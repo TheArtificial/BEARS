@@ -66,6 +66,34 @@ pub async fn ensure_conversation_for_external_id(
     })
 }
 
+pub async fn set_conversation_title(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+    title: &str,
+) -> Result<u64, CustomError> {
+    let normalized = title.trim();
+    if normalized.is_empty() {
+        return Ok(0);
+    }
+    let result = sqlx::query(
+        r#"
+        UPDATE conversations
+        SET current_title = $3,
+            updated_at = NOW()
+        WHERE bear_id = $1
+          AND external_conversation_id = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(external_conversation_id)
+    .bind(normalized)
+    .execute(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("update conversation title: {err}")))?;
+    Ok(result.rows_affected())
+}
+
 pub async fn insert_message_if_absent(
     pool: &PgPool,
     conversation_id: Uuid,
