@@ -24,6 +24,7 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [letta migration plan](letta-migration-plan.md)
 - [rename from starter](rename-from-starter.md)
 - [context compaction comparative report](../research/context-compaction-comparative-report.md)
+- [model tasks strategy](../research/model-tasks-strategy.md)
 
 ## Deployment
 
