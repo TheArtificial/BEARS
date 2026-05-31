@@ -563,26 +563,50 @@ jobs:
         needs: prepare-release
         env:
             BEARS_APP_VERSION: ${{ needs.prepare-release.outputs.update_version }}
+            UPDATE_CHANNEL: ${{ needs.prepare-release.outputs.update_channel }}
             PUBLISH_UPDATE_SITE: ${{ needs.prepare-release.outputs.publish_update_site }}
+            MACOS_APPLICATION_CERT_IDENTITY: ${{ secrets.MACOS_APPLICATION_CERT_IDENTITY }}
+            MACOS_CERTIFICATES_P12_BASE64: ${{ secrets.MACOS_CERTIFICATES_P12_BASE64 }}
+            MACOS_CERTIFICATES_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
+            MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
 
         steps:
             - uses: actions/checkout@v5
+
+            - name: Ensure DMG script is executable
+              run: chmod +x ./packaging/macos/build-dmg.sh
+
+            - name: Import Apple signing certificates
+              if: env.MACOS_CERTIFICATES_P12_BASE64 != ''
+              run: |
+                  security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-signing.keychain-db
+                  security set-keychain-settings -lut 21600 build-signing.keychain-db
+                  security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-signing.keychain-db
+                  echo "$MACOS_CERTIFICATES_P12_BASE64" | base64 -D > certificates.p12
+                  security import certificates.p12 \
+                    -k build-signing.keychain-db \
+                    -P "$MACOS_CERTIFICATES_PASSWORD" \
+                    -T /usr/bin/codesign
+                  security list-keychains -d user -s build-signing.keychain-db login.keychain-db
+                  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build-signing.keychain-db
+                  security find-identity -v -p codesigning build-signing.keychain-db
 
             - name: Build Bears DMG
               run: |
                   ./packaging/macos/build-dmg.sh \
                     --app-version "$BEARS_APP_VERSION" \
+                    --application-identity "$MACOS_APPLICATION_CERT_IDENTITY" \
                     --output "dist/macos/Bears.dmg"
 
             - name: Stage Bears app public payload
               if: env.PUBLISH_UPDATE_SITE == 'true'
               run: |
-                  site_dir="dist/update-site/bears-app/stable"
+                  site_dir="dist/update-site/bears-app/$UPDATE_CHANNEL"
                   mkdir -p "$site_dir"
                   cp dist/macos/Bears.dmg "$site_dir/Bears.dmg"
                   shasum -a 256 dist/macos/Bears.dmg | awk '{print $1}' > "$site_dir/Bears.dmg.sha256"
 
-                  python3 - "$site_dir/macos.json" "$BEARS_APP_VERSION" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-app/stable/Bears.dmg" "$(cat "$site_dir/Bears.dmg.sha256")" <<'PY'
+                  python3 - "$site_dir/macos.json" "$BEARS_APP_VERSION" "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-app/$UPDATE_CHANNEL/Bears.dmg" "$(cat "$site_dir/Bears.dmg.sha256")" <<'PY'
                   import json
                   import pathlib
                   import sys
@@ -612,7 +636,7 @@ jobs:
                   if-no-files-found: error
 
     upload-release-assets:
-        name: Attach ACP adapter assets to GitHub release
+        name: Attach Bears release assets to GitHub release
         runs-on: ubuntu-24.04
         needs: [prepare-release, build, macos-pkg, bears-dmg]
         if: needs.prepare-release.outputs.release_tag != ''
@@ -688,7 +712,7 @@ jobs:
                   done
 
     publish-update-site:
-        name: Publish ACP adapter update site
+        name: Publish Bears update site
         runs-on: ubuntu-24.04
         needs: [prepare-release, macos-pkg, bears-dmg]
         if: needs.prepare-release.outputs.publish_update_site == 'true'
