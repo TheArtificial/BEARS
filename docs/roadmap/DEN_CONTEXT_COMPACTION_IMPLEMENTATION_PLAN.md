@@ -1,6 +1,6 @@
 # Implementation Plan: Den Context Compaction
 
-This plan implements the context-compaction direction described in [ADR-0032: Den Context Compaction Architecture](../decisions/adr-0032-den-context-compaction-architecture.md) and supports the Letta migration plan in [letta-migration-plan.md](../guides/letta-migration-plan.md).
+This plan implements the context-compaction direction described in [ADR-0032: Den Context Compaction Architecture](../decisions/adr-0032-den-context-compaction-architecture.md), supports the Letta migration plan in [letta-migration-plan.md](../guides/letta-migration-plan.md), and should be read alongside the Den-owned canonical persistence target in [den-conversation-persistence-and-archive-model.md](../architecture/den-conversation-persistence-and-archive-model.md).
 
 The goal is to replace Letta-era long-context handling with a Den-owned compaction system that preserves continuation quality, keeps transcript ownership explicit, and separates derived compaction artifacts from durable memory.
 
@@ -357,6 +357,8 @@ This section tracks the current status of the Den-owned compaction migration sli
 - **Phase 1 — transcript/artifact schema direction**
   - logical schema direction documented in:
     - `docs/architecture/den-context-compaction-schema.md`
+  - Den-owned canonical post-Letta persistence and archive model documented in:
+    - `docs/architecture/den-conversation-persistence-and-archive-model.md`
   - transcript/artifact/event separation is now explicit at the design level.
 
 - **Phase 2 — semantic grouping (scaffold level)**

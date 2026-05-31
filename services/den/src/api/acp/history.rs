@@ -127,6 +127,12 @@ pub(crate) fn runtime_messages_for_compaction(
         .collect()
 }
 
+pub(crate) fn runtime_messages_for_persistence(
+    body: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    runtime_messages_top_array(body).to_vec()
+}
+
 pub(crate) fn runtime_semantic_groups_for_compaction(
     body: &serde_json::Value,
 ) -> Vec<RuntimeSemanticGroup> {

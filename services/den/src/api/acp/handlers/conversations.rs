@@ -12,6 +12,7 @@ use crate::{
         acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_belongs_to_binding},
         archived_conversations,
         bears::db as bears_db,
+        conversation_persistence::{ensure_conversation_for_external_id, insert_message_if_absent},
         letta::load_agent_conversations as load_runtime_conversations,
         runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
     },
@@ -20,7 +21,8 @@ use crate::{
 
 use crate::api::acp::{
     history::{
-        map_acp_history_page, map_compaction_status_for_history, runtime_compaction_event_for_history,
+        map_acp_history_page, map_compaction_status_for_history,
+        runtime_compaction_event_for_history, runtime_messages_for_persistence,
     },
     normalize_acp_conversation_id,
     responses::acp_error_response,
@@ -173,6 +175,64 @@ pub(super) async fn conversation_history_inner(
         .letta
         .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
         .await?;
+    let canonical_conversation = ensure_conversation_for_external_id(
+        &state.sqlx_pool,
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    for (index, raw_message) in runtime_messages_for_persistence(&body).iter().enumerate() {
+        let inner = raw_message.get("contents").unwrap_or(raw_message);
+        let message_type = inner
+            .get("message_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("system_message");
+        let normalized_message_type = match message_type {
+            "user_message" => "user",
+            "assistant_message" => "assistant",
+            _ => "system",
+        };
+        let role = inner
+            .get("role")
+            .and_then(|v| v.as_str())
+            .or_else(|| raw_message.get("role").and_then(|v| v.as_str()));
+        let content_text = inner
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                inner
+                    .get("content")
+                    .and_then(|v| v.get("text"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let provider_message_id = raw_message
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| inner.get("id").and_then(|v| v.as_str()));
+        let created_at = raw_message
+            .get("date")
+            .or_else(|| raw_message.get("created_at"))
+            .and_then(|v| v.as_str());
+        insert_message_if_absent(
+            &state.sqlx_pool,
+            canonical_conversation.id,
+            index as i64,
+            normalized_message_type,
+            role,
+            "default",
+            &content_text,
+            inner.clone(),
+            provider_message_id,
+            created_at,
+        )
+        .await?;
+    }
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
     let event = runtime_compaction_event_for_history(
         &conv_id,
