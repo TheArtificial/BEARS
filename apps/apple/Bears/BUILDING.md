@@ -125,16 +125,34 @@ The Swift sources needed by the executable target have now been consolidated und
 
 That keeps the initial Swift Package setup simple and gives the first local build a better chance of succeeding.
 
+## Building a distributable DMG
+
+A first-pass DMG packaging script now exists at:
+
+- `packaging/macos/build-dmg.sh`
+
+From the repo root:
+
+```bash
+./packaging/macos/build-dmg.sh --app-version 0.1.0
+```
+
+This produces:
+
+- `dist/macos/Bears-0.1.0.dmg`
+
+The script currently builds a release SwiftPM executable, wraps it into a minimal `Bears.app`, and creates a DMG containing that app plus an `/Applications` symlink.
+
 ## Current limitations
 
-This is an intentionally lightweight package-based scaffold for early testing.
+This is still an intentionally lightweight package-based scaffold for early testing and first-pass distribution.
 
 Not yet complete:
 
-- proper `.app` packaging
-- codesigning/notarization flow
+- Developer ID signing for `Bears.app`
+- DMG signing/notarization flow
 - Sparkle integration
-- automated bundling of the Rust adapter artifact
+- automated app release publishing to gh-pages
 - Xcode project/workspace configuration for shipping builds
 
-The current goal is just to make the SwiftUI shell and install flow testable as quickly as possible.
+The current goal is to make the SwiftUI shell, install flow, and downloadable DMG testable as quickly as possible.

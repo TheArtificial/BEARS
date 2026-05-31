@@ -1,6 +1,9 @@
-# macOS installer packaging
+# macOS packaging
 
-This directory contains the first-pass macOS `.pkg` installer pipeline for `bears-acp-adapter`.
+This directory contains the first-pass macOS packaging pipelines for:
+
+- the `bears-acp-adapter` `.pkg` installer
+- the `Bears.app` distribution `.dmg`
 
 The package now installs the adapter at:
 
@@ -10,7 +13,46 @@ The package now installs the adapter at:
 
 That system-level Bears-owned path aligns more closely with the Bears app-managed installation contract while avoiding `/usr/local/bin`.
 
-## Local package build
+## Bears app DMG build
+
+Build a DMG directly from the Swift package:
+
+```bash
+./packaging/macos/build-dmg.sh --app-version 0.1.0
+```
+
+That script will:
+
+1. run `swift build -c release --product Bears` under `apps/apple/Bears`
+2. wrap the resulting executable and app resources into a minimal `Bears.app`
+3. create a DMG containing `Bears.app` and an `/Applications` symlink
+
+The default output path is:
+
+```text
+dist/macos/Bears-<version>.dmg
+```
+
+You can also package an existing `.app` bundle instead of building one:
+
+```bash
+./packaging/macos/build-dmg.sh \
+  --app /path/to/Bears.app \
+  --app-version 0.1.0 \
+  --output dist/macos/Bears-0.1.0.dmg
+```
+
+This is currently an unsigned/not-notarized DMG pipeline intended to get a downloadable artifact onto GitHub Pages quickly. Add signing/notarization after the artifact flow is stable.
+
+A practical gh-pages destination would be something like:
+
+```text
+dist/update-site/bears-app/stable/Bears.dmg
+```
+
+or another stable path that your site publishing workflow preserves.
+
+## Local adapter package build
 
 Build the adapter first:
 
