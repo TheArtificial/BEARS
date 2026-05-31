@@ -15,6 +15,7 @@ Options:
   --output <path>                 Output DMG path (default: dist/macos/Bears-<version>.dmg)
   --source-root <path>            Swift package root (default: apps/apple/Bears)
   --binary-name <name>            Executable name inside the app (default: Bears)
+  --application-identity <name>   Developer ID Application identity for codesign
   --background <path>             Optional background image copied into the DMG staging dir
   -h, --help                      Show this help
 
@@ -32,6 +33,7 @@ bundle_id="ai.bears.app"
 display_name="Bears"
 binary_name="Bears"
 output=""
+application_identity="${MACOS_APPLICATION_CERT_IDENTITY:-}"
 background=""
 
 while [ "$#" -gt 0 ]; do
@@ -62,6 +64,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --binary-name)
       binary_name="${2:-}"
+      shift 2
+      ;;
+    --application-identity)
+      application_identity="${2:-}"
       shift 2
       ;;
     --background)
@@ -107,8 +113,10 @@ build_app_bundle() {
   contents_dir="$app_bundle/Contents"
   macos_dir="$contents_dir/MacOS"
   resources_dir="$contents_dir/Resources"
+  frameworks_dir="$contents_dir/Frameworks"
   app_binary="$source_root/.build/release/$binary_name"
   plist_path="$contents_dir/Info.plist"
+  pkginfo_path="$contents_dir/PkgInfo"
 
   echo "build-dmg.sh: building release app from Swift package"
   swift build -c release --product "$binary_name" --package-path "$source_root"
@@ -118,13 +126,18 @@ build_app_bundle() {
     exit 1
   fi
 
-  mkdir -p "$macos_dir" "$resources_dir"
+  mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir"
   cp "$app_binary" "$macos_dir/$display_name"
   chmod 755 "$macos_dir/$display_name"
+
+  codesign --remove-signature "$macos_dir/$display_name" >/dev/null 2>&1 || true
+  xattr -cr "$macos_dir/$display_name" >/dev/null 2>&1 || true
 
   if [ -d "$source_root/BearsApp/Resources" ]; then
     cp -R "$source_root/BearsApp/Resources/." "$resources_dir/"
   fi
+
+  printf 'APPL????' >"$pkginfo_path"
 
   cat >"$plist_path" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -141,6 +154,8 @@ build_app_bundle() {
   <string>6.0</string>
   <key>CFBundleName</key>
   <string>$display_name</string>
+  <key>CFBundleDisplayName</key>
+  <string>$display_name</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -151,9 +166,21 @@ build_app_bundle() {
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
 </dict>
 </plist>
 EOF
+
+  if [ -n "$application_identity" ]; then
+    echo "build-dmg.sh: signing app bundle with $application_identity"
+    codesign --force --deep --timestamp --options runtime --sign "$application_identity" "$app_bundle"
+    codesign --verify --deep --strict --verbose=2 "$app_bundle"
+  else
+    echo "build-dmg.sh: no application signing identity supplied; leaving app unsigned" >&2
+  fi
 
   app_path="$app_bundle"
 }

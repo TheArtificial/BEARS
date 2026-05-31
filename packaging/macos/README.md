@@ -42,7 +42,15 @@ You can also package an existing `.app` bundle instead of building one:
   --output dist/macos/Bears-0.1.0.dmg
 ```
 
-This is currently an unsigned/not-notarized DMG pipeline intended to get a downloadable artifact onto GitHub Pages quickly. Add signing/notarization after the artifact flow is stable.
+You can optionally sign the generated app bundle before DMG creation with:
+
+```bash
+./packaging/macos/build-dmg.sh \
+  --app-version 0.1.0 \
+  --application-identity "Developer ID Application: Your Org (TEAMID)"
+```
+
+This is still a first-pass DMG pipeline. Without signing and notarization, downloaded copies may still be rejected by Gatekeeper. Add full notarization after the artifact flow is stable.
 
 A practical gh-pages destination would be something like:
 
