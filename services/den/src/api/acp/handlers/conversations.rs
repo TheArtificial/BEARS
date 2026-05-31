@@ -12,7 +12,9 @@ use crate::{
         acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_belongs_to_binding},
         archived_conversations,
         bears::db as bears_db,
-        conversation_persistence::{ensure_conversation_for_external_id, insert_message_if_absent},
+        conversation_persistence::{
+            ensure_conversation_for_external_id, insert_message_if_absent, list_messages_page,
+        },
         letta::load_agent_conversations as load_runtime_conversations,
         runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
     },
@@ -21,7 +23,7 @@ use crate::{
 
 use crate::api::acp::{
     history::{
-        map_acp_history_page, map_compaction_status_for_history,
+        map_acp_history_page, map_canonical_history_page, map_compaction_status_for_history,
         runtime_compaction_event_for_history, runtime_messages_for_persistence,
     },
     normalize_acp_conversation_id,
@@ -171,10 +173,7 @@ pub(super) async fn conversation_history_inner(
     } else {
         None
     };
-    let body = state
-        .letta
-        .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
-        .await?;
+    let before_sequence_no = before.and_then(|value| value.parse::<i64>().ok());
     let canonical_conversation = ensure_conversation_for_external_id(
         &state.sqlx_pool,
         bear.id,
@@ -184,6 +183,31 @@ pub(super) async fn conversation_history_inner(
         None,
     )
     .await?;
+    let canonical_rows = list_messages_page(
+        &state.sqlx_pool,
+        canonical_conversation.id,
+        before_sequence_no,
+        i64::from(limit),
+    )
+    .await?;
+    if !canonical_rows.is_empty() {
+        let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
+        let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
+            .await
+            .unwrap_or_default();
+        return Ok(Json(AcpConversationHistoryResponse {
+            messages,
+            has_more,
+            next_before,
+            compaction: None,
+            compaction_history,
+        })
+        .into_response());
+    }
+    let body = state
+        .letta
+        .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
+        .await?;
     for (index, raw_message) in runtime_messages_for_persistence(&body).iter().enumerate() {
         let inner = raw_message.get("contents").unwrap_or(raw_message);
         let message_type = inner

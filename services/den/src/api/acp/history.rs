@@ -5,6 +5,7 @@ use crate::{
     core::{
         acp_letta_events::AcpGatewayEvent,
         acp_sessions,
+        conversation_persistence::PersistedConversationMessage,
         letta::sanitize_visible_transcript_text,
         runtime_compaction::{
             choose_compaction_decision, semantic_groups_from_runtime_messages,
@@ -277,6 +278,36 @@ pub(crate) fn map_compaction_status_for_history(
         diagnostic: event.diagnostic,
         artifact: event.artifact.and_then(|artifact| serde_json::to_value(artifact).ok()),
     }
+}
+
+pub(super) fn map_canonical_history_page(
+    rows: &[PersistedConversationMessage],
+    page_limit: u32,
+) -> (Vec<AcpConversationHistoryMessage>, bool, Option<String>) {
+    let has_more = rows.len() >= page_limit as usize;
+    let next_before = rows.last().map(|row| row.sequence_no.to_string());
+    let messages = rows
+        .iter()
+        .rev()
+        .filter_map(|row| {
+            let role = match row.message_type.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                _ => return None,
+            };
+            let text = sanitize_visible_transcript_text(&row.content_text);
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(AcpConversationHistoryMessage {
+                id: row.provider_message_id.clone().or_else(|| Some(row.sequence_no.to_string())),
+                role: role.to_string(),
+                text,
+                created_at: Some(format_acp_session_timestamp(row.created_at)),
+            })
+        })
+        .collect();
+    (messages, has_more, next_before)
 }
 
 pub(super) fn map_acp_history_page(

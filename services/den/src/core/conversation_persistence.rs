@@ -12,6 +12,17 @@ pub struct ConversationRecord {
     pub current_title: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PersistedConversationMessage {
+    pub sequence_no: i64,
+    pub message_type: String,
+    pub role: Option<String>,
+    pub visibility: String,
+    pub content_text: String,
+    pub provider_message_id: Option<String>,
+    pub created_at: time::OffsetDateTime,
+}
+
 pub async fn ensure_conversation_for_external_id(
     pool: &PgPool,
     bear_id: Uuid,
@@ -92,6 +103,58 @@ pub async fn set_conversation_title(
     .await
     .map_err(|err| CustomError::Database(format!("update conversation title: {err}")))?;
     Ok(result.rows_affected())
+}
+
+pub async fn list_messages_page(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    before_sequence_no: Option<i64>,
+    limit: i64,
+) -> Result<Vec<PersistedConversationMessage>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT sequence_no, message_type, role, visibility, content_text, provider_message_id, created_at
+        FROM conversation_messages
+        WHERE conversation_id = $1
+          AND ($2::bigint IS NULL OR sequence_no < $2)
+        ORDER BY sequence_no DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(before_sequence_no)
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list conversation messages: {err}")))?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(PersistedConversationMessage {
+                sequence_no: row.try_get("sequence_no").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message sequence_no: {err}"))
+                })?,
+                message_type: row.try_get("message_type").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message message_type: {err}"))
+                })?,
+                role: row.try_get("role").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message role: {err}"))
+                })?,
+                visibility: row.try_get("visibility").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message visibility: {err}"))
+                })?,
+                content_text: row.try_get("content_text").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message content_text: {err}"))
+                })?,
+                provider_message_id: row.try_get("provider_message_id").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message provider_message_id: {err}"))
+                })?,
+                created_at: row.try_get("created_at").map_err(|err| {
+                    CustomError::Database(format!("decode conversation message created_at: {err}"))
+                })?,
+            })
+        })
+        .collect()
 }
 
 pub async fn insert_message_if_absent(
