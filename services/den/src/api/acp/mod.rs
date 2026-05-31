@@ -364,6 +364,95 @@ mod tests {
     }
 
     #[test]
+    fn adapter_environment_title_extraction_prefers_explicit_conversation_title() {
+        let body: AcpAdapterEnvironmentRequest = serde_json::from_value(serde_json::json!({
+            "environment": {
+                "thread_title": "Thread title",
+                "conversation_title": "Environment conversation title",
+                "title": "Fallback title"
+            },
+            "conversation_title": "Explicit title"
+        }))
+        .expect("request should deserialize");
+        let client_title = body
+            .conversation_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                ["thread_title", "conversation_title", "title"]
+                    .iter()
+                    .find_map(|key| {
+                        body.environment
+                            .get(*key)
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                    })
+            });
+        assert_eq!(client_title, Some("Explicit title"));
+    }
+
+    #[test]
+    fn adapter_environment_title_extraction_falls_back_to_thread_title() {
+        let body: AcpAdapterEnvironmentRequest = serde_json::from_value(serde_json::json!({
+            "environment": {
+                "thread_title": "Thread title",
+                "conversation_title": "Environment conversation title",
+                "title": "Fallback title"
+            }
+        }))
+        .expect("request should deserialize");
+        let client_title = body
+            .conversation_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                ["thread_title", "conversation_title", "title"]
+                    .iter()
+                    .find_map(|key| {
+                        body.environment
+                            .get(*key)
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                    })
+            });
+        assert_eq!(client_title, Some("Thread title"));
+    }
+
+    #[test]
+    fn adapter_environment_title_extraction_ignores_blank_values() {
+        let body: AcpAdapterEnvironmentRequest = serde_json::from_value(serde_json::json!({
+            "environment": {
+                "thread_title": "   ",
+                "conversation_title": "",
+                "title": "Fallback title"
+            },
+            "conversation_title": "  "
+        }))
+        .expect("request should deserialize");
+        let client_title = body
+            .conversation_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                ["thread_title", "conversation_title", "title"]
+                    .iter()
+                    .find_map(|key| {
+                        body.environment
+                            .get(*key)
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                    })
+            });
+        assert_eq!(client_title, Some("Fallback title"));
+    }
+
+    #[test]
     fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
         let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask", None);
         let context = acp_direct_tool_prompt_context_with_activity(

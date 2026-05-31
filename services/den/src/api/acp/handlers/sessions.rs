@@ -25,6 +25,7 @@ use crate::{
         acp_sessions,
         acp_tokens,
         bears::{db as bears_db, BearAgentRole},
+        conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
         role_runtime::{RoleRuntime, RoleTurnScope},
         work_plans::{self, WorkPlanLookup},
     },
@@ -341,23 +342,51 @@ pub(super) async fn post_adapter_environment_inner(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .or_else(|| {
-            body.environment
-                .get("thread_title")
-                .or_else(|| body.environment.get("conversation_title"))
-                .or_else(|| body.environment.get("title"))
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+            ["thread_title", "conversation_title", "title"]
+                .iter()
+                .find_map(|key| {
+                    body.environment
+                        .get(*key)
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                })
         });
-    if client_title.is_some() {
+    if let Some(client_title) = client_title {
         acp_sessions::update_client_conversation_title(
             &state.sqlx_pool,
             auth.user_id,
             session.bear_id,
             &session_id,
-            client_title,
+            Some(client_title),
         )
         .await?;
+        let external_conversation_id = session
+            .resolved_conversation_id
+            .as_deref()
+            .filter(|value| value.starts_with("conv-"))
+            .or_else(|| {
+                let conversation_id = session.conversation_id.as_str();
+                conversation_id.starts_with("conv-").then_some(conversation_id)
+            });
+        if let Some(external_conversation_id) = external_conversation_id {
+            let _ = ensure_conversation_for_external_id(
+                &state.sqlx_pool,
+                session.bear_id,
+                Some(auth.user_id),
+                external_conversation_id,
+                Some(&session_id),
+                Some(client_title),
+            )
+            .await;
+            let _ = set_conversation_title(
+                &state.sqlx_pool,
+                session.bear_id,
+                external_conversation_id,
+                client_title,
+            )
+            .await;
+        }
     }
     Ok(Json(serde_json::json!({
         "accepted": true,
