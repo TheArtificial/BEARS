@@ -157,6 +157,64 @@ pub async fn list_messages_page(
         .collect()
 }
 
+pub async fn append_message(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    message_type: &str,
+    role: Option<&str>,
+    visibility: &str,
+    content_text: &str,
+    content_json: serde_json::Value,
+    provider_message_id: Option<&str>,
+    created_at: Option<&str>,
+) -> Result<i64, CustomError> {
+    let row = sqlx::query(
+        r#"
+        WITH next_seq AS (
+            SELECT COALESCE(MAX(sequence_no), -1) + 1 AS sequence_no
+            FROM conversation_messages
+            WHERE conversation_id = $1
+        )
+        INSERT INTO conversation_messages (
+            conversation_id,
+            sequence_no,
+            message_type,
+            role,
+            visibility,
+            content_text,
+            content_json,
+            provider_message_id,
+            created_at
+        )
+        SELECT
+            $1,
+            next_seq.sequence_no,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            COALESCE($8::timestamptz, NOW())
+        FROM next_seq
+        RETURNING sequence_no
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(message_type)
+    .bind(role)
+    .bind(visibility)
+    .bind(content_text)
+    .bind(content_json)
+    .bind(provider_message_id)
+    .bind(created_at)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("append conversation message: {err}")))?;
+    row.try_get("sequence_no")
+        .map_err(|err| CustomError::Database(format!("decode appended sequence_no: {err}")))
+}
+
 pub async fn insert_message_if_absent(
     pool: &PgPool,
     conversation_id: Uuid,
