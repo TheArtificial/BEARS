@@ -137,6 +137,9 @@ jobs:
                     esac
                   else
                     channel="${{ inputs.update_channel }}"
+                    if [ -z "$channel" ]; then
+                      channel="stable"
+                    fi
                   fi
 
                   if [ "$create_release" = "true" ]; then
