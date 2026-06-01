@@ -17,15 +17,26 @@ enum BundledAdapterLocatorError: LocalizedError {
 }
 
 struct BundledAdapterLocator: BundledAdapterLocating {
+    private let resourceBundle: Bundle
+
+    init(resourceBundle: Bundle = .main) {
+        self.resourceBundle = resourceBundle
+    }
+
     func bundledAdapterExecutableURL() throws -> URL {
         let candidates = [
-            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil),
-            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Adapter"),
-            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Resources/Adapter"),
-            Bundle.module.resourceURL?
+            resourceBundle.url(forResource: "bears-acp-adapter", withExtension: nil),
+            resourceBundle.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Adapter"),
+            resourceBundle.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Resources/Adapter"),
+            resourceBundle.resourceURL?
                 .appendingPathComponent("Adapter", isDirectory: true)
                 .appendingPathComponent("bears-acp-adapter", isDirectory: false),
-            Bundle.module.resourceURL?
+            resourceBundle.resourceURL?
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("Adapter", isDirectory: true)
+                .appendingPathComponent("bears-acp-adapter", isDirectory: false),
+            Bundle.main.bundleURL
+                .appendingPathComponent("Contents", isDirectory: true)
                 .appendingPathComponent("Resources", isDirectory: true)
                 .appendingPathComponent("Adapter", isDirectory: true)
                 .appendingPathComponent("bears-acp-adapter", isDirectory: false)
