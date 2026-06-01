@@ -778,8 +778,8 @@ jobs:
 
             - name: Notify external publish webhook
               env:
-                  WEBHOOK_URL: ${{ secrets.BEARS_PUBLISH_WEBHOOK_URL }}
-                  WEBHOOK_TOKEN: ${{ secrets.BEARS_PUBLISH_WEBHOOK_TOKEN }}
+                  WEBHOOK_URL: ${{ secrets.PUBLISH_WEBHOOK_URL }}
+                  WEBHOOK_TOKEN: ${{ secrets.PUBLISH_WEBHOOK_TOKEN }}
                   UPDATE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
                   UPDATE_CHANNEL: ${{ needs.prepare-release.outputs.update_channel }}
                   RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
@@ -787,7 +787,7 @@ jobs:
                   set -eu
 
                   if [ -z "${WEBHOOK_URL:-}" ]; then
-                    echo "No BEARS_PUBLISH_WEBHOOK_URL configured; skipping webhook notification."
+                    echo "No PUBLISH_WEBHOOK_URL configured; skipping webhook notification."
                     exit 0
                   fi
 
