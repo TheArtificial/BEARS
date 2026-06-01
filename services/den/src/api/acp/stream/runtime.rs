@@ -14,12 +14,56 @@ use crate::{
     core::{
         acp_sessions,
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
+        conversation_persistence::{append_message, ensure_conversation_for_external_id},
         bears::{db as bears_db, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         web_policy,
     },
     errors::CustomError,
 };
+
+async fn append_canonical_structured_event(
+    context: &AcpStreamContext,
+    message_type: &str,
+    role: Option<&str>,
+    visibility: &str,
+    content_text: &str,
+    content_json: serde_json::Value,
+    provider_message_id: Option<&str>,
+) -> Result<(), CustomError> {
+    if context.config.database_url.starts_with("postgres://postgres:postgres@127.0.0.1:9/") {
+        return Ok(());
+    }
+    let Some(conversation_id) = context
+        .resolved_conversation_id
+        .as_deref()
+        .filter(|id| *id == "default" || id.starts_with("conv-"))
+    else {
+        return Ok(());
+    };
+    let canonical = ensure_conversation_for_external_id(
+        &context.pool,
+        context.bear_id,
+        Some(context.user_id),
+        conversation_id,
+        Some(&context.acp_session_id),
+        None,
+    )
+    .await?;
+    append_message(
+        &context.pool,
+        canonical.id,
+        message_type,
+        role,
+        visibility,
+        content_text,
+        content_json,
+        provider_message_id,
+        None,
+    )
+    .await?;
+    Ok(())
+}
 
 pub(in crate::api::acp) async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
@@ -34,6 +78,21 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 context.bear_id,
                 &context.acp_session_id,
                 conversation_id,
+            )
+            .await?;
+            append_canonical_structured_event(
+                context,
+                "workflow_event",
+                Some("system"),
+                "diagnostic_only",
+                "Conversation resolved",
+                serde_json::json!({
+                    "source": "acp_stream",
+                    "event": "conversation_resolved",
+                    "conversation_id": conversation_id,
+                    "acp_session_id": context.acp_session_id,
+                }),
+                None,
             )
             .await?;
         }

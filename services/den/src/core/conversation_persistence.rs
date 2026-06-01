@@ -168,13 +168,31 @@ pub async fn append_message(
     provider_message_id: Option<&str>,
     created_at: Option<&str>,
 ) -> Result<i64, CustomError> {
-    let row = sqlx::query(
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|err| CustomError::Database(format!("begin append conversation message tx: {err}")))?;
+
+    let allocator_row = sqlx::query(
         r#"
-        WITH next_seq AS (
-            SELECT COALESCE(MAX(sequence_no), -1) + 1 AS sequence_no
-            FROM conversation_messages
-            WHERE conversation_id = $1
-        )
+        UPDATE conversations
+        SET next_message_sequence = next_message_sequence + 1,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING next_message_sequence - 1 AS sequence_no
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| CustomError::Database(format!("allocate conversation message sequence: {err}")))?;
+
+    let sequence_no: i64 = allocator_row
+        .try_get("sequence_no")
+        .map_err(|err| CustomError::Database(format!("decode allocated sequence_no: {err}")))?;
+
+    sqlx::query(
+        r#"
         INSERT INTO conversation_messages (
             conversation_id,
             sequence_no,
@@ -186,21 +204,21 @@ pub async fn append_message(
             provider_message_id,
             created_at
         )
-        SELECT
+        VALUES (
             $1,
-            next_seq.sequence_no,
             $2,
             $3,
             $4,
             $5,
             $6,
             $7,
-            COALESCE($8::timestamptz, NOW())
-        FROM next_seq
-        RETURNING sequence_no
+            $8,
+            COALESCE($9::timestamptz, NOW())
+        )
         "#,
     )
     .bind(conversation_id)
+    .bind(sequence_no)
     .bind(message_type)
     .bind(role)
     .bind(visibility)
@@ -208,11 +226,15 @@ pub async fn append_message(
     .bind(content_json)
     .bind(provider_message_id)
     .bind(created_at)
-    .fetch_one(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| CustomError::Database(format!("append conversation message: {err}")))?;
-    row.try_get("sequence_no")
-        .map_err(|err| CustomError::Database(format!("decode appended sequence_no: {err}")))
+
+    tx.commit()
+        .await
+        .map_err(|err| CustomError::Database(format!("commit append conversation message tx: {err}")))?;
+
+    Ok(sequence_no)
 }
 
 pub async fn insert_message_if_absent(
