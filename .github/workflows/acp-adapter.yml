@@ -778,8 +778,8 @@ jobs:
 
             - name: Notify external publish webhook
               env:
-                  WEBHOOK_URL: ${{ secrets.PUBLISH_WEBHOOK_URL }}
-                  WEBHOOK_TOKEN: ${{ secrets.PUBLISH_WEBHOOK_TOKEN }}
+                  WEBHOOK_URL: ${{ secrets.BEARS_PUBLISH_WEBHOOK_URL }}
+                  WEBHOOK_TOKEN: ${{ secrets.BEARS_PUBLISH_WEBHOOK_TOKEN }}
                   UPDATE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
                   UPDATE_CHANNEL: ${{ needs.prepare-release.outputs.update_channel }}
                   RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
@@ -787,17 +787,12 @@ jobs:
                   set -eu
 
                   if [ -z "${WEBHOOK_URL:-}" ]; then
-                    echo "No PUBLISH_WEBHOOK_URL configured; skipping webhook notification."
+                    echo "No BEARS_PUBLISH_WEBHOOK_URL configured; skipping webhook notification."
                     exit 0
                   fi
 
-                  app_base_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-app/$UPDATE_CHANNEL"
-                  adapter_base_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL"
-
-                  auth_args=""
-                  if [ -n "${WEBHOOK_TOKEN:-}" ]; then
-                    auth_args="-H Authorization: Bearer $WEBHOOK_TOKEN"
-                  fi
+                  export APP_BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-app/$UPDATE_CHANNEL"
+                  export ADAPTER_BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL"
 
                   payload="$(python3 - <<'PY'
                   import json
@@ -818,7 +813,6 @@ jobs:
                   PY
                   )"
 
-                  APP_BASE_URL="$app_base_url" ADAPTER_BASE_URL="$adapter_base_url" \
                   curl -fsS --retry 3 --max-time 20 -X POST "$WEBHOOK_URL" \
                     -H "Content-Type: application/json" \
                     ${WEBHOOK_TOKEN:+-H "Authorization: Bearer $WEBHOOK_TOKEN"} \
