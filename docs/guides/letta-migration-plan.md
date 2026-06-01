@@ -211,7 +211,7 @@ This matrix now maps reasonably well to a subset of existing docs, but coverage 
 | Letta feature family | Existing docs with meaningful coverage | Coverage assessment | Missing or weak treatment |
 |---|---|---|---|
 | Agent object lifecycle | `docs/architecture/bear-roles.md`, `docs/architecture/bears-and-den.md`, `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/role-vocabulary.md` | Partial | We have role-profile and Bear-identity framing, but no dedicated design for import/export, template migration, or exact replacement of Letta agent-resource lifecycle APIs. |
-| Conversation transcript store | `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-contract.md`, `docs/architecture/identity-and-membership.md` | Strong | Transcript/read-model separation is described well, but transcript retention, dedup/idempotency, and cross-surface replay policy are still not gathered into one explicit transcript design note. |
+| Conversation transcript store | `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-contract.md`, `docs/architecture/identity-and-membership.md` | Strong | This is also the most advanced implementation area so far: canonical conversation/message persistence helpers exist, ACP prompt ingress writes user messages at source, and append sequencing is allocator-backed for concurrency safety. Remaining gaps are assistant final-message persistence, structured tool-event persistence, transcript retention policy, dedup/idempotency rules across all writers, and a fully explicit replay/read-switch policy. |
 | Turn/run execution lifecycle | `docs/architecture/acp-runtime-contract.md`, `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-invariants.md`, `docs/architecture/bear-channel-and-acp.md` | Strong | Good ACP/runtime coverage exists. Remaining gap is broader non-ACP shared role-runner design parity across `chat`, `review`, `watch`, and `work`. |
 | Editable in-context memory blocks | `docs/architecture/memory-model.md`, `docs/architecture/workflow-state-overview.md` | Weak | We describe canonical memory and retrieval, but we do not yet have a dedicated replacement design for Letta-style editable prompt blocks, attachment semantics, or block compilation into runtime context. |
 | Archival / recall memory | `docs/architecture/memory-model.md`, `docs/architecture/reflection-system.md`, `docs/architecture/reflection-run-taxonomy.md` | Partial | Retrieval is recognized, but the plan still leans on Letta Archives. We lack a BEARS-owned replacement design for archival write/query semantics and lifecycle after Letta removal. |
@@ -237,6 +237,26 @@ The most obvious gaps after this mapping are:
 
 ## Current-state assessment
 
+### Current repository snapshot
+
+As of the current `off-letta` branch state, the repository is no longer only at the design-and-seams stage for conversation persistence. Den now owns a meaningful part of the canonical conversation transcript model for ACP `pair`, while Letta still remains the active execution substrate for runtime turns.
+
+The most important landed changes visible in the repository are:
+
+- **canonical conversation persistence helpers exist in Den** via `services/den/src/core/conversation_persistence.rs`, including conversation upsert, title updates, paged canonical message reads, idempotent insert helpers, and an allocator-backed append path
+- **conversation message append sequencing is now conversation-owned and concurrency-safe**, using `conversations.next_message_sequence` rather than `MAX(sequence_no)+1`
+- **ACP prompt ingress now source-persists human messages** in `services/den/src/api/acp/stream/prompt_flow.rs` after conversation resolution and session upsert, before runtime turn execution
+- **ACP structured-event source persistence has started cautiously** in `services/den/src/api/acp/stream/runtime.rs`, where `ConversationResolved` is now persisted as a canonical workflow event
+- **canonical-history read support exists alongside compatibility behavior**, but coverage is still incomplete because not all event/message classes are yet source-persisted
+
+This means the repository has progressed beyond pure migration scaffolding for transcript ownership and is now in a real **Den-owned interaction persistence / hybrid runtime** phase:
+
+- **Den owns increasing portions of transcript and read-model state**
+- **Letta still executes the underlying runtime turns for ACP `pair`**
+- **the repository is not yet at full execution-substrate cutover or Letta retirement**
+
+The practical implication is that the migration has advanced furthest in the **conversation transcript store** and **control-plane ownership** tracks, while broader runtime replacement, compaction, archival retrieval replacement, and non-ACP role migration remain less complete.
+
 ### Canonical roles and legacy compatibility
 
 The target role names are:
@@ -260,9 +280,10 @@ Canonical roles:
 Current behavior:
 
 - Den uses Letta conversations and runs as execution substrate for parts of these roles.
-- Den adds policy, tool mediation, and workflow control around that runtime.
+- Den adds policy, tool mediation, workflow control, and increasing transcript ownership around that runtime.
 - The `pair` role, through the ACP actuator, has especially strong Letta-specific recovery, approval, cancellation, and continuation logic.
 - The `pair` path already contains important Den-owned patterns that should be generalized into the shared role runner.
+- For `pair`, the repository has already crossed an important persistence boundary: user prompts are now written into Den canonical conversations at source, and selected workflow events have begun migrating there as well.
 
 ### Harness-backed roles
 
@@ -377,6 +398,98 @@ Qdrant or another owned system should own:
 - optional interaction-summary retrieval later
 
 Retrieval should stay behind descriptor-owned model-facing tools such as `memory_search`, rather than being baked into role logic.
+
+## Immediate next steps from current repository state
+
+Given the current repository state, the next steps should continue the migration pattern that has already proven safe:
+
+1. **finish canonical transcript source-ownership without destabilizing ACP stream semantics**
+   - add source persistence for assistant final messages
+   - add source persistence for structured tool and workflow events through a non-blocking sink or equivalent post-emission path, rather than inline hot-path writes that perturb stream ordering
+   - define explicit idempotency/dedup behavior for multi-writer or replay scenarios
+
+2. **complete the conversation read-path transition criteria**
+   - document when ACP/admin/history reads may fully prefer Den canonical conversations over Letta-backed history
+   - define minimum source-persisted coverage required before removing compatibility reads for newer sessions
+   - preserve provenance and mixed-origin debugability during the transition
+
+3. **advance the compaction contract from architecture into implementation**
+   - now that Den owns more transcript state, use that as the foundation for compaction summaries, replay markers, and read-model integration
+   - ensure compaction artifacts relate cleanly to canonical transcript ordering and retrieval
+
+4. **extend the same Den-owned runtime/persistence pattern beyond ACP `pair`**
+   - identify which runner, event, and persistence primitives can be extracted from the ACP path into shared role-runner contracts
+   - prioritize migration steps that reduce Letta coupling for `review` and `watch` before the higher-complexity `chat`/`work` harness migration
+
+5. **keep transcript ownership ahead of substrate replacement**
+   - do not rush to replace Letta execution before transcript coverage, read models, approval/cancellation auditability, and recovery semantics are strong enough in Den
+   - use the current hybrid phase to finish Den control-plane ownership first, then cut execution paths over with clearer rollback options
+
+### Recommended next implementation slice
+
+The best next concrete implementation slice is:
+
+- **assistant final-message persistence plus a non-blocking structured-event persistence path**
+
+That choice fits the current state because:
+
+- user-message persistence is already landed
+- conversation sequence allocation is already concurrency-safe
+- inline hot-path persistence for tool request/result events has already shown evidence of ACP stream-ordering risk
+- assistant final-message persistence is the largest remaining transcript gap for canonical read ownership on recent sessions
+
+A practical sequence would be:
+
+1. add a non-blocking canonical event sink for ACP structured events
+2. route tool request/result and related workflow events through that sink
+3. add a clear finalized assistant-message persistence boundary
+4. then tighten canonical-read preference for eligible conversations
+
+## Immediate next steps from current repository state
+
+Given the current repository state, the next steps should continue the migration pattern that has already proven safe:
+
+1. **finish canonical transcript source-ownership without destabilizing ACP stream semantics**
+   - add source persistence for assistant final messages
+   - add source persistence for structured tool and workflow events through a non-blocking sink or equivalent post-emission path, rather than inline hot-path writes that perturb stream ordering
+   - define explicit idempotency/dedup behavior for multi-writer or replay scenarios
+
+2. **complete the conversation read-path transition criteria**
+   - document when ACP/admin/history reads may fully prefer Den canonical conversations over Letta-backed history
+   - define minimum source-persisted coverage required before removing compatibility reads for newer sessions
+   - preserve provenance and mixed-origin debugability during the transition
+
+3. **advance the compaction contract from architecture into implementation**
+   - now that Den owns more transcript state, use that as the foundation for compaction summaries, replay markers, and read-model integration
+   - ensure compaction artifacts relate cleanly to canonical transcript ordering and retrieval
+
+4. **extend the same Den-owned runtime/persistence pattern beyond ACP `pair`**
+   - identify which runner, event, and persistence primitives can be extracted from the ACP path into shared role-runner contracts
+   - prioritize migration steps that reduce Letta coupling for `review` and `watch` before the higher-complexity `chat`/`work` harness migration
+
+5. **keep transcript ownership ahead of substrate replacement**
+   - do not rush to replace Letta execution before transcript coverage, read models, approval/cancellation auditability, and recovery semantics are strong enough in Den
+   - use the current hybrid phase to finish Den control-plane ownership first, then cut execution paths over with clearer rollback options
+
+### Recommended next implementation slice
+
+The best next concrete implementation slice is:
+
+- **assistant final-message persistence plus a non-blocking structured-event persistence path**
+
+That choice fits the current state because:
+
+- user-message persistence is already landed
+- conversation sequence allocation is already concurrency-safe
+- inline hot-path persistence for tool request/result events has already shown evidence of ACP stream-ordering risk
+- assistant final-message persistence is the largest remaining transcript gap for canonical read ownership on recent sessions
+
+A practical sequence would be:
+
+1. add a non-blocking canonical event sink for ACP structured events
+2. route tool request/result and related workflow events through that sink
+3. add a clear finalized assistant-message persistence boundary
+4. then tighten canonical-read preference for eligible conversations
 
 ## Migration scorecard and success metrics
 
@@ -519,6 +632,52 @@ Dual-write alone is not enough. The migration also needs a deliberate plan for h
 - whether old tool-call payloads require normalization into the new schema
 - how archived/deleted state should be represented when source semantics differ
 - what minimum fidelity is required for compliance, audit, and incident response
+
+## Immediate next steps from current repository state
+
+Given the current repository state, the next steps should continue the migration pattern that has already proven safe:
+
+1. **finish canonical transcript source-ownership without destabilizing ACP stream semantics**
+   - add source persistence for assistant final messages
+   - add source persistence for structured tool and workflow events through a non-blocking sink or equivalent post-emission path, rather than inline hot-path writes that perturb stream ordering
+   - define explicit idempotency/dedup behavior for multi-writer or replay scenarios
+
+2. **complete the conversation read-path transition criteria**
+   - document when ACP/admin/history reads may fully prefer Den canonical conversations over Letta-backed history
+   - define minimum source-persisted coverage required before removing compatibility reads for newer sessions
+   - preserve provenance and mixed-origin debugability during the transition
+
+3. **advance the compaction contract from architecture into implementation**
+   - now that Den owns more transcript state, use that as the foundation for compaction summaries, replay markers, and read-model integration
+   - ensure compaction artifacts relate cleanly to canonical transcript ordering and retrieval
+
+4. **extend the same Den-owned runtime/persistence pattern beyond ACP `pair`**
+   - identify which runner, event, and persistence primitives can be extracted from the ACP path into shared role-runner contracts
+   - prioritize migration steps that reduce Letta coupling for `review` and `watch` before the higher-complexity `chat`/`work` harness migration
+
+5. **keep transcript ownership ahead of substrate replacement**
+   - do not rush to replace Letta execution before transcript coverage, read models, approval/cancellation auditability, and recovery semantics are strong enough in Den
+   - use the current hybrid phase to finish Den control-plane ownership first, then cut execution paths over with clearer rollback options
+
+### Recommended next implementation slice
+
+The best next concrete implementation slice is:
+
+- **assistant final-message persistence plus a non-blocking structured-event persistence path**
+
+That choice fits the current state because:
+
+- user-message persistence is already landed
+- conversation sequence allocation is already concurrency-safe
+- inline hot-path persistence for tool request/result events has already shown evidence of ACP stream-ordering risk
+- assistant final-message persistence is the largest remaining transcript gap for canonical read ownership on recent sessions
+
+A practical sequence would be:
+
+1. add a non-blocking canonical event sink for ACP structured events
+2. route tool request/result and related workflow events through that sink
+3. add a clear finalized assistant-message persistence boundary
+4. then tighten canonical-read preference for eligible conversations
 
 ## Testing and validation strategy
 
