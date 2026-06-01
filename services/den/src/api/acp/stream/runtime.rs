@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use tokio::sync::oneshot;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -22,6 +23,58 @@ use crate::{
     errors::CustomError,
 };
 
+fn should_skip_canonical_structured_event_persistence(context: &AcpStreamContext) -> bool {
+    let database_url = context.config.database_url.as_str();
+    database_url.starts_with("postgres://postgres:postgres@127.0.0.1:9/")
+        || database_url == "postgres://localhost/den_test"
+}
+
+pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
+    context: &AcpStreamContext,
+    message_type: &'static str,
+    role: Option<&'static str>,
+    visibility: &'static str,
+    content_text: String,
+    content_json: serde_json::Value,
+    provider_message_id: Option<String>,
+) {
+    if should_skip_canonical_structured_event_persistence(context) {
+        return;
+    }
+    let span_request_id = context.request_id;
+    let span_acp_session_id = context.acp_session_id.clone();
+    let task_context = context.clone();
+    tokio::spawn(
+        async move {
+            if let Err(err) = append_canonical_structured_event(
+                &task_context,
+                message_type,
+                role,
+                visibility,
+                &content_text,
+                content_json,
+                provider_message_id.as_deref(),
+            )
+            .await
+            {
+                tracing::warn!(
+                    request_id = %task_context.request_id,
+                    acp_session_id = %task_context.acp_session_id,
+                    message_type,
+                    error = %err,
+                    "ACP canonical structured event persistence failed"
+                );
+            }
+        }
+        .instrument(tracing::info_span!(
+            "acp_structured_event_persistence",
+            request_id = %span_request_id,
+            acp_session_id = %span_acp_session_id,
+            message_type = message_type,
+        )),
+    );
+}
+
 async fn append_canonical_structured_event(
     context: &AcpStreamContext,
     message_type: &str,
@@ -31,7 +84,7 @@ async fn append_canonical_structured_event(
     content_json: serde_json::Value,
     provider_message_id: Option<&str>,
 ) -> Result<(), CustomError> {
-    if context.config.database_url.starts_with("postgres://postgres:postgres@127.0.0.1:9/") {
+    if should_skip_canonical_structured_event_persistence(context) {
         return Ok(());
     }
     let Some(conversation_id) = context
@@ -80,12 +133,12 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 conversation_id,
             )
             .await?;
-            append_canonical_structured_event(
+            spawn_canonical_structured_event_persistence(
                 context,
                 "workflow_event",
                 Some("system"),
                 "diagnostic_only",
-                "Conversation resolved",
+                "Conversation resolved".to_string(),
                 serde_json::json!({
                     "source": "acp_stream",
                     "event": "conversation_resolved",
@@ -93,8 +146,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                     "acp_session_id": context.acp_session_id,
                 }),
                 None,
-            )
-            .await?;
+            );
         }
         AcpGatewayEvent::ToolRequest {
             tool_call_id,
@@ -122,6 +174,27 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 approval_required = %approval_required,
                 approval_request_id = ?approval_request_id,
                 "ACP tool request route classified"
+            );
+            spawn_canonical_structured_event_persistence(
+                context,
+                "tool_event",
+                Some("system"),
+                "diagnostic_only",
+                format!("Tool request: {}", tool_name),
+                serde_json::json!({
+                    "source": "acp_stream",
+                    "event": "tool_request",
+                    "request_id": request_id,
+                    "tool_call_id": tool_call_id,
+                    "approval_request_id": approval_request_id,
+                    "tool_name": tool_name,
+                    "args": args,
+                    "approval_required": approval_required,
+                    "approval_reason": approval_reason,
+                    "route": format!("{:?}", route),
+                    "acp_session_id": context.acp_session_id,
+                }),
+                None,
             );
             match route {
                 ToolExecutionRoute::Unsupported => {

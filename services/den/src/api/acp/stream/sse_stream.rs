@@ -532,6 +532,32 @@ impl Stream for AcpRuntimeSseStream {
                     };
                     let tool_result = *tool_result;
                     {
+                        if let Some(tool_call_id) = tool_result.tool_call_id.clone() {
+                            super::runtime::spawn_canonical_structured_event_persistence(
+                                &this.context,
+                                "tool_event",
+                                Some("system"),
+                                "diagnostic_only",
+                                format!(
+                                    "Tool result: {}",
+                                    tool_result.tool_name.as_deref().unwrap_or("tool")
+                                ),
+                                serde_json::json!({
+                                    "source": "acp_stream",
+                                    "event": "tool_result",
+                                    "tool_call_id": tool_call_id,
+                                    "approval_request_id": tool_result.approval_request_id,
+                                    "tool_name": tool_result.tool_name,
+                                    "status": tool_result.status,
+                                    "content": tool_result.content,
+                                    "structured_content": tool_result.structured_content,
+                                    "diagnostic": tool_result.diagnostic,
+                                    "request_id": tool_result.request_id,
+                                    "acp_session_id": this.context.acp_session_id,
+                                }),
+                                None,
+                            );
+                        }
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
                             let ok = tool_result.status == "ok";
                             this.turn_controller.on_adapter_tool_result(done_id, ok);
