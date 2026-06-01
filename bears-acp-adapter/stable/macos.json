@@ -1,6 +1,6 @@
 {
-  "version": "0.1.17",
+  "version": "0.1.18",
   "pkg_url": "https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-aarch64-apple-darwin.pkg",
-  "sha256": "63199bcb5eeef7c543d070f8e5c34b3f49be0f097b2384594e79fa75af22caff",
-  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bears-acp-adapter/v0.1.17"
+  "sha256": "ff3f03a66685a0572922c6f3300add998912268c43c6bb2fafefcd2736e3f286",
+  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bears-acp-adapter/v0.1.18"
 }
