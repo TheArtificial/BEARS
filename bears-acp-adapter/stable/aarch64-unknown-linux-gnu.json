@@ -1,13 +1,13 @@
 {
   "channel": "stable",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "platforms": {
     "aarch64-unknown-linux-gnu": {
       "binary_url": "https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-aarch64-unknown-linux-gnu",
-      "sha256": "4692747ea4e50bc8be80dd27789c5d9af78442287f3df4d943579002fffddafd",
-      "size": 17405432
+      "sha256": "bf331b853e85fc82e439f3e0ad68ea009f6472acd1825dd3d370631cc3c22ba6",
+      "size": 17397912
     }
   },
-  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bears-acp-adapter/v0.1.10",
+  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bears-acp-adapter/v0.1.11",
   "mandatory": false
 }
