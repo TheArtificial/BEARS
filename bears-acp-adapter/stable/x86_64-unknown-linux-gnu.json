@@ -4,8 +4,8 @@
   "platforms": {
     "x86_64-unknown-linux-gnu": {
       "binary_url": "https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-x86_64-unknown-linux-gnu",
-      "sha256": "f407a821c8477c681134d771a7c6395c8bc23ade51546856943a1e5c97f2756f",
-      "size": 18826584
+      "sha256": "2ae789a5b40895c10afac9082ac1b94d3603826a4712a1c065b032467e1c2507",
+      "size": 18826384
     }
   },
   "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bears-acp-adapter/v0.1.11",
