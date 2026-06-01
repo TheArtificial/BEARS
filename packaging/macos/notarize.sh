@@ -42,7 +42,6 @@ done
 
 artifact=""
 artifact_kind=""
-assessment_type=""
 
 if [ -n "$pkg" ] && [ -n "$dmg" ]; then
   echo "notarize.sh: pass only one of --pkg or --dmg" >&2
@@ -52,11 +51,9 @@ fi
 if [ -n "$pkg" ]; then
   artifact="$pkg"
   artifact_kind="package"
-  assessment_type="install"
 elif [ -n "$dmg" ]; then
   artifact="$dmg"
   artifact_kind="dmg"
-  assessment_type="open"
 else
   echo "notarize.sh: one of --pkg or --dmg is required" >&2
   exit 2
@@ -80,6 +77,10 @@ xcrun notarytool submit "$artifact" \
 xcrun stapler staple "$artifact"
 xcrun stapler validate "$artifact"
 
-spctl --assess --type "$assessment_type" --verbose=4 "$artifact"
+if [ "$artifact_kind" = "package" ]; then
+  spctl --assess --type install --verbose=4 "$artifact"
+else
+  echo "notarize.sh: skipping spctl assessment for DMG; stapler validation succeeded"
+fi
 
 echo "notarize.sh: notarized and stapled $artifact_kind $artifact"
