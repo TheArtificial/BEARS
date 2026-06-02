@@ -906,6 +906,47 @@ mod tests {
     }
 
     #[test]
+    fn canonical_event_dedup_key_serializes_to_stable_source_event_id() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let assistant = CanonicalConversationRecord::assistant_output(
+            "hello",
+            &provenance,
+            Some("provider-1".to_string()),
+            Some("req-123".to_string()),
+        );
+        let tool_result = CanonicalConversationRecord::tool_result(
+            Some("web_fetch".to_string()),
+            "call-123",
+            Some("approval-123".to_string()),
+            "ok",
+            Some("done".to_string()),
+            serde_json::json!({"value":1}),
+            serde_json::json!({"diag":true}),
+            Some("req-123".to_string()),
+            &provenance,
+        );
+
+        let assistant_json = match assistant {
+            CanonicalConversationRecord::VisibleMessage { content_json, .. } => content_json,
+            _ => panic!("expected visible message"),
+        };
+        let tool_json = match tool_result {
+            CanonicalConversationRecord::StructuredEvent { content_json, .. } => content_json,
+            _ => panic!("expected structured event"),
+        };
+
+        assert_eq!(assistant_json["event"], "assistant_output");
+        assert_eq!(assistant_json["request_id"], "req-123");
+        assert_eq!(tool_json["event"], "tool_result");
+        assert_eq!(tool_json["tool_call_id"], "call-123");
+        assert_eq!(tool_json["request_id"], "req-123");
+    }
+
+    #[test]
     fn canonical_turn_outcome_helper_builds_provenance_payload() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,

@@ -29,6 +29,19 @@ pub struct CanonicalEventDedupKey {
     pub provider_message_id: Option<String>,
 }
 
+impl CanonicalEventDedupKey {
+    pub fn source_event_id(&self) -> String {
+        serde_json::json!({
+            "event": self.event,
+            "scope_id": self.scope_id,
+            "request_id": self.request_id,
+            "tool_call_id": self.tool_call_id,
+            "provider_message_id": self.provider_message_id,
+        })
+        .to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CanonicalConversationRecord {
     VisibleMessage {
@@ -360,6 +373,10 @@ impl CanonicalConversationRecord {
     }
 }
 
+fn canonical_record_source_event_id(record: &CanonicalConversationRecord) -> Option<String> {
+    record.dedup_key().map(|key| key.source_event_id())
+}
+
 async fn canonical_record_already_persisted(
     context: &ConversationPersistenceContext,
     conversation_id: Uuid,
@@ -370,22 +387,6 @@ async fn canonical_record_already_persisted(
     };
     let recent = list_messages_page(&context.pool, conversation_id, None, 32).await?;
     for message in recent {
-        let value: serde_json::Value = serde_json::from_str(&message.content_text)
-            .ok()
-            .unwrap_or(serde_json::Value::Null);
-        let parsed = if value.is_object() {
-            content_json_dedup_key(&value)
-        } else {
-            None
-        };
-        if parsed.is_none() {
-            let parsed = serde_json::from_str::<serde_json::Value>(&message.content_text)
-                .ok()
-                .and_then(|json| content_json_dedup_key(&json));
-            if parsed.as_ref() == Some(&expected) {
-                return Ok(true);
-            }
-        }
         if let Ok(content_json) = serde_json::from_str::<serde_json::Value>(&message.content_text) {
             if content_json_dedup_key(&content_json).as_ref() == Some(&expected) {
                 return Ok(true);
@@ -416,7 +417,9 @@ pub async fn persist_canonical_conversation_record(
         None,
     )
     .await?;
-    if canonical_record_already_persisted(context, canonical.id, record).await? {
+    let source_event_id = canonical_record_source_event_id(record);
+    if source_event_id.is_none() && canonical_record_already_persisted(context, canonical.id, record).await?
+    {
         return Ok(());
     }
     append_message(
@@ -428,6 +431,7 @@ pub async fn persist_canonical_conversation_record(
         record.storage_text(),
         record.storage_json(),
         record.provider_message_id(),
+        source_event_id.as_deref(),
         None,
     )
     .await?;

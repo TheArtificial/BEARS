@@ -336,15 +336,20 @@ This section tracks the current status of the Letta migration transcript-ownersh
   - the implementation continues to use spawned persistence for assistant output, tool results, workflow events, and terminal outcomes
   - the large remaining transcript/event persistence paths stay off the ACP stream hot path
 
-- **Phase 3 — idempotency and dedup contract (initial implementation)**
-  - a first-pass canonical dedup key model now exists in:
+- **Phase 3 — idempotency and dedup contract (strengthened implementation)**
+  - a canonical dedup key model now exists in:
     - `services/den/src/core/conversation_events.rs`
-  - canonical persistence now skips duplicate recent records for structured events carrying request/scope metadata, including assistant output and tool-result events
+  - canonical event persistence now derives a stable `source_event_id` from structured provenance metadata and passes it into conversation-message persistence
+  - conversation-message append now performs storage-backed duplicate suppression keyed by `(conversation_id, source_event_id)` in:
+    - `services/den/src/core/conversation_persistence.rs`
+  - a migration adds a unique partial index for canonical source event ids in:
+    - `services/den/migrations/20260602191000_conversation_message_source_event_id_unique.up.sql`
 
 - **Validation and targeted coverage**
   - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml` is passing after this slice
   - ACP-facing helper coverage now includes request-scoped assistant-output provenance assertions in:
     - `services/den/src/api/acp/mod.rs`
+  - helper coverage also asserts structured provenance fields used for stable canonical dedup ids
 
 ### Partially complete / still in progress
 

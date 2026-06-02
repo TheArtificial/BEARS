@@ -430,6 +430,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             }),
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| {
