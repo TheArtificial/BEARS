@@ -47,6 +47,7 @@ pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) buffer: Vec<u8>,
     pub(in crate::api::acp) pending: VecDeque<Bytes>,
     pub(in crate::api::acp) context: AcpStreamContext,
+    pub(in crate::api::acp) assistant_text_buffer: String,
     pub(in crate::api::acp) waiting_adapter_tool_result:
         Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::api::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
@@ -203,11 +204,33 @@ impl AcpRuntimeSseStream {
                 "emitting ACP turn_complete authorized by turn controller"
             );
         }
+        if let AcpGatewayEvent::AssistantTextDelta { text } = &event {
+            self.assistant_text_buffer.push_str(text);
+        }
         if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
             self.session_info_event_sent = true;
         }
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
+    }
+
+    pub(in crate::api::acp) fn persist_assistant_output_if_present(&mut self) {
+        if self.assistant_text_buffer.is_empty() {
+            return;
+        }
+        super::runtime::spawn_canonical_message_persistence(
+            &self.context,
+            "message",
+            Some("assistant"),
+            "default",
+            std::mem::take(&mut self.assistant_text_buffer),
+            serde_json::json!({
+                "source": "acp_stream",
+                "event": "assistant_output",
+                "acp_session_id": self.context.acp_session_id,
+            }),
+            None,
+        );
     }
 
     pub(in crate::api::acp) fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
@@ -231,6 +254,7 @@ impl AcpRuntimeSseStream {
             controller_terminal_reason = ?controller_terminal.reason,
             "emitting ACP turn_result authorized by turn controller"
         );
+        self.persist_assistant_output_if_present();
         let event = Self::turn_result_event(&role_result);
         self.push_adapter_event(event);
     }
@@ -275,6 +299,7 @@ impl AcpRuntimeSseStream {
             buffer: Vec::new(),
             pending,
             context,
+            assistant_text_buffer: String::new(),
             waiting_adapter_tool_result: None,
             queued_tool_result_continuation: None,
             diagnostics: AcpStreamDiagnostics::default(),

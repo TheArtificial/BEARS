@@ -215,7 +215,10 @@ mod tests {
                 mapping::{
                     map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
                 },
-                runtime::spawn_canonical_structured_event_persistence,
+                runtime::{
+                    spawn_canonical_message_persistence,
+                    spawn_canonical_structured_event_persistence,
+                },
                 sse_stream::{runtime_terminal_events, AcpRuntimeSseStream},
                 support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
                 text::AcpTextChunker,
@@ -680,6 +683,59 @@ mod tests {
             serde_json::json!({
                 "event": "tool_request",
                 "tool_call_id": "call_test"
+            }),
+            None,
+        );
+
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn canonical_message_persistence_skip_is_test_safe() {
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let request_id = Uuid::new_v4();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let role_runtime = RoleRuntime::new(tool_turns.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let context = AcpStreamContext {
+            pool,
+            tool_turns,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-test-resolved".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime,
+            turn_scope,
+        };
+
+        spawn_canonical_message_persistence(
+            &context,
+            "message",
+            Some("assistant"),
+            "default",
+            "hello from assistant".to_string(),
+            serde_json::json!({
+                "event": "assistant_output"
             }),
             None,
         );

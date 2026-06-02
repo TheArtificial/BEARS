@@ -75,6 +75,52 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     );
 }
 
+pub(in crate::api::acp) fn spawn_canonical_message_persistence(
+    context: &AcpStreamContext,
+    message_type: &'static str,
+    role: Option<&'static str>,
+    visibility: &'static str,
+    content_text: String,
+    content_json: serde_json::Value,
+    provider_message_id: Option<String>,
+) {
+    if should_skip_canonical_structured_event_persistence(context) {
+        return;
+    }
+    let span_request_id = context.request_id;
+    let span_acp_session_id = context.acp_session_id.clone();
+    let task_context = context.clone();
+    tokio::spawn(
+        async move {
+            if let Err(err) = append_canonical_structured_event(
+                &task_context,
+                message_type,
+                role,
+                visibility,
+                &content_text,
+                content_json,
+                provider_message_id.as_deref(),
+            )
+            .await
+            {
+                tracing::warn!(
+                    request_id = %task_context.request_id,
+                    acp_session_id = %task_context.acp_session_id,
+                    message_type,
+                    error = %err,
+                    "ACP canonical message persistence failed"
+                );
+            }
+        }
+        .instrument(tracing::info_span!(
+            "acp_message_persistence",
+            request_id = %span_request_id,
+            acp_session_id = %span_acp_session_id,
+            message_type = message_type,
+        )),
+    );
+}
+
 async fn append_canonical_structured_event(
     context: &AcpStreamContext,
     message_type: &str,
