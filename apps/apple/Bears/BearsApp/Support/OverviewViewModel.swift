@@ -124,7 +124,6 @@ final class OverviewViewModel: ObservableObject {
 
     deinit {
         installMonitorTask?.cancel()
-        directoryObserver?.stop()
     }
 
     private func beginInstallMonitoring(baselineSnapshot: InstalledAdapterSnapshot) {

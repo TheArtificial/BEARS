@@ -3,6 +3,10 @@ import Foundation
 import AppKit
 #endif
 
+private final class OpenResultBox: @unchecked Sendable {
+    var error: Error?
+}
+
 protocol AdapterPackageInstalling {
     func installPackage(at packageURL: URL) throws -> String
 }
@@ -23,10 +27,6 @@ struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
         #if os(macOS)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-
-        final class OpenResultBox: @unchecked Sendable {
-            var error: Error?
-        }
 
         let resultBox = OpenResultBox()
         let semaphore = DispatchSemaphore(value: 0)
