@@ -57,17 +57,25 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     provider_message_id: Option<String>,
 ) {
     let persistence = canonical_persistence_context(context);
-    spawn_persist_canonical_conversation_record(
-        persistence,
-        CanonicalConversationRecord::StructuredEvent {
-            message_type: message_type.to_string(),
-            role: role.map(str::to_string),
-            visibility: visibility.to_string(),
+    let record = match message_type {
+        "tool_event" => {
+            CanonicalConversationRecord::tool_event(content_text, content_json, provider_message_id)
+        }
+        "workflow_event" => CanonicalConversationRecord::workflow_event(
             content_text,
             content_json,
             provider_message_id,
-        },
-    );
+        ),
+        _ => CanonicalConversationRecord::structured_event(
+            message_type,
+            role.map(str::to_string),
+            visibility,
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
+    };
+    spawn_persist_canonical_conversation_record(persistence, record);
 }
 
 pub(in crate::api::acp) fn spawn_canonical_message_persistence(
@@ -80,19 +88,19 @@ pub(in crate::api::acp) fn spawn_canonical_message_persistence(
     provider_message_id: Option<String>,
 ) {
     let persistence = canonical_persistence_context(context);
-    let role = match role {
-        Some("user") => crate::core::conversation_events::CanonicalVisibleRole::User,
-        _ => crate::core::conversation_events::CanonicalVisibleRole::Assistant,
-    };
-    spawn_persist_canonical_conversation_record(
-        persistence,
-        CanonicalConversationRecord::VisibleMessage {
-            role,
-            text: content_text,
+    let record = match role {
+        Some("user") => CanonicalConversationRecord::visible_user_message(
+            content_text,
             content_json,
             provider_message_id,
-        },
-    );
+        ),
+        _ => CanonicalConversationRecord::visible_assistant_message(
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
+    };
+    spawn_persist_canonical_conversation_record(persistence, record);
 }
 
 pub(in crate::api::acp) async fn persist_stream_event_side_effects(

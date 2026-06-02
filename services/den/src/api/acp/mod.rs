@@ -752,16 +752,13 @@ mod tests {
 
     #[test]
     fn canonical_visible_message_record_uses_transport_neutral_storage_shape() {
-        use crate::core::conversation_events::{
-            CanonicalConversationRecord, CanonicalVisibleRole,
-        };
+        use crate::core::conversation_events::CanonicalConversationRecord;
 
-        let record = CanonicalConversationRecord::VisibleMessage {
-            role: CanonicalVisibleRole::Assistant,
-            text: "hello from assistant".to_string(),
-            content_json: serde_json::json!({"event":"assistant_output"}),
-            provider_message_id: Some("provider-1".to_string()),
-        };
+        let record = CanonicalConversationRecord::visible_assistant_message(
+            "hello from assistant",
+            serde_json::json!({"event":"assistant_output"}),
+            Some("provider-1".to_string()),
+        );
 
         match record {
             CanonicalConversationRecord::VisibleMessage {
@@ -775,6 +772,33 @@ mod tests {
                 assert_eq!(provider_message_id.as_deref(), Some("provider-1"));
             }
             _ => panic!("expected visible message"),
+        }
+    }
+
+    #[test]
+    fn canonical_workflow_event_constructor_uses_transport_neutral_defaults() {
+        use crate::core::conversation_events::CanonicalConversationRecord;
+
+        let record = CanonicalConversationRecord::workflow_event(
+            "Turn outcome: ok / stream_complete",
+            serde_json::json!({"event":"turn_result"}),
+            None,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                message_type,
+                role,
+                visibility,
+                content_text,
+                ..
+            } => {
+                assert_eq!(message_type, "workflow_event");
+                assert_eq!(role.as_deref(), Some("system"));
+                assert_eq!(visibility, "diagnostic_only");
+                assert_eq!(content_text, "Turn outcome: ok / stream_complete");
+            }
+            _ => panic!("expected structured event"),
         }
     }
 

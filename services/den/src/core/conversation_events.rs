@@ -52,6 +52,80 @@ impl CanonicalVisibleRole {
 }
 
 impl CanonicalConversationRecord {
+    pub fn visible_user_message(
+        text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::VisibleMessage {
+            role: CanonicalVisibleRole::User,
+            text: text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
+    pub fn visible_assistant_message(
+        text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::VisibleMessage {
+            role: CanonicalVisibleRole::Assistant,
+            text: text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
+    pub fn tool_event(
+        content_text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::StructuredEvent {
+            message_type: "tool_event".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: content_text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
+    pub fn workflow_event(
+        content_text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::StructuredEvent {
+            message_type: "workflow_event".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: content_text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
+    pub fn structured_event(
+        message_type: impl Into<String>,
+        role: Option<String>,
+        visibility: impl Into<String>,
+        content_text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::StructuredEvent {
+            message_type: message_type.into(),
+            role,
+            visibility: visibility.into(),
+            content_text: content_text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
     fn storage_message_type(&self) -> &str {
         match self {
             Self::VisibleMessage { .. } => "message",
