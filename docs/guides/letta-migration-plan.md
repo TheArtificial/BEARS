@@ -245,15 +245,24 @@ The most important landed changes visible in the repository are:
 
 - **canonical conversation persistence helpers exist in Den** via `services/den/src/core/conversation_persistence.rs`, including conversation upsert, title updates, paged canonical message reads, idempotent insert helpers, and an allocator-backed append path
 - **conversation message append sequencing is now conversation-owned and concurrency-safe**, using `conversations.next_message_sequence` rather than `MAX(sequence_no)+1`
-- **ACP prompt ingress now source-persists human messages** in `services/den/src/api/acp/stream/prompt_flow.rs` after conversation resolution and session upsert, before runtime turn execution
-- **ACP structured-event source persistence has started cautiously** in `services/den/src/api/acp/stream/runtime.rs`, where `ConversationResolved` is now persisted as a canonical workflow event
-- **canonical-history read support exists alongside compatibility behavior**, but coverage is still incomplete because not all event/message classes are yet source-persisted
+- **a Den-owned core conversation-event layer now exists** via `services/den/src/core/conversation_events.rs`, and owns the canonical persistence boundary for visible messages and structured workflow/tool records
+- **ACP prompt ingress source-persists human messages** in `services/den/src/api/acp/stream/prompt_flow.rs` after conversation resolution and session upsert, before runtime turn execution
+- **ACP assistant output, tool request/result, conversation-resolved events, and terminal outcomes are now source-persisted through the core conversation-event layer**, using non-blocking background persistence so ACP stream ordering stays intact
+- **canonical-history read support now recognizes both legacy transcript rows and newer role-tagged canonical `message` rows**, while continuing to exclude diagnostic-only workflow/tool records from normal visible history
 
 This means the repository has progressed beyond pure migration scaffolding for transcript ownership and is now in a real **Den-owned interaction persistence / hybrid runtime** phase:
 
-- **Den owns increasing portions of transcript and read-model state**
+- **Den owns the canonical conversation write/read contract for the main ACP-visible transcript path**
 - **Letta still executes the underlying runtime turns for ACP `pair`**
 - **the repository is not yet at full execution-substrate cutover or Letta retirement**
+
+It is also now clearer where the current abstraction boundary should stop. The repository has moved the following concerns into a Den-owned core seam:
+
+- canonical conversation persistence execution
+- canonical record construction
+- semantic payload shaping for the main persisted ACP event classes
+
+ACP still decides when events occur and supplies ACP-specific provenance, but it no longer owns most canonical storage semantics. This is a good migration seam and is likely enough abstraction for now. The plan should not assume more generalized runtime/provider layering unless another transport or non-ACP producer creates real duplication that justifies it.
 
 The practical implication is that the migration has advanced furthest in the **conversation transcript store** and **control-plane ownership** tracks, while broader runtime replacement, compaction, archival retrieval replacement, and non-ACP role migration remain less complete.
 
