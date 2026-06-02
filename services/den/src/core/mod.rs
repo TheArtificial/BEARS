@@ -12,6 +12,7 @@ pub mod archived_conversations;
 pub mod bears;
 pub mod bifrost;
 pub mod codepool;
+pub mod conversation_events;
 pub mod conversation_persistence;
 pub mod den_tools;
 #[cfg(test)]

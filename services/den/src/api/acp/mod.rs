@@ -750,6 +750,34 @@ mod tests {
         tokio::task::yield_now().await;
     }
 
+    #[test]
+    fn canonical_visible_message_record_uses_transport_neutral_storage_shape() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, CanonicalVisibleRole,
+        };
+
+        let record = CanonicalConversationRecord::VisibleMessage {
+            role: CanonicalVisibleRole::Assistant,
+            text: "hello from assistant".to_string(),
+            content_json: serde_json::json!({"event":"assistant_output"}),
+            provider_message_id: Some("provider-1".to_string()),
+        };
+
+        match record {
+            CanonicalConversationRecord::VisibleMessage {
+                role,
+                text,
+                provider_message_id,
+                ..
+            } => {
+                assert_eq!(role.as_str(), "assistant");
+                assert_eq!(text, "hello from assistant");
+                assert_eq!(provider_message_id.as_deref(), Some("provider-1"));
+            }
+            _ => panic!("expected visible message"),
+        }
+    }
+
     #[tokio::test]
     async fn canonical_message_persistence_skip_is_test_safe() {
         use sqlx::postgres::PgPoolOptions;
