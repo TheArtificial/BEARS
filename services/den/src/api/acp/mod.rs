@@ -802,6 +802,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn canonical_turn_outcome_helper_builds_provenance_payload() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let record = CanonicalConversationRecord::turn_outcome(
+            "failed",
+            "runtime_cleanup",
+            "req-123",
+            false,
+            serde_json::json!({"channel_id":"acp-test-session"}),
+            serde_json::json!({"details":"x"}),
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                content_text,
+                content_json,
+                ..
+            } => {
+                assert_eq!(content_text, "Turn outcome: failed / runtime_cleanup");
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["scope_id"], "acp-test-session");
+                assert_eq!(content_json["event"], "turn_result");
+                assert_eq!(content_json["status"], "failed");
+                assert_eq!(content_json["reason"], "runtime_cleanup");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
     #[tokio::test]
     async fn canonical_message_persistence_skip_is_test_safe() {
         use sqlx::postgres::PgPoolOptions;

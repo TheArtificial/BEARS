@@ -218,44 +218,36 @@ impl AcpRuntimeSseStream {
         if self.assistant_text_buffer.is_empty() {
             return;
         }
-        super::runtime::spawn_canonical_message_persistence(
-            &self.context,
-            "message",
-            Some("assistant"),
-            "default",
+        let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
+            self.context.acp_session_id.clone(),
+        );
+        let record = crate::core::conversation_events::CanonicalConversationRecord::assistant_output(
             std::mem::take(&mut self.assistant_text_buffer),
-            serde_json::json!({
-                "source": "acp_stream",
-                "event": "assistant_output",
-                "acp_session_id": self.context.acp_session_id,
-            }),
+            &provenance,
             None,
+        );
+        crate::core::conversation_events::spawn_persist_canonical_conversation_record(
+            super::runtime::canonical_persistence_context(&self.context),
+            record,
         );
     }
 
     pub(in crate::api::acp) fn persist_terminal_outcome(&mut self, role_result: &RoleTurnResult) {
-        super::runtime::spawn_canonical_structured_event_persistence(
-            &self.context,
-            "workflow_event",
-            Some("system"),
-            "diagnostic_only",
-            format!(
-                "Turn outcome: {} / {}",
-                role_result.status.as_str(),
-                role_result.reason.as_str()
-            ),
-            serde_json::json!({
-                "source": "acp_stream",
-                "event": "turn_result",
-                "status": role_result.status.as_str(),
-                "reason": role_result.reason.as_str(),
-                "request_id": role_result.request_id.to_string(),
-                "retryable": role_result.retryable,
-                "scope": role_result.scope.diagnostic(),
-                "diagnostics": role_result.diagnostics,
-                "acp_session_id": self.context.acp_session_id,
-            }),
-            None,
+        let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
+            self.context.acp_session_id.clone(),
+        );
+        let record = crate::core::conversation_events::CanonicalConversationRecord::turn_outcome(
+            role_result.status.as_str(),
+            role_result.reason.as_str(),
+            role_result.request_id.to_string(),
+            role_result.retryable,
+            role_result.scope.diagnostic(),
+            role_result.diagnostics.clone(),
+            &provenance,
+        );
+        crate::core::conversation_events::spawn_persist_canonical_conversation_record(
+            super::runtime::canonical_persistence_context(&self.context),
+            record,
         );
     }
 

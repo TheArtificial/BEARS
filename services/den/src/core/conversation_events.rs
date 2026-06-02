@@ -36,6 +36,12 @@ pub enum CanonicalConversationRecord {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct ConversationEventProvenance {
+    pub source: String,
+    pub scope_id: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum CanonicalVisibleRole {
     User,
@@ -48,6 +54,23 @@ impl CanonicalVisibleRole {
             Self::User => "user",
             Self::Assistant => "assistant",
         }
+    }
+}
+
+impl ConversationEventProvenance {
+    pub fn acp_session(scope_id: impl Into<String>) -> Self {
+        Self {
+            source: "acp_stream".to_string(),
+            scope_id: scope_id.into(),
+        }
+    }
+
+    pub fn as_content_json(&self, event: &str) -> serde_json::Value {
+        serde_json::json!({
+            "source": self.source,
+            "event": event,
+            "scope_id": self.scope_id,
+        })
     }
 }
 
@@ -106,6 +129,44 @@ impl CanonicalConversationRecord {
             content_json,
             provider_message_id,
         }
+    }
+
+    pub fn assistant_output(
+        text: impl Into<String>,
+        provenance: &ConversationEventProvenance,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::visible_assistant_message(
+            text,
+            provenance.as_content_json("assistant_output"),
+            provider_message_id,
+        )
+    }
+
+    pub fn turn_outcome(
+        status: &str,
+        reason: &str,
+        request_id: impl Into<String>,
+        retryable: bool,
+        scope: serde_json::Value,
+        diagnostics: serde_json::Value,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        Self::workflow_event(
+            format!("Turn outcome: {status} / {reason}"),
+            serde_json::json!({
+                "source": provenance.source,
+                "event": "turn_result",
+                "scope_id": provenance.scope_id,
+                "status": status,
+                "reason": reason,
+                "request_id": request_id.into(),
+                "retryable": retryable,
+                "scope": scope,
+                "diagnostics": diagnostics,
+            }),
+            None,
+        )
     }
 
     pub fn structured_event(

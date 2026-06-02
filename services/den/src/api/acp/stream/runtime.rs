@@ -31,7 +31,9 @@ fn should_skip_canonical_persistence(context: &AcpStreamContext) -> bool {
         || database_url == "postgres://localhost/den_test"
 }
 
-fn canonical_persistence_context(context: &AcpStreamContext) -> ConversationPersistenceContext {
+pub(in crate::api::acp) fn canonical_persistence_context(
+    context: &AcpStreamContext,
+) -> ConversationPersistenceContext {
     ConversationPersistenceContext {
         pool: context.pool.clone(),
         bear_id: context.bear_id,
