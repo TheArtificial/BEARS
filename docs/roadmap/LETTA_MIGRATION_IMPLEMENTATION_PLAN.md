@@ -319,6 +319,57 @@ The implementation is successful when:
 
 ---
 
+## Current implementation status
+
+This section tracks the current status of the Letta migration transcript-ownership slice.
+
+### Completed in this slice
+
+- **Phase 1 — canonical transcript ownership completion for ACP `pair` (expanded)**
+  - assistant final-message persistence now includes request-scoped dedup metadata in the canonical assistant-output record path
+  - tool-result persistence is explicitly emitted from ACP local-tool result settlement in:
+    - `services/den/src/api/acp/stream/sse_stream.rs`
+  - transcript/event persistence coverage remains centered on Den-owned canonical record builders in:
+    - `services/den/src/core/conversation_events.rs`
+
+- **Phase 2 — non-blocking structured-event persistence hardening (continued)**
+  - the implementation continues to use spawned persistence for assistant output, tool results, workflow events, and terminal outcomes
+  - the large remaining transcript/event persistence paths stay off the ACP stream hot path
+
+- **Phase 3 — idempotency and dedup contract (initial implementation)**
+  - a first-pass canonical dedup key model now exists in:
+    - `services/den/src/core/conversation_events.rs`
+  - canonical persistence now skips duplicate recent records for structured events carrying request/scope metadata, including assistant output and tool-result events
+
+### Partially complete / still in progress
+
+- **Phase 1** still needs broader confirmation across all ACP terminal/failure/cancellation paths to ensure assistant final-output persistence semantics are exactly right in every edge case.
+- **Phase 2** still needs a fuller audit of all workflow-transition and non-tool diagnostic events to verify consistent helper usage.
+- **Phase 3** currently uses a recent-history lookup heuristic for dedup rather than a stronger storage-level idempotency key or uniqueness contract.
+
+### Remaining work before this migration slice is complete
+
+1. **Broaden tool/workflow event coverage review**
+   - verify every structured event class that matters for transcript-read eligibility has canonical persistence coverage.
+
+2. **Strengthen idempotency from heuristic to durable contract**
+   - replace or reinforce recent-history dedup checks with stronger storage-backed semantics where appropriate.
+
+3. **Validate edge paths with focused tests**
+   - duplicate tool-result settlement,
+   - repeated assistant-output terminalization,
+   - cancellation/failure interactions.
+
+### Practical migration summary
+
+Current status can be summarized as:
+
+- **Canonical transcript/event coverage:** materially improved
+- **Assistant final-message persistence:** request-scoped and more dedup-friendly
+- **Tool-result persistence:** explicit and source-persisted
+- **Idempotency/dedup:** initial application-level guard landed, but not yet final-form
+- **Canonical-read cutover readiness:** improved, but not yet complete
+
 ## Open questions to resolve during implementation
 
 - What exact idempotency key strategy best fits transcript-visible and diagnostic events?

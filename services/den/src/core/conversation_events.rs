@@ -4,7 +4,9 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::conversation_persistence::{append_message, ensure_conversation_for_external_id};
+use super::conversation_persistence::{
+    append_message, ensure_conversation_for_external_id, list_messages_page,
+};
 
 #[derive(Debug, Clone)]
 pub struct ConversationPersistenceContext {
@@ -16,6 +18,15 @@ pub struct ConversationPersistenceContext {
     pub request_id: Option<String>,
     pub persistence_scope_id: String,
     pub skip_persistence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalEventDedupKey {
+    pub event: String,
+    pub scope_id: String,
+    pub request_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub provider_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +83,31 @@ impl ConversationEventProvenance {
             "scope_id": self.scope_id,
         })
     }
+}
+
+fn content_json_dedup_key(content_json: &serde_json::Value) -> Option<CanonicalEventDedupKey> {
+    let object = content_json.as_object()?;
+    let event = object.get("event")?.as_str()?.to_string();
+    let scope_id = object.get("scope_id")?.as_str()?.to_string();
+    let request_id = object
+        .get("request_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let tool_call_id = object
+        .get("tool_call_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let provider_message_id = object
+        .get("provider_message_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    Some(CanonicalEventDedupKey {
+        event,
+        scope_id,
+        request_id,
+        tool_call_id,
+        provider_message_id,
+    })
 }
 
 impl CanonicalConversationRecord {
@@ -135,12 +171,16 @@ impl CanonicalConversationRecord {
         text: impl Into<String>,
         provenance: &ConversationEventProvenance,
         provider_message_id: Option<String>,
+        request_id: Option<String>,
     ) -> Self {
-        Self::visible_assistant_message(
-            text,
-            provenance.as_content_json("assistant_output"),
-            provider_message_id,
-        )
+        let mut content_json = provenance.as_content_json("assistant_output");
+        if let Some(request_id) = request_id {
+            content_json["request_id"] = serde_json::json!(request_id);
+        }
+        if let Some(provider_message_id) = provider_message_id.as_ref() {
+            content_json["provider_message_id"] = serde_json::json!(provider_message_id);
+        }
+        Self::visible_assistant_message(text, content_json, provider_message_id)
     }
 
     pub fn conversation_resolved(
@@ -314,6 +354,45 @@ impl CanonicalConversationRecord {
             } => provider_message_id.as_deref(),
         }
     }
+
+    fn dedup_key(&self) -> Option<CanonicalEventDedupKey> {
+        content_json_dedup_key(&self.storage_json())
+    }
+}
+
+async fn canonical_record_already_persisted(
+    context: &ConversationPersistenceContext,
+    conversation_id: Uuid,
+    record: &CanonicalConversationRecord,
+) -> Result<bool, CustomError> {
+    let Some(expected) = record.dedup_key() else {
+        return Ok(false);
+    };
+    let recent = list_messages_page(&context.pool, conversation_id, None, 32).await?;
+    for message in recent {
+        let value: serde_json::Value = serde_json::from_str(&message.content_text)
+            .ok()
+            .unwrap_or(serde_json::Value::Null);
+        let parsed = if value.is_object() {
+            content_json_dedup_key(&value)
+        } else {
+            None
+        };
+        if parsed.is_none() {
+            let parsed = serde_json::from_str::<serde_json::Value>(&message.content_text)
+                .ok()
+                .and_then(|json| content_json_dedup_key(&json));
+            if parsed.as_ref() == Some(&expected) {
+                return Ok(true);
+            }
+        }
+        if let Ok(content_json) = serde_json::from_str::<serde_json::Value>(&message.content_text) {
+            if content_json_dedup_key(&content_json).as_ref() == Some(&expected) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub async fn persist_canonical_conversation_record(
@@ -337,6 +416,9 @@ pub async fn persist_canonical_conversation_record(
         None,
     )
     .await?;
+    if canonical_record_already_persisted(context, canonical.id, record).await? {
+        return Ok(());
+    }
     append_message(
         &context.pool,
         canonical.id,

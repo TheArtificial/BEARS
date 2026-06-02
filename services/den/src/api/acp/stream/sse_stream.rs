@@ -225,6 +225,7 @@ impl AcpRuntimeSseStream {
             std::mem::take(&mut self.assistant_text_buffer),
             &provenance,
             None,
+            Some(self.context.request_id.to_string()),
         );
         crate::core::conversation_events::spawn_persist_canonical_conversation_record(
             super::runtime::canonical_persistence_context(&self.context),
@@ -580,19 +581,20 @@ impl Stream for AcpRuntimeSseStream {
                             let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
                                 this.context.acp_session_id.clone(),
                             );
+                            let record = crate::core::conversation_events::CanonicalConversationRecord::tool_result(
+                                tool_result.tool_name.clone(),
+                                tool_call_id,
+                                tool_result.approval_request_id.clone(),
+                                tool_result.status.clone(),
+                                tool_result.content.clone(),
+                                tool_result.structured_content.clone(),
+                                tool_result.diagnostic.clone(),
+                                tool_result.request_id.clone(),
+                                &provenance,
+                            );
                             crate::core::conversation_events::spawn_persist_canonical_conversation_record(
                                 super::runtime::canonical_persistence_context(&this.context),
-                                crate::core::conversation_events::CanonicalConversationRecord::tool_result(
-                                    tool_result.tool_name.clone(),
-                                    tool_call_id,
-                                    tool_result.approval_request_id.clone(),
-                                    tool_result.status.clone(),
-                                    tool_result.content.clone(),
-                                    tool_result.structured_content.clone(),
-                                    tool_result.diagnostic.clone(),
-                                    tool_result.request_id.clone(),
-                                    &provenance,
-                                ),
+                                record,
                             );
                         }
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
