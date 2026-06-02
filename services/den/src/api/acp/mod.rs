@@ -918,6 +918,12 @@ mod tests {
             Some("provider-1".to_string()),
             Some("req-123".to_string()),
         );
+        let duplicate_assistant = CanonicalConversationRecord::assistant_output(
+            "hello again",
+            &provenance,
+            Some("provider-1".to_string()),
+            Some("req-123".to_string()),
+        );
         let tool_result = CanonicalConversationRecord::tool_result(
             Some("web_fetch".to_string()),
             "call-123",
@@ -934,6 +940,10 @@ mod tests {
             CanonicalConversationRecord::VisibleMessage { content_json, .. } => content_json,
             _ => panic!("expected visible message"),
         };
+        let duplicate_assistant_json = match duplicate_assistant {
+            CanonicalConversationRecord::VisibleMessage { content_json, .. } => content_json,
+            _ => panic!("expected visible message"),
+        };
         let tool_json = match tool_result {
             CanonicalConversationRecord::StructuredEvent { content_json, .. } => content_json,
             _ => panic!("expected structured event"),
@@ -944,6 +954,8 @@ mod tests {
         assert_eq!(tool_json["event"], "tool_result");
         assert_eq!(tool_json["tool_call_id"], "call-123");
         assert_eq!(tool_json["request_id"], "req-123");
+        assert_eq!(assistant_json["provider_message_id"], duplicate_assistant_json["provider_message_id"]);
+        assert_eq!(assistant_json["request_id"], duplicate_assistant_json["request_id"]);
     }
 
     #[test]
@@ -975,6 +987,7 @@ mod tests {
                 assert_eq!(content_json["event"], "turn_result");
                 assert_eq!(content_json["status"], "failed");
                 assert_eq!(content_json["reason"], "runtime_cleanup");
+                assert_eq!(content_json["request_id"], "req-123");
             }
             _ => panic!("expected structured event"),
         }

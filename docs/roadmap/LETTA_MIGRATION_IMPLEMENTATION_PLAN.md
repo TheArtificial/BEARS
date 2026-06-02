@@ -353,9 +353,9 @@ This section tracks the current status of the Letta migration transcript-ownersh
 
 ### Partially complete / still in progress
 
-- **Phase 1** still needs broader confirmation across all ACP terminal/failure/cancellation paths to ensure assistant final-output persistence semantics are exactly right in every edge case.
+- **Phase 1** has a stronger terminal-outcome canonicalization path, and helper coverage now explicitly asserts request-scoped turn-outcome provenance; broader end-to-end confirmation across every ACP terminal/failure/cancellation edge case is still needed.
 - **Phase 2** still needs a fuller audit of all workflow-transition and non-tool diagnostic events to verify consistent helper usage.
-- **Phase 3** currently uses a recent-history lookup heuristic for dedup rather than a stronger storage-level idempotency key or uniqueness contract.
+- **Phase 3** now has storage-backed idempotency for canonical events that carry stable provenance-derived source ids, but deeper DB-applied integration coverage is still blocked on introducing or locating a runnable Postgres integration harness in this environment.
 
 ### Remaining work before this migration slice is complete
 
@@ -368,7 +368,8 @@ This section tracks the current status of the Letta migration transcript-ownersh
 3. **Validate edge paths with focused tests**
    - duplicate tool-result settlement,
    - repeated assistant-output terminalization,
-   - cancellation/failure interactions.
+   - cancellation/failure interactions,
+   - DB-applied duplicate suppression across migrated `conversation_messages.source_event_id` schema.
 
 ### Practical migration summary
 

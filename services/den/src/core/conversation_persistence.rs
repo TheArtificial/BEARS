@@ -334,3 +334,4 @@ pub async fn insert_message_if_absent(
     .map_err(|err| CustomError::Database(format!("insert conversation message: {err}")))?;
     Ok(())
 }
+
