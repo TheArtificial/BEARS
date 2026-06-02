@@ -24,17 +24,21 @@ struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
-        var openError: Error?
+        final class OpenResultBox: @unchecked Sendable {
+            var error: Error?
+        }
+
+        let resultBox = OpenResultBox()
         let semaphore = DispatchSemaphore(value: 0)
 
         NSWorkspace.shared.open([packageURL], withApplicationAt: URL(fileURLWithPath: "/System/Library/CoreServices/Installer.app"), configuration: configuration) { _, error in
-            openError = error
+            resultBox.error = error
             semaphore.signal()
         }
 
         semaphore.wait()
 
-        if let openError {
+        if let openError = resultBox.error {
             throw AdapterPackageInstallerError.installerFailed("Failed to open the adapter package in Installer.app: \(openError.localizedDescription)")
         }
 

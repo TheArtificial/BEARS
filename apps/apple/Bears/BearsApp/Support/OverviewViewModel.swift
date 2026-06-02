@@ -6,6 +6,12 @@ import AppKit
 @MainActor
 final class OverviewViewModel: ObservableObject {
     private var hasRefreshedOnce = false
+    private var installMonitorTask: Task<Void, Never>?
+    private var directoryObserver: ManagedAdapterDirectoryObserver?
+    private let installMonitorFastPollSeconds: UInt64 = 1
+    private let installMonitorSlowPollSeconds: UInt64 = 3
+    private let installMonitorFastPhaseDuration: TimeInterval = 60
+    private let installMonitorTimeout: TimeInterval = 600
 
     @Published private(set) var installState: InstallState?
     @Published private(set) var managedAdapterPath: String
@@ -17,6 +23,7 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var canUpdate = false
     @Published private(set) var lastError: String?
     @Published private(set) var actionMessage: String?
+    @Published private(set) var isAwaitingInstallerCompletion = false
     @Published private(set) var statusCopied = false
     @Published private(set) var latestVersionCopied = false
     @Published private(set) var installedVersionCopied = false
@@ -62,7 +69,7 @@ final class OverviewViewModel: ObservableObject {
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
             let visibleError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
-            if visibleError != nil {
+            if visibleError != nil && !isAwaitingInstallerCompletion {
                 actionMessage = nil
             }
             lastError = visibleError
@@ -82,12 +89,28 @@ final class OverviewViewModel: ObservableObject {
     }
 
     func updateInstall() {
+        let baselineSnapshot = installManager.installedAdapterSnapshot()
+
         do {
-            _ = try installManager.updateInstall()
-            actionMessage = "Installer opened — complete installation there, then click Refresh."
-            lastError = nil
-            refreshManifestAndState()
+            let result = try installManager.updateInstall()
+            switch result {
+            case .installed:
+                installMonitorTask?.cancel()
+                stopDirectoryObservation()
+                isAwaitingInstallerCompletion = false
+                actionMessage = "Installed version updated."
+                lastError = nil
+                refreshManifestAndState()
+            case .installerOpened(let message):
+                actionMessage = "\(message) Complete installation there. Bears will refresh the installed version automatically."
+                lastError = nil
+                isAwaitingInstallerCompletion = true
+                beginInstallMonitoring(baselineSnapshot: baselineSnapshot)
+            }
         } catch {
+            installMonitorTask?.cancel()
+            stopDirectoryObservation()
+            isAwaitingInstallerCompletion = false
             statusText = "Error"
             canUpdate = false
             actionMessage = nil
@@ -97,6 +120,104 @@ final class OverviewViewModel: ObservableObject {
             installedVersionDetails = "Unavailable"
             fputs("[Bears][updateInstall] \(error.localizedDescription)\n", stderr)
         }
+    }
+
+    deinit {
+        installMonitorTask?.cancel()
+        directoryObserver?.stop()
+    }
+
+    private func beginInstallMonitoring(baselineSnapshot: InstalledAdapterSnapshot) {
+        installMonitorTask?.cancel()
+        stopDirectoryObservation()
+        startDirectoryObservation(baselineSnapshot: baselineSnapshot)
+        installMonitorTask = Task { @MainActor [weak self] in
+            await self?.monitorInstalledVersionChange(baselineSnapshot: baselineSnapshot)
+        }
+    }
+
+    private func monitorInstalledVersionChange(baselineSnapshot: InstalledAdapterSnapshot) async {
+        let start = Date()
+
+        while !Task.isCancelled, Date().timeIntervalSince(start) < installMonitorTimeout {
+            refreshManifestAndState()
+
+            let currentSnapshot = installManager.installedAdapterSnapshot()
+            if finishInstallMonitoringIfCompleted(previous: baselineSnapshot, current: currentSnapshot) {
+                return
+            }
+
+            actionMessage = "Waiting for installation to complete…"
+
+            let elapsed = Date().timeIntervalSince(start)
+            let sleepSeconds = elapsed < installMonitorFastPhaseDuration ? installMonitorFastPollSeconds : installMonitorSlowPollSeconds
+            do {
+                try await Task.sleep(nanoseconds: sleepSeconds * 1_000_000_000)
+            } catch {
+                break
+            }
+        }
+
+        refreshManifestAndState()
+        actionMessage = "Still waiting for installation to complete. You can click Refresh if needed."
+        isAwaitingInstallerCompletion = false
+        stopDirectoryObservation()
+        installMonitorTask = nil
+    }
+
+    private func startDirectoryObservation(baselineSnapshot: InstalledAdapterSnapshot) {
+        let observer = ManagedAdapterDirectoryObserver(directoryURL: pathProvider.adapterDirectory)
+        observer.start { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshManifestAndState()
+                let currentSnapshot = self.installManager.installedAdapterSnapshot()
+                _ = self.finishInstallMonitoringIfCompleted(previous: baselineSnapshot, current: currentSnapshot)
+            }
+        }
+        directoryObserver = observer
+    }
+
+    private func stopDirectoryObservation() {
+        directoryObserver?.stop()
+        directoryObserver = nil
+    }
+
+    private func finishInstallMonitoringIfCompleted(previous: InstalledAdapterSnapshot, current: InstalledAdapterSnapshot) -> Bool {
+        guard Self.hasObservedInstallCompletion(previous: previous, current: current) else {
+            return false
+        }
+
+        let message: String
+        if previous.version != current.version, let version = current.version {
+            message = "Installed version updated to \(version)."
+        } else if let version = current.version {
+            message = "Adapter reinstalled. Installed version remains \(version)."
+        } else {
+            message = "Installation detected."
+        }
+
+        actionMessage = message
+        isAwaitingInstallerCompletion = false
+        stopDirectoryObservation()
+        installMonitorTask = nil
+        return true
+    }
+
+    private static func hasObservedInstallCompletion(previous: InstalledAdapterSnapshot, current: InstalledAdapterSnapshot) -> Bool {
+        if !previous.exists && current.exists {
+            return true
+        }
+        if previous.version != current.version, current.version != nil {
+            return true
+        }
+        if previous.fileSize != current.fileSize, current.fileSize != nil {
+            return true
+        }
+        if previous.modificationDate != current.modificationDate, current.modificationDate != nil {
+            return true
+        }
+        return false
     }
 
     private static func versionDetails(from info: AdapterVersionInfo?) -> String {

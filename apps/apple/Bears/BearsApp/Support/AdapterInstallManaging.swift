@@ -1,9 +1,22 @@
 import Foundation
 
+enum AdapterInstallUpdateResult {
+    case installerOpened(message: String)
+    case installed(InstallState)
+}
+
+struct InstalledAdapterSnapshot {
+    let version: String?
+    let exists: Bool
+    let fileSize: UInt64?
+    let modificationDate: Date?
+}
+
 protocol AdapterInstallManaging {
     func loadInstallState() throws -> InstallState?
     func inspectInstallState() throws -> InstallState
-    func updateInstall() throws -> InstallState
+    func updateInstall() throws -> AdapterInstallUpdateResult
+    func installedAdapterSnapshot() -> InstalledAdapterSnapshot
 }
 
 protocol AdapterVersionProviding {

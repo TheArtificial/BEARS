@@ -105,20 +105,20 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         return state
     }
 
-    func updateInstall() throws -> InstallState {
+    func updateInstall() throws -> AdapterInstallUpdateResult {
         let source = try resolveInstallSource()
 
-        var packageInstallOutput: String?
         if source.source.isInstallerPackage {
-            packageInstallOutput = try packageInstaller.installPackage(at: source.localURL)
-        } else {
-            try pathProvider.ensureManagedDirectoriesExist()
-            if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
-                try fileManager.removeItem(at: pathProvider.managedAdapterPath)
-            }
-            try fileManager.copyItem(at: source.localURL, to: pathProvider.managedAdapterPath)
-            try makeExecutable(pathProvider.managedAdapterPath)
+            let packageInstallOutput = try packageInstaller.installPackage(at: source.localURL)
+            return .installerOpened(message: packageInstallOutput)
         }
+
+        try pathProvider.ensureManagedDirectoriesExist()
+        if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
+            try fileManager.removeItem(at: pathProvider.managedAdapterPath)
+        }
+        try fileManager.copyItem(at: source.localURL, to: pathProvider.managedAdapterPath)
+        try makeExecutable(pathProvider.managedAdapterPath)
 
         let installedVersionResult = Result { try installedAdapterVersion() }
         let bundledVersionResult = Result { try bundledAdapterVersion() }
@@ -135,7 +135,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             primary: "Installed adapter is missing version metadata and likely needs repair.",
             installedVersionError: installedVersionError,
             bundledVersionError: bundledVersionError,
-            packageInstallOutput: packageInstallOutput,
+            packageInstallOutput: nil,
             availableVersionError: availableVersionError
         )
         let repairedState = InstallState(
@@ -148,7 +148,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         )
 
         try persistInstallState(repairedState)
-        return repairedState
+        return .installed(repairedState)
     }
 
     func bundledAdapterVersion() throws -> AdapterVersionInfo {
@@ -279,6 +279,26 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         let source = try artifactSourceProvider.latestMacOSArtifactSource()
         let localURL = try artifactDownloader.downloadArtifact(from: source)
         return DownloadedAdapterArtifact(localURL: localURL, source: source)
+    }
+
+    func installedAdapterSnapshot() -> InstalledAdapterSnapshot {
+        let path = pathProvider.managedAdapterPath.path
+        let exists = fileManager.fileExists(atPath: path)
+        guard exists else {
+            return InstalledAdapterSnapshot(version: nil, exists: false, fileSize: nil, modificationDate: nil)
+        }
+
+        let attributes = try? fileManager.attributesOfItem(atPath: path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.uint64Value
+        let modificationDate = attributes?[.modificationDate] as? Date
+        let version = (try? installedAdapterVersion().version)
+
+        return InstalledAdapterSnapshot(
+            version: version,
+            exists: true,
+            fileSize: fileSize,
+            modificationDate: modificationDate
+        )
     }
 
     private func makeExecutable(_ url: URL) throws {
