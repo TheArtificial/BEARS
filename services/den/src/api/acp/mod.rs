@@ -875,6 +875,37 @@ mod tests {
     }
 
     #[test]
+    fn canonical_assistant_output_helper_builds_request_scoped_provenance_payload() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let record = CanonicalConversationRecord::assistant_output(
+            "hello from assistant",
+            &provenance,
+            Some("provider-1".to_string()),
+            Some("req-123".to_string()),
+        );
+
+        match record {
+            CanonicalConversationRecord::VisibleMessage {
+                content_json,
+                provider_message_id,
+                ..
+            } => {
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["scope_id"], "acp-test-session");
+                assert_eq!(content_json["event"], "assistant_output");
+                assert_eq!(content_json["request_id"], "req-123");
+                assert_eq!(content_json["provider_message_id"], "provider-1");
+                assert_eq!(provider_message_id.as_deref(), Some("provider-1"));
+            }
+            _ => panic!("expected visible message"),
+        }
+    }
+
+    #[test]
     fn canonical_turn_outcome_helper_builds_provenance_payload() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,

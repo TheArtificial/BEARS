@@ -341,6 +341,11 @@ This section tracks the current status of the Letta migration transcript-ownersh
     - `services/den/src/core/conversation_events.rs`
   - canonical persistence now skips duplicate recent records for structured events carrying request/scope metadata, including assistant output and tool-result events
 
+- **Validation and targeted coverage**
+  - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml` is passing after this slice
+  - ACP-facing helper coverage now includes request-scoped assistant-output provenance assertions in:
+    - `services/den/src/api/acp/mod.rs`
+
 ### Partially complete / still in progress
 
 - **Phase 1** still needs broader confirmation across all ACP terminal/failure/cancellation paths to ensure assistant final-output persistence semantics are exactly right in every edge case.
