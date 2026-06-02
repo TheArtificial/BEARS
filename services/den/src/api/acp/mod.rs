@@ -209,7 +209,10 @@ mod tests {
     use crate::{
         errors::CustomError,
         api::acp::{
-            history::{acp_auto_title_instruction, map_acp_history_page},
+            history::{
+                acp_auto_title_instruction, map_acp_history_page,
+                map_canonical_history_page,
+            },
             prompt_context::acp_direct_tool_prompt_context_with_activity,
             stream::{
                 mapping::{
@@ -323,6 +326,63 @@ mod tests {
             assert!(reason.contains("not a user or web policy block"));
             assert!(reason.contains("Retry the tool"));
         }
+    }
+
+    #[test]
+    fn canonical_history_page_includes_message_role_variants_and_skips_diagnostic_only() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let rows = vec![
+            PersistedConversationMessage {
+                sequence_no: 4,
+                message_type: "workflow_event".to_string(),
+                role: Some("system".to_string()),
+                visibility: "diagnostic_only".to_string(),
+                content_text: "Turn outcome: ok / stream_complete".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+            PersistedConversationMessage {
+                sequence_no: 3,
+                message_type: "message".to_string(),
+                role: Some("assistant".to_string()),
+                visibility: "default".to_string(),
+                content_text: "assistant reply".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+            PersistedConversationMessage {
+                sequence_no: 2,
+                message_type: "message".to_string(),
+                role: Some("user".to_string()),
+                visibility: "default".to_string(),
+                content_text: "user prompt".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+            PersistedConversationMessage {
+                sequence_no: 1,
+                message_type: "assistant".to_string(),
+                role: None,
+                visibility: "default".to_string(),
+                content_text: "legacy assistant".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+        ];
+
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 10);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("1"));
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].text, "legacy assistant");
+        assert_eq!(messages[1].role, "user");
+        assert_eq!(messages[1].text, "user prompt");
+        assert_eq!(messages[2].role, "assistant");
+        assert_eq!(messages[2].text, "assistant reply");
     }
 
     #[test]
@@ -736,6 +796,62 @@ mod tests {
             "hello from assistant".to_string(),
             serde_json::json!({
                 "event": "assistant_output"
+            }),
+            None,
+        );
+
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn canonical_terminal_outcome_persistence_skip_is_test_safe() {
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let request_id = Uuid::new_v4();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let role_runtime = RoleRuntime::new(tool_turns.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let context = AcpStreamContext {
+            pool,
+            tool_turns,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-test-resolved".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime,
+            turn_scope: turn_scope.clone(),
+        };
+
+        spawn_canonical_structured_event_persistence(
+            &context,
+            "workflow_event",
+            Some("system"),
+            "diagnostic_only",
+            "Turn outcome: failed / runtime_cleanup".to_string(),
+            serde_json::json!({
+                "event": "turn_result",
+                "status": "failed",
+                "reason": "runtime_cleanup",
+                "scope": turn_scope.diagnostic(),
             }),
             None,
         );

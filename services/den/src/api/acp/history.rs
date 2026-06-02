@@ -290,11 +290,16 @@ pub(super) fn map_canonical_history_page(
         .iter()
         .rev()
         .filter_map(|row| {
-            let role = match row.message_type.as_str() {
-                "user" => "user",
-                "assistant" => "assistant",
+            let role = match (row.message_type.as_str(), row.role.as_deref()) {
+                ("user", _) => "user",
+                ("assistant", _) => "assistant",
+                ("message", Some("user")) => "user",
+                ("message", Some("assistant")) => "assistant",
                 _ => return None,
             };
+            if row.visibility == "diagnostic_only" {
+                return None;
+            }
             let text = sanitize_visible_transcript_text(&row.content_text);
             if text.trim().is_empty() {
                 return None;

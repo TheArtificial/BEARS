@@ -233,6 +233,32 @@ impl AcpRuntimeSseStream {
         );
     }
 
+    pub(in crate::api::acp) fn persist_terminal_outcome(&mut self, role_result: &RoleTurnResult) {
+        super::runtime::spawn_canonical_structured_event_persistence(
+            &self.context,
+            "workflow_event",
+            Some("system"),
+            "diagnostic_only",
+            format!(
+                "Turn outcome: {} / {}",
+                role_result.status.as_str(),
+                role_result.reason.as_str()
+            ),
+            serde_json::json!({
+                "source": "acp_stream",
+                "event": "turn_result",
+                "status": role_result.status.as_str(),
+                "reason": role_result.reason.as_str(),
+                "request_id": role_result.request_id.to_string(),
+                "retryable": role_result.retryable,
+                "scope": role_result.scope.diagnostic(),
+                "diagnostics": role_result.diagnostics,
+                "acp_session_id": self.context.acp_session_id,
+            }),
+            None,
+        );
+    }
+
     pub(in crate::api::acp) fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
         let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
             let snapshot = self.turn_controller.status_snapshot();
@@ -255,6 +281,7 @@ impl AcpRuntimeSseStream {
             "emitting ACP turn_result authorized by turn controller"
         );
         self.persist_assistant_output_if_present();
+        self.persist_terminal_outcome(&role_result);
         let event = Self::turn_result_event(&role_result);
         self.push_adapter_event(event);
     }
