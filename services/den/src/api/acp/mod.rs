@@ -803,6 +803,78 @@ mod tests {
     }
 
     #[test]
+    fn canonical_tool_request_helper_builds_provenance_payload() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let record = CanonicalConversationRecord::tool_request(
+            "web_fetch",
+            "call-123",
+            "req-123",
+            Some("approval-123".to_string()),
+            serde_json::json!({"url":"https://example.com"}),
+            true,
+            Some("needs approval".to_string()),
+            "DenServer",
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                content_text,
+                content_json,
+                ..
+            } => {
+                assert_eq!(content_text, "Tool request: web_fetch");
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["scope_id"], "acp-test-session");
+                assert_eq!(content_json["event"], "tool_request");
+                assert_eq!(content_json["tool_name"], "web_fetch");
+                assert_eq!(content_json["route"], "DenServer");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
+    fn canonical_tool_result_helper_builds_provenance_payload() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let record = CanonicalConversationRecord::tool_result(
+            Some("web_fetch".to_string()),
+            "call-123",
+            Some("approval-123".to_string()),
+            "ok",
+            Some("done".to_string()),
+            serde_json::json!({"value":1}),
+            serde_json::json!({"diag":true}),
+            Some("req-123".to_string()),
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                content_text,
+                content_json,
+                ..
+            } => {
+                assert_eq!(content_text, "Tool result: web_fetch");
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["scope_id"], "acp-test-session");
+                assert_eq!(content_json["event"], "tool_result");
+                assert_eq!(content_json["tool_name"], "web_fetch");
+                assert_eq!(content_json["status"], "ok");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
     fn canonical_turn_outcome_helper_builds_provenance_payload() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,

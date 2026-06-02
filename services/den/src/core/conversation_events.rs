@@ -143,6 +143,86 @@ impl CanonicalConversationRecord {
         )
     }
 
+    pub fn conversation_resolved(
+        conversation_id: impl Into<String>,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        let conversation_id = conversation_id.into();
+        Self::workflow_event(
+            "Conversation resolved",
+            serde_json::json!({
+                "source": provenance.source,
+                "event": "conversation_resolved",
+                "scope_id": provenance.scope_id,
+                "conversation_id": conversation_id,
+            }),
+            None,
+        )
+    }
+
+    pub fn tool_request(
+        tool_name: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        request_id: impl Into<String>,
+        approval_request_id: Option<String>,
+        args: serde_json::Value,
+        approval_required: bool,
+        approval_reason: Option<String>,
+        route: impl Into<String>,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        let tool_name = tool_name.into();
+        let tool_call_id = tool_call_id.into();
+        Self::tool_event(
+            format!("Tool request: {tool_name}"),
+            serde_json::json!({
+                "source": provenance.source,
+                "event": "tool_request",
+                "scope_id": provenance.scope_id,
+                "request_id": request_id.into(),
+                "tool_call_id": tool_call_id,
+                "approval_request_id": approval_request_id,
+                "tool_name": tool_name,
+                "args": args,
+                "approval_required": approval_required,
+                "approval_reason": approval_reason,
+                "route": route.into(),
+            }),
+            None,
+        )
+    }
+
+    pub fn tool_result(
+        tool_name: Option<String>,
+        tool_call_id: impl Into<String>,
+        approval_request_id: Option<String>,
+        status: impl Into<String>,
+        content: Option<String>,
+        structured_content: serde_json::Value,
+        diagnostic: serde_json::Value,
+        request_id: Option<String>,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
+        let tool_name = tool_name.unwrap_or_else(|| "tool".to_string());
+        Self::tool_event(
+            format!("Tool result: {tool_name}"),
+            serde_json::json!({
+                "source": provenance.source,
+                "event": "tool_result",
+                "scope_id": provenance.scope_id,
+                "tool_call_id": tool_call_id.into(),
+                "approval_request_id": approval_request_id,
+                "tool_name": tool_name,
+                "status": status.into(),
+                "content": content,
+                "structured_content": structured_content,
+                "diagnostic": diagnostic,
+                "request_id": request_id,
+            }),
+            None,
+        )
+    }
+
     pub fn turn_outcome(
         status: &str,
         reason: &str,

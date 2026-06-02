@@ -120,19 +120,15 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 conversation_id,
             )
             .await?;
-            spawn_canonical_structured_event_persistence(
-                context,
-                "workflow_event",
-                Some("system"),
-                "diagnostic_only",
-                "Conversation resolved".to_string(),
-                serde_json::json!({
-                    "source": "acp_stream",
-                    "event": "conversation_resolved",
-                    "conversation_id": conversation_id,
-                    "acp_session_id": context.acp_session_id,
-                }),
-                None,
+            let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
+                context.acp_session_id.clone(),
+            );
+            spawn_persist_canonical_conversation_record(
+                canonical_persistence_context(context),
+                CanonicalConversationRecord::conversation_resolved(
+                    conversation_id.clone(),
+                    &provenance,
+                ),
             );
         }
         AcpGatewayEvent::ToolRequest {
@@ -162,26 +158,22 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 approval_request_id = ?approval_request_id,
                 "ACP tool request route classified"
             );
-            spawn_canonical_structured_event_persistence(
-                context,
-                "tool_event",
-                Some("system"),
-                "diagnostic_only",
-                format!("Tool request: {}", tool_name),
-                serde_json::json!({
-                    "source": "acp_stream",
-                    "event": "tool_request",
-                    "request_id": request_id,
-                    "tool_call_id": tool_call_id,
-                    "approval_request_id": approval_request_id,
-                    "tool_name": tool_name,
-                    "args": args,
-                    "approval_required": approval_required,
-                    "approval_reason": approval_reason,
-                    "route": format!("{:?}", route),
-                    "acp_session_id": context.acp_session_id,
-                }),
-                None,
+            let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
+                context.acp_session_id.clone(),
+            );
+            spawn_persist_canonical_conversation_record(
+                canonical_persistence_context(context),
+                CanonicalConversationRecord::tool_request(
+                    tool_name.clone(),
+                    tool_call_id.clone(),
+                    request_id.clone(),
+                    approval_request_id.clone(),
+                    args.clone(),
+                    *approval_required,
+                    approval_reason.clone(),
+                    format!("{:?}", route),
+                    &provenance,
+                ),
             );
             match route {
                 ToolExecutionRoute::Unsupported => {
