@@ -552,3 +552,31 @@ pub fn spawn_persist_tool_result(
         ),
     );
 }
+
+pub fn spawn_persist_tool_request(
+    context: ConversationPersistenceContext,
+    tool_name: String,
+    tool_call_id: String,
+    request_id: String,
+    approval_request_id: Option<String>,
+    arguments: serde_json::Value,
+    approval_required: bool,
+    approval_reason: Option<String>,
+    route: String,
+    provenance: &ConversationEventProvenance,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::tool_request(
+            tool_name,
+            tool_call_id,
+            request_id,
+            approval_request_id,
+            arguments,
+            approval_required,
+            approval_reason,
+            route,
+            provenance,
+        ),
+    );
+}

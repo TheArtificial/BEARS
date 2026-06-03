@@ -161,19 +161,17 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
             let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
                 context.acp_session_id.clone(),
             );
-            spawn_persist_canonical_conversation_record(
+            crate::core::conversation_events::spawn_persist_tool_request(
                 canonical_persistence_context_from_acp(context),
-                CanonicalConversationRecord::tool_request(
-                    tool_name.clone(),
-                    tool_call_id.clone(),
-                    request_id.clone(),
-                    approval_request_id.clone(),
-                    args.clone(),
-                    *approval_required,
-                    approval_reason.clone(),
-                    format!("{:?}", route),
-                    &provenance,
-                ),
+                tool_name.clone(),
+                tool_call_id.clone(),
+                request_id.clone(),
+                approval_request_id.clone(),
+                args.clone(),
+                *approval_required,
+                approval_reason.clone(),
+                format!("{:?}", route),
+                &provenance,
             );
             match route {
                 ToolExecutionRoute::Unsupported => {

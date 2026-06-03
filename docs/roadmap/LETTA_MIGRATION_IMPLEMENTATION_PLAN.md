@@ -306,11 +306,14 @@ Why this slice first:
 - A third small extraction step is also landed:
   - `core/conversation_events.rs` now exposes a shared spawn helper for canonical tool-result persistence.
   - `api/acp/stream/sse_stream.rs` now delegates transport-neutral tool-result record construction to core instead of inlining it.
+- A fourth small extraction step is also landed:
+  - `core/conversation_events.rs` now exposes a shared spawn helper for canonical tool-request persistence.
+  - `api/acp/stream/runtime.rs` now delegates transport-neutral tool-request record construction to core instead of inlining it.
 
 Why this matters:
 - the shared/core side now owns the generic persistence context constructor,
 - ACP remains responsible only for adapting ACP session/request fields into that generic constructor,
-- shared/core now also owns more of the transport-neutral assistant-output / turn-outcome / tool-result persistence glue,
+- shared/core now also owns more of the transport-neutral assistant-output / turn-outcome / tool-result / tool-request persistence glue,
 - future non-ACP runners can reuse the same core constructor and helper layer without importing ACP event policy.
 
 ---
