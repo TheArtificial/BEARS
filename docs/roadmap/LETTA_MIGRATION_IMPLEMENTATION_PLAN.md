@@ -535,7 +535,9 @@ At this point, the migration surface is audited enough to return to implementati
    - Fast-path read eligibility is now better protected by canonical history mapping tests, including:
      - Den-owned prompt+assistant transcript ordering,
      - diagnostic-only canonical rows staying invisible,
-     - Letta fallback filling visible history when canonical rows are absent.
+     - Letta fallback filling visible history when canonical rows are absent,
+     - current Den-first behavior when canonical history is partial (user-only or assistant-only visible rows).
+   - The practical current policy is: any visible canonical rows cause Den history mapping to win; only zero canonical rows trigger Letta fallback.
    - Stack-level proof is still desirable.
 
 3. **Add bespoke smoke-stack coverage for replay + continuation if release confidence requires it**

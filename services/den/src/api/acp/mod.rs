@@ -482,6 +482,54 @@ mod tests {
     }
 
     #[test]
+    fn canonical_history_page_with_only_user_rows_still_returns_den_visible_history() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let rows = vec![PersistedConversationMessage {
+            sequence_no: 1,
+            message_type: "user".to_string(),
+            role: None,
+            visibility: "default".to_string(),
+            content_text: "persisted prompt only".to_string(),
+            provider_message_id: Some("msg-1".to_string()),
+            created_at: now,
+        }];
+
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 50);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("1"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "persisted prompt only");
+    }
+
+    #[test]
+    fn canonical_history_page_with_only_assistant_rows_still_returns_den_visible_history() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let rows = vec![PersistedConversationMessage {
+            sequence_no: 1,
+            message_type: "assistant".to_string(),
+            role: None,
+            visibility: "default".to_string(),
+            content_text: "persisted assistant only".to_string(),
+            provider_message_id: Some("msg-1".to_string()),
+            created_at: now,
+        }];
+
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 50);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("1"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].text, "persisted assistant only");
+    }
+
+    #[test]
     fn letta_history_page_can_fill_visible_history_when_canonical_rows_are_absent() {
         let body = serde_json::json!({
             "messages": [
