@@ -505,22 +505,37 @@ At this point, the migration surface is audited enough to return to implementati
    - `conversation_resolved` tests,
    - broader tool-result variant tests.
 
+### Replay/continuation validation results
+
+- Existing smoke scripts do **not** currently include a dedicated ACP replay/continuation stack scenario.
+- The strongest available practical validation today is a combination of:
+  - focused ACP lib tests for replay settlement behavior,
+  - focused ACP lib tests for continuation mapping/waiting behavior,
+  - broader ACP lib test sweep,
+  - existing smoke-stack validation for schema + persistence contract sanity.
+- Concretely re-run during this slice:
+  - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml acp_stream_waits_for_tool_result_and_continues_runtime`
+  - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml acp_tool_result_endpoint_treats_replayed_identical_result_as_idempotent`
+  - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml acp_tool_result_endpoint_marks_changed_replay_as_conflict`
+- Result: all targeted validations passed.
+- Current confidence statement:
+  - replay settlement semantics are strong at the fast-test layer,
+  - continuation wiring/waiting semantics are strong at the fast-test layer,
+  - but there is still **no bespoke smoke-stack scenario** proving replay + continuation together against the live stack.
+
 ### Remaining work before this migration slice is complete
 
-1. **Make the workflow/diagnostic persistence policy explicit**
-   - document which workflow/UI/diagnostic surfaces are intentionally ephemeral,
-   - and which should graduate into canonical transcript/event records.
+1. **Keep the workflow/diagnostic persistence policy aligned with implementation**
+   - canonical vs ephemeral policy is now documented,
+   - future changes should either follow that policy or update it intentionally.
 
-2. **Broaden confirmed tool-result coverage**
-   - producer wiring is present,
-   - remaining work is to validate timeout/error/replay/continuation variants systematically.
+2. **Strengthen end-to-end coverage for already-wired canonical paths**
+   - prompt-path persistence through the live stack,
+   - `conversation_resolved` persistence through the live stack.
 
-3. **Validate key canonical edge paths with focused tests**
-   - prompt-path provenance/dedup semantics,
-   - `conversation_resolved` persistence,
-   - repeated assistant-output terminalization,
-   - cancellation/failure/recovery interactions.
-   - These should primarily land as fast unit/lib tests where practical.
+3. **Add bespoke smoke-stack coverage for replay + continuation if release confidence requires it**
+   - current fast-test confidence is strong,
+   - but no dedicated stack-level scenario exists yet.
 
 4. **Keep smoke-stack integration validation as the release-confidence layer**
    - verify migrated schema presence,
