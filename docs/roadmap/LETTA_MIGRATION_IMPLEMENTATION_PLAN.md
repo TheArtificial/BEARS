@@ -393,18 +393,35 @@ This section tracks the current status of the Letta migration transcript-ownersh
 - **Phase 2** still needs a fuller audit of all workflow-transition and non-tool diagnostic events to verify consistent helper usage.
 - **Phase 3** now has storage-backed idempotency for canonical events that carry stable provenance-derived source ids, and smoke-stack-backed live Postgres inspection confirms the migrated uniqueness contract is present; remaining work is to wire this into repeatable automated integration tests rather than manual stack-level validation.
 
+### Broad canonical event coverage audit
+
+| Event / record class | Canonical helper exists | Producer/persistence path seen | Validation currently present | Broad status / gap |
+| --- | --- | --- | --- | --- |
+| Visible user message | Yes (`visible_user_message`) | **Direct prompt path currently uses raw `append_message(...)` in `api/acp/stream/prompt_flow.rs`, not the canonical helper** | Indirect / existing history behavior tests | Confirmed gap: user prompt persistence exists but bypasses canonical helper/dedup-shape path |
+| Assistant final output | Yes (`assistant_output`) | Yes; ACP SSE stream persists buffered final assistant output on terminal turn path in `api/acp/stream/sse_stream.rs` | Strong unit/helper coverage + smoke-backed schema confidence | In good shape; remaining gap is broader edge-path confirmation across all terminal modes |
+| Tool request | Yes (`tool_request`) | Yes; ACP runtime maps tool requests through `CanonicalConversationRecord::tool_request(...)` in `api/acp/stream/runtime.rs` | Helper/unit coverage present | Stronger than initial audit suggested; remaining gap is making sure every request variant flows through this path |
+| Tool result | Yes (`tool_result`) | Yes; ACP SSE stream persists settled tool results through `CanonicalConversationRecord::tool_result(...)` in `api/acp/stream/sse_stream.rs` | Helper/unit coverage present | Producer path confirmed; highest-value remaining gap is broader result variants (timeout/error/replay/continuation) coverage confirmation |
+| Conversation resolved | Yes (`conversation_resolved`) | **No active producer path found in this audit** despite helper existence | Limited helper-level confidence | Confirmed high-priority gap: helper exists but appears unused / not wired in active ACP paths |
+| Turn outcome / terminal result | Yes (`turn_outcome`) | Yes; ACP SSE stream persists terminal outcome on terminal turn emission in `api/acp/stream/sse_stream.rs` | Strong helper/unit coverage | In decent shape; remaining gap is fuller failure/cancellation/recovery path breadth |
+| Generic workflow event | Yes (`workflow_event`) | No active producer path found in this audit apart from being the substrate for turn outcomes/conversation-resolved helpers | Basic helper/unit coverage | Broad gap: workflow-event helper surface exists, but explicit workflow-transition producer wiring appears sparse or absent |
+| Generic tool event | Yes (`tool_event`) | Yes indirectly; underlies confirmed tool request/result producer paths | Basic helper/unit coverage | Substrate appears meaningfully used through tool request/result paths |
+| Other structured events / diagnostics | Partial (via `structured_event`) | No meaningful active producer path found in this audit | Sparse | Medium-priority gap: many diagnostics may still be ephemeral/operator-only rather than canonically persisted |
+
 ### Remaining work before this migration slice is complete
 
-1. **Broaden tool/workflow event coverage review**
-   - verify every structured event class that matters for transcript-read eligibility has canonical persistence coverage.
+1. **Close confirmed producer-path gaps**
+   - route visible user prompt persistence through canonical helpers instead of the current raw `append_message(...)` path in ACP prompt flow,
+   - wire or intentionally retire `conversation_resolved` canonical persistence,
+   - decide which workflow transitions deserve canonical persistence beyond terminal outcomes.
 
-2. **Strengthen idempotency from heuristic to durable contract**
-   - replace or reinforce recent-history dedup checks with stronger storage-backed semantics where appropriate.
+2. **Broaden confirmed tool-result coverage**
+   - producer wiring is present,
+   - remaining work is to validate timeout/error/replay/continuation variants systematically.
 
 3. **Validate edge paths with focused tests**
    - duplicate tool-result settlement,
    - repeated assistant-output terminalization,
-   - cancellation/failure interactions.
+   - cancellation/failure/recovery interactions.
    - These should primarily land as fast unit/lib tests where practical.
 
 4. **Keep smoke-stack integration validation as the release-confidence layer**
