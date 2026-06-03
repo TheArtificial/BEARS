@@ -243,6 +243,69 @@ The implementation is successful when:
 - ACP-specific logic remains separable from common role-runner behavior.
 - `review` and `watch` migration can reuse extracted seams.
 
+### Current Phase 5 extraction audit
+
+The current ACP `pair` path already exposes a few strong extraction candidates and a few areas that should remain ACP-edge specific.
+
+#### Strongest shared candidates
+
+1. **Turn lifecycle primitives**
+   - `core/role_runtime.rs` already contains role/channel-scoped turn ownership, terminal result shape, and cancellation registration.
+   - This looks like the best existing shared core because it is not intrinsically ACP-transport-specific.
+
+2. **Canonical conversation persistence seam**
+   - `core/conversation_events.rs` plus the persistence context/record model already represent a transport-neutral event/message persistence contract.
+   - The ACP stream currently consumes this through helper wrappers in `api/acp/stream/runtime.rs`.
+   - This seam appears reusable for `review`/`watch` provided the role-specific provenance builder stays at the edge.
+
+3. **Runtime-event to terminal-outcome contract**
+   - `api/acp/stream/sse_stream.rs` currently applies a disciplined turn-result/terminal-event contract around runtime failure/cancellation/completion.
+   - The policy surface is partly ACP-shaped today, but the underlying role-turn result model is a plausible shared runner primitive.
+
+4. **Tool continuation settlement shape**
+   - `api/acp/stream/mapping.rs` and ACP tool-turn coordination currently expose a reusable conceptual seam:
+     - runtime requests a tool,
+     - execution route is classified,
+     - a continuation receiver is retained,
+     - runtime resumes from a resolved tool result.
+   - The exact adapter/approval payloads are ACP-specific, but the continuation lifecycle itself is a candidate shared concept.
+
+#### Things that should stay ACP-edge specific for now
+
+1. **Adapter SSE/event mapping**
+   - ACP message/event shapes, session-info updates, plan-mode payloads, and approval-request transport details should remain at the ACP edge.
+
+2. **ACP tool routing policy**
+   - direct adapter-local vs Den-server routing, approval presentation, and unsupported-tool fallback are currently ACP client-contract decisions.
+
+3. **Prompt/context orchestration**
+   - ACP prompt guidance, adapter contract handling, workflow UI projections, and session-title sync are not good first extraction targets.
+
+#### Smallest extraction-friendly next code slice
+
+The best low-risk Phase 5 move appears to be:
+
+- **extract transport-neutral canonical persistence helper(s) out of `api/acp/stream/runtime.rs` into shared core-facing runtime/persistence support**, while
+- leaving ACP event mapping, tool routing, and adapter payload policy in ACP modules.
+
+Why this slice first:
+- it already uses a transport-neutral canonical record model,
+- it reduces ACP ownership of generic persistence glue,
+- it helps future `review`/`watch` migration without forcing premature runtime-provider abstraction.
+
+### Phase 5 progress in this slice
+
+- A first extraction-friendly refactor is now landed:
+  - `core/conversation_events.rs` now exposes a transport-neutral `canonical_persistence_context(...)` constructor over primitive inputs.
+- ACP still owns the ACP-specific context adapter in:
+  - `api/acp/stream/runtime.rs` via `canonical_persistence_context_from_acp(...)`.
+- `api/acp/stream/sse_stream.rs` now consumes that ACP adapter helper rather than depending on ACP-local persistence construction details directly.
+
+Why this matters:
+- the shared/core side now owns the generic persistence context constructor,
+- ACP remains responsible only for adapting ACP session/request fields into that generic constructor,
+- future non-ACP runners can reuse the same core constructor without importing ACP event policy.
+
 ---
 
 ## Phase 6 — Follow-on migration for `review` and `watch`

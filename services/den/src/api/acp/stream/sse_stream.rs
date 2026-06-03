@@ -228,7 +228,7 @@ impl AcpRuntimeSseStream {
             Some(self.context.request_id.to_string()),
         );
         crate::core::conversation_events::spawn_persist_canonical_conversation_record(
-            super::runtime::canonical_persistence_context(&self.context),
+            super::runtime::canonical_persistence_context_from_acp(&self.context),
             record,
         );
     }
@@ -247,7 +247,7 @@ impl AcpRuntimeSseStream {
             &provenance,
         );
         crate::core::conversation_events::spawn_persist_canonical_conversation_record(
-            super::runtime::canonical_persistence_context(&self.context),
+            super::runtime::canonical_persistence_context_from_acp(&self.context),
             record,
         );
     }
@@ -593,7 +593,7 @@ impl Stream for AcpRuntimeSseStream {
                                 &provenance,
                             );
                             crate::core::conversation_events::spawn_persist_canonical_conversation_record(
-                                super::runtime::canonical_persistence_context(&this.context),
+                                super::runtime::canonical_persistence_context_from_acp(&this.context),
                                 record,
                             );
                         }

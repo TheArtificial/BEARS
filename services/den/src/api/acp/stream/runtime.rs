@@ -16,8 +16,8 @@ use crate::{
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
         bears::{db as bears_db, BearAgentRole},
         conversation_events::{
-            spawn_persist_canonical_conversation_record, CanonicalConversationRecord,
-            ConversationPersistenceContext,
+            canonical_persistence_context, spawn_persist_canonical_conversation_record,
+            CanonicalConversationRecord,
         },
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         web_policy,
@@ -31,22 +31,22 @@ fn should_skip_canonical_persistence(context: &AcpStreamContext) -> bool {
         || database_url == "postgres://localhost/den_test"
 }
 
-pub(in crate::api::acp) fn canonical_persistence_context(
+pub(in crate::api::acp) fn canonical_persistence_context_from_acp(
     context: &AcpStreamContext,
-) -> ConversationPersistenceContext {
-    ConversationPersistenceContext {
-        pool: context.pool.clone(),
-        bear_id: context.bear_id,
-        user_id: Some(context.user_id),
-        external_conversation_id: context
+) -> crate::core::conversation_events::ConversationPersistenceContext {
+    canonical_persistence_context(
+        context.pool.clone(),
+        context.bear_id,
+        Some(context.user_id),
+        context
             .resolved_conversation_id
             .clone()
             .unwrap_or_else(|| context.conversation_selection.clone()),
-        source_session_id: Some(context.acp_session_id.clone()),
-        request_id: Some(context.request_id.to_string()),
-        persistence_scope_id: context.acp_session_id.clone(),
-        skip_persistence: should_skip_canonical_persistence(context),
-    }
+        Some(context.acp_session_id.clone()),
+        Some(context.request_id.to_string()),
+        context.acp_session_id.clone(),
+        should_skip_canonical_persistence(context),
+    )
 }
 
 pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
@@ -58,7 +58,7 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     content_json: serde_json::Value,
     provider_message_id: Option<String>,
 ) {
-    let persistence = canonical_persistence_context(context);
+    let persistence = canonical_persistence_context_from_acp(context);
     let record = match message_type {
         "tool_event" => {
             CanonicalConversationRecord::tool_event(content_text, content_json, provider_message_id)
@@ -89,7 +89,7 @@ pub(in crate::api::acp) fn spawn_canonical_message_persistence(
     content_json: serde_json::Value,
     provider_message_id: Option<String>,
 ) {
-    let persistence = canonical_persistence_context(context);
+    let persistence = canonical_persistence_context_from_acp(context);
     let record = match role {
         Some("user") => CanonicalConversationRecord::visible_user_message(
             content_text,
@@ -124,7 +124,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 context.acp_session_id.clone(),
             );
             spawn_persist_canonical_conversation_record(
-                canonical_persistence_context(context),
+                canonical_persistence_context_from_acp(context),
                 CanonicalConversationRecord::conversation_resolved(
                     conversation_id.clone(),
                     &provenance,
@@ -162,7 +162,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 context.acp_session_id.clone(),
             );
             spawn_persist_canonical_conversation_record(
-                canonical_persistence_context(context),
+                canonical_persistence_context_from_acp(context),
                 CanonicalConversationRecord::tool_request(
                     tool_name.clone(),
                     tool_call_id.clone(),

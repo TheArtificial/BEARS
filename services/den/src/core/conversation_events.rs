@@ -438,6 +438,28 @@ pub async fn persist_canonical_conversation_record(
     Ok(())
 }
 
+pub fn canonical_persistence_context(
+    pool: PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    external_conversation_id: String,
+    source_session_id: Option<String>,
+    request_id: Option<String>,
+    persistence_scope_id: String,
+    skip_persistence: bool,
+) -> ConversationPersistenceContext {
+    ConversationPersistenceContext {
+        pool,
+        bear_id,
+        user_id,
+        external_conversation_id,
+        source_session_id,
+        request_id,
+        persistence_scope_id,
+        skip_persistence,
+    }
+}
+
 pub fn spawn_persist_canonical_conversation_record(
     context: ConversationPersistenceContext,
     record: CanonicalConversationRecord,
