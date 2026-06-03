@@ -73,6 +73,14 @@ pub struct AcpToolTurnCleanupSummary {
     pub settled_removed: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpToolSettlementSummary {
+    pub tool_call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub status: String,
+    pub removed_pending_turn: bool,
+}
+
 impl AcpToolTurnCleanupSummary {
     pub fn to_json(self) -> serde_json::Value {
         serde_json::json!({
@@ -606,6 +614,30 @@ impl AcpToolTurnCoordinator {
         }
         if let Ok(mut active_turns) = self.active_turns.lock() {
             active_turns.remove(session_id);
+        }
+    }
+
+    pub fn settle_after_result(
+        &self,
+        session_id: &str,
+        result: &AcpToolResultRequest,
+    ) -> AcpToolSettlementSummary {
+        let removed_pending_turn = result
+            .tool_call_id
+            .as_deref()
+            .map(|tool_call_id| {
+                if let Ok(mut turns) = self.turns.lock() {
+                    turns.remove(&Self::key(session_id, tool_call_id)).is_some()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        AcpToolSettlementSummary {
+            tool_call_id: result.tool_call_id.clone(),
+            tool_name: result.tool_name.clone(),
+            status: result.status.clone(),
+            removed_pending_turn,
         }
     }
 

@@ -583,17 +583,16 @@ impl Stream for AcpRuntimeSseStream {
                                 &provenance,
                             );
                         }
-                        if let Some(done_id) = tool_result.tool_call_id.as_deref() {
-                            let ok = tool_result.status == "ok";
+                        let settlement = this
+                            .context
+                            .tool_turns
+                            .settle_after_result(&this.context.acp_session_id, &tool_result);
+                        if let Some(done_id) = settlement.tool_call_id.as_deref() {
+                            let ok = settlement.status == "ok";
                             this.turn_controller.on_adapter_tool_result(done_id, ok);
-                            if tool_result.status == "timeout" {
+                            if settlement.status == "timeout" {
                                 this.turn_controller.on_tool_timeout(done_id);
                             }
-                        }
-                        if let Some(done_id) = tool_result.tool_call_id.as_deref() {
-                            this.context
-                                .tool_turns
-                                .remove(&this.context.acp_session_id, done_id);
                         }
                         if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result) {
                             this.push_adapter_event(plan_event);

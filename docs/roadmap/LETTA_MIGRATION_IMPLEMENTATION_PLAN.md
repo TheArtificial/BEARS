@@ -310,10 +310,65 @@ Why this slice first:
   - `core/conversation_events.rs` now exposes a shared spawn helper for canonical tool-request persistence.
   - `api/acp/stream/runtime.rs` now delegates transport-neutral tool-request record construction to core instead of inlining it.
 
+### Continuation / tool-settlement seam audit
+
+The next stronger shared seam is not another canonical record helper; it is the lifecycle around pending tool turns and runtime continuation.
+
+#### Current lifecycle split
+
+1. **Registration lives partly in ACP runtime, partly in core coordinator**
+   - ACP runtime decides routing and approval semantics.
+   - `core/acp_tool_turns.rs` owns the actual pending-turn registry and delivery contract.
+
+2. **Continuation retention lives in ACP stream orchestration**
+   - `api/acp/stream/mapping.rs` and `sse_stream.rs` retain adapter/local continuation receivers.
+   - This is where ACP-specific event framing and runtime resumption are still tightly interleaved.
+
+3. **Settlement / cleanup is currently mixed**
+   - core coordinator already owns result delivery, recently-settled replay caching, timeout synthesis, and request/session cleanup helpers.
+   - ACP stream code still performs some settlement-side orchestration directly:
+     - persist canonical tool result,
+     - notify turn controller,
+     - remove pending turn from coordinator,
+     - queue continuation,
+     - emit UI-facing completion/status events.
+
+#### Best first extraction candidate in this seam
+
+The safest next extraction candidate appears to be a **shared tool-settlement helper/contract** that groups the transport-neutral parts of post-result handling:
+
+- canonical tool-result persistence,
+- coordinator removal / settled-result bookkeeping,
+- normalized settlement summary usable by role runners,
+
+while leaving these at the ACP edge:
+- route classification,
+- approval semantics,
+- adapter/SSE status text,
+- plan/mode UI projection,
+- runtime-specific continuation driving.
+
+#### Recommended next code slice
+
+The smallest safe follow-on implementation slice is:
+
+- introduce a shared core-facing helper that consumes a settled tool result plus coordinator/session identifiers and performs the transport-neutral settlement bookkeeping,
+- return a small summary structure that ACP can use to drive turn-controller updates and UI events.
+
+Status: **initial slice landed**
+- `core/acp_tool_turns.rs` now exposes `settle_after_result(...)` returning `AcpToolSettlementSummary`.
+- `api/acp/stream/sse_stream.rs` now delegates pending-turn removal bookkeeping to that shared coordinator helper before ACP-specific controller/UI follow-up.
+
+Why this slice first:
+- core already owns much of the registry/delivery behavior,
+- ACP currently duplicates just enough cleanup/orchestration to make the boundary noisy,
+- it advances reuse without prematurely abstracting runtime-provider continuation behavior.
+
 Why this matters:
 - the shared/core side now owns the generic persistence context constructor,
 - ACP remains responsible only for adapting ACP session/request fields into that generic constructor,
 - shared/core now also owns more of the transport-neutral assistant-output / turn-outcome / tool-result / tool-request persistence glue,
+- the next reuse win is the settlement bookkeeping boundary between the coordinator and ACP stream orchestration,
 - future non-ACP runners can reuse the same core constructor and helper layer without importing ACP event policy.
 
 ---
