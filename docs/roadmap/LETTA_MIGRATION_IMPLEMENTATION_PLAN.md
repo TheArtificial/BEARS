@@ -449,6 +449,73 @@ Status: **diagnostics reset helper landed**
   - `AcpStreamDiagnostics::reset_for_resumed_continuation()`
 - `api/acp/stream/sse_stream.rs` now delegates resumed diagnostics initialization/reset to those helpers instead of mutating `saw_requires_approval_stop` inline.
 
+##### ACP resume execution wiring audit
+
+A broader audit of the remaining resumed execution wiring shows that `ApiState` and `RoleRuntimeBinding` assembly should stay ACP-owned for now.
+
+1. **`ApiState` construction is API-surface wiring, not continuation semantics**
+   - `sse_stream.rs` rebuilds `ApiState` in resume and cleanup paths using:
+     - SQL pool,
+     - shared config,
+     - freshly wrapped `LettaClient` / `BifrostClient`,
+     - process-local ACP registries.
+   - The same shape also appears in `api/service.rs` and test helpers, which indicates this is application/runtime wiring rather than a continuation-specific contract.
+   - Extracting this too early would mostly move dependency assembly around without creating a transport-neutral seam.
+
+2. **`RoleRuntimeBinding` is still provider-policy encoded**
+   - resumed ACP continuation currently chooses compatibility backend `"letta"` inline.
+   - nearby runtime code and tests also encode backend-specific binding values (for example `"runtime:letta"` and `"letta"`).
+   - until runtime binding selection is normalized across providers/runners, this remains ACP/provider policy rather than reusable continuation preparation.
+
+3. **Future extraction condition**
+   - a shared seam becomes more realistic only if Den introduces:
+     - a reusable runtime-execution context factory used by multiple runners, or
+     - normalized binding-selection policy independent of ACP transport decisions.
+   - absent that, extracting these now would create indirection without meaningful reuse.
+
+Decision: **keep `ApiState` assembly and `RoleRuntimeBinding` selection ACP-owned for now.**
+
+### Recommended next broader Phase 5 seam
+
+The strongest next boundary is to return to the **broader runtime/persistence seam** rather than continue ACP resume-path factoring.
+
+Specifically, the best next target is:
+
+#### Shared conversation-event persistence entrypoint / policy seam
+
+Why this is stronger than more ACP resume work:
+- `core/conversation_events.rs` already owns the extracted transport-neutral spawn helpers for:
+  - assistant output,
+  - turn outcome,
+  - tool result,
+  - tool request.
+- That file is now the clearest shared anchor for non-ACP reuse.
+- The next broader reuse win is likely not another ACP stream helper, but clearer ownership of:
+  - persistence entrypoint policy,
+  - event-category normalization,
+  - or record/spawn orchestration used by future non-ACP runners.
+
+Why this seam now:
+- it is already partially centralized,
+- it aligns with the migration goal of Den-first canonical persistence,
+- it has better cross-runner reuse potential than ACP-local execution wiring,
+- it avoids overfitting Phase 5 to Letta/ACP stream mechanics.
+
+#### Recommended next implementation slice under that seam
+
+The next concrete slice should be:
+
+- audit `core/conversation_events.rs` for the next duplication or policy split between:
+  - canonical record construction,
+  - spawn orchestration,
+  - and caller-owned event categorization/provenance shaping,
+- then extract the next transport-neutral persistence entrypoint/helper that future runners can call without ACP-specific knowledge.
+
+Decision rationale:
+- stop micro-extracting the resume path,
+- return to the next stronger Phase 5 boundary outside ACP resume wiring,
+- prefer a broader runtime/persistence seam with higher non-ACP reuse value.
+
 These should remain at the ACP edge:
 - `ApiState` assembly,
 - `RoleRuntimeBinding` selection,
