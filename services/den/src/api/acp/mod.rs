@@ -386,6 +386,43 @@ mod tests {
     }
 
     #[test]
+    fn canonical_history_page_prefers_den_rows_when_prompt_and_assistant_exist() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let rows = vec![
+            PersistedConversationMessage {
+                sequence_no: 2,
+                message_type: "assistant".to_string(),
+                role: None,
+                visibility: "default".to_string(),
+                content_text: "persisted assistant".to_string(),
+                provider_message_id: Some("msg-2".to_string()),
+                created_at: now,
+            },
+            PersistedConversationMessage {
+                sequence_no: 1,
+                message_type: "user".to_string(),
+                role: None,
+                visibility: "default".to_string(),
+                content_text: "persisted prompt".to_string(),
+                provider_message_id: Some("msg-1".to_string()),
+                created_at: now,
+            },
+        ];
+
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 50);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("1"));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "persisted prompt");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].text, "persisted assistant");
+    }
+
+    #[test]
     fn acp_history_page_replays_desc_letta_page_chronologically() {
         let body = serde_json::json!({
             "messages": [

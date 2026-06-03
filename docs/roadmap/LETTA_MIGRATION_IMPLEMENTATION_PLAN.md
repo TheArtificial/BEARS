@@ -532,6 +532,7 @@ At this point, the migration surface is audited enough to return to implementati
 2. **Strengthen end-to-end coverage for already-wired canonical paths**
    - prompt-path persistence through the live stack,
    - `conversation_resolved` persistence through the live stack.
+   - Fast-path read eligibility is now better protected by canonical history mapping tests, but stack-level proof is still desirable.
 
 3. **Add bespoke smoke-stack coverage for replay + continuation if release confidence requires it**
    - current fast-test confidence is strong,
