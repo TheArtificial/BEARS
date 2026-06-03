@@ -401,25 +401,89 @@ This section tracks the current status of the Letta migration transcript-ownersh
 | Assistant final output | Yes (`assistant_output`) | Yes; ACP SSE stream persists buffered final assistant output on terminal turn path in `api/acp/stream/sse_stream.rs` | Strong unit/helper coverage + smoke-backed schema confidence | In good shape; remaining gap is broader edge-path confirmation across all terminal modes |
 | Tool request | Yes (`tool_request`) | Yes; ACP runtime maps tool requests through `CanonicalConversationRecord::tool_request(...)` in `api/acp/stream/runtime.rs` | Helper/unit coverage present | Stronger than initial audit suggested; remaining gap is making sure every request variant flows through this path |
 | Tool result | Yes (`tool_result`) | Yes; ACP SSE stream persists settled tool results through `CanonicalConversationRecord::tool_result(...)` in `api/acp/stream/sse_stream.rs` | Helper/unit coverage present | Producer path confirmed; highest-value remaining gap is broader result variants (timeout/error/replay/continuation) coverage confirmation |
-| Conversation resolved | Yes (`conversation_resolved`) | **No active producer path found in this audit** despite helper existence | Limited helper-level confidence | Confirmed high-priority gap: helper exists but appears unused / not wired in active ACP paths |
+| Conversation resolved | Yes (`conversation_resolved`) | Yes; persisted from `AcpGatewayEvent::ConversationResolved` side effects in `api/acp/stream/runtime.rs`, and emitted as an initial ACP event in `api/acp/stream/orchestration.rs` when a resolved conversation is known | Producer-path audit confidence; still light explicit test coverage | Better than earlier audit suggested: path is wired, but still needs explicit tests proving canonical persistence behavior and clarifying whether it is transcript-read-critical or mainly provenance/debug support |
 | Turn outcome / terminal result | Yes (`turn_outcome`) | Yes; ACP SSE stream persists terminal outcome on terminal turn emission in `api/acp/stream/sse_stream.rs` | Strong helper/unit coverage | In decent shape; remaining gap is fuller failure/cancellation/recovery path breadth |
 | Generic workflow event | Yes (`workflow_event`) | No active producer path found in this audit apart from being the substrate for turn outcomes/conversation-resolved helpers | Basic helper/unit coverage | Broad gap: workflow-event helper surface exists, but explicit workflow-transition producer wiring appears sparse or absent |
 | Generic tool event | Yes (`tool_event`) | Yes indirectly; underlies confirmed tool request/result producer paths | Basic helper/unit coverage | Substrate appears meaningfully used through tool request/result paths |
 | Other structured events / diagnostics | Partial (via `structured_event`) | No meaningful active producer path found in this audit | Sparse | Medium-priority gap: many diagnostics may still be ephemeral/operator-only rather than canonically persisted |
 
+### Workflow-transition and structured-diagnostic audit
+
+| Surface | Client-visible today | Canonically persisted today | Likely purpose | Audit conclusion |
+| --- | --- | --- | --- | --- |
+| `turn_result` / terminal outcome | Yes | Yes | Canonical workflow/terminal record | This is the primary confirmed workflow-event path today |
+| `conversation_resolved` | Yes | Yes | Provenance/session binding + possible read-switch support | Wired, but still needs explicit tests and a clearer statement of whether it is transcript-read-critical |
+| `PlanUpdate` / `PlanUpdateJson` | Yes | No producer-path evidence found for canonical persistence | UI/workboard state projection | Appears client-visible but not canonically persisted; likely intentional unless transcript-read requirements say otherwise |
+| `PlanApprovalFallback` | Yes | No producer-path evidence found for canonical persistence | UI/workflow assist for submitted plan approval | Appears diagnostic/workflow-facing rather than canonical transcript state |
+| `ModeUpdate` | Yes | No producer-path evidence found for canonical persistence | Session-mode UI state | Appears ephemeral/session-state oriented, not canonical transcript state |
+| `StatusText` / reasoning text | Yes | No canonical persistence path found in this audit | UX progress/debug text | Likely ephemeral by design |
+| `Error` events | Yes | Mixed: terminal errors become `turn_result`; non-terminal adapter errors do not obviously persist canonically | Operator/user visibility | Need explicit policy on which errors deserve canonical event persistence vs transient surfacing only |
+| `SessionInfoUpdate` | Yes | No canonical persistence path found in this audit | Session metadata/title sync | Session-state/UI only |
+
+### Validation/readiness audit
+
+- **Fast unit/lib coverage is strongest for:**
+  - canonical helper construction,
+  - assistant-output provenance,
+  - turn-outcome provenance,
+  - tool request/result helper semantics,
+  - canonical dedup key serialization.
+- **Smoke-stack/release-confidence coverage is strongest for:**
+  - migrated schema presence,
+  - live Postgres uniqueness enforcement,
+  - stack-level persistence contract sanity.
+- **Highest-value remaining validation gaps before more coding:**
+  1. explicit tests for prompt-path canonical provenance/dedup semantics,
+  2. explicit tests for `conversation_resolved` persistence behavior,
+  3. broader tool-result variant tests (timeout/error/replay/continuation),
+  4. a written policy for whether non-terminal errors and workflow UI events should remain ephemeral or become canonical records.
+
+### Code-ready audit summary
+
+At this point, the migration surface is audited enough to return to implementation work.
+
+#### Confirmed canonical transcript/event paths
+
+- visible user prompt
+- assistant final output
+- tool request
+- tool result
+- conversation resolved
+- terminal turn outcome
+
+#### Confirmed non-canonical / primarily ephemeral surfaces
+
+- plan-update UI projections
+- mode-update UI state
+- session-info update events
+- status/reasoning text
+
+#### Remaining design decisions before or during the next coding slice
+
+1. **Workflow policy decision**
+   - decide whether any workflow-state projections beyond terminal outcomes and conversation resolution should become canonical records.
+
+2. **Error persistence policy decision**
+   - decide which non-terminal/transient errors are worth canonical persistence versus remaining stream-only diagnostics.
+
+3. **Validation tightening on already-wired paths**
+   - prompt-path canonical tests,
+   - `conversation_resolved` tests,
+   - broader tool-result variant tests.
+
 ### Remaining work before this migration slice is complete
 
-1. **Close remaining confirmed producer-path gaps**
-   - wire or intentionally retire `conversation_resolved` canonical persistence,
-   - decide which workflow transitions deserve canonical persistence beyond terminal outcomes,
-   - add stronger explicit tests for prompt-path canonical provenance/dedup semantics now that user prompts use the helper path.
+1. **Make the workflow/diagnostic persistence policy explicit**
+   - document which workflow/UI/diagnostic surfaces are intentionally ephemeral,
+   - and which should graduate into canonical transcript/event records.
 
 2. **Broaden confirmed tool-result coverage**
    - producer wiring is present,
    - remaining work is to validate timeout/error/replay/continuation variants systematically.
 
-3. **Validate edge paths with focused tests**
-   - duplicate tool-result settlement,
+3. **Validate key canonical edge paths with focused tests**
+   - prompt-path provenance/dedup semantics,
+   - `conversation_resolved` persistence,
    - repeated assistant-output terminalization,
    - cancellation/failure/recovery interactions.
    - These should primarily land as fast unit/lib tests where practical.
