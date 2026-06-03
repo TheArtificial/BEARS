@@ -41,6 +41,17 @@ pub(in crate::api::acp) struct AcpStreamDiagnostics {
 }
 
 impl AcpStreamDiagnostics {
+    pub(in crate::api::acp) fn resumed_continuation_defaults() -> Self {
+        Self {
+            saw_requires_approval_stop: false,
+            ..Default::default()
+        }
+    }
+
+    pub(in crate::api::acp) fn reset_for_resumed_continuation(&mut self) {
+        self.saw_requires_approval_stop = false;
+    }
+
     pub(in crate::api::acp) fn merge_from(&mut self, other: Self) {
         self.upstream_frames += other.upstream_frames;
         self.parsed_events += other.parsed_events;

@@ -416,6 +416,45 @@ Status: **initial continuation-preparation slice landed**
   - `core/acp_turn_runner.rs` now exposes `default_acp_tool_continue_stream_context()`.
   - `api/acp/stream/sse_stream.rs` now delegates the default resumed-tool stream context construction to that shared helper instead of rebuilding the default inline.
 
+##### Pre-resume execution-context audit
+
+After those slices, the remaining ACP-side resume setup is concentrated in three places:
+
+1. **Execution-state assembly remains ACP-owned**
+   - `sse_stream.rs` still constructs a fresh `ApiState` for resumed continuation execution.
+   - This includes config/client wiring (`LettaClient`, `BifrostClient`) plus process-local registries.
+   - This is not yet a good extraction target because it is tightly tied to API/runtime wiring rather than continuation semantics.
+
+2. **Binding selection remains ACP-owned**
+   - `sse_stream.rs` still builds `RoleRuntimeBinding` inline for the compatibility backend (`letta`).
+   - This may become a future seam if runtime binding selection becomes transport-neutral, but today it is still ACP/provider policy.
+
+3. **Diagnostics reset is the smallest remaining shared-friendly candidate**
+   - resumed continuation setup still resets `AcpStreamDiagnostics` in-line after successful resume preparation/execution handoff,
+   - and flips `saw_requires_approval_stop = false` in multiple nearby places.
+   - This is the cleanest remaining pre-resume helper candidate if we want one more extraction before touching larger runtime wiring.
+
+##### Best next non-trivial candidate
+
+The safest next candidate is a **small resumed-stream diagnostics initializer/reset helper** that centralizes the default diagnostics state expected after a continuation resume is launched.
+
+That helper could own:
+- creation of fresh `AcpStreamDiagnostics`,
+- reset of `saw_requires_approval_stop`,
+- any future default flags that should be consistently cleared on resumed runtime execution.
+
+Status: **diagnostics reset helper landed**
+- `api/acp/stream/support.rs` now exposes:
+  - `AcpStreamDiagnostics::resumed_continuation_defaults()`
+  - `AcpStreamDiagnostics::reset_for_resumed_continuation()`
+- `api/acp/stream/sse_stream.rs` now delegates resumed diagnostics initialization/reset to those helpers instead of mutating `saw_requires_approval_stop` inline.
+
+These should remain at the ACP edge:
+- `ApiState` assembly,
+- `RoleRuntimeBinding` selection,
+- actual `continue_acp_turn_with_runtime(...)` invocation,
+- adapter event/error framing.
+
 Why this matters:
 - the shared/core side now owns the generic persistence context constructor,
 - ACP remains responsible only for adapting ACP session/request fields into that generic constructor,

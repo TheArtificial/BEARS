@@ -983,15 +983,14 @@ impl Stream for AcpRuntimeSseStream {
                                 stream_context,
                             })
                             .await?;
-                            let mut diagnostics = AcpStreamDiagnostics::default();
-                            diagnostics.saw_requires_approval_stop = false;
+                            let diagnostics = AcpStreamDiagnostics::resumed_continuation_defaults();
                             Ok((
                                 prepared.0,
                                 prepared.1,
                                 std::sync::Arc::new(std::sync::Mutex::new(diagnostics)),
                             ))
                         })));
-                    this.diagnostics.saw_requires_approval_stop = false;
+                    this.diagnostics.reset_for_resumed_continuation();
                     self.poll_next(cx)
                 } else if this.turn_controller.phase() == AcpTurnPhase::WaitingForObligations
                     && this.turn_controller.status_snapshot().open_obligations == 0
