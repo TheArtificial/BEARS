@@ -570,7 +570,8 @@ impl Stream for AcpRuntimeSseStream {
                             let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
                                 this.context.acp_session_id.clone(),
                             );
-                            let record = crate::core::conversation_events::CanonicalConversationRecord::tool_result(
+                            crate::core::conversation_events::spawn_persist_tool_result(
+                                super::runtime::canonical_persistence_context_from_acp(&this.context),
                                 tool_result.tool_name.clone(),
                                 tool_call_id,
                                 tool_result.approval_request_id.clone(),
@@ -580,10 +581,6 @@ impl Stream for AcpRuntimeSseStream {
                                 tool_result.diagnostic.clone(),
                                 tool_result.request_id.clone(),
                                 &provenance,
-                            );
-                            crate::core::conversation_events::spawn_persist_canonical_conversation_record(
-                                super::runtime::canonical_persistence_context_from_acp(&this.context),
-                                record,
                             );
                         }
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
