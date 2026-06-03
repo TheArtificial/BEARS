@@ -358,6 +358,9 @@ The smallest safe follow-on implementation slice is:
 Status: **initial slice landed**
 - `core/acp_tool_turns.rs` now exposes `settle_after_result(...)` returning `AcpToolSettlementSummary`.
 - `api/acp/stream/sse_stream.rs` now delegates pending-turn removal bookkeeping to that shared coordinator helper before ACP-specific controller/UI follow-up.
+- A second small settlement slice is also landed:
+  - `AcpToolSettlementSummary` now carries normalized classification flags (`completed_ok`, `timed_out`).
+  - `api/acp/stream/sse_stream.rs` now consumes those core-owned settlement flags for turn-controller updates instead of re-deriving status policy inline.
 
 Why this slice first:
 - core already owns much of the registry/delivery behavior,

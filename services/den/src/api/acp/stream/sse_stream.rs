@@ -588,9 +588,9 @@ impl Stream for AcpRuntimeSseStream {
                             .tool_turns
                             .settle_after_result(&this.context.acp_session_id, &tool_result);
                         if let Some(done_id) = settlement.tool_call_id.as_deref() {
-                            let ok = settlement.status == "ok";
-                            this.turn_controller.on_adapter_tool_result(done_id, ok);
-                            if settlement.status == "timeout" {
+                            this.turn_controller
+                                .on_adapter_tool_result(done_id, settlement.completed_ok);
+                            if settlement.timed_out {
                                 this.turn_controller.on_tool_timeout(done_id);
                             }
                         }
