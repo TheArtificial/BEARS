@@ -554,14 +554,16 @@ The safest next implementation slice is:
 - keep `core/conversation_events.rs` transport-neutral,
 - reduce repeated ACP callsite provenance shaping before considering any deeper persistence-policy refactor.
 
-Status: **ACP persistence adapter helper landed**
+Status: **ACP persistence adapter seam completed for current ACP event set**
 - `api/acp/stream/runtime.rs` now exposes:
   - `acp_session_provenance(...)`
   - `spawn_persist_acp_assistant_output(...)`
   - `spawn_persist_acp_turn_outcome(...)`
   - `spawn_persist_acp_tool_result(...)`
-- `api/acp/stream/sse_stream.rs` now delegates assistant-output, turn-outcome, and tool-result persistence through those ACP adapter helpers instead of rebuilding ACP-session provenance inline.
-- `runtime.rs` also reuses `acp_session_provenance(...)` for conversation-resolved and tool-request persistence callsites.
+  - `spawn_persist_acp_conversation_resolved(...)`
+  - `spawn_persist_acp_tool_request(...)`
+- `api/acp/stream/sse_stream.rs` now delegates assistant-output, turn-outcome, and tool-result persistence through ACP adapter helpers instead of rebuilding ACP-session provenance inline.
+- `api/acp/stream/runtime.rs` now also delegates conversation-resolved and tool-request persistence through ACP adapter helpers, finishing the current ACP-side provenance/context bundling pass while keeping `core/conversation_events.rs` transport-neutral.
 
 Decision rationale:
 - stop micro-extracting the resume path,
