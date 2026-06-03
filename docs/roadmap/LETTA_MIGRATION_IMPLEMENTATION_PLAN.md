@@ -354,7 +354,7 @@ This section tracks the current status of the Letta migration transcript-ownersh
 - Frequent implementation validation should continue to prefer focused/unit lib tests in `services/den`.
 - Smoke-stack validation via `scripts/smoke-stack.sh` should be treated as the slower integration/release-confidence layer.
 - For the current idempotency slice, we now have both:
-  - fast unit/helper validation in Rust tests, and
+  - fast unit/helper validation in Rust tests, including duplicate-like assistant replay scope checks and cancellation turn-outcome provenance checks, and
   - live smoke-stack-backed Postgres confirmation of the migrated uniqueness contract.
 
 ### Completed in this slice

@@ -3055,6 +3055,80 @@ mod tests {
     }
 
     #[test]
+    fn canonical_assistant_output_records_same_request_scope_for_duplicate_like_replays() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let first = CanonicalConversationRecord::assistant_output(
+            "hello once",
+            &provenance,
+            Some("provider-1".to_string()),
+            Some("req-123".to_string()),
+        );
+        let replay = CanonicalConversationRecord::assistant_output(
+            "hello twice",
+            &provenance,
+            Some("provider-1".to_string()),
+            Some("req-123".to_string()),
+        );
+
+        let first_json = match first {
+            CanonicalConversationRecord::VisibleMessage { content_json, .. } => content_json,
+            _ => panic!("expected visible message"),
+        };
+        let replay_json = match replay {
+            CanonicalConversationRecord::VisibleMessage { content_json, .. } => content_json,
+            _ => panic!("expected visible message"),
+        };
+
+        assert_eq!(first_json["event"], "assistant_output");
+        assert_eq!(first_json["request_id"], "req-123");
+        assert_eq!(replay_json["request_id"], "req-123");
+        assert_eq!(first_json["scope_id"], replay_json["scope_id"]);
+        assert_eq!(
+            first_json["provider_message_id"],
+            replay_json["provider_message_id"]
+        );
+    }
+
+    #[test]
+    fn canonical_turn_outcome_records_cancellation_request_scope() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-test-session");
+        let record = CanonicalConversationRecord::turn_outcome(
+            "cancelled",
+            "cancelled",
+            "req-cancel-123",
+            false,
+            serde_json::json!({"channel_id":"acp-test-session"}),
+            serde_json::json!({"cancel_source":"user"}),
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                content_text,
+                content_json,
+                ..
+            } => {
+                assert_eq!(content_text, "Turn outcome: cancelled / cancelled");
+                assert_eq!(content_json["event"], "turn_result");
+                assert_eq!(content_json["status"], "cancelled");
+                assert_eq!(content_json["reason"], "cancelled");
+                assert_eq!(content_json["request_id"], "req-cancel-123");
+                assert_eq!(content_json["scope_id"], "acp-test-session");
+                assert_eq!(content_json["diagnostics"]["cancel_source"], "user");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
     fn sse_parser_joins_multiple_data_lines_into_one_json_value() {
         let body = br#"data: {"message_type":"assistant_message","content":
 data: "hello"}"#;
