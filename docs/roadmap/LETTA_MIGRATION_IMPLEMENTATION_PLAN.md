@@ -412,6 +412,9 @@ Status: **initial continuation-preparation slice landed**
 - `core/acp_tool_turns.rs` now exposes `prepare_runtime_continuation(...)` plus structured result/error types.
 - `api/acp/stream/sse_stream.rs` now delegates missing-`tool_call_id` validation, status mapping, and approval-vs-tool-result continuation shaping to that shared helper.
 - ACP stream still owns user-facing error framing and resumed runtime execution.
+- A second small continuation-resume slice is also landed:
+  - `core/acp_turn_runner.rs` now exposes `default_acp_tool_continue_stream_context()`.
+  - `api/acp/stream/sse_stream.rs` now delegates the default resumed-tool stream context construction to that shared helper instead of rebuilding the default inline.
 
 Why this matters:
 - the shared/core side now owns the generic persistence context constructor,

@@ -65,6 +65,14 @@ pub struct AcpTurnContinueRequest<'a> {
     pub stream_context: AcpTurnStreamContext,
 }
 
+pub fn default_acp_tool_continue_stream_context() -> AcpTurnStreamContext {
+    AcpTurnStreamContext {
+        client_tools: None,
+        stream_tokens: false,
+        max_steps: 4,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpTurnStreamContext {
     pub client_tools: Option<Value>,

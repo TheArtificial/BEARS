@@ -17,7 +17,7 @@ use crate::{
             mode_from_den_tool_result, plan_update_from_den_tool_result,
             AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
             AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-            AcpTurnStreamContext, RoleRuntimeBinding,
+            RoleRuntimeBinding, default_acp_tool_continue_stream_context,
         },
         acp::types::PersistedToolRequestEffect,
         service::ApiState,
@@ -971,11 +971,7 @@ impl Stream for AcpRuntimeSseStream {
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();
                     let continuation_request = prepared_continuation.continuation;
-                    let stream_context = AcpTurnStreamContext {
-                        client_tools: None,
-                        stream_tokens: false,
-                        max_steps: 4,
-                    };
+                    let stream_context = default_acp_tool_continue_stream_context();
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                             let prepared = continue_acp_turn_with_runtime(AcpTurnContinueRequest {

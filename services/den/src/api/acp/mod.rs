@@ -60,7 +60,8 @@ use crate::{
         acp_turn_controller::AcpActiveTurnCancelHandle,
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
-            AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
+            default_acp_tool_continue_stream_context, AcpStaleRuntimeCleanupParams,
+            AcpTurnContinueRequest,
         },
         runtime_provider::RoleRuntimeBinding,
     },
