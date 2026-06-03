@@ -77,6 +77,7 @@ pub struct AcpToolTurnCleanupSummary {
 pub struct AcpToolSettlementSummary {
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
+    pub display_tool_name: String,
     pub status: String,
     pub removed_pending_turn: bool,
     pub completed_ok: bool,
@@ -638,6 +639,12 @@ impl AcpToolTurnCoordinator {
         AcpToolSettlementSummary {
             tool_call_id: result.tool_call_id.clone(),
             tool_name: result.tool_name.clone(),
+            display_tool_name: result
+                .tool_name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("tool")
+                .to_string(),
             completed_ok: result.status == "ok",
             timed_out: result.status == "timeout",
             status: result.status.clone(),

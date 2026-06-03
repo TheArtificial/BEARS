@@ -603,20 +603,16 @@ impl Stream for AcpRuntimeSseStream {
                             };
                             this.push_adapter_event(mode_event);
                         }
-                        let tool_name = tool_result
-                            .tool_name
-                            .as_deref()
-                            .unwrap_or("tool")
-                            .to_string();
                         let completion_text = normalize_display_status_text(
                             &if acp_debug_ui_enabled() {
                                 format!(
-                                    "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
+                                    "BEARS debug: local tool {} completed with status {} ({} bytes)",
+                                    settlement.display_tool_name,
                                     tool_result.status,
                                     tool_result.content.as_deref().map(str::len).unwrap_or(0),
                                 )
                             } else {
-                                format!("Local tool {tool_name} completed")
+                                format!("Local tool {} completed", settlement.display_tool_name)
                             },
                         );
                         for event in this.text_chunker.flush_all() {

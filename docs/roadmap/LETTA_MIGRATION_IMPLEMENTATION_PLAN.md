@@ -361,6 +361,9 @@ Status: **initial slice landed**
 - A second small settlement slice is also landed:
   - `AcpToolSettlementSummary` now carries normalized classification flags (`completed_ok`, `timed_out`).
   - `api/acp/stream/sse_stream.rs` now consumes those core-owned settlement flags for turn-controller updates instead of re-deriving status policy inline.
+- A third small settlement slice is also landed:
+  - `AcpToolSettlementSummary` now carries a normalized `display_tool_name` fallback.
+  - `api/acp/stream/sse_stream.rs` now consumes that core-owned display name when building completion status text instead of re-deriving the fallback inline.
 
 Why this slice first:
 - core already owns much of the registry/delivery behavior,
