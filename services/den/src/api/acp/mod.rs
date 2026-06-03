@@ -423,6 +423,39 @@ mod tests {
     }
 
     #[test]
+    fn canonical_history_page_diagnostic_only_rows_do_not_create_visible_history() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let rows = vec![
+            PersistedConversationMessage {
+                sequence_no: 2,
+                message_type: "workflow_event".to_string(),
+                role: Some("system".to_string()),
+                visibility: "diagnostic_only".to_string(),
+                content_text: "Conversation resolved".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+            PersistedConversationMessage {
+                sequence_no: 1,
+                message_type: "workflow_event".to_string(),
+                role: Some("system".to_string()),
+                visibility: "diagnostic_only".to_string(),
+                content_text: "Turn outcome: ok / stream_complete".to_string(),
+                provider_message_id: None,
+                created_at: now,
+            },
+        ];
+
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 50);
+        assert!(messages.is_empty());
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("1"));
+    }
+
+    #[test]
     fn acp_history_page_replays_desc_letta_page_chronologically() {
         let body = serde_json::json!({
             "messages": [
@@ -446,6 +479,24 @@ mod tests {
                 ("assistant", "reply 2"),
             ]
         );
+    }
+
+    #[test]
+    fn letta_history_page_can_fill_visible_history_when_canonical_rows_are_absent() {
+        let body = serde_json::json!({
+            "messages": [
+                { "id": "m2", "message_type": "assistant_message", "content": "runtime reply", "created_at": "2026-01-01T00:00:02Z" },
+                { "id": "m1", "message_type": "user_message", "content": "runtime prompt", "created_at": "2026-01-01T00:00:01Z" }
+            ]
+        });
+        let (messages, has_more, next_before) = map_acp_history_page(&body, 50);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("m1"));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "runtime prompt");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].text, "runtime reply");
     }
 
     #[test]
