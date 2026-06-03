@@ -2397,6 +2397,78 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn runtime_tool_request_mapping_exposes_continuation_receiver_for_local_tools() {
+        use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
+        use crate::api::acp::stream::support::AcpStreamDiagnostics;
+        use crate::core::runtime_provider::RuntimeStreamEvent;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-continuation-session",
+            Some("conv-continuation".to_string()),
+        );
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-continuation-session".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-continuation".to_string(),
+            resolved_conversation_id: Some("conv-continuation".to_string()),
+            upstream_target: "conv-continuation".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime,
+            turn_scope,
+        };
+        let runtime_event = RuntimeStreamEvent::ToolCallRequested {
+            tool_call_id: "call-cont-1".to_string(),
+            tool_name: "fs_read_text_file".to_string(),
+            title: Some("Read text file".to_string()),
+            kind: Some("read".to_string()),
+            arguments: serde_json::json!({"path":"/workspace/README.md"}),
+            approval_request_id: Some("approval-cont-1".to_string()),
+            approval_required: true,
+            approval_reason: Some("workspace read".to_string()),
+        };
+        let mut diagnostics = AcpStreamDiagnostics::default();
+
+        let (events, effect, adapter_result_rx) = futures::executor::block_on(
+            map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                runtime_event,
+                context,
+                &mut diagnostics,
+            ),
+        )
+        .expect("mapping should succeed");
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], AcpGatewayEvent::ToolRequest { .. }));
+        let effect = effect.expect("tool request effect expected");
+        assert!(matches!(effect.route, ToolExecutionRoute::AdapterLocal));
+        let (tool_call_id, tool_name, resolved) =
+            adapter_result_rx.expect("continuation receiver should be exposed");
+        assert_eq!(tool_call_id, "call-cont-1");
+        assert_eq!(tool_name, "fs_read_text_file");
+        assert!(matches!(resolved, AcpResolvedToolResult::Receiver(_)));
+    }
+
     #[test]
     fn runtime_terminal_failure_events_follow_strict_terminal_contract() {
         let request_id = "req-test";
@@ -2513,6 +2585,77 @@ mod tests {
             value["diagnostic"]["tool_call_id"],
             serde_json::json!("call_idempotent")
         );
+        assert_eq!(value["diagnostic"]["status"], "ok");
+    }
+
+    #[test]
+    fn acp_tool_result_endpoint_marks_changed_replay_as_conflict() {
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
+        registry
+            .register(AcpToolTurnRegistration {
+                user_id: 1,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: "acp-conflict-session".to_string(),
+                request_id,
+                tool_call_id: "call_conflict".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: None,
+                timeout_ms: 1_000,
+                result_tx,
+            })
+            .expect("register tool turn");
+
+        let first = AcpToolResultRequest {
+            tool_call_id: Some("call_conflict".to_string()),
+            tool_name: Some("fs_read_text_file".to_string()),
+            status: "ok".to_string(),
+            content: Some("original body".to_string()),
+            structured_content: serde_json::json!({"k":"v1"}),
+            diagnostic: serde_json::json!({"phase":"first"}),
+            ..Default::default()
+        };
+        let changed = AcpToolResultRequest {
+            content: Some("changed body".to_string()),
+            structured_content: serde_json::json!({"k":"v2"}),
+            diagnostic: serde_json::json!({"phase":"second"}),
+            ..first.clone()
+        };
+
+        let first_delivery = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-conflict-session",
+                "call_conflict",
+                first,
+            )
+            .expect("first delivery");
+        assert!(matches!(first_delivery, AcpToolResultDelivery::Delivered { .. }));
+
+        let replay = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-conflict-session",
+                "call_conflict",
+                changed,
+            )
+            .expect("changed replay should classify without transport error");
+        let response = acp_tool_result_response_from_delivery(
+            replay,
+            "acp-conflict-session",
+            "call_conflict".to_string(),
+            AcpToolStatus::Ok,
+            &registry,
+        );
+        let value = response.to_value();
+        assert_eq!(value["accepted"], true);
+        assert_eq!(value["reason"], "duplicate_result_ignored");
+        assert_eq!(value["settlement"], "already_settled");
+        assert_eq!(value["diagnostic"]["tool_call_id"], "call_conflict");
         assert_eq!(value["diagnostic"]["status"], "ok");
     }
 

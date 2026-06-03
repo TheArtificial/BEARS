@@ -469,9 +469,8 @@ These surfaces are useful for ACP UX and operator context, but they do not curre
   - live Postgres uniqueness enforcement,
   - stack-level persistence contract sanity.
 - **Highest-value remaining validation gaps before more coding:**
-  1. broader tool-result variant tests that go beyond timeout/error metadata shape into replay/continuation behavior,
-  2. stronger end-to-end-style tests for prompt-path and `conversation_resolved` persistence behavior,
-  3. a written policy for whether non-terminal errors and workflow UI events should remain ephemeral or become canonical records.
+  1. stronger end-to-end-style tests for prompt-path and `conversation_resolved` persistence behavior,
+  2. smoke/integration confirmation that replay and continuation semantics hold against the full stack, not just the fast unit/lib layer.
 
 ### Code-ready audit summary
 
