@@ -20,6 +20,30 @@ This plan covers:
 
 This plan does **not** fully specify archival retrieval replacement, editable prompt-memory replacement, or every long-term non-ACP runtime detail beyond what the Letta cutover directly depends on.
 
+## Validation strategy
+
+We should treat validation as two intentionally different regimes:
+
+1. **Fast unit/library validation for active development**
+   - This is the default validation loop while implementing migration slices.
+   - It should rely on focused Rust unit/lib tests that run quickly and are practical to execute repeatedly during editing.
+   - These tests should cover canonical record construction, dedup key derivation, persistence decision logic, replay handling, terminal-path semantics, and other logic that benefits from tight iteration.
+   - For the current Den service, the primary frequent loop is `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml`, optionally narrowed to targeted test groups while iterating.
+
+2. **Smoke-stack integration validation for stack-level confidence**
+   - This is the slower, environment-backed validation regime we should run before releases, major cutover points, or high-risk migration milestones.
+   - It should verify that the built services, migrations, docker-compose stack, seed flows, and cross-service runtime behavior work together in a live environment.
+   - In this repository, `scripts/smoke-stack.sh` is the right anchor for that regime because it builds the local images, starts the bundled stack, waits for readiness, applies the smoke seed, and runs `scripts/smoke.sh`.
+   - Smoke-stack validation is the right place to verify migrated-schema presence, live Postgres uniqueness contracts, service wiring, and end-to-end behavior that unit tests should not try to simulate fully.
+
+### Practical policy for this migration
+
+- Use **unit/lib tests** as the required default proof for most code changes during implementation.
+- Use **targeted live DB probes** only when needed to validate migration/schema assumptions that unit tests cannot establish by themselves.
+- Use **smoke-stack validation** as the release/pre-release gate for Letta migration slices that change persistence, migrations, transcript ownership, or cross-service runtime behavior.
+- Do **not** try to force every stack concern into the fast unit-test loop; keep the fast path fast.
+- Do **not** treat smoke-stack checks as a substitute for good unit coverage; they are the slower confidence layer on top.
+
 ## Success criteria
 
 The implementation is successful when:
@@ -162,6 +186,8 @@ The implementation is successful when:
 - Canonical persistence is safe under expected retry/replay conditions.
 - Duplicate visible transcript rows are prevented or explicitly explainable.
 - Dedup policy is documented and test-covered.
+- Fast unit/lib validation covers the canonical dedup logic and helper semantics used during implementation.
+- Smoke-stack validation covers live migrated-schema behavior before release/cutover decisions.
 
 ---
 
@@ -323,6 +349,14 @@ The implementation is successful when:
 
 This section tracks the current status of the Letta migration transcript-ownership slice.
 
+### Validation posture
+
+- Frequent implementation validation should continue to prefer focused/unit lib tests in `services/den`.
+- Smoke-stack validation via `scripts/smoke-stack.sh` should be treated as the slower integration/release-confidence layer.
+- For the current idempotency slice, we now have both:
+  - fast unit/helper validation in Rust tests, and
+  - live smoke-stack-backed Postgres confirmation of the migrated uniqueness contract.
+
 ### Completed in this slice
 
 - **Phase 1 — canonical transcript ownership completion for ACP `pair` (expanded)**
@@ -370,8 +404,13 @@ This section tracks the current status of the Letta migration transcript-ownersh
 3. **Validate edge paths with focused tests**
    - duplicate tool-result settlement,
    - repeated assistant-output terminalization,
-   - cancellation/failure interactions,
-   - DB-applied duplicate suppression across migrated `conversation_messages.source_event_id` schema.
+   - cancellation/failure interactions.
+   - These should primarily land as fast unit/lib tests where practical.
+
+4. **Keep smoke-stack integration validation as the release-confidence layer**
+   - verify migrated schema presence,
+   - verify live duplicate suppression/uniqueness behavior,
+   - verify stack wiring and seeded runtime behavior before release/cutover.
 
 ### Practical migration summary
 
