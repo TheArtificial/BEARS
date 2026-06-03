@@ -192,17 +192,19 @@ pub(super) async fn conversation_history_inner(
     .await?;
     if !canonical_rows.is_empty() {
         let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
-        let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
-            .await
-            .unwrap_or_default();
-        return Ok(Json(AcpConversationHistoryResponse {
-            messages,
-            has_more,
-            next_before,
-            compaction: None,
-            compaction_history,
-        })
-        .into_response());
+        if !messages.is_empty() {
+            let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
+                .await
+                .unwrap_or_default();
+            return Ok(Json(AcpConversationHistoryResponse {
+                messages,
+                has_more,
+                next_before,
+                compaction: None,
+                compaction_history,
+            })
+            .into_response());
+        }
     }
     let body = state
         .letta

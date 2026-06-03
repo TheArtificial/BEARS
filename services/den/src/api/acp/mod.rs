@@ -548,6 +548,38 @@ mod tests {
     }
 
     #[test]
+    fn canonical_read_eligibility_requires_visible_canonical_messages() {
+        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::now_utc();
+        let diagnostic_only = vec![PersistedConversationMessage {
+            sequence_no: 1,
+            message_type: "workflow_event".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: "conversation resolved".to_string(),
+            provider_message_id: None,
+            created_at: now,
+        }];
+        let (diagnostic_messages, _, _) = map_canonical_history_page(&diagnostic_only, 50);
+        assert!(diagnostic_messages.is_empty());
+
+        let visible = vec![PersistedConversationMessage {
+            sequence_no: 2,
+            message_type: "assistant".to_string(),
+            role: None,
+            visibility: "default".to_string(),
+            content_text: "visible assistant".to_string(),
+            provider_message_id: None,
+            created_at: now,
+        }];
+        let (visible_messages, _, _) = map_canonical_history_page(&visible, 50);
+        assert_eq!(visible_messages.len(), 1);
+        assert_eq!(visible_messages[0].text, "visible assistant");
+    }
+
+    #[test]
     fn adapter_environment_request_deserializes_client_thread_title() {
         let body: AcpAdapterEnvironmentRequest = serde_json::from_value(serde_json::json!({
             "environment": { "thread_title": "Zed rename" },

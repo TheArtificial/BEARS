@@ -537,7 +537,7 @@ At this point, the migration surface is audited enough to return to implementati
      - diagnostic-only canonical rows staying invisible,
      - Letta fallback filling visible history when canonical rows are absent,
      - current Den-first behavior when canonical history is partial (user-only or assistant-only visible rows).
-   - The practical current policy is: any visible canonical rows cause Den history mapping to win; only zero canonical rows trigger Letta fallback.
+   - The practical current policy is now explicit in the ACP history handler: canonical history is preferred only when canonical rows produce at least one visible transcript message; diagnostic-only-only canonical pages fall back to Letta/runtime history.
    - Stack-level proof is still desirable.
 
 3. **Add bespoke smoke-stack coverage for replay + continuation if release confidence requires it**
