@@ -27,7 +27,7 @@ use crate::{
         acp_tool_turns::AcpToolResultRequest,
         acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
         role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
-        runtime_provider::{RuntimeContinuation, RuntimeStreamEvent, RuntimeToolResultStatus},
+        runtime_provider::RuntimeStreamEvent,
         bifrost::BifrostClient,
         letta::normalize_display_status_text,
     },
@@ -935,29 +935,26 @@ impl Stream for AcpRuntimeSseStream {
                     );
                     Poll::Pending
                 } else if let Some(tool_result) = this.queued_tool_result_continuation.take() {
-                    let tool_name = tool_result
-                        .tool_name
-                        .as_deref()
-                        .unwrap_or("tool")
-                        .to_string();
-                    let Some(tool_call_id) = tool_result.tool_call_id.clone() else {
-                        this.pending.push_back(acp_event_to_adapter_sse(
-                            AcpGatewayEvent::Error {
-                                message: "Cannot continue Letta after ACP tool result without original tool_call_id.".to_string(),
-                                detail: Some(format!(
-                                    "Tool result for {tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."
-                                )),
-                                error_type: Some("missing_tool_call_id".to_string()),
-                                request_id: Some(this.context.request_id.to_string()),
-                                context: None,
-                            },
-                        ));
-                        return self.poll_next(cx);
+                    let prepared_continuation = match crate::core::acp_tool_turns::AcpToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
+                        Ok(prepared) => prepared,
+                        Err(crate::core::acp_tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
+                            display_tool_name,
+                        }) => {
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::Error {
+                                    message: "Cannot continue Letta after ACP tool result without original tool_call_id.".to_string(),
+                                    detail: Some(format!(
+                                        "Tool result for {display_tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."
+                                    )),
+                                    error_type: Some("missing_tool_call_id".to_string()),
+                                    request_id: Some(this.context.request_id.to_string()),
+                                    context: None,
+                                },
+                            ));
+                            return self.poll_next(cx);
+                        }
                     };
                     this.diagnostics.saw_tool_return_ack = true;
-                    let tool_return = tool_result.content.clone().unwrap_or_default();
-                    let status = tool_result.status.clone();
-                    let approval_request_id = tool_result.approval_request_id.clone();
                     let config = this.context.config.clone();
                     let api_state = ApiState {
                         sqlx_pool: this.context.pool.clone(),
@@ -973,30 +970,7 @@ impl Stream for AcpRuntimeSseStream {
                     };
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();
-                    let continuation_request =
-                        if let Some(approval_request_id) = approval_request_id {
-                            RuntimeContinuation::ApprovalDecision {
-                                approval_request_id,
-                                tool_call_id: Some(tool_call_id.clone()),
-                                decision: if status == "ok" {
-                                    crate::core::runtime_provider::RuntimeApprovalDecision::Approve
-                                } else {
-                                    crate::core::runtime_provider::RuntimeApprovalDecision::Deny
-                                },
-                                reason: Some(tool_return.clone()),
-                            }
-                        } else {
-                            RuntimeContinuation::ToolResult {
-                                tool_call_id: tool_call_id.clone(),
-                                approval_request_id: None,
-                                status: match status.as_str() {
-                                    "ok" => RuntimeToolResultStatus::Ok,
-                                    "timeout" => RuntimeToolResultStatus::Timeout,
-                                    _ => RuntimeToolResultStatus::Error,
-                                },
-                                content: tool_return.clone(),
-                            }
-                        };
+                    let continuation_request = prepared_continuation.continuation;
                     let stream_context = AcpTurnStreamContext {
                         client_tools: None,
                         stream_tokens: false,

@@ -365,16 +365,60 @@ Status: **initial slice landed**
   - `AcpToolSettlementSummary` now carries a normalized `display_tool_name` fallback.
   - `api/acp/stream/sse_stream.rs` now consumes that core-owned display name when building completion status text instead of re-deriving the fallback inline.
 
-Why this slice first:
-- core already owns much of the registry/delivery behavior,
-- ACP currently duplicates just enough cleanup/orchestration to make the boundary noisy,
-- it advances reuse without prematurely abstracting runtime-provider continuation behavior.
+#### Continuation resume contract audit
+
+The next broader seam after settlement is the **resume contract** between queued tool results and runtime continuation.
+
+##### Current continuation split
+
+1. **ACP stream owns queueing and resume triggering**
+   - `queued_tool_result_continuation` lives in `api/acp/stream/sse_stream.rs`.
+   - ACP decides when upstream/runtime conditions allow resumption.
+
+2. **ACP stream still inlines continuation request construction**
+   - it converts a queued `AcpToolResultRequest` into either:
+     - `RuntimeContinuation::ApprovalDecision`, or
+     - `RuntimeContinuation::ToolResult`.
+   - it also inlines status mapping (`ok` / `timeout` / error) and missing-`tool_call_id` refusal behavior.
+
+3. **Runtime driving remains ACP-specific**
+   - creation of `ApiState`, `RoleRuntimeBinding`, `AcpTurnContinueRequest`, and resumed stream diagnostics stays tightly coupled to ACP stream/provider orchestration.
+   - this part is not yet a good extraction target because it still mixes provider selection and stream framing assumptions.
+
+##### Best first continuation-resume extraction candidate
+
+The safest next candidate appears to be a **shared continuation request builder/helper** that converts a settled ACP tool result into a normalized runtime continuation input.
+
+That helper can own transport-neutral pieces such as:
+- requiring original `tool_call_id`,
+- mapping ACP tool-result status into `RuntimeToolResultStatus`,
+- choosing approval-decision vs tool-result continuation shape,
+- carrying normalized continuation-preparation diagnostics/result.
+
+These should remain at the ACP edge:
+- deciding when the queued continuation may run,
+- emitting adapter error/status events,
+- constructing `ApiState` / binding / streamed continuation execution,
+- post-resume event framing and diagnostics.
+
+##### Recommended next implementation slice
+
+The smallest safe follow-on slice after settlement is:
+
+- introduce a core-facing helper that transforms `AcpToolResultRequest` into a prepared runtime continuation payload (or a structured preparation error),
+- update `sse_stream.rs` to consume that prepared continuation while retaining ACP-specific event/error framing.
+
+Status: **initial continuation-preparation slice landed**
+- `core/acp_tool_turns.rs` now exposes `prepare_runtime_continuation(...)` plus structured result/error types.
+- `api/acp/stream/sse_stream.rs` now delegates missing-`tool_call_id` validation, status mapping, and approval-vs-tool-result continuation shaping to that shared helper.
+- ACP stream still owns user-facing error framing and resumed runtime execution.
 
 Why this matters:
 - the shared/core side now owns the generic persistence context constructor,
 - ACP remains responsible only for adapting ACP session/request fields into that generic constructor,
 - shared/core now also owns more of the transport-neutral assistant-output / turn-outcome / tool-result / tool-request persistence glue,
 - the next reuse win is the settlement bookkeeping boundary between the coordinator and ACP stream orchestration,
+- after settlement, the next strongest reusable boundary is continuation-request preparation before provider/runtime-specific streaming resumes,
 - future non-ACP runners can reuse the same core constructor and helper layer without importing ACP event policy.
 
 ---

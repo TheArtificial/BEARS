@@ -9,7 +9,12 @@ use time::OffsetDateTime;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use crate::{
+    core::runtime_provider::{
+        RuntimeApprovalDecision, RuntimeContinuation, RuntimeToolResultStatus,
+    },
+    errors::CustomError,
+};
 
 const ACTIVE_TURN_TTL: Duration = Duration::from_secs(10 * 60);
 
@@ -71,6 +76,18 @@ impl AcpPendingToolTurn {
 pub struct AcpToolTurnCleanupSummary {
     pub pending_removed: usize,
     pub settled_removed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrepareRuntimeContinuationError {
+    MissingToolCallId { display_tool_name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRuntimeContinuation {
+    pub tool_call_id: String,
+    pub display_tool_name: String,
+    pub continuation: RuntimeContinuation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -618,6 +635,49 @@ impl AcpToolTurnCoordinator {
         if let Ok(mut active_turns) = self.active_turns.lock() {
             active_turns.remove(session_id);
         }
+    }
+
+    pub fn prepare_runtime_continuation(
+        result: &AcpToolResultRequest,
+    ) -> Result<PreparedRuntimeContinuation, PrepareRuntimeContinuationError> {
+        let display_tool_name = result
+            .tool_name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("tool")
+            .to_string();
+        let Some(tool_call_id) = result.tool_call_id.clone() else {
+            return Err(PrepareRuntimeContinuationError::MissingToolCallId { display_tool_name });
+        };
+        let content = result.content.clone().unwrap_or_default();
+        let continuation = if let Some(approval_request_id) = result.approval_request_id.clone() {
+            RuntimeContinuation::ApprovalDecision {
+                approval_request_id,
+                tool_call_id: Some(tool_call_id.clone()),
+                decision: if result.status == "ok" {
+                    RuntimeApprovalDecision::Approve
+                } else {
+                    RuntimeApprovalDecision::Deny
+                },
+                reason: Some(content.clone()),
+            }
+        } else {
+            RuntimeContinuation::ToolResult {
+                tool_call_id: tool_call_id.clone(),
+                approval_request_id: None,
+                status: match result.status.as_str() {
+                    "ok" => RuntimeToolResultStatus::Ok,
+                    "timeout" => RuntimeToolResultStatus::Timeout,
+                    _ => RuntimeToolResultStatus::Error,
+                },
+                content,
+            }
+        };
+        Ok(PreparedRuntimeContinuation {
+            tool_call_id,
+            display_tool_name,
+            continuation,
+        })
     }
 
     pub fn settle_after_result(
