@@ -511,6 +511,58 @@ The next concrete slice should be:
   - and caller-owned event categorization/provenance shaping,
 - then extract the next transport-neutral persistence entrypoint/helper that future runners can call without ACP-specific knowledge.
 
+##### Conversation-event persistence seam audit
+
+Current caller/core split after the recent extractions:
+
+1. **core already owns record construction and spawn orchestration**
+   - `core/conversation_events.rs` owns:
+     - `spawn_persist_canonical_conversation_record(...)`
+     - `spawn_persist_assistant_output(...)`
+     - `spawn_persist_turn_outcome(...)`
+     - `spawn_persist_tool_result(...)`
+     - `spawn_persist_tool_request(...)`
+
+2. **ACP callers still own provenance creation policy**
+   - ACP callsites in `sse_stream.rs` and `runtime.rs` repeatedly construct:
+     - `ConversationEventProvenance::acp_session(acp_session_id.clone())`
+   - then immediately pass that provenance into core persistence helpers.
+
+3. **The remaining split is policy-shaped, not just syntactic**
+   - provenance creation is currently transport-specific (`acp_session`) but the repeated pattern suggests the next reusable seam is a small **transport-adapter persistence entrypoint** rather than another raw spawn helper.
+   - the transport-neutral core should still avoid importing ACP concerns directly, but ACP-facing code can likely centralize this policy in one ACP adapter helper instead of rebuilding provenance at each callsite.
+
+##### Best next persistence extraction candidate
+
+The strongest next slice appears to be:
+
+- an **ACP-facing persistence adapter helper** that bundles:
+  - `canonical_persistence_context_from_acp(...)`
+  - ACP-session provenance creation
+  - and a small number of common ACP persistence entrypoints
+
+This is stronger than further raw-core helper extraction because:
+- core helper coverage is already reasonably good,
+- the repeated duplication now lives more in ACP adapter policy than in canonical record construction,
+- it preserves the transport-neutral boundary while still reducing ACP callsite noise.
+
+##### Recommended next implementation slice
+
+The safest next implementation slice is:
+
+- introduce one small ACP adapter helper for the most repeated persistence path(s), starting with ACP-session provenance bundling for assistant-output / turn-outcome / tool-result persistence,
+- keep `core/conversation_events.rs` transport-neutral,
+- reduce repeated ACP callsite provenance shaping before considering any deeper persistence-policy refactor.
+
+Status: **ACP persistence adapter helper landed**
+- `api/acp/stream/runtime.rs` now exposes:
+  - `acp_session_provenance(...)`
+  - `spawn_persist_acp_assistant_output(...)`
+  - `spawn_persist_acp_turn_outcome(...)`
+  - `spawn_persist_acp_tool_result(...)`
+- `api/acp/stream/sse_stream.rs` now delegates assistant-output, turn-outcome, and tool-result persistence through those ACP adapter helpers instead of rebuilding ACP-session provenance inline.
+- `runtime.rs` also reuses `acp_session_provenance(...)` for conversation-resolved and tool-request persistence callsites.
+
 Decision rationale:
 - stop micro-extracting the resume path,
 - return to the next stronger Phase 5 boundary outside ACP resume wiring,

@@ -49,6 +49,68 @@ pub(in crate::api::acp) fn canonical_persistence_context_from_acp(
     )
 }
 
+pub(in crate::api::acp) fn acp_session_provenance(
+    context: &AcpStreamContext,
+) -> crate::core::conversation_events::ConversationEventProvenance {
+    crate::core::conversation_events::ConversationEventProvenance::acp_session(
+        context.acp_session_id.clone(),
+    )
+}
+
+pub(in crate::api::acp) fn spawn_persist_acp_assistant_output(
+    context: &AcpStreamContext,
+    content_text: String,
+    provider_message_id: Option<String>,
+    request_id: Option<String>,
+) {
+    let provenance = acp_session_provenance(context);
+    crate::core::conversation_events::spawn_persist_assistant_output(
+        canonical_persistence_context_from_acp(context),
+        content_text,
+        &provenance,
+        provider_message_id,
+        request_id,
+    );
+}
+
+pub(in crate::api::acp) fn spawn_persist_acp_turn_outcome(
+    context: &AcpStreamContext,
+    role_result: &crate::core::role_runtime::RoleTurnResult,
+) {
+    let provenance = acp_session_provenance(context);
+    crate::core::conversation_events::spawn_persist_turn_outcome(
+        canonical_persistence_context_from_acp(context),
+        role_result,
+        &provenance,
+    );
+}
+
+pub(in crate::api::acp) fn spawn_persist_acp_tool_result(
+    context: &AcpStreamContext,
+    tool_name: Option<String>,
+    tool_call_id: String,
+    approval_request_id: Option<String>,
+    status: String,
+    content: Option<String>,
+    structured_content: serde_json::Value,
+    diagnostic: serde_json::Value,
+    request_id: Option<String>,
+) {
+    let provenance = acp_session_provenance(context);
+    crate::core::conversation_events::spawn_persist_tool_result(
+        canonical_persistence_context_from_acp(context),
+        tool_name,
+        tool_call_id,
+        approval_request_id,
+        status,
+        content,
+        structured_content,
+        diagnostic,
+        request_id,
+        &provenance,
+    );
+}
+
 pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     context: &AcpStreamContext,
     message_type: &'static str,
@@ -120,9 +182,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 conversation_id,
             )
             .await?;
-            let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
-                context.acp_session_id.clone(),
-            );
+            let provenance = acp_session_provenance(context);
             spawn_persist_canonical_conversation_record(
                 canonical_persistence_context_from_acp(context),
                 CanonicalConversationRecord::conversation_resolved(
@@ -158,9 +218,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                 approval_request_id = ?approval_request_id,
                 "ACP tool request route classified"
             );
-            let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
-                context.acp_session_id.clone(),
-            );
+            let provenance = acp_session_provenance(context);
             crate::core::conversation_events::spawn_persist_tool_request(
                 canonical_persistence_context_from_acp(context),
                 tool_name.clone(),

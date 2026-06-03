@@ -218,27 +218,16 @@ impl AcpRuntimeSseStream {
         if self.assistant_text_buffer.is_empty() {
             return;
         }
-        let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
-            self.context.acp_session_id.clone(),
-        );
-        crate::core::conversation_events::spawn_persist_assistant_output(
-            super::runtime::canonical_persistence_context_from_acp(&self.context),
+        super::runtime::spawn_persist_acp_assistant_output(
+            &self.context,
             std::mem::take(&mut self.assistant_text_buffer),
-            &provenance,
             None,
             Some(self.context.request_id.to_string()),
         );
     }
 
     pub(in crate::api::acp) fn persist_terminal_outcome(&mut self, role_result: &RoleTurnResult) {
-        let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
-            self.context.acp_session_id.clone(),
-        );
-        crate::core::conversation_events::spawn_persist_turn_outcome(
-            super::runtime::canonical_persistence_context_from_acp(&self.context),
-            role_result,
-            &provenance,
-        );
+        super::runtime::spawn_persist_acp_turn_outcome(&self.context, role_result);
     }
 
     pub(in crate::api::acp) fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
@@ -567,11 +556,8 @@ impl Stream for AcpRuntimeSseStream {
                     let tool_result = *tool_result;
                     {
                         if let Some(tool_call_id) = tool_result.tool_call_id.clone() {
-                            let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
-                                this.context.acp_session_id.clone(),
-                            );
-                            crate::core::conversation_events::spawn_persist_tool_result(
-                                super::runtime::canonical_persistence_context_from_acp(&this.context),
+                            super::runtime::spawn_persist_acp_tool_result(
+                                &this.context,
                                 tool_result.tool_name.clone(),
                                 tool_call_id,
                                 tool_result.approval_request_id.clone(),
@@ -580,7 +566,6 @@ impl Stream for AcpRuntimeSseStream {
                                 tool_result.structured_content.clone(),
                                 tool_result.diagnostic.clone(),
                                 tool_result.request_id.clone(),
-                                &provenance,
                             );
                         }
                         let settlement = this
