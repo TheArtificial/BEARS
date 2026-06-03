@@ -221,15 +221,12 @@ impl AcpRuntimeSseStream {
         let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
             self.context.acp_session_id.clone(),
         );
-        let record = crate::core::conversation_events::CanonicalConversationRecord::assistant_output(
+        crate::core::conversation_events::spawn_persist_assistant_output(
+            super::runtime::canonical_persistence_context_from_acp(&self.context),
             std::mem::take(&mut self.assistant_text_buffer),
             &provenance,
             None,
             Some(self.context.request_id.to_string()),
-        );
-        crate::core::conversation_events::spawn_persist_canonical_conversation_record(
-            super::runtime::canonical_persistence_context_from_acp(&self.context),
-            record,
         );
     }
 
@@ -237,18 +234,10 @@ impl AcpRuntimeSseStream {
         let provenance = crate::core::conversation_events::ConversationEventProvenance::acp_session(
             self.context.acp_session_id.clone(),
         );
-        let record = crate::core::conversation_events::CanonicalConversationRecord::turn_outcome(
-            role_result.status.as_str(),
-            role_result.reason.as_str(),
-            role_result.request_id.to_string(),
-            role_result.retryable,
-            role_result.scope.diagnostic(),
-            role_result.diagnostics.clone(),
-            &provenance,
-        );
-        crate::core::conversation_events::spawn_persist_canonical_conversation_record(
+        crate::core::conversation_events::spawn_persist_turn_outcome(
             super::runtime::canonical_persistence_context_from_acp(&self.context),
-            record,
+            role_result,
+            &provenance,
         );
     }
 

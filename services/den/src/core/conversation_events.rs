@@ -487,3 +487,40 @@ pub fn spawn_persist_canonical_conversation_record(
         )),
     );
 }
+
+pub fn spawn_persist_assistant_output(
+    context: ConversationPersistenceContext,
+    content_text: String,
+    provenance: &ConversationEventProvenance,
+    provider_message_id: Option<String>,
+    request_id: Option<String>,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::assistant_output(
+            content_text,
+            provenance,
+            provider_message_id,
+            request_id,
+        ),
+    );
+}
+
+pub fn spawn_persist_turn_outcome(
+    context: ConversationPersistenceContext,
+    role_result: &crate::core::role_runtime::RoleTurnResult,
+    provenance: &ConversationEventProvenance,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::turn_outcome(
+            role_result.status.as_str(),
+            role_result.reason.as_str(),
+            role_result.request_id.to_string(),
+            role_result.retryable,
+            role_result.scope.diagnostic(),
+            role_result.diagnostics.clone(),
+            provenance,
+        ),
+    );
+}
