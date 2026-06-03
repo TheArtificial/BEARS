@@ -350,12 +350,14 @@ This section tracks the current status of the Letta migration transcript-ownersh
   - ACP-facing helper coverage now includes request-scoped assistant-output provenance assertions in:
     - `services/den/src/api/acp/mod.rs`
   - helper coverage also asserts structured provenance fields used for stable canonical dedup ids
+  - live Postgres smoke-stack validation confirms the migrated `conversation_messages.source_event_id` unique index exists and rejects duplicate canonical inserts for the same `(conversation_id, source_event_id)` pair
+  - append-message duplicate suppression no longer relies on invalid `ON CONFLICT` syntax against the partial unique index; it now safely detects duplicate insert races by handling the insert error and reloading the existing sequence
 
 ### Partially complete / still in progress
 
 - **Phase 1** has a stronger terminal-outcome canonicalization path, and helper coverage now explicitly asserts request-scoped turn-outcome provenance; broader end-to-end confirmation across every ACP terminal/failure/cancellation edge case is still needed.
 - **Phase 2** still needs a fuller audit of all workflow-transition and non-tool diagnostic events to verify consistent helper usage.
-- **Phase 3** now has storage-backed idempotency for canonical events that carry stable provenance-derived source ids, but deeper DB-applied integration coverage is still blocked on introducing or locating a runnable Postgres integration harness in this environment.
+- **Phase 3** now has storage-backed idempotency for canonical events that carry stable provenance-derived source ids, and smoke-stack-backed live Postgres inspection confirms the migrated uniqueness contract is present; remaining work is to wire this into repeatable automated integration tests rather than manual stack-level validation.
 
 ### Remaining work before this migration slice is complete
 

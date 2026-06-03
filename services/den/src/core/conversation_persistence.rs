@@ -215,7 +215,7 @@ pub async fn append_message(
         .try_get("sequence_no")
         .map_err(|err| CustomError::Database(format!("decode allocated sequence_no: {err}")))?;
 
-    let insert_result = sqlx::query(
+    if let Err(err) = sqlx::query(
         r#"
         INSERT INTO conversation_messages (
             conversation_id,
@@ -241,9 +241,6 @@ pub async fn append_message(
             $9,
             COALESCE($10::timestamptz, NOW())
         )
-        ON CONFLICT (conversation_id, source_event_id)
-        WHERE source_event_id IS NOT NULL
-        DO NOTHING
         "#,
     )
     .bind(conversation_id)
@@ -258,27 +255,40 @@ pub async fn append_message(
     .bind(created_at)
     .execute(&mut *tx)
     .await
-    .map_err(|err| CustomError::Database(format!("append conversation message: {err}")))?;
-
-    if insert_result.rows_affected() == 0 {
-        let existing_sequence_no = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT sequence_no
-            FROM conversation_messages
-            WHERE conversation_id = $1
-              AND source_event_id = $2
-            LIMIT 1
-            "#,
-        )
-        .bind(conversation_id)
-        .bind(source_event_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|err| CustomError::Database(format!("reload duplicate conversation message sequence: {err}")))?;
-        tx.rollback().await.map_err(|err| {
-            CustomError::Database(format!("rollback append conversation message tx: {err}"))
-        })?;
-        return Ok(existing_sequence_no);
+    {
+        let duplicate_sequence_no = if source_event_id.is_some() {
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT sequence_no
+                FROM conversation_messages
+                WHERE conversation_id = $1
+                  AND source_event_id = $2
+                LIMIT 1
+                "#,
+            )
+            .bind(conversation_id)
+            .bind(source_event_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|reload_err| {
+                CustomError::Database(format!(
+                    "reload duplicate conversation message sequence after insert error: {reload_err}"
+                ))
+            })?
+        } else {
+            None
+        };
+        if let Some(existing_sequence_no) = duplicate_sequence_no {
+            tx.rollback().await.map_err(|rollback_err| {
+                CustomError::Database(format!(
+                    "rollback append conversation message tx after duplicate source_event_id: {rollback_err}"
+                ))
+            })?;
+            return Ok(existing_sequence_no);
+        }
+        return Err(CustomError::Database(format!(
+            "append conversation message: {err}"
+        )));
     }
 
     tx.commit()
