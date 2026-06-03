@@ -24,7 +24,10 @@ use crate::{
             verify_acp_conversation_belongs_to_binding,
         },
         acp_sessions::{self, UpsertAcpSession},
-        conversation_persistence::{append_message, ensure_conversation_for_external_id},
+        conversation_events::{
+            persist_canonical_conversation_record, CanonicalConversationRecord,
+            ConversationEventProvenance, ConversationPersistenceContext,
+        },
         acp_tokens,
         acp_tools::acp_client_tool_descriptors_for_client_context,
         bears::{db as bears_db, BearAgentRole},
@@ -402,35 +405,28 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         .map(|conversation| conversation.id.as_str())
         .filter(|id| *id == "default" || id.starts_with("conv-"))
     {
-        let canonical_conversation = ensure_conversation_for_external_id(
-            &state.sqlx_pool,
-            bear.id,
-            Some(user_id),
-            resolved_conversation_id,
-            Some(session_id),
-            synthetic_session_row.conversation_title.as_deref(),
-        )
-        .await
-        .map_err(|err| {
-            let (status, code, message) = acp_error_status_message(&err);
-            ApiError::new(status, code, message)
-        })?;
-        append_message(
-            &state.sqlx_pool,
-            canonical_conversation.id,
-            "user",
-            Some("user"),
-            "default",
-            prompt,
-            serde_json::json!({
-                "source": "acp_prompt",
-                "role": "user",
-                "acp_session_id": session_id,
-                "client": client,
-            }),
-            None,
-            None,
-            None,
+        let provenance = ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: session_id.to_string(),
+        };
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!(session_id);
+        content_json["client"] = serde_json::json!(client.clone());
+        content_json["request_id"] = serde_json::json!(request_id.to_string());
+        let record = CanonicalConversationRecord::visible_user_message(prompt, content_json, None);
+        persist_canonical_conversation_record(
+            &ConversationPersistenceContext {
+                pool: state.sqlx_pool.clone(),
+                bear_id: bear.id,
+                user_id: Some(user_id),
+                external_conversation_id: resolved_conversation_id.to_string(),
+                source_session_id: Some(session_id.to_string()),
+                request_id: Some(request_id.to_string()),
+                persistence_scope_id: session_id.to_string(),
+                skip_persistence: false,
+            },
+            &record,
         )
         .await
         .map_err(|err| {

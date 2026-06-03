@@ -397,7 +397,7 @@ This section tracks the current status of the Letta migration transcript-ownersh
 
 | Event / record class | Canonical helper exists | Producer/persistence path seen | Validation currently present | Broad status / gap |
 | --- | --- | --- | --- | --- |
-| Visible user message | Yes (`visible_user_message`) | **Direct prompt path currently uses raw `append_message(...)` in `api/acp/stream/prompt_flow.rs`, not the canonical helper** | Indirect / existing history behavior tests | Confirmed gap: user prompt persistence exists but bypasses canonical helper/dedup-shape path |
+| Visible user message | Yes (`visible_user_message`) | Yes; ACP prompt flow now persists user prompts through canonical visible-message persistence in `api/acp/stream/prompt_flow.rs` | Indirect history behavior tests + canonical helper compilation/test coverage | Improved: canonical helper path now used; remaining gap is stronger explicit test coverage for prompt-path provenance/dedup semantics |
 | Assistant final output | Yes (`assistant_output`) | Yes; ACP SSE stream persists buffered final assistant output on terminal turn path in `api/acp/stream/sse_stream.rs` | Strong unit/helper coverage + smoke-backed schema confidence | In good shape; remaining gap is broader edge-path confirmation across all terminal modes |
 | Tool request | Yes (`tool_request`) | Yes; ACP runtime maps tool requests through `CanonicalConversationRecord::tool_request(...)` in `api/acp/stream/runtime.rs` | Helper/unit coverage present | Stronger than initial audit suggested; remaining gap is making sure every request variant flows through this path |
 | Tool result | Yes (`tool_result`) | Yes; ACP SSE stream persists settled tool results through `CanonicalConversationRecord::tool_result(...)` in `api/acp/stream/sse_stream.rs` | Helper/unit coverage present | Producer path confirmed; highest-value remaining gap is broader result variants (timeout/error/replay/continuation) coverage confirmation |
@@ -409,10 +409,10 @@ This section tracks the current status of the Letta migration transcript-ownersh
 
 ### Remaining work before this migration slice is complete
 
-1. **Close confirmed producer-path gaps**
-   - route visible user prompt persistence through canonical helpers instead of the current raw `append_message(...)` path in ACP prompt flow,
+1. **Close remaining confirmed producer-path gaps**
    - wire or intentionally retire `conversation_resolved` canonical persistence,
-   - decide which workflow transitions deserve canonical persistence beyond terminal outcomes.
+   - decide which workflow transitions deserve canonical persistence beyond terminal outcomes,
+   - add stronger explicit tests for prompt-path canonical provenance/dedup semantics now that user prompts use the helper path.
 
 2. **Broaden confirmed tool-result coverage**
    - producer wiring is present,
