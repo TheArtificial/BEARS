@@ -420,23 +420,58 @@ This section tracks the current status of the Letta migration transcript-ownersh
 | `Error` events | Yes | Mixed: terminal errors become `turn_result`; non-terminal adapter errors do not obviously persist canonically | Operator/user visibility | Need explicit policy on which errors deserve canonical event persistence vs transient surfacing only |
 | `SessionInfoUpdate` | Yes | No canonical persistence path found in this audit | Session metadata/title sync | Session-state/UI only |
 
+### Workflow/diagnostic persistence policy
+
+Until a stronger product requirement says otherwise, we should treat these surfaces as belonging to one of two buckets:
+
+#### Canonical transcript/event records
+
+These should be persisted as Den-owned canonical records because they describe transcript-visible content, durable tool/workflow provenance, or terminal turn state that matters for history reconstruction and migration correctness:
+
+- visible user prompts,
+- visible assistant final output,
+- tool request records,
+- tool result records,
+- conversation resolution provenance,
+- terminal turn outcomes.
+
+#### Intentionally ephemeral or session-scoped surfaces
+
+These should remain non-canonical unless a future read/replay requirement proves otherwise:
+
+- status/reasoning text,
+- mode-update UI state,
+- session-info/title sync events,
+- plan-update/workboard projections,
+- plan-approval fallback UI payloads.
+
+These surfaces are useful for ACP UX and operator context, but they do not currently define the durable transcript contract.
+
+#### Error policy
+
+- Errors that terminate a turn and materially affect transcript/run outcome should be represented through canonical terminal outcome persistence.
+- Non-terminal adapter/runtime errors may remain stream-visible but non-canonical by default unless we identify a concrete replay, audit, or read-switch requirement for them.
+- If a non-terminal error later proves necessary for durable auditability, it should be added as a specific canonical structured-event class rather than promoted incidentally through generic UI/error payloads.
+
 ### Validation/readiness audit
 
 - **Fast unit/lib coverage is strongest for:**
   - canonical helper construction,
+  - prompt-path provenance payload shape,
   - assistant-output provenance,
+  - conversation-resolved metadata shape,
   - turn-outcome provenance,
   - tool request/result helper semantics,
+  - timeout/error tool-result metadata shape,
   - canonical dedup key serialization.
 - **Smoke-stack/release-confidence coverage is strongest for:**
   - migrated schema presence,
   - live Postgres uniqueness enforcement,
   - stack-level persistence contract sanity.
 - **Highest-value remaining validation gaps before more coding:**
-  1. explicit tests for prompt-path canonical provenance/dedup semantics,
-  2. explicit tests for `conversation_resolved` persistence behavior,
-  3. broader tool-result variant tests (timeout/error/replay/continuation),
-  4. a written policy for whether non-terminal errors and workflow UI events should remain ephemeral or become canonical records.
+  1. broader tool-result variant tests that go beyond timeout/error metadata shape into replay/continuation behavior,
+  2. stronger end-to-end-style tests for prompt-path and `conversation_resolved` persistence behavior,
+  3. a written policy for whether non-terminal errors and workflow UI events should remain ephemeral or become canonical records.
 
 ### Code-ready audit summary
 

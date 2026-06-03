@@ -3055,6 +3055,78 @@ mod tests {
     }
 
     #[test]
+    fn canonical_user_prompt_record_carries_prompt_scope_and_request_metadata() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: "acp-session-123".to_string(),
+        };
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!("acp-session-123");
+        content_json["client"] = serde_json::json!("zed");
+        content_json["request_id"] = serde_json::json!("req-prompt-123");
+
+        let record =
+            CanonicalConversationRecord::visible_user_message("hello prompt", content_json, None);
+        match record {
+            CanonicalConversationRecord::VisibleMessage {
+                role,
+                text,
+                content_json,
+                provider_message_id,
+            } => {
+                assert_eq!(role.as_str(), "user");
+                assert_eq!(text, "hello prompt");
+                assert!(provider_message_id.is_none());
+                assert_eq!(content_json["source"], "acp_prompt");
+                assert_eq!(content_json["event"], "user_prompt");
+                assert_eq!(content_json["scope_id"], "acp-session-123");
+                assert_eq!(content_json["acp_session_id"], "acp-session-123");
+                assert_eq!(content_json["client"], "zed");
+                assert_eq!(content_json["request_id"], "req-prompt-123");
+            }
+            _ => panic!("expected visible message"),
+        }
+    }
+
+    #[test]
+    fn canonical_conversation_resolved_record_carries_resolution_metadata() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-session-456");
+        let record =
+            CanonicalConversationRecord::conversation_resolved("conv-12345678", &provenance);
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                message_type,
+                role,
+                visibility,
+                content_text,
+                content_json,
+                provider_message_id,
+            } => {
+                assert_eq!(message_type, "workflow_event");
+                assert_eq!(role.as_deref(), Some("system"));
+                assert_eq!(visibility, "diagnostic_only");
+                assert_eq!(content_text, "Conversation resolved");
+                assert!(provider_message_id.is_none());
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["event"], "conversation_resolved");
+                assert_eq!(content_json["scope_id"], "acp-session-456");
+                assert_eq!(content_json["conversation_id"], "conv-12345678");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
     fn canonical_assistant_output_records_same_request_scope_for_duplicate_like_replays() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
@@ -3091,6 +3163,85 @@ mod tests {
             first_json["provider_message_id"],
             replay_json["provider_message_id"]
         );
+    }
+
+    #[test]
+    fn canonical_tool_result_timeout_record_preserves_timeout_status_and_diagnostic_phase() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-timeout-session");
+        let record = CanonicalConversationRecord::tool_result(
+            Some("fs_read_text_file".to_string()),
+            "call-timeout-1",
+            Some("approval-timeout-1".to_string()),
+            "timeout",
+            Some("timed out waiting for local tool result".to_string()),
+            serde_json::json!({}),
+            serde_json::json!({
+                "component": "den.acp",
+                "phase": "local_tool_result_timeout_auto_denied"
+            }),
+            Some("req-timeout-1".to_string()),
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent {
+                content_json,
+                content_text,
+                ..
+            } => {
+                assert_eq!(content_text, "Tool result: fs_read_text_file");
+                assert_eq!(content_json["event"], "tool_result");
+                assert_eq!(content_json["status"], "timeout");
+                assert_eq!(content_json["tool_call_id"], "call-timeout-1");
+                assert_eq!(content_json["approval_request_id"], "approval-timeout-1");
+                assert_eq!(content_json["request_id"], "req-timeout-1");
+                assert_eq!(
+                    content_json["diagnostic"]["phase"],
+                    "local_tool_result_timeout_auto_denied"
+                );
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
+    fn canonical_tool_result_error_record_preserves_error_status_and_diagnostic_phase() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let provenance = ConversationEventProvenance::acp_session("acp-error-session");
+        let record = CanonicalConversationRecord::tool_result(
+            Some("fs_read_text_file".to_string()),
+            "call-error-1",
+            None,
+            "error",
+            Some("tool result channel closed".to_string()),
+            serde_json::json!({}),
+            serde_json::json!({
+                "component": "den.acp",
+                "phase": "local_tool_result_channel_closed_auto_denied"
+            }),
+            Some("req-error-1".to_string()),
+            &provenance,
+        );
+
+        match record {
+            CanonicalConversationRecord::StructuredEvent { content_json, .. } => {
+                assert_eq!(content_json["event"], "tool_result");
+                assert_eq!(content_json["status"], "error");
+                assert_eq!(content_json["tool_call_id"], "call-error-1");
+                assert_eq!(
+                    content_json["diagnostic"]["phase"],
+                    "local_tool_result_channel_closed_auto_denied"
+                );
+            }
+            _ => panic!("expected structured event"),
+        }
     }
 
     #[test]
