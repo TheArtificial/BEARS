@@ -4277,7 +4277,12 @@ async fn request_memory_review(
             source_role: role,
             source_agent_id: clean_optional(&context.role_agent_id),
             source_paths,
-            source_refs: serde_json::json!([]),
+            source_refs: serde_json::json!({
+                "conversation_id": clean_optional(&context.conversation_id),
+                "session_id": source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+                "request_id": context.request_id,
+                "runtime_target": context.runtime_target,
+            }),
             suggested_action,
             target_ref: args
                 .target_ref

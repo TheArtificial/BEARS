@@ -670,3 +670,18 @@ pub fn spawn_persist_workflow_event(
         ),
     );
 }
+
+pub fn spawn_persist_assistant_summary_message(
+    context: ConversationPersistenceContext,
+    text: String,
+    provider_message_id: Option<String>,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::visible_assistant_message(
+            text,
+            serde_json::json!({}),
+            provider_message_id,
+        ),
+    );
+}

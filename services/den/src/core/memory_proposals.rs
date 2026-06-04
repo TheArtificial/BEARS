@@ -7,8 +7,8 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            canonical_persistence_context, spawn_persist_workflow_event,
-            ConversationEventProvenance,
+            canonical_persistence_context, spawn_persist_assistant_summary_message,
+            spawn_persist_workflow_event, ConversationEventProvenance,
         },
     },
     errors::CustomError,
@@ -77,16 +77,11 @@ fn conversation_id_for_proposal(row: &MemoryProposalRow) -> Option<&str> {
         .filter(|value| value.starts_with("conv-"))
 }
 
-fn maybe_spawn_memory_proposal_event(
+fn review_projection_context(
     pool: &PgPool,
     row: &MemoryProposalRow,
-    event: &str,
-    content_text: String,
-    extra_json: serde_json::Value,
-) {
-    let Some(conversation_id) = conversation_id_for_proposal(row) else {
-        return;
-    };
+) -> Option<(crate::core::conversation_events::ConversationPersistenceContext, ConversationEventProvenance)> {
+    let conversation_id = conversation_id_for_proposal(row)?;
     let provenance = memory_proposal_provenance(row.bear_id);
     let context = canonical_persistence_context(
         pool.clone(),
@@ -98,6 +93,20 @@ fn maybe_spawn_memory_proposal_event(
         provenance.scope_id.clone(),
         false,
     );
+    Some((context, provenance))
+}
+
+fn maybe_project_memory_proposal_lifecycle(
+    pool: &PgPool,
+    row: &MemoryProposalRow,
+    event: &str,
+    workflow_text: String,
+    summary_text: Option<String>,
+    extra_json: serde_json::Value,
+) {
+    let Some((context, provenance)) = review_projection_context(pool, row) else {
+        return;
+    };
     let mut content_json = serde_json::json!({
         "source": provenance.source,
         "event": event,
@@ -113,15 +122,22 @@ fn maybe_spawn_memory_proposal_event(
             base.insert(key.clone(), value.clone());
         }
     }
-    spawn_persist_workflow_event(context, content_text, content_json, None);
+    spawn_persist_workflow_event(context.clone(), workflow_text, content_json, None);
+    if let Some(summary_text) = summary_text {
+        spawn_persist_assistant_summary_message(context, summary_text, None);
+    }
 }
 
 fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {
-    maybe_spawn_memory_proposal_event(
+    maybe_project_memory_proposal_lifecycle(
         pool,
         row,
         "memory_proposal_created",
         format!("Memory proposal created: {}", row.title),
+        Some(format!(
+            "Review requested for memory proposal '{}' from {}.",
+            row.title, row.source_role
+        )),
         serde_json::json!({}),
     );
 }
@@ -245,11 +261,35 @@ pub async fn resolve_for_bear(
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
-    maybe_spawn_memory_proposal_event(
+    let summary_text = match proposal.status.as_str() {
+        "approved" => Some(format!(
+            "Memory proposal '{}' was approved{}.",
+            proposal.title,
+            proposal
+                .result_path
+                .as_deref()
+                .map(|path| format!(" and applied at {path}"))
+                .unwrap_or_default()
+        )),
+        "rejected" => Some(format!("Memory proposal '{}' was rejected.", proposal.title)),
+        "deferred" => Some(format!("Memory proposal '{}' was deferred.", proposal.title)),
+        "retained_local" => Some(format!(
+            "Memory proposal '{}' was retained as role-local only.",
+            proposal.title
+        )),
+        "superseded" => Some(format!("Memory proposal '{}' was superseded.", proposal.title)),
+        "needs_human_review" => Some(format!(
+            "Memory proposal '{}' now requires human review.",
+            proposal.title
+        )),
+        _ => None,
+    };
+    maybe_project_memory_proposal_lifecycle(
         pool,
         &proposal,
         "memory_proposal_resolved",
         format!("Memory proposal resolved: {}", proposal.title),
+        summary_text,
         serde_json::json!({
             "reviewer_role": proposal.reviewer_role,
             "reviewer_agent_id": proposal.reviewer_agent_id,

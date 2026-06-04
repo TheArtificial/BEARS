@@ -622,29 +622,35 @@ The next broader migration slice should therefore be:
 - identify where they currently bypass or duplicate canonical conversation persistence,
 - and adapt one `review` persistence path onto the shared `core/conversation_events.rs` seam without importing ACP adapter policy.
 
-Status: **first non-ACP reuse slice landed and expanded**
-- `core/conversation_events.rs` now exposes `spawn_persist_workflow_event(...)` as a transport-neutral workflow-event persistence helper beyond ACP-specific callsites.
-- `core/memory_proposals.rs` now uses that shared helper to emit canonical review-lifecycle workflow events when a proposal has a conversation-scoped `source_refs.conversation_id`.
-- The current non-ACP canonical events now include:
+Status: **larger review lifecycle projection slice landed**
+- `core/conversation_events.rs` now exposes both:
+  - `spawn_persist_workflow_event(...)`
+  - `spawn_persist_assistant_summary_message(...)`
+- `core/memory_proposals.rs` now projects review lifecycle actions through a shared non-ACP helper that can emit:
+  - canonical workflow events
+  - canonical visible assistant-style summary messages
+- The current non-ACP canonical review lifecycle now covers:
   - `memory_proposal_created`
   - `memory_proposal_resolved`
-- Proposal resolution now also carries richer outcome projection fields when available:
+  - visible summary projection for major lifecycle states (requested / approved / rejected / deferred / retained_local / superseded / needs_human_review)
+- Proposal resolution carries richer outcome projection fields when available:
   - `result_path`
   - `result_commit`
   - alongside reviewer/decision metadata
 - The curate core-apply flow now threads real artifact outcome data into proposal resolution:
   - `den.memory.apply_core_update` passes the returned MemFS `path` and `canonical_tip` into `resolve_for_bear(...)`
   - resulting `memory_proposal_resolved` canonical events now carry actual result artifact metadata for that apply path.
-- This gives the pair-reflection → review/memory-proposal flow a real Den-owned canonical workflow trail outside ACP stream persistence.
+- `den.memory.request_review` now includes conversation/session/request/runtime provenance in `source_refs`, so more proposal-created lifecycle projection can attach to canonical conversations.
+- This gives the pair-reflection → review/memory-proposal flow both a Den-owned canonical workflow trail and operator-visible summary projection outside ACP stream persistence.
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from workflow-only proposal events into **review-visible state projection**, for example:
-- a review-visible message/event when a proposal materially changes shared memory state,
-- enriching `den.memory.request_review` proposal creation with conversation/session/source provenance so more proposal-created events attach to canonical conversations,
-- or canonical projection of accepted/rejected outcomes into a more operator-facing transcript surface.
+The next broader non-ACP slice should likely move from current review lifecycle projection into **deeper operator-facing audit coverage**, for example:
+- projecting memory/core apply results into even richer visible summaries or dedicated review transcript surfaces,
+- adding focused tests around non-ACP visible summary persistence for proposal lifecycle transitions,
+- or taking the same shared projection pattern into another non-ACP subsystem before tackling `watch`-specific ingestion concerns.
 
-At this point, additional resolve/apply callsites do not appear to return richer artifact outputs than `den.memory.apply_core_update`; the best next leverage is therefore improved proposal-creation provenance plus operator-visible projection before tackling `watch`-specific ingestion concerns.
+At this point, the review/memory-proposal flow has both workflow-event and visible-summary projection; the best next leverage is either deeper test coverage for this slice or extending the same pattern to the next non-ACP consumer.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 
