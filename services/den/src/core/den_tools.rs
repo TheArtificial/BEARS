@@ -27,8 +27,8 @@ use crate::{
             MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
         },
         conversation_events::{
-            project_to_conversation, MemoryReviewRequestedPayload, Projection, ProjectionEvent,
-            ProjectionProvenance, ProjectionSource,
+            memory_proposal_resolved_projection, memory_review_requested_projection,
+            project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
         memory_proposals::{self, CreateMemoryProposal},
         tool_descriptor_guidance::{
@@ -4219,6 +4219,28 @@ async fn resolve_memory_proposal(
         },
     )
     .await?;
+    project_to_conversation(
+        pool,
+        context.bear_id,
+        Some(context.user_id),
+        clean_optional(&context.conversation_id).as_deref(),
+        memory_proposal_resolved_projection(
+            ProjectionProvenance {
+                source: ProjectionSource::DenTools,
+                scope_id: source_acp_session_id(context)
+                    .or_else(|| clean_optional(&context.session_id))
+                    .unwrap_or_else(|| format!("bear:{}:role:{}", context.bear_id, role.as_str())),
+            },
+            proposal.id,
+            proposal.source_role.clone(),
+            proposal.suggested_action.clone(),
+            proposal.title.clone(),
+            proposal.status.clone(),
+            proposal.reviewer_role.clone(),
+            proposal.result_path.clone(),
+            proposal.result_commit.clone(),
+        ),
+    );
     Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
 }
 
@@ -4309,27 +4331,20 @@ async fn request_memory_review(
         context.bear_id,
         Some(context.user_id),
         clean_optional(&context.conversation_id).as_deref(),
-        Projection {
-            provenance: ProjectionProvenance {
+        memory_review_requested_projection(
+            ProjectionProvenance {
                 source: ProjectionSource::DenTools,
                 scope_id: source_acp_session_id(context)
                     .or_else(|| clean_optional(&context.session_id))
                     .unwrap_or_else(|| format!("bear:{}:role:{}", context.bear_id, role.as_str())),
             },
-            event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
-                proposal_id: proposal.id,
-                source_role: proposal.source_role.clone(),
-                title: proposal.title.clone(),
-                suggested_action: proposal.suggested_action.clone(),
-                status: proposal.status.clone(),
-                source_paths: proposal.source_paths.clone(),
-            }),
-            workflow_text: format!("Memory review requested: {}", proposal.title),
-            visible_summary: Some(format!(
-                "Review requested for memory proposal '{}' from {}.",
-                proposal.title, proposal.source_role
-            )),
-        },
+            proposal.id,
+            proposal.source_role.clone(),
+            proposal.suggested_action.clone(),
+            proposal.title.clone(),
+            proposal.status.clone(),
+            proposal.source_paths.clone(),
+        ),
     );
     Ok(json!({
         "bear_id": context.bear_id,

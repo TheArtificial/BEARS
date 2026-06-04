@@ -805,6 +805,94 @@ pub struct Projection {
     pub visible_summary: Option<String>,
 }
 
+pub fn memory_proposal_created_projection(
+    provenance: ProjectionProvenance,
+    proposal_id: Uuid,
+    source_role: String,
+    suggested_action: String,
+    title: String,
+    status: String,
+) -> Projection {
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
+            proposal_id,
+            source_role: source_role.clone(),
+            suggested_action,
+            title: title.clone(),
+            status,
+        }),
+        workflow_text: format!("Memory proposal created: {title}"),
+        visible_summary: Some(format!(
+            "Review requested for memory proposal '{}' from {}.",
+            title, source_role
+        )),
+    }
+}
+
+pub fn memory_proposal_resolved_projection(
+    provenance: ProjectionProvenance,
+    proposal_id: Uuid,
+    source_role: String,
+    suggested_action: String,
+    title: String,
+    status: String,
+    reviewer_role: Option<String>,
+    result_path: Option<String>,
+    result_commit: Option<String>,
+) -> Projection {
+    let visible_summary = match status.as_str() {
+        "approved" => Some(match result_path.as_deref() {
+            Some(path) => format!("Memory proposal '{}' was approved and applied at {path}.", title),
+            None => format!("Memory proposal '{}' was approved.", title),
+        }),
+        "rejected" => Some(format!("Memory proposal '{}' was rejected.", title)),
+        _ => None,
+    };
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
+            proposal_id,
+            source_role,
+            suggested_action,
+            title: title.clone(),
+            status: status.clone(),
+            reviewer_role,
+            result_path,
+            result_commit,
+        }),
+        workflow_text: format!("Memory proposal resolved: {} ({})", title, status),
+        visible_summary,
+    }
+}
+
+pub fn memory_review_requested_projection(
+    provenance: ProjectionProvenance,
+    proposal_id: Uuid,
+    source_role: String,
+    suggested_action: String,
+    title: String,
+    status: String,
+    source_paths: Vec<String>,
+) -> Projection {
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
+            proposal_id,
+            source_role: source_role.clone(),
+            title: title.clone(),
+            suggested_action,
+            status,
+            source_paths,
+        }),
+        workflow_text: format!("Memory review requested: {title}"),
+        visible_summary: Some(format!(
+            "Review requested for memory proposal '{}' from {}.",
+            title, source_role
+        )),
+    }
+}
+
 impl Projection {
     pub fn workflow_content_json(&self) -> serde_json::Value {
         let mut value = serde_json::to_value(&self.event).expect("projection event should serialize");

@@ -7,9 +7,8 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            project_to_conversation, MemoryProposalCreatedPayload,
-            MemoryProposalResolvedPayload, Projection, ProjectionEvent,
-            ProjectionProvenance, ProjectionSource,
+            memory_proposal_created_projection, memory_proposal_resolved_projection,
+            project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
     },
     errors::CustomError,
@@ -84,53 +83,34 @@ fn maybe_project_memory_proposal_created(pool: &PgPool, row: &MemoryProposalRow)
         row.bear_id,
         None,
         conversation_id_for_proposal(row),
-        Projection {
-            provenance: memory_proposal_provenance(row.bear_id),
-            event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
-                proposal_id: row.id,
-                source_role: row.source_role.clone(),
-                suggested_action: row.suggested_action.clone(),
-                title: row.title.clone(),
-                status: row.status.clone(),
-            }),
-            workflow_text: format!("Memory proposal created: {}", row.title),
-            visible_summary: Some(format!(
-                "Review requested for memory proposal '{}' from {}.",
-                row.title, row.source_role
-            )),
-        },
+        memory_proposal_created_projection(
+            memory_proposal_provenance(row.bear_id),
+            row.id,
+            row.source_role.clone(),
+            row.suggested_action.clone(),
+            row.title.clone(),
+            row.status.clone(),
+        ),
     );
 }
 
 fn maybe_project_memory_proposal_resolved(pool: &PgPool, row: &MemoryProposalRow) {
-    let visible_summary = match row.status.as_str() {
-        "approved" => Some(match row.result_path.as_deref() {
-            Some(path) => format!("Memory proposal '{}' was approved and applied at {path}.", row.title),
-            None => format!("Memory proposal '{}' was approved.", row.title),
-        }),
-        "rejected" => Some(format!("Memory proposal '{}' was rejected.", row.title)),
-        _ => None,
-    };
     project_to_conversation(
         pool,
         row.bear_id,
         None,
         conversation_id_for_proposal(row),
-        Projection {
-            provenance: memory_proposal_provenance(row.bear_id),
-            event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
-                proposal_id: row.id,
-                source_role: row.source_role.clone(),
-                suggested_action: row.suggested_action.clone(),
-                title: row.title.clone(),
-                status: row.status.clone(),
-                reviewer_role: row.reviewer_role.clone(),
-                result_path: row.result_path.clone(),
-                result_commit: row.result_commit.clone(),
-            }),
-            workflow_text: format!("Memory proposal resolved: {} ({})", row.title, row.status),
-            visible_summary,
-        },
+        memory_proposal_resolved_projection(
+            memory_proposal_provenance(row.bear_id),
+            row.id,
+            row.source_role.clone(),
+            row.suggested_action.clone(),
+            row.title.clone(),
+            row.status.clone(),
+            row.reviewer_role.clone(),
+            row.result_path.clone(),
+            row.result_commit.clone(),
+        ),
     );
 }
 

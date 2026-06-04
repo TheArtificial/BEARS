@@ -14,15 +14,27 @@ pub mod bifrost;
 pub mod codepool;
 pub mod conversation_events;
 pub mod conversation_persistence;
-#[cfg(test)]
-mod conversation_events_tests;
-#[cfg(test)]
-mod conversation_persistence_non_acp_integration_tests;
-#[cfg(test)]
-mod den_tools_memory_request_review_projection_tests;
+pub mod conversation {
+    pub use super::conversation_events as events;
+    pub use super::conversation_persistence as persistence;
+
+    #[cfg(test)]
+    mod events_tests {
+        include!("conversation_events_tests.rs");
+    }
+
+    #[cfg(test)]
+    mod persistence_non_acp_integration_tests {
+        include!("conversation_persistence_non_acp_integration_tests.rs");
+    }
+}
 pub mod den_tools;
 #[cfg(test)]
 mod den_tools_descriptor_guidance_tests;
+#[cfg(test)]
+mod den_tools_memory_request_review_projection_tests;
+#[cfg(test)]
+mod den_tools_memory_resolve_proposal_projection_tests;
 #[cfg(test)]
 mod den_tools_memory_write_tests;
 #[cfg(test)]

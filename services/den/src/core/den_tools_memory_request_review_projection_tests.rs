@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;

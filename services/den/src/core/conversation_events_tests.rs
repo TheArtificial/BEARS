@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use super::conversation_events::*;
+use crate::core::conversation::events::*;
 
 #[test]
 fn projection_workflow_content_json_is_derived_from_typed_event() {
@@ -40,6 +38,64 @@ fn projection_requires_canonical_conversation_id_shape() {
     assert!(Option::<&str>::None
         .filter(|id| id.starts_with("conv-"))
         .is_none());
+}
+
+#[test]
+fn proposal_projection_helpers_build_expected_summaries() {
+    let created = memory_proposal_created_projection(
+        ProjectionProvenance {
+            source: ProjectionSource::DenTools,
+            scope_id: "scope-1".to_string(),
+        },
+        uuid::Uuid::nil(),
+        "pair".to_string(),
+        "promote_to_core".to_string(),
+        "Proposal A".to_string(),
+        "pending".to_string(),
+    );
+    assert_eq!(created.workflow_text, "Memory proposal created: Proposal A");
+    assert_eq!(
+        created.visible_summary.as_deref(),
+        Some("Review requested for memory proposal 'Proposal A' from pair.")
+    );
+
+    let resolved = memory_proposal_resolved_projection(
+        ProjectionProvenance {
+            source: ProjectionSource::DenTools,
+            scope_id: "scope-2".to_string(),
+        },
+        uuid::Uuid::nil(),
+        "pair".to_string(),
+        "promote_to_core".to_string(),
+        "Proposal B".to_string(),
+        "approved".to_string(),
+        Some("curate".to_string()),
+        Some("core/notes.md".to_string()),
+        None,
+    );
+    assert_eq!(resolved.workflow_text, "Memory proposal resolved: Proposal B (approved)");
+    assert_eq!(
+        resolved.visible_summary.as_deref(),
+        Some("Memory proposal 'Proposal B' was approved and applied at core/notes.md.")
+    );
+
+    let requested = memory_review_requested_projection(
+        ProjectionProvenance {
+            source: ProjectionSource::DenTools,
+            scope_id: "scope-3".to_string(),
+        },
+        uuid::Uuid::nil(),
+        "pair".to_string(),
+        "promote_to_core".to_string(),
+        "Proposal C".to_string(),
+        "pending".to_string(),
+        vec!["pair/notes/test.md".to_string()],
+    );
+    assert_eq!(requested.workflow_text, "Memory review requested: Proposal C");
+    assert_eq!(
+        requested.visible_summary.as_deref(),
+        Some("Review requested for memory proposal 'Proposal C' from pair.")
+    );
 }
 
 #[test]

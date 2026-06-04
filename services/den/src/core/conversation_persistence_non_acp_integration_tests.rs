@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use sqlx::PgPool;
 use uuid::Uuid;
 
