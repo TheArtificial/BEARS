@@ -70,13 +70,21 @@ fn memory_proposal_provenance(bear_id: Uuid) -> ConversationEventProvenance {
     }
 }
 
-fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {
-    let conversation_id = row
-        .source_refs
+fn conversation_id_for_proposal(row: &MemoryProposalRow) -> Option<&str> {
+    row.source_refs
         .get("conversation_id")
         .and_then(|value| value.as_str())
-        .filter(|value| value.starts_with("conv-"));
-    let Some(conversation_id) = conversation_id else {
+        .filter(|value| value.starts_with("conv-"))
+}
+
+fn maybe_spawn_memory_proposal_event(
+    pool: &PgPool,
+    row: &MemoryProposalRow,
+    event: &str,
+    content_text: String,
+    extra_json: serde_json::Value,
+) {
+    let Some(conversation_id) = conversation_id_for_proposal(row) else {
         return;
     };
     let provenance = memory_proposal_provenance(row.bear_id);
@@ -90,20 +98,31 @@ fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposal
         provenance.scope_id.clone(),
         false,
     );
-    spawn_persist_workflow_event(
-        context,
+    let mut content_json = serde_json::json!({
+        "source": provenance.source,
+        "event": event,
+        "scope_id": provenance.scope_id,
+        "proposal_id": row.id,
+        "source_role": row.source_role,
+        "suggested_action": row.suggested_action,
+        "title": row.title,
+        "status": row.status,
+    });
+    if let (Some(base), Some(extra)) = (content_json.as_object_mut(), extra_json.as_object()) {
+        for (key, value) in extra {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    spawn_persist_workflow_event(context, content_text, content_json, None);
+}
+
+fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {
+    maybe_spawn_memory_proposal_event(
+        pool,
+        row,
+        "memory_proposal_created",
         format!("Memory proposal created: {}", row.title),
-        serde_json::json!({
-            "source": provenance.source,
-            "event": "memory_proposal_created",
-            "scope_id": provenance.scope_id,
-            "proposal_id": row.id,
-            "source_role": row.source_role,
-            "suggested_action": row.suggested_action,
-            "title": row.title,
-            "status": row.status,
-        }),
-        None,
+        serde_json::json!({}),
     );
 }
 
@@ -219,7 +238,21 @@ pub async fn resolve_for_bear(
     .bind(params.decision_summary)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    let proposal = row_from_sql(row);
+    maybe_spawn_memory_proposal_event(
+        pool,
+        &proposal,
+        "memory_proposal_resolved",
+        format!("Memory proposal resolved: {}", proposal.title),
+        serde_json::json!({
+            "reviewer_role": proposal.reviewer_role,
+            "reviewer_agent_id": proposal.reviewer_agent_id,
+            "review_notes": proposal.review_notes,
+            "decision_summary": proposal.decision_summary,
+            "reviewed_at": proposal.reviewed_at,
+        }),
+    );
+    Ok(proposal)
 }
 
 pub async fn get_for_bear(

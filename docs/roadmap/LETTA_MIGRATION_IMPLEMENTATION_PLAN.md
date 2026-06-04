@@ -622,10 +622,22 @@ The next broader migration slice should therefore be:
 - identify where they currently bypass or duplicate canonical conversation persistence,
 - and adapt one `review` persistence path onto the shared `core/conversation_events.rs` seam without importing ACP adapter policy.
 
-Status: **first non-ACP reuse slice landed**
+Status: **first non-ACP reuse slice landed and expanded**
 - `core/conversation_events.rs` now exposes `spawn_persist_workflow_event(...)` as a transport-neutral workflow-event persistence helper beyond ACP-specific callsites.
-- `core/memory_proposals.rs` now uses that shared helper to emit canonical `memory_proposal_created` workflow events when a proposal is created with a conversation-scoped `source_refs.conversation_id`.
-- This gives the pair-reflection → review/memory-proposal flow its first Den-owned canonical conversation event outside ACP stream persistence.
+- `core/memory_proposals.rs` now uses that shared helper to emit canonical review-lifecycle workflow events when a proposal has a conversation-scoped `source_refs.conversation_id`.
+- The current non-ACP canonical events now include:
+  - `memory_proposal_created`
+  - `memory_proposal_resolved`
+- This gives the pair-reflection → review/memory-proposal flow a real Den-owned canonical workflow trail outside ACP stream persistence.
+
+#### Next likely follow-on after proposal lifecycle events
+
+The next broader non-ACP slice should likely move from proposal metadata events into **review decision/result projection**, for example:
+- canonical persistence for proposal result-path/result-commit updates,
+- canonical projection of accepted/rejected review decisions,
+- or a review-visible message/event when a proposal materially changes shared memory state.
+
+That would extend the current workflow-event trail into a fuller review transcript/audit path before tackling `watch`-specific ingestion concerns.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 
