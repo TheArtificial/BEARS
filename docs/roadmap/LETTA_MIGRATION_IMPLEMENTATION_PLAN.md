@@ -889,12 +889,12 @@ At this point, the migration surface is audited enough to return to implementati
      - `scripts/smoke.sh` runs `tests/smoke/test_stack.py` inside the bundled runner container.
      - `tests/smoke/test_stack.py` currently covers health checks, ACP auth gating, a prompt/conversation boundary scenario against Letta history, and now a dedicated ACP tool-result replay/idempotency scenario.
    - Bespoke replay scenario now added:
-     1. create an ACP session/prompt that triggers a known tool request,
-     2. capture the emitted `tool_call_id`,
+     1. create an ACP session/prompt that tries to trigger a known tool request,
+     2. capture the emitted `tool_call_id` when the runtime actually enters the tool path,
      3. POST the matching tool result once and assert accepted continuation behavior,
-     4. POST the same tool result again and assert idempotent replay acceptance (`duplicate_result_ignored` / `already_settled`),
-     5. confirm the conversation remains queryable via ACP history after settlement.
-   - Remaining gap: this smoke scenario now proves the live HTTP replay contract, but it still does not fully assert every downstream resumed-runtime assistant-output path before terminal completion.
+     4. poll ACP conversation history and assert downstream assistant output appears after resumed continuation,
+     5. POST the same tool result again and assert idempotent replay acceptance (`duplicate_result_ignored` / `already_settled`).
+   - Current limitation: live providers may still sometimes satisfy the prompt without taking the tool path; in those runs the smoke test records successful resolution and skips replay-path assertions instead of failing the whole stack.
 
 4. **Keep smoke-stack integration validation as the release-confidence layer**
    - verify migrated schema presence,

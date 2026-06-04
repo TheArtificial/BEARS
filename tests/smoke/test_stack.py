@@ -134,6 +134,46 @@ def stream_acp_prompt_events(session_id, payload, timeout=30):
             yield __import__("json").loads(raw)
 
 
+def post_tool_result(session_id, tool_call_id, tool_name, body, timeout=30):
+    response = request_with_retries(
+        "POST",
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
+        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+        json={
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            **body,
+        },
+        timeout=timeout,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def wait_for_conversation_history_signal(conversation_id, timeout=30):
+    deadline = time.time() + timeout
+    last_body = None
+    while time.time() < deadline:
+        history = request_with_retries(
+            "GET",
+            f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/conversations/{conversation_id}/history",
+            headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+            timeout=10,
+        )
+        assert history.status_code == 200, history.text
+        body = history.json()
+        last_body = body
+        messages = body.get("messages") or []
+        if any((msg.get("role") == "assistant" and (msg.get("text") or "").strip()) for msg in messages):
+            return "assistant_message", body
+        if any((msg.get("role") == "user" and (msg.get("text") or "").strip()) for msg in messages):
+            # Keep polling; user-only history proves the conversation exists but not
+            # that resumed runtime progressed yet.
+            pass
+        time.sleep(1)
+    return None, last_body
+
+
 def post_acp_prompt_until_conversation_resolved(session_id, payload, timeout=30):
     with requests.post(
         f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
@@ -326,41 +366,33 @@ def test_acp_tool_result_replay_continues_and_is_idempotent_when_api_enabled():
     arguments = tool_request.get("arguments") or {}
     assert "README.md" in __import__("json").dumps(arguments)
 
-    first_response = request_with_retries(
-        "POST",
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        json={
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "status": "ok",
-            "content": "# Smoke README\n\nThis is a replay smoke test result.",
-            "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
-            "diagnostic": {"phase": "smoke-first"},
-        },
+    tool_result_body = {
+        "status": "ok",
+        "content": "# Smoke README\n\nThis is a replay smoke test result.",
+        "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
+        "diagnostic": {"phase": "smoke-first"},
+    }
+    first_json = post_tool_result(
+        session_id,
+        tool_call_id,
+        tool_name,
+        tool_result_body,
         timeout=30,
     )
-    assert first_response.status_code == 200, first_response.text
-    first_json = first_response.json()
     assert first_json["accepted"] is True
     assert first_json["settlement"] in ("accepted", "delivered", "pending_continuation", None)
 
-    replay_response = request_with_retries(
-        "POST",
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        json={
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "status": "ok",
-            "content": "# Smoke README\n\nThis is a replay smoke test result.",
-            "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
-            "diagnostic": {"phase": "smoke-first"},
-        },
+    if conversation_id:
+        signal, history_body = wait_for_conversation_history_signal(conversation_id, timeout=30)
+        assert signal == "assistant_message", history_body
+
+    replay_json = post_tool_result(
+        session_id,
+        tool_call_id,
+        tool_name,
+        tool_result_body,
         timeout=30,
     )
-    assert replay_response.status_code == 200, replay_response.text
-    replay_json = replay_response.json()
     assert replay_json["accepted"] is True
     assert replay_json["reason"] == "duplicate_result_ignored"
     assert replay_json["settlement"] == "already_settled"
