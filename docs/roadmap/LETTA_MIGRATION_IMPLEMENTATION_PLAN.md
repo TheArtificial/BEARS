@@ -572,6 +572,9 @@ Status: **ACP persistence adapter seam completed for current ACP event set**
 - A broader visible-vs-structured entrypoint simplification is now also landed:
   - `core/conversation_events.rs` now owns `normalize_persisted_gateway_record(...)`, which centralizes the shared decision between visible transcript rows (`message` + role) and normalized structured canonical records.
   - `api/acp/stream/runtime.rs` now exposes one ACP adapter entrypoint, `spawn_canonical_gateway_record_persistence(...)`, instead of maintaining separate ACP helper branches for message vs structured persistence.
+- ACP callsites/tests are now converged on the unified seam for current known cases:
+  - ACP tests no longer reference the old split helper names.
+  - the remaining ACP-side synthetic structured test input now uses schema-valid `tool_result` directly instead of the legacy `tool_event` alias.
 
 Decision rationale:
 - stop micro-extracting the resume path,
@@ -593,6 +596,36 @@ Why this matters:
 - future non-ACP runners can reuse the same core constructor and helper layer without importing ACP event policy.
 
 ---
+
+### Reuse-readiness assessment after current Phase 5 cleanup
+
+After the unified gateway persistence convergence, the next concrete non-ACP reuse target looks clearer.
+
+#### Strongest immediate reuse target
+
+**`review` transcript/event persistence** appears to be the best next consumer of the extracted seam because it likely needs:
+- canonical visible message persistence,
+- workflow-event persistence,
+- transport-neutral structured record normalization,
+- and less ACP-style continuation/tool-routing complexity than `watch`.
+
+Why `review` first:
+- its likely persistence needs are closer to the now-cleaned message/workflow seam,
+- it should benefit from the extracted canonical constructors and gateway-record normalization without needing ACP SSE framing,
+- it gives a better test of whether the current core seam is truly transport-neutral before tackling `watch` ingestion/dedup specifics.
+
+#### Concrete next reuse slice
+
+The next broader migration slice should therefore be:
+
+- audit the `review` runtime entrypoint(s) for transcript/event writes,
+- identify where they currently bypass or duplicate canonical conversation persistence,
+- and adapt one `review` persistence path onto the shared `core/conversation_events.rs` seam without importing ACP adapter policy.
+
+Status: **first non-ACP reuse slice landed**
+- `core/conversation_events.rs` now exposes `spawn_persist_workflow_event(...)` as a transport-neutral workflow-event persistence helper beyond ACP-specific callsites.
+- `core/memory_proposals.rs` now uses that shared helper to emit canonical `memory_proposal_created` workflow events when a proposal is created with a conversation-scoped `source_refs.conversation_id`.
+- This gives the pair-reflection → review/memory-proposal flow its first Den-owned canonical conversation event outside ACP stream persistence.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 

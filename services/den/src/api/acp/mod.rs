@@ -904,7 +904,7 @@ mod tests {
 
         spawn_canonical_gateway_record_persistence(
             &context,
-            "tool_event",
+            "tool_result",
             Some("system"),
             "diagnostic_only",
             "Tool request: fs_read_text_file".to_string(),

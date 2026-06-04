@@ -654,3 +654,19 @@ pub fn spawn_persist_tool_request(
         ),
     );
 }
+
+pub fn spawn_persist_workflow_event(
+    context: ConversationPersistenceContext,
+    content_text: String,
+    content_json: serde_json::Value,
+    provider_message_id: Option<String>,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::workflow_event(
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
+    );
+}

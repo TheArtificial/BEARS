@@ -3,7 +3,16 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{core::bears::BearAgentRole, errors::CustomError};
+use crate::{
+    core::{
+        bears::BearAgentRole,
+        conversation_events::{
+            canonical_persistence_context, spawn_persist_workflow_event,
+            ConversationEventProvenance,
+        },
+    },
+    errors::CustomError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryProposalRow {
@@ -54,6 +63,50 @@ pub struct CreateMemoryProposal<'a> {
     pub requires_human: bool,
 }
 
+fn memory_proposal_provenance(bear_id: Uuid) -> ConversationEventProvenance {
+    ConversationEventProvenance {
+        source: "memory_proposals".to_string(),
+        scope_id: format!("bear:{bear_id}"),
+    }
+}
+
+fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {
+    let conversation_id = row
+        .source_refs
+        .get("conversation_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| value.starts_with("conv-"));
+    let Some(conversation_id) = conversation_id else {
+        return;
+    };
+    let provenance = memory_proposal_provenance(row.bear_id);
+    let context = canonical_persistence_context(
+        pool.clone(),
+        row.bear_id,
+        None,
+        conversation_id.to_string(),
+        None,
+        None,
+        provenance.scope_id.clone(),
+        false,
+    );
+    spawn_persist_workflow_event(
+        context,
+        format!("Memory proposal created: {}", row.title),
+        serde_json::json!({
+            "source": provenance.source,
+            "event": "memory_proposal_created",
+            "scope_id": provenance.scope_id,
+            "proposal_id": row.id,
+            "source_role": row.source_role,
+            "suggested_action": row.suggested_action,
+            "title": row.title,
+            "status": row.status,
+        }),
+        None,
+    );
+}
+
 pub async fn create(
     pool: &PgPool,
     params: CreateMemoryProposal<'_>,
@@ -93,7 +146,9 @@ pub async fn create(
     .bind(params.requires_human)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    let proposal = row_from_sql(row);
+    maybe_spawn_memory_proposal_created_event(pool, &proposal);
+    Ok(proposal)
 }
 
 pub async fn list_for_bear(
