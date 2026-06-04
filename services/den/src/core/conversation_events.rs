@@ -156,7 +156,22 @@ impl CanonicalConversationRecord {
         provider_message_id: Option<String>,
     ) -> Self {
         Self::StructuredEvent {
-            message_type: "tool_event".to_string(),
+            message_type: "tool_result".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: content_text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
+    pub fn tool_call_event(
+        content_text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::StructuredEvent {
+            message_type: "tool_call".to_string(),
             role: Some("system".to_string()),
             visibility: "diagnostic_only".to_string(),
             content_text: content_text.into(),
@@ -226,7 +241,7 @@ impl CanonicalConversationRecord {
     ) -> Self {
         let tool_name = tool_name.into();
         let tool_call_id = tool_call_id.into();
-        Self::tool_event(
+        Self::tool_call_event(
             format!("Tool request: {tool_name}"),
             serde_json::json!({
                 "source": provenance.source,

@@ -159,9 +159,16 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
 ) {
     let persistence = canonical_persistence_context_from_acp(context);
     let record = match message_type {
-        "tool_event" => {
-            CanonicalConversationRecord::tool_event(content_text, content_json, provider_message_id)
-        }
+        "tool_event" | "tool_result" => CanonicalConversationRecord::tool_event(
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
+        "tool_call" => CanonicalConversationRecord::tool_call_event(
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
         "workflow_event" => CanonicalConversationRecord::workflow_event(
             content_text,
             content_json,

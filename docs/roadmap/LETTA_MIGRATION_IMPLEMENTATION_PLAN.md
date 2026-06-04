@@ -564,6 +564,9 @@ Status: **ACP persistence adapter seam completed for current ACP event set**
   - `spawn_persist_acp_tool_request(...)`
 - `api/acp/stream/sse_stream.rs` now delegates assistant-output, turn-outcome, and tool-result persistence through ACP adapter helpers instead of rebuilding ACP-session provenance inline.
 - `api/acp/stream/runtime.rs` now also delegates conversation-resolved and tool-request persistence through ACP adapter helpers, finishing the current ACP-side provenance/context bundling pass while keeping `core/conversation_events.rs` transport-neutral.
+- A follow-on schema-alignment cleanup is now also landed:
+  - `core/conversation_events.rs` now persists tool requests as canonical `tool_call` rows and tool-result-style diagnostic events as canonical `tool_result` rows instead of the schema-invalid synthetic `tool_event` type.
+  - `api/acp/stream/runtime.rs` now normalizes older `tool_event` callers onto those schema-valid canonical categories at the ACP adapter boundary.
 
 Decision rationale:
 - stop micro-extracting the resume path,
