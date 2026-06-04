@@ -1,4 +1,4 @@
-use super::den_tools::{
+use crate::core::den_tools::{
     normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
     work_surface_scaffold_requests,
 };

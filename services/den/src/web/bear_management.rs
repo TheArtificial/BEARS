@@ -2741,6 +2741,7 @@ async fn bear_memory_delete_post(
                     .filter(|s| !s.is_empty())
                     .unwrap_or("normal"),
                 requires_human: form.requires_human.as_deref() == Some("on"),
+                project_to_conversation: true,
             },
         )
         .await?;
@@ -2877,6 +2878,7 @@ async fn bear_memory_proposal_post(
             decision_summary: form.decision_summary.as_deref(),
             result_path: None,
             result_commit: None,
+            project_to_conversation: true,
         },
     )
     .await?;

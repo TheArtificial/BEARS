@@ -4131,6 +4131,7 @@ async fn apply_core_update(
             decision_summary: Some("Applied reviewed memory proposal to core."),
             result_path: Some(response.path.as_str()),
             result_commit: response.canonical_tip.as_deref(),
+            project_to_conversation: false,
         },
     )
     .await?;
@@ -4238,6 +4239,7 @@ async fn resolve_memory_proposal(
             decision_summary: args.decision_summary.as_deref(),
             result_path: None,
             result_commit: None,
+            project_to_conversation: false,
         },
     )
     .await?;
@@ -4345,6 +4347,7 @@ async fn request_memory_review(
             refs: args.refs.unwrap_or_else(|| serde_json::json!({})),
             sensitivity,
             requires_human: args.requires_human,
+            project_to_conversation: false,
         },
     )
     .await?;

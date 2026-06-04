@@ -61,6 +61,7 @@ pub struct CreateMemoryProposal<'a> {
     pub refs: serde_json::Value,
     pub sensitivity: &'a str,
     pub requires_human: bool,
+    pub project_to_conversation: bool,
 }
 
 fn memory_proposal_provenance(bear_id: Uuid) -> ProjectionProvenance {
@@ -154,7 +155,9 @@ pub async fn create(
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
-    maybe_project_memory_proposal_created(pool, &proposal);
+    if params.project_to_conversation {
+        maybe_project_memory_proposal_created(pool, &proposal);
+    }
     Ok(proposal)
 }
 
@@ -196,6 +199,7 @@ pub struct ProposalResolutionParams<'a> {
     pub decision_summary: Option<&'a str>,
     pub result_path: Option<&'a str>,
     pub result_commit: Option<&'a str>,
+    pub project_to_conversation: bool,
 }
 
 pub async fn resolve_for_bear(
@@ -233,7 +237,9 @@ pub async fn resolve_for_bear(
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
-    maybe_project_memory_proposal_resolved(pool, &proposal);
+    if params.project_to_conversation {
+        maybe_project_memory_proposal_resolved(pool, &proposal);
+    }
     Ok(proposal)
 }
 

@@ -184,6 +184,7 @@ pub(crate) async fn run_pair_reflection_summary(
             }),
             sensitivity: "normal",
             requires_human: false,
+            project_to_conversation: true,
         },
     )
     .await?;

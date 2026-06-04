@@ -97,6 +97,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
             refs: json!({}),
             sensitivity: "normal",
             requires_human: false,
+            project_to_conversation: false,
         },
     )
     .await?;

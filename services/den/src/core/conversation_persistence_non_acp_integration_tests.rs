@@ -83,6 +83,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             refs: serde_json::json!({}),
             sensitivity: "normal",
             requires_human: false,
+            project_to_conversation: true,
         },
     )
     .await?;
@@ -99,6 +100,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             decision_summary: Some("applied"),
             result_path: Some("core/test.md"),
             result_commit: Some("abc123"),
+            project_to_conversation: true,
         },
     )
     .await?;
