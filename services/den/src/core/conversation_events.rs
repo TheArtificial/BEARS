@@ -502,6 +502,38 @@ pub fn canonical_persistence_context(
     }
 }
 
+pub fn normalize_persisted_gateway_record(
+    message_type: &str,
+    role: Option<&str>,
+    visibility: &str,
+    content_text: String,
+    content_json: serde_json::Value,
+    provider_message_id: Option<String>,
+) -> CanonicalConversationRecord {
+    match message_type {
+        "message" => match role {
+            Some("user") => CanonicalConversationRecord::visible_user_message(
+                content_text,
+                content_json,
+                provider_message_id,
+            ),
+            _ => CanonicalConversationRecord::visible_assistant_message(
+                content_text,
+                content_json,
+                provider_message_id,
+            ),
+        },
+        _ => CanonicalConversationRecord::normalized_structured_event(
+            message_type.to_string(),
+            role.map(str::to_string),
+            visibility.to_string(),
+            content_text,
+            content_json,
+            provider_message_id,
+        ),
+    }
+}
+
 pub fn spawn_persist_canonical_conversation_record(
     context: ConversationPersistenceContext,
     record: CanonicalConversationRecord,

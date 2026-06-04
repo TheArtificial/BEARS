@@ -148,7 +148,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_tool_request(
     );
 }
 
-pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
+pub(in crate::api::acp) fn spawn_canonical_gateway_record_persistence(
     context: &AcpStreamContext,
     message_type: &'static str,
     role: Option<&'static str>,
@@ -158,39 +158,14 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     provider_message_id: Option<String>,
 ) {
     let persistence = canonical_persistence_context_from_acp(context);
-    let record = CanonicalConversationRecord::normalized_structured_event(
-        message_type.to_string(),
-        role.map(str::to_string),
-        visibility.to_string(),
+    let record = crate::core::conversation_events::normalize_persisted_gateway_record(
+        message_type,
+        role,
+        visibility,
         content_text,
         content_json,
         provider_message_id,
     );
-    spawn_persist_canonical_conversation_record(persistence, record);
-}
-
-pub(in crate::api::acp) fn spawn_canonical_message_persistence(
-    context: &AcpStreamContext,
-    _message_type: &'static str,
-    role: Option<&'static str>,
-    _visibility: &'static str,
-    content_text: String,
-    content_json: serde_json::Value,
-    provider_message_id: Option<String>,
-) {
-    let persistence = canonical_persistence_context_from_acp(context);
-    let record = match role {
-        Some("user") => CanonicalConversationRecord::visible_user_message(
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-        _ => CanonicalConversationRecord::visible_assistant_message(
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-    };
     spawn_persist_canonical_conversation_record(persistence, record);
 }
 

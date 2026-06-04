@@ -220,8 +220,7 @@ mod tests {
                     map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
                 },
                 runtime::{
-                    spawn_canonical_message_persistence,
-                    spawn_canonical_structured_event_persistence,
+                    spawn_canonical_gateway_record_persistence,
                 },
                 sse_stream::{runtime_terminal_events, AcpRuntimeSseStream},
                 support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
@@ -903,7 +902,7 @@ mod tests {
             turn_scope,
         };
 
-        spawn_canonical_structured_event_persistence(
+        spawn_canonical_gateway_record_persistence(
             &context,
             "tool_event",
             Some("system"),
@@ -1200,7 +1199,7 @@ mod tests {
             turn_scope,
         };
 
-        spawn_canonical_message_persistence(
+        spawn_canonical_gateway_record_persistence(
             &context,
             "message",
             Some("assistant"),
@@ -1253,7 +1252,7 @@ mod tests {
             turn_scope: turn_scope.clone(),
         };
 
-        spawn_canonical_structured_event_persistence(
+        spawn_canonical_gateway_record_persistence(
             &context,
             "workflow_event",
             Some("system"),

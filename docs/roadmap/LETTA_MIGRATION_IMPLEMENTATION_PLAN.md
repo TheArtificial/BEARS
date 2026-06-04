@@ -569,6 +569,9 @@ Status: **ACP persistence adapter seam completed for current ACP event set**
 - A larger shared-entrypoint cleanup is now also landed:
   - `core/conversation_events.rs` now owns `normalized_structured_event(...)`, which centralizes schema-valid canonical event-category normalization for structured records.
   - `api/acp/stream/runtime.rs` now delegates structured canonical category normalization to that shared core entrypoint instead of open-coding the `tool_event` / `tool_call` / `workflow_event` mapping at the ACP adapter edge.
+- A broader visible-vs-structured entrypoint simplification is now also landed:
+  - `core/conversation_events.rs` now owns `normalize_persisted_gateway_record(...)`, which centralizes the shared decision between visible transcript rows (`message` + role) and normalized structured canonical records.
+  - `api/acp/stream/runtime.rs` now exposes one ACP adapter entrypoint, `spawn_canonical_gateway_record_persistence(...)`, instead of maintaining separate ACP helper branches for message vs structured persistence.
 
 Decision rationale:
 - stop micro-extracting the resume path,
