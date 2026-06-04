@@ -890,6 +890,31 @@ At this point, the migration surface is audited enough to return to implementati
    - verify live duplicate suppression/uniqueness behavior,
    - verify stack wiring and seeded runtime behavior before release/cutover.
 
+### Highest-value next slice after Phase 5 seam work
+
+After completing the ACP persistence adapter seam, the highest-value remaining slice is **validation tightening**, not another extraction.
+
+Recommended next priority:
+1. **Strengthen end-to-end-style coverage for already-wired canonical paths**
+   - especially prompt-path persistence,
+   - and `conversation_resolved` persistence.
+2. **Then consider bespoke smoke-stack replay/continuation coverage** if release confidence still needs a live-stack proof.
+
+Status: **validation tightening started**
+- Added focused ACP canonical validation for ACP-session provenance helper behavior.
+- Added focused validation that `conversation_resolved` canonical records preserve ACP-session provenance and conversation id metadata through the helper path.
+- Canonical ACP test sweep now passes with the added validation coverage.
+
+Why this should be next:
+- the roadmap now shows good helper/unit coverage and materially improved seam boundaries,
+- the biggest remaining risk is confidence on already-wired behavior through the full stack,
+- additional micro-refactors are lower value than proving the migrated paths behave correctly in integrated execution.
+
+Concrete implementation entry point:
+- start with the strongest fast feedback path for missing confidence:
+  - add/strengthen focused tests around prompt-path and `conversation_resolved` persistence behavior,
+  - then evaluate whether smoke-stack scripting needs a dedicated replay/continuation scenario.
+
 ### Practical migration summary
 
 Current status can be summarized as:

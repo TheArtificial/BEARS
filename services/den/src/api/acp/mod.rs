@@ -3439,6 +3439,94 @@ mod tests {
     }
 
     #[test]
+    fn acp_session_provenance_helper_uses_acp_session_scope() {
+        use std::sync::Arc;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let request_id = Uuid::new_v4();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let role_runtime = RoleRuntime::new(tool_turns.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-helper-session",
+            Some("conv-helper".to_string()),
+        );
+        let context = AcpStreamContext {
+            pool,
+            tool_turns,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-helper-session".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-helper".to_string(),
+            resolved_conversation_id: Some("conv-helper".to_string()),
+            upstream_target: "conv-helper".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime,
+            turn_scope,
+        };
+
+        let provenance = super::stream::runtime::acp_session_provenance(&context);
+        assert_eq!(provenance.source, "acp_stream");
+        assert_eq!(provenance.scope_id, "acp-helper-session");
+    }
+
+    #[tokio::test]
+    async fn canonical_conversation_resolved_helper_preserves_acp_session_provenance() {
+        use std::sync::Arc;
+        let provenance = super::stream::runtime::acp_session_provenance(&AcpStreamContext {
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+                .unwrap(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-session-resolved-helper".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-helper".to_string(),
+            resolved_conversation_id: Some("conv-helper".to_string()),
+            upstream_target: "conv-helper".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id: Uuid::new_v4(),
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(
+                Uuid::new_v4(),
+                "acp-session-resolved-helper",
+                Some("conv-helper".to_string()),
+            ),
+        });
+        let record = crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
+            "conv-validated",
+            &provenance,
+        );
+
+        match record {
+            crate::core::conversation_events::CanonicalConversationRecord::StructuredEvent {
+                content_json, ..
+            } => {
+                assert_eq!(content_json["source"], "acp_stream");
+                assert_eq!(content_json["scope_id"], "acp-session-resolved-helper");
+                assert_eq!(content_json["conversation_id"], "conv-validated");
+            }
+            _ => panic!("expected structured event"),
+        }
+    }
+
+    #[test]
     fn canonical_assistant_output_records_same_request_scope_for_duplicate_like_replays() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
