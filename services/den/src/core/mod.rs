@@ -30,6 +30,8 @@ pub mod conversation {
 }
 pub mod den_tools;
 #[cfg(test)]
+mod den_tools_apply_core_update_projection_tests;
+#[cfg(test)]
 mod den_tools_descriptor_guidance_tests;
 #[cfg(test)]
 mod den_tools_memory_request_review_projection_tests;

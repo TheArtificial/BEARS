@@ -314,6 +314,10 @@ Why this slice first:
   - typed projection payloads are modeled with transport-neutral enums/structs (`ProjectionEvent`, `ProjectionSource`, `ProjectionProvenance` and event payload structs) instead of stringly JSON assembly at call sites.
   - current non-ACP producers (`memory_proposals`, `pair_reflection`, `reflection_conductor`) now project through that shared typed seam rather than bespoke helper shapes.
   - projection-specific unit coverage now lives beside core implementation, and DB-backed integration coverage validates the projection persistence path independently of ACP-specific helpers.
+- A sixth extraction step is now landed for proposal lifecycle projection shaping:
+  - `core/conversation_events.rs` now exposes shared proposal lifecycle projection constructors (`memory_proposal_created_projection(...)`, `memory_proposal_resolved_projection(...)`, `memory_review_requested_projection(...)`).
+  - proposal creation/resolution in `core/memory_proposals.rs` and tool-driven request/resolve/apply flows in `core/den_tools.rs` now reuse those shared constructors instead of each shaping workflow text, visible summaries, and typed payloads independently.
+  - this keeps proposal lifecycle projection policy converged across direct proposal persistence and Den tool entrypoints while preserving typed provenance at the edge.
 
 ### Continuation / tool-settlement seam audit
 

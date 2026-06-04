@@ -4134,6 +4134,28 @@ async fn apply_core_update(
         },
     )
     .await?;
+    project_to_conversation(
+        pool,
+        context.bear_id,
+        Some(context.user_id),
+        clean_optional(&context.conversation_id).as_deref(),
+        memory_proposal_resolved_projection(
+            ProjectionProvenance {
+                source: ProjectionSource::DenTools,
+                scope_id: source_acp_session_id(context)
+                    .or_else(|| clean_optional(&context.session_id))
+                    .unwrap_or_else(|| format!("bear:{}:role:{}", context.bear_id, role.as_str())),
+            },
+            resolved.id,
+            resolved.source_role.clone(),
+            resolved.suggested_action.clone(),
+            resolved.title.clone(),
+            resolved.status.clone(),
+            resolved.reviewer_role.clone(),
+            resolved.result_path.clone(),
+            resolved.result_commit.clone(),
+        ),
+    );
     Ok(json!({
         "bear_id": context.bear_id,
         "proposal": resolved,
