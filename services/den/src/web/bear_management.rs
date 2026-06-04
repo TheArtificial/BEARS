@@ -2875,6 +2875,8 @@ async fn bear_memory_proposal_post(
             status,
             review_notes: form.review_notes.as_deref(),
             decision_summary: form.decision_summary.as_deref(),
+            result_path: None,
+            result_commit: None,
         },
     )
     .await?;

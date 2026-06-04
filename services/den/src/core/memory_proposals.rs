@@ -206,6 +206,8 @@ pub struct ProposalResolutionParams<'a> {
     pub status: &'a str,
     pub review_notes: Option<&'a str>,
     pub decision_summary: Option<&'a str>,
+    pub result_path: Option<&'a str>,
+    pub result_commit: Option<&'a str>,
 }
 
 pub async fn resolve_for_bear(
@@ -220,6 +222,8 @@ pub async fn resolve_for_bear(
             reviewer_agent_id = $5,
             review_notes = $6,
             decision_summary = $7,
+            result_path = COALESCE($8, result_path),
+            result_commit = COALESCE($9, result_commit),
             reviewed_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, source_role, source_agent_id, source_paths, source_refs,
@@ -236,6 +240,8 @@ pub async fn resolve_for_bear(
     .bind(params.reviewer_agent_id)
     .bind(params.review_notes)
     .bind(params.decision_summary)
+    .bind(params.result_path)
+    .bind(params.result_commit)
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
@@ -249,6 +255,8 @@ pub async fn resolve_for_bear(
             "reviewer_agent_id": proposal.reviewer_agent_id,
             "review_notes": proposal.review_notes,
             "decision_summary": proposal.decision_summary,
+            "result_path": proposal.result_path,
+            "result_commit": proposal.result_commit,
             "reviewed_at": proposal.reviewed_at,
         }),
     );

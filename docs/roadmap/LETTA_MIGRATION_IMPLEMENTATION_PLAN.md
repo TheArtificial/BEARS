@@ -628,14 +628,18 @@ Status: **first non-ACP reuse slice landed and expanded**
 - The current non-ACP canonical events now include:
   - `memory_proposal_created`
   - `memory_proposal_resolved`
+- Proposal resolution now also carries richer outcome projection fields when available:
+  - `result_path`
+  - `result_commit`
+  - alongside reviewer/decision metadata
 - This gives the pair-reflection → review/memory-proposal flow a real Den-owned canonical workflow trail outside ACP stream persistence.
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from proposal metadata events into **review decision/result projection**, for example:
-- canonical persistence for proposal result-path/result-commit updates,
-- canonical projection of accepted/rejected review decisions,
-- or a review-visible message/event when a proposal materially changes shared memory state.
+The next broader non-ACP slice should likely move from proposal metadata events into **review-visible state projection**, for example:
+- a review-visible message/event when a proposal materially changes shared memory state,
+- canonical projection of accepted/rejected outcomes once result paths/commits are actually populated by callers,
+- or wiring result-path/result-commit population through the resolve/apply callsites instead of leaving them optional placeholders.
 
 That would extend the current workflow-event trail into a fuller review transcript/audit path before tackling `watch`-specific ingestion concerns.
 

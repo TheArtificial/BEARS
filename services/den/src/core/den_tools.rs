@@ -4125,6 +4125,8 @@ async fn apply_core_update(
             status: "approved",
             review_notes: args.review_notes.as_deref(),
             decision_summary: Some("Applied reviewed memory proposal to core."),
+            result_path: None,
+            result_commit: None,
         },
     )
     .await?;
@@ -4208,6 +4210,8 @@ async fn resolve_memory_proposal(
             status,
             review_notes: args.review_notes.as_deref(),
             decision_summary: args.decision_summary.as_deref(),
+            result_path: None,
+            result_commit: None,
         },
     )
     .await?;
