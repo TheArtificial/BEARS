@@ -4125,8 +4125,8 @@ async fn apply_core_update(
             status: "approved",
             review_notes: args.review_notes.as_deref(),
             decision_summary: Some("Applied reviewed memory proposal to core."),
-            result_path: None,
-            result_commit: None,
+            result_path: Some(response.path.as_str()),
+            result_commit: response.canonical_tip.as_deref(),
         },
     )
     .await?;

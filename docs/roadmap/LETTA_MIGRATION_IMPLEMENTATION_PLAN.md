@@ -632,16 +632,19 @@ Status: **first non-ACP reuse slice landed and expanded**
   - `result_path`
   - `result_commit`
   - alongside reviewer/decision metadata
+- The curate core-apply flow now threads real artifact outcome data into proposal resolution:
+  - `den.memory.apply_core_update` passes the returned MemFS `path` and `canonical_tip` into `resolve_for_bear(...)`
+  - resulting `memory_proposal_resolved` canonical events now carry actual result artifact metadata for that apply path.
 - This gives the pair-reflection → review/memory-proposal flow a real Den-owned canonical workflow trail outside ACP stream persistence.
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from proposal metadata events into **review-visible state projection**, for example:
+The next broader non-ACP slice should likely move from workflow-only proposal events into **review-visible state projection**, for example:
 - a review-visible message/event when a proposal materially changes shared memory state,
-- canonical projection of accepted/rejected outcomes once result paths/commits are actually populated by callers,
-- or wiring result-path/result-commit population through the resolve/apply callsites instead of leaving them optional placeholders.
+- enriching `den.memory.request_review` proposal creation with conversation/session/source provenance so more proposal-created events attach to canonical conversations,
+- or canonical projection of accepted/rejected outcomes into a more operator-facing transcript surface.
 
-That would extend the current workflow-event trail into a fuller review transcript/audit path before tackling `watch`-specific ingestion concerns.
+At this point, additional resolve/apply callsites do not appear to return richer artifact outputs than `den.memory.apply_core_update`; the best next leverage is therefore improved proposal-creation provenance plus operator-visible projection before tackling `watch`-specific ingestion concerns.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 
