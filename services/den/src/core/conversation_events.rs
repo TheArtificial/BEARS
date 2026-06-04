@@ -322,7 +322,7 @@ impl CanonicalConversationRecord {
 
     fn storage_message_type(&self) -> &str {
         match self {
-            Self::VisibleMessage { .. } => "message",
+            Self::VisibleMessage { role, .. } => role.as_str(),
             Self::StructuredEvent { message_type, .. } => message_type.as_str(),
         }
     }

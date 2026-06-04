@@ -31,7 +31,7 @@ pub async fn ensure_conversation_for_external_id(
     source_acp_session_id: Option<&str>,
     current_title: Option<&str>,
 ) -> Result<ConversationRecord, CustomError> {
-    let row = sqlx::query(
+    let inserted_row = sqlx::query(
         r#"
         INSERT INTO conversations (
             bear_id,
@@ -41,11 +41,7 @@ pub async fn ensure_conversation_for_external_id(
             current_title
         )
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT ON CONSTRAINT idx_conversations_bear_external_conversation
-        DO UPDATE SET
-            source_acp_session_id = COALESCE(EXCLUDED.source_acp_session_id, conversations.source_acp_session_id),
-            current_title = COALESCE(EXCLUDED.current_title, conversations.current_title),
-            updated_at = NOW()
+        ON CONFLICT DO NOTHING
         RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title
         "#,
     )
@@ -54,9 +50,32 @@ pub async fn ensure_conversation_for_external_id(
     .bind(external_conversation_id)
     .bind(source_acp_session_id)
     .bind(current_title)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("upsert conversation: {err}")))?;
+    .map_err(|err| CustomError::Database(format!("upsert conversation insert: {err}")))?;
+
+    let row = if let Some(row) = inserted_row {
+        row
+    } else {
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET source_acp_session_id = COALESCE($3, conversations.source_acp_session_id),
+                current_title = COALESCE($4, conversations.current_title),
+                updated_at = NOW()
+            WHERE bear_id = $1
+              AND external_conversation_id = $2
+            RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title
+            "#,
+        )
+        .bind(bear_id)
+        .bind(external_conversation_id)
+        .bind(source_acp_session_id)
+        .bind(current_title)
+        .fetch_one(pool)
+        .await
+        .map_err(|err| CustomError::Database(format!("upsert conversation update: {err}")))?
+    };
 
     Ok(ConversationRecord {
         id: row
@@ -256,6 +275,10 @@ pub async fn append_message(
     .execute(&mut *tx)
     .await
     {
+        tx.rollback().await.map_err(|rollback_err| {
+            CustomError::Database(format!("rollback append conversation message tx: {rollback_err}"))
+        })?;
+
         let duplicate_sequence_no = if source_event_id.is_some() {
             sqlx::query_scalar::<_, i64>(
                 r#"
@@ -268,7 +291,7 @@ pub async fn append_message(
             )
             .bind(conversation_id)
             .bind(source_event_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(pool)
             .await
             .map_err(|reload_err| {
                 CustomError::Database(format!(
@@ -279,11 +302,6 @@ pub async fn append_message(
             None
         };
         if let Some(existing_sequence_no) = duplicate_sequence_no {
-            tx.rollback().await.map_err(|rollback_err| {
-                CustomError::Database(format!(
-                    "rollback append conversation message tx after duplicate source_event_id: {rollback_err}"
-                ))
-            })?;
             return Ok(existing_sequence_no);
         }
         return Err(CustomError::Database(format!(
