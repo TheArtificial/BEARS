@@ -3,7 +3,16 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{core::bears::BearAgentRole, errors::CustomError};
+use crate::{
+    core::{
+        bears::BearAgentRole,
+        conversation_events::{
+            canonical_persistence_context, spawn_persist_assistant_summary_message,
+            spawn_persist_workflow_event, ConversationEventProvenance,
+        },
+    },
+    errors::CustomError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairReflectionRunRow {
@@ -73,6 +82,63 @@ pub async fn create_run(
     Ok(row_from_sql(row))
 }
 
+fn reflection_provenance(bear_id: Uuid, acp_session_id: &str) -> ConversationEventProvenance {
+    ConversationEventProvenance {
+        source: "pair_reflection".to_string(),
+        scope_id: format!("bear:{bear_id}:acp:{acp_session_id}"),
+    }
+}
+
+fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionRunRow) {
+    let Some(conversation_id) = row.conversation_id.as_deref().filter(|id| id.starts_with("conv-")) else {
+        return;
+    };
+    let provenance = reflection_provenance(row.bear_id, &row.acp_session_id);
+    let context = canonical_persistence_context(
+        pool.clone(),
+        row.bear_id,
+        Some(row.user_id),
+        conversation_id.to_string(),
+        None,
+        None,
+        provenance.scope_id.clone(),
+        false,
+    );
+    let workflow_json = serde_json::json!({
+        "source": provenance.source,
+        "event": "pair_reflection_completed",
+        "scope_id": provenance.scope_id,
+        "reflection_run_id": row.id,
+        "acp_session_id": row.acp_session_id,
+        "trigger": row.trigger,
+        "status": row.status,
+        "summary_path": row.summary_path,
+        "summary_commit": row.summary_commit,
+        "considered_message_count": row.considered_message_count,
+        "completed_at": row.completed_at,
+    });
+    spawn_persist_workflow_event(
+        context.clone(),
+        format!("Pair reflection completed for session {}", row.acp_session_id),
+        workflow_json,
+        None,
+    );
+    if row.status == "completed" {
+        spawn_persist_assistant_summary_message(
+            context,
+            format!(
+                "Pair reflection summary completed for session {}{}.",
+                row.acp_session_id,
+                row.summary_path
+                    .as_deref()
+                    .map(|path| format!(" and saved to {path}"))
+                    .unwrap_or_default()
+            ),
+            None,
+        );
+    }
+}
+
 pub async fn complete_run(
     pool: &PgPool,
     params: CompletePairReflectionRun<'_>,
@@ -98,7 +164,9 @@ pub async fn complete_run(
     .bind(params.diagnostic)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    let completed = row_from_sql(row);
+    maybe_project_pair_reflection_completion(pool, &completed);
+    Ok(completed)
 }
 
 pub async fn list_recent_for_bear(

@@ -645,12 +645,17 @@ Status: **larger review lifecycle projection slice landed**
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from current review lifecycle projection into **deeper operator-facing audit coverage**, for example:
-- projecting memory/core apply results into even richer visible summaries or dedicated review transcript surfaces,
+The next broader non-ACP slice should likely move from the current review lifecycle projection into **broader cross-subsystem audit coverage**, for example:
 - adding focused tests around non-ACP visible summary persistence for proposal lifecycle transitions,
-- or taking the same shared projection pattern into another non-ACP subsystem before tackling `watch`-specific ingestion concerns.
+- taking the same shared projection pattern into other non-ACP subsystems,
+- or projecting additional operator-facing summaries where long-running background/completion workflows finish.
 
-At this point, the review/memory-proposal flow has both workflow-event and visible-summary projection; the best next leverage is either deeper test coverage for this slice or extending the same pattern to the next non-ACP consumer.
+Status: **projection pattern extended to another non-ACP consumer**
+- `core/pair_reflection/mod.rs` now projects pair-reflection completion into canonical conversation persistence when a canonical conversation id is present.
+- Pair reflection completion now emits:
+  - a canonical workflow event (`pair_reflection_completed`)
+  - a canonical visible assistant-style summary message when the reflection run completed successfully
+- This extends the workflow+visible projection pattern beyond review/memory proposals into another concrete non-ACP completion flow.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 
