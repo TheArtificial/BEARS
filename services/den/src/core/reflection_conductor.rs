@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     core::conversation_events::{
-        project_non_acp_audit_event, ConversationEventProvenance, NonAcpAuditProjection,
+        project_to_conversation, MemoryCurateEnqueuedPayload, Projection,
+        ProjectionEvent, ProjectionProvenance, ProjectionSource,
     },
     errors::CustomError,
 };
@@ -114,30 +115,28 @@ pub async fn enqueue_memory_curate_for_proposals(
         },
     )
     .await?;
-    let provenance = ConversationEventProvenance {
-        source: "reflection_conductor".to_string(),
-        scope_id: format!("bear:{}:lane:{}", row.bear_id, row.lane),
-    };
-    project_non_acp_audit_event(
+    project_to_conversation(
         pool,
         row.bear_id,
         None,
         row.conversation_id.as_deref(),
-        provenance,
-        NonAcpAuditProjection {
-            event: "memory_curate_enqueued".to_string(),
-            workflow_text: format!("Memory curate enqueued with {} proposal(s)", proposal_ids.len()),
-            workflow_json: serde_json::json!({
-                "reflection_run_id": row.id,
-                "lane": row.lane,
-                "trigger": row.trigger,
-                "status": row.status,
-                "proposal_ids": proposal_ids,
-                "conversation_key": row.conversation_key,
-                "conversation_date": row.conversation_date,
-                "created_at": row.created_at,
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{}:lane:{}", row.bear_id, row.lane),
+            },
+            event: ProjectionEvent::MemoryCurateEnqueued(MemoryCurateEnqueuedPayload {
+                reflection_run_id: row.id,
+                lane: row.lane.clone(),
+                trigger: row.trigger.clone(),
+                status: row.status.clone(),
+                proposal_ids: proposal_ids.clone(),
+                conversation_key: row.conversation_key.clone(),
+                conversation_date: row.conversation_date,
+                created_at: row.created_at,
             }),
-            visible_summary_text: Some(format!(
+            workflow_text: format!("Memory curate enqueued with {} proposal(s)", proposal_ids.len()),
+            visible_summary: Some(format!(
                 "Memory curate was queued for {} proposal(s).",
                 row.input_summary
                     .get("proposal_ids")

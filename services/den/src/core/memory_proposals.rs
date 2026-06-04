@@ -7,8 +7,9 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            project_non_acp_audit_event, ConversationEventProvenance,
-            NonAcpAuditProjection,
+            project_to_conversation, MemoryProposalCreatedPayload,
+            MemoryProposalResolvedPayload, Projection, ProjectionEvent,
+            ProjectionProvenance, ProjectionSource,
         },
     },
     errors::CustomError,
@@ -63,9 +64,9 @@ pub struct CreateMemoryProposal<'a> {
     pub requires_human: bool,
 }
 
-fn memory_proposal_provenance(bear_id: Uuid) -> ConversationEventProvenance {
-    ConversationEventProvenance {
-        source: "memory_proposals".to_string(),
+fn memory_proposal_provenance(bear_id: Uuid) -> ProjectionProvenance {
+    ProjectionProvenance {
+        source: ProjectionSource::MemoryProposals,
         scope_id: format!("bear:{bear_id}"),
     }
 }
@@ -77,52 +78,59 @@ fn conversation_id_for_proposal(row: &MemoryProposalRow) -> Option<&str> {
         .filter(|value| value.starts_with("conv-"))
 }
 
-fn maybe_project_memory_proposal_lifecycle(
-    pool: &PgPool,
-    row: &MemoryProposalRow,
-    event: &str,
-    workflow_text: String,
-    summary_text: Option<String>,
-    extra_json: serde_json::Value,
-) {
-    let mut workflow_json = serde_json::json!({
-        "proposal_id": row.id,
-        "source_role": row.source_role,
-        "suggested_action": row.suggested_action,
-        "title": row.title,
-        "status": row.status,
-    });
-    if let (Some(base), Some(extra)) = (workflow_json.as_object_mut(), extra_json.as_object()) {
-        for (key, value) in extra {
-            base.insert(key.clone(), value.clone());
-        }
-    }
-    project_non_acp_audit_event(
+fn maybe_project_memory_proposal_created(pool: &PgPool, row: &MemoryProposalRow) {
+    project_to_conversation(
         pool,
         row.bear_id,
         None,
         conversation_id_for_proposal(row),
-        memory_proposal_provenance(row.bear_id),
-        NonAcpAuditProjection {
-            event: event.to_string(),
-            workflow_text,
-            workflow_json,
-            visible_summary_text: summary_text,
+        Projection {
+            provenance: memory_proposal_provenance(row.bear_id),
+            event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
+                proposal_id: row.id,
+                source_role: row.source_role.clone(),
+                suggested_action: row.suggested_action.clone(),
+                title: row.title.clone(),
+                status: row.status.clone(),
+            }),
+            workflow_text: format!("Memory proposal created: {}", row.title),
+            visible_summary: Some(format!(
+                "Review requested for memory proposal '{}' from {}.",
+                row.title, row.source_role
+            )),
         },
     );
 }
 
-fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {
-    maybe_project_memory_proposal_lifecycle(
+fn maybe_project_memory_proposal_resolved(pool: &PgPool, row: &MemoryProposalRow) {
+    let visible_summary = match row.status.as_str() {
+        "approved" => Some(match row.result_path.as_deref() {
+            Some(path) => format!("Memory proposal '{}' was approved and applied at {path}.", row.title),
+            None => format!("Memory proposal '{}' was approved.", row.title),
+        }),
+        "rejected" => Some(format!("Memory proposal '{}' was rejected.", row.title)),
+        _ => None,
+    };
+    project_to_conversation(
         pool,
-        row,
-        "memory_proposal_created",
-        format!("Memory proposal created: {}", row.title),
-        Some(format!(
-            "Review requested for memory proposal '{}' from {}.",
-            row.title, row.source_role
-        )),
-        serde_json::json!({}),
+        row.bear_id,
+        None,
+        conversation_id_for_proposal(row),
+        Projection {
+            provenance: memory_proposal_provenance(row.bear_id),
+            event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
+                proposal_id: row.id,
+                source_role: row.source_role.clone(),
+                suggested_action: row.suggested_action.clone(),
+                title: row.title.clone(),
+                status: row.status.clone(),
+                reviewer_role: row.reviewer_role.clone(),
+                result_path: row.result_path.clone(),
+                result_commit: row.result_commit.clone(),
+            }),
+            workflow_text: format!("Memory proposal resolved: {} ({})", row.title, row.status),
+            visible_summary,
+        },
     );
 }
 
@@ -166,7 +174,7 @@ pub async fn create(
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
-    maybe_spawn_memory_proposal_created_event(pool, &proposal);
+    maybe_project_memory_proposal_created(pool, &proposal);
     Ok(proposal)
 }
 
@@ -245,45 +253,7 @@ pub async fn resolve_for_bear(
     .fetch_one(pool)
     .await?;
     let proposal = row_from_sql(row);
-    let summary_text = match proposal.status.as_str() {
-        "approved" => Some(format!(
-            "Memory proposal '{}' was approved{}.",
-            proposal.title,
-            proposal
-                .result_path
-                .as_deref()
-                .map(|path| format!(" and applied at {path}"))
-                .unwrap_or_default()
-        )),
-        "rejected" => Some(format!("Memory proposal '{}' was rejected.", proposal.title)),
-        "deferred" => Some(format!("Memory proposal '{}' was deferred.", proposal.title)),
-        "retained_local" => Some(format!(
-            "Memory proposal '{}' was retained as role-local only.",
-            proposal.title
-        )),
-        "superseded" => Some(format!("Memory proposal '{}' was superseded.", proposal.title)),
-        "needs_human_review" => Some(format!(
-            "Memory proposal '{}' now requires human review.",
-            proposal.title
-        )),
-        _ => None,
-    };
-    maybe_project_memory_proposal_lifecycle(
-        pool,
-        &proposal,
-        "memory_proposal_resolved",
-        format!("Memory proposal resolved: {}", proposal.title),
-        summary_text,
-        serde_json::json!({
-            "reviewer_role": proposal.reviewer_role,
-            "reviewer_agent_id": proposal.reviewer_agent_id,
-            "review_notes": proposal.review_notes,
-            "decision_summary": proposal.decision_summary,
-            "result_path": proposal.result_path,
-            "result_commit": proposal.result_commit,
-            "reviewed_at": proposal.reviewed_at,
-        }),
-    );
+    maybe_project_memory_proposal_resolved(pool, &proposal);
     Ok(proposal)
 }
 

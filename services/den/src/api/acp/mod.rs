@@ -971,73 +971,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_non_acp_audit_projection_merges_real_consumer_payload_shape() {
-        use crate::core::conversation_events::{
-            ConversationEventProvenance, NonAcpAuditProjection,
-        };
-
-        let provenance = ConversationEventProvenance {
-            source: "reflection_conductor".to_string(),
-            scope_id: "bear:test:lane:memory_curate".to_string(),
-        };
-        let projection = NonAcpAuditProjection {
-            event: "memory_curate_enqueued".to_string(),
-            workflow_text: "Memory curate enqueued with 2 proposal(s)".to_string(),
-            workflow_json: serde_json::json!({
-                "reflection_run_id": "run-123",
-                "lane": "memory_curate",
-                "status": "queued",
-                "proposal_ids": ["p1", "p2"],
-            }),
-            visible_summary_text: Some("Memory curate was queued for 2 proposal(s).".to_string()),
-        };
-
-        let mut workflow_json = serde_json::json!({
-            "source": provenance.source,
-            "event": projection.event,
-            "scope_id": provenance.scope_id,
-        });
-        if let (Some(base), Some(extra)) =
-            (workflow_json.as_object_mut(), projection.workflow_json.as_object())
-        {
-            for (key, value) in extra {
-                base.insert(key.clone(), value.clone());
-            }
-        }
-
-        assert_eq!(workflow_json["source"], "reflection_conductor");
-        assert_eq!(workflow_json["event"], "memory_curate_enqueued");
-        assert_eq!(workflow_json["scope_id"], "bear:test:lane:memory_curate");
-        assert_eq!(workflow_json["lane"], "memory_curate");
-        assert_eq!(workflow_json["status"], "queued");
-        assert_eq!(workflow_json["proposal_ids"], serde_json::json!(["p1", "p2"]));
-    }
-
-    #[test]
-    fn canonical_non_acp_audit_projection_supports_visible_summary_policy() {
-        use crate::core::conversation_events::NonAcpAuditProjection;
-
-        let with_summary = NonAcpAuditProjection {
-            event: "pair_reflection_completed".to_string(),
-            workflow_text: "Pair reflection completed".to_string(),
-            workflow_json: serde_json::json!({"status":"completed"}),
-            visible_summary_text: Some("Pair reflection summary completed.".to_string()),
-        };
-        let without_summary = NonAcpAuditProjection {
-            event: "memory_proposal_resolved".to_string(),
-            workflow_text: "Memory proposal resolved".to_string(),
-            workflow_json: serde_json::json!({"status":"unknown"}),
-            visible_summary_text: None,
-        };
-
-        assert_eq!(
-            with_summary.visible_summary_text.as_deref(),
-            Some("Pair reflection summary completed.")
-        );
-        assert!(without_summary.visible_summary_text.is_none());
-    }
-
-    #[test]
     fn canonical_tool_request_helper_builds_provenance_payload() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
@@ -3551,8 +3484,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn acp_session_provenance_helper_uses_acp_session_scope() {
+    #[tokio::test]
+    async fn acp_session_provenance_helper_uses_acp_session_scope() {
         use std::sync::Arc;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")

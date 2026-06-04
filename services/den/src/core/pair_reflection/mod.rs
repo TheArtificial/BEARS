@@ -7,8 +7,8 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            project_non_acp_audit_event, ConversationEventProvenance,
-            NonAcpAuditProjection,
+            project_to_conversation, PairReflectionCompletedPayload, Projection,
+            ProjectionEvent, ProjectionProvenance, ProjectionSource,
         },
     },
     errors::CustomError,
@@ -82,34 +82,33 @@ pub async fn create_run(
     Ok(row_from_sql(row))
 }
 
-fn reflection_provenance(bear_id: Uuid, acp_session_id: &str) -> ConversationEventProvenance {
-    ConversationEventProvenance {
-        source: "pair_reflection".to_string(),
+fn reflection_provenance(bear_id: Uuid, acp_session_id: &str) -> ProjectionProvenance {
+    ProjectionProvenance {
+        source: ProjectionSource::PairReflection,
         scope_id: format!("bear:{bear_id}:acp:{acp_session_id}"),
     }
 }
 
 fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionRunRow) {
-    project_non_acp_audit_event(
+    project_to_conversation(
         pool,
         row.bear_id,
         Some(row.user_id),
         row.conversation_id.as_deref(),
-        reflection_provenance(row.bear_id, &row.acp_session_id),
-        NonAcpAuditProjection {
-            event: "pair_reflection_completed".to_string(),
-            workflow_text: format!("Pair reflection completed for session {}", row.acp_session_id),
-            workflow_json: serde_json::json!({
-                "reflection_run_id": row.id,
-                "acp_session_id": row.acp_session_id,
-                "trigger": row.trigger,
-                "status": row.status,
-                "summary_path": row.summary_path,
-                "summary_commit": row.summary_commit,
-                "considered_message_count": row.considered_message_count,
-                "completed_at": row.completed_at,
+        Projection {
+            provenance: reflection_provenance(row.bear_id, &row.acp_session_id),
+            event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
+                reflection_run_id: row.id,
+                acp_session_id: row.acp_session_id.clone(),
+                trigger: row.trigger.clone(),
+                status: row.status.clone(),
+                summary_path: row.summary_path.clone(),
+                summary_commit: row.summary_commit.clone(),
+                considered_message_count: row.considered_message_count,
+                completed_at: row.completed_at,
             }),
-            visible_summary_text: (row.status == "completed").then(|| format!(
+            workflow_text: format!("Pair reflection completed for session {}", row.acp_session_id),
+            visible_summary: (row.status == "completed").then(|| format!(
                 "Pair reflection summary completed for session {}{}.",
                 row.acp_session_id,
                 row.summary_path

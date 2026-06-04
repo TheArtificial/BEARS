@@ -15,6 +15,8 @@ pub mod codepool;
 pub mod conversation_events;
 pub mod conversation_persistence;
 #[cfg(test)]
+mod conversation_events_tests;
+#[cfg(test)]
 mod conversation_persistence_non_acp_integration_tests;
 pub mod den_tools;
 #[cfg(test)]

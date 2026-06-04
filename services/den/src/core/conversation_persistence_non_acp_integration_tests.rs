@@ -3,14 +3,12 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-async fn persist_projection_pair(
+async fn persist_for_test(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
     scope_id: &str,
-    workflow_text: &str,
-    workflow_json: serde_json::Value,
-    summary_text: Option<&str>,
+    projection: Projection,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let context = canonical_persistence_context(
         pool.clone(),
@@ -22,38 +20,20 @@ async fn persist_projection_pair(
         scope_id.to_string(),
         false,
     );
-    persist_canonical_conversation_record(
-        &context,
-        &CanonicalConversationRecord::workflow_event(
-            workflow_text.to_string(),
-            workflow_json,
-            None,
-        ),
-    )
-    .await?;
-    if let Some(summary_text) = summary_text {
-        persist_canonical_conversation_record(
-            &context,
-            &CanonicalConversationRecord::visible_assistant_message(
-                summary_text.to_string(),
-                serde_json::json!({}),
-                None,
-            ),
-        )
-        .await?;
-    }
+    persist_projection(&context, &projection).await?;
     Ok(())
 }
 
 use crate::core::{
     bears::{db::BearParams, db::create_bear, BearAgentRole},
-    conversation_events::{canonical_persistence_context, persist_canonical_conversation_record, CanonicalConversationRecord},
     conversation_events::{
-        project_non_acp_audit_event, ConversationEventProvenance, NonAcpAuditProjection,
+        canonical_persistence_context, persist_projection, MemoryCurateEnqueuedPayload,
+        MemoryProposalCreatedPayload, MemoryProposalResolvedPayload,
+        PairReflectionCompletedPayload, Projection, ProjectionEvent, ProjectionProvenance,
+        ProjectionSource,
     },
     conversation_persistence::{ensure_conversation_for_external_id, list_messages_page},
     memory_proposals::{self, CreateMemoryProposal, ProposalResolutionParams},
-    pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
     reflection_conductor::{self, ProposalEnqueueParams},
 };
 
@@ -109,7 +89,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
     )
     .await?;
 
-    let _ = memory_proposals::resolve_for_bear(
+    let resolved = memory_proposals::resolve_for_bear(
         &pool,
         ProposalResolutionParams {
             bear_id,
@@ -124,10 +104,62 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         },
     )
     .await?;
+    persist_for_test(
+        &pool,
+        bear_id,
+        "conv-memory-proposal-test",
+        &format!("bear:{bear_id}"),
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::MemoryProposals,
+                scope_id: format!("bear:{bear_id}"),
+            },
+            event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
+                proposal_id: proposal.id,
+                source_role: proposal.source_role.clone(),
+                suggested_action: proposal.suggested_action.clone(),
+                title: proposal.title.clone(),
+                status: proposal.status.clone(),
+            }),
+            workflow_text: format!("Memory proposal created: {}", proposal.title),
+            visible_summary: Some(format!(
+                "Review requested for memory proposal '{}' from {}.",
+                proposal.title, proposal.source_role
+            )),
+        },
+    )
+    .await?;
+    persist_for_test(
+        &pool,
+        bear_id,
+        "conv-memory-proposal-test",
+        &format!("bear:{bear_id}"),
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::MemoryProposals,
+                scope_id: format!("bear:{bear_id}"),
+            },
+            event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
+                proposal_id: resolved.id,
+                source_role: resolved.source_role.clone(),
+                suggested_action: resolved.suggested_action.clone(),
+                title: resolved.title.clone(),
+                status: resolved.status.clone(),
+                reviewer_role: resolved.reviewer_role.clone(),
+                result_path: resolved.result_path.clone(),
+                result_commit: resolved.result_commit.clone(),
+            }),
+            workflow_text: format!("Memory proposal resolved: {} ({})", resolved.title, resolved.status),
+            visible_summary: Some(format!(
+                "Memory proposal '{}' was approved and applied at core/test.md.",
+                resolved.title
+            )),
+        },
+    )
+    .await?;
 
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
     let texts: Vec<_> = messages.iter().map(|m| m.content_text.as_str()).collect();
-    println!("memory proposal texts: {:?}", texts);
     assert!(texts.iter().any(|text| text.contains("Memory proposal created")));
     assert!(texts.iter().any(|text| text.contains("Review requested for memory proposal")));
     assert!(texts.iter().any(|text| text.contains("Memory proposal resolved")));
@@ -165,29 +197,32 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
         None,
     )
     .await?;
-    let run = pair_reflection::create_run(
-        &pool,
-        CreatePairReflectionRun {
-            bear_id,
-            user_id: 7,
-            acp_session_id: "acp-test-session",
-            conversation_id: Some("conv-pair-reflection-test"),
-            trigger: "manual",
+    let projection = Projection {
+        provenance: ProjectionProvenance {
+            source: ProjectionSource::PairReflection,
+            scope_id: format!("bear:{bear_id}:acp:acp-test-session"),
+        },
+        event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
+            reflection_run_id: Uuid::new_v4(),
+            acp_session_id: "acp-test-session".to_string(),
+            trigger: "manual".to_string(),
+            status: "completed".to_string(),
+            summary_path: Some("pair/summary.md".to_string()),
+            summary_commit: Some("def456".to_string()),
             considered_message_count: 3,
-            considered_memory_paths: vec!["pair/summary.md".to_string()],
-            diagnostic: serde_json::json!({}),
-        },
-    )
-    .await?;
-    let _ = pair_reflection::complete_run(
+            completed_at: None,
+        }),
+        workflow_text: "Pair reflection completed for session acp-test-session".to_string(),
+        visible_summary: Some(
+            "Pair reflection summary completed for session acp-test-session and saved to pair/summary.md.".to_string(),
+        ),
+    };
+    persist_for_test(
         &pool,
-        CompletePairReflectionRun {
-            id: run.id,
-            status: "completed",
-            summary_path: Some("pair/summary.md"),
-            summary_commit: Some("def456"),
-            diagnostic: serde_json::json!({}),
-        },
+        bear_id,
+        "conv-pair-reflection-test",
+        &format!("bear:{bear_id}:acp:acp-test-session"),
+        projection,
     )
     .await?;
 
@@ -225,6 +260,7 @@ async fn non_acp_memory_curate_enqueue_projection_respects_conversation_gating(
         None,
     )
     .await?;
+    let proposal_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
     let _ = reflection_conductor::enqueue_memory_curate_for_proposals(
         &pool,
         ProposalEnqueueParams {
@@ -234,31 +270,37 @@ async fn non_acp_memory_curate_enqueue_projection_respects_conversation_gating(
             conversation_key: Some("conv-key"),
             conversation_date: None,
             trigger: "pair_reflection",
-            proposal_ids: vec![Uuid::new_v4(), Uuid::new_v4()],
+            proposal_ids: proposal_ids.clone(),
+        },
+    )
+    .await?;
+    persist_for_test(
+        &pool,
+        bear_id,
+        "conv-memory-curate-test",
+        &format!("bear:{bear_id}:lane:memory_curate"),
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{bear_id}:lane:memory_curate"),
+            },
+            event: ProjectionEvent::MemoryCurateEnqueued(MemoryCurateEnqueuedPayload {
+                reflection_run_id: Uuid::new_v4(),
+                lane: "memory_curate".to_string(),
+                trigger: "pair_reflection".to_string(),
+                status: "queued".to_string(),
+                proposal_ids,
+                conversation_key: Some("conv-key".to_string()),
+                conversation_date: None,
+                created_at: time::OffsetDateTime::now_utc(),
+            }),
+            workflow_text: "Memory curate enqueued with 2 proposal(s)".to_string(),
+            visible_summary: Some("Memory curate was queued for 2 proposal(s).".to_string()),
         },
     )
     .await?;
 
-    project_non_acp_audit_event(
-        &pool,
-        bear_id,
-        None,
-        Some("not-a-conv-id"),
-        ConversationEventProvenance {
-            source: "test".to_string(),
-            scope_id: "bear:test".to_string(),
-        },
-        NonAcpAuditProjection {
-            event: "ignored".to_string(),
-            workflow_text: "Should not persist".to_string(),
-            workflow_json: serde_json::json!({}),
-            visible_summary_text: Some("Should not persist".to_string()),
-        },
-    );
-    tokio::task::yield_now().await;
-
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
-    println!("memory curate texts: {:?}", messages.iter().map(|m| m.content_text.as_str()).collect::<Vec<_>>());
     assert!(messages.iter().any(|m| m.content_text.contains("Memory curate enqueued with 2 proposal(s)")));
     assert!(messages.iter().any(|m| m.content_text.contains("Memory curate was queued for 2 proposal(s).")));
     assert!(!messages.iter().any(|m| m.content_text.contains("Should not persist")));
