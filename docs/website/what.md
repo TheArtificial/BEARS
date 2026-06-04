@@ -1,6 +1,8 @@
 # What Is a Bear?
 
-(Missing: the top intro "why this is more useful than a chatbot")
+A chatbot is usually a model answering the next prompt. A Bear is a durable AI collaborator: a model given a role, memory, tools, relationships, and a governed place to work.
+
+Bear Den supplies the harness around the model, so each interaction can build on the last and safely reach into real work.
 
 ---
 
