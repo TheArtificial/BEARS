@@ -678,6 +678,7 @@ pub enum ProjectionSource {
     MemoryProposals,
     PairReflection,
     ReflectionConductor,
+    DenTools,
 }
 
 impl ProjectionSource {
@@ -687,6 +688,7 @@ impl ProjectionSource {
             Self::MemoryProposals => "memory_proposals",
             Self::PairReflection => "pair_reflection",
             Self::ReflectionConductor => "reflection_conductor",
+            Self::DenTools => "den_tools",
         }
     }
 }
@@ -697,6 +699,7 @@ pub enum ProjectionEventKind {
     MemoryProposalResolved,
     PairReflectionCompleted,
     MemoryCurateEnqueued,
+    MemoryReviewRequested,
 }
 
 impl ProjectionEventKind {
@@ -706,6 +709,7 @@ impl ProjectionEventKind {
             Self::MemoryProposalResolved => "memory_proposal_resolved",
             Self::PairReflectionCompleted => "pair_reflection_completed",
             Self::MemoryCurateEnqueued => "memory_curate_enqueued",
+            Self::MemoryReviewRequested => "memory_review_requested",
         }
     }
 }
@@ -762,12 +766,23 @@ pub struct MemoryCurateEnqueuedPayload {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryReviewRequestedPayload {
+    pub proposal_id: Uuid,
+    pub source_role: String,
+    pub title: String,
+    pub suggested_action: String,
+    pub status: String,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ProjectionEvent {
     MemoryProposalCreated(MemoryProposalCreatedPayload),
     MemoryProposalResolved(MemoryProposalResolvedPayload),
     PairReflectionCompleted(PairReflectionCompletedPayload),
     MemoryCurateEnqueued(MemoryCurateEnqueuedPayload),
+    MemoryReviewRequested(MemoryReviewRequestedPayload),
 }
 
 impl ProjectionEvent {
@@ -777,6 +792,7 @@ impl ProjectionEvent {
             Self::MemoryProposalResolved(_) => ProjectionEventKind::MemoryProposalResolved,
             Self::PairReflectionCompleted(_) => ProjectionEventKind::PairReflectionCompleted,
             Self::MemoryCurateEnqueued(_) => ProjectionEventKind::MemoryCurateEnqueued,
+            Self::MemoryReviewRequested(_) => ProjectionEventKind::MemoryReviewRequested,
         }
     }
 }

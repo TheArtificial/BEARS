@@ -43,6 +43,34 @@ fn projection_requires_canonical_conversation_id_shape() {
 }
 
 #[test]
+fn projection_memory_review_requested_json_uses_typed_event_shape() {
+    let projection = Projection {
+        provenance: ProjectionProvenance {
+            source: ProjectionSource::DenTools,
+            scope_id: "acp-session-1".to_string(),
+        },
+        event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
+            proposal_id: uuid::Uuid::nil(),
+            source_role: "pair".to_string(),
+            title: "Promote note".to_string(),
+            suggested_action: "promote_to_core".to_string(),
+            status: "pending".to_string(),
+            source_paths: vec!["pair/notes/test.md".to_string()],
+        }),
+        workflow_text: "Memory review requested".to_string(),
+        visible_summary: Some("Review requested".to_string()),
+    };
+
+    let json = projection.workflow_content_json();
+    assert_eq!(json["event"], "memory_review_requested");
+    assert_eq!(json["source"], "den_tools");
+    assert_eq!(json["scope_id"], "acp-session-1");
+    assert_eq!(json["title"], "Promote note");
+    assert_eq!(json["suggested_action"], "promote_to_core");
+    assert_eq!(json["source_paths"], serde_json::json!(["pair/notes/test.md"]));
+}
+
+#[test]
 fn projection_visible_summary_record_uses_visible_assistant_shape() {
     let projection = Projection {
         provenance: ProjectionProvenance {

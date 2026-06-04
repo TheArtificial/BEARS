@@ -309,6 +309,11 @@ Why this slice first:
 - A fourth small extraction step is also landed:
   - `core/conversation_events.rs` now exposes a shared spawn helper for canonical tool-request persistence.
   - `api/acp/stream/runtime.rs` now delegates transport-neutral tool-request record construction to core instead of inlining it.
+- A fifth extraction step is now landed for non-ACP consumers:
+  - `core/conversation_events.rs` now exposes a typed `Projection` seam for canonical workflow/summary projection persistence.
+  - typed projection payloads are modeled with transport-neutral enums/structs (`ProjectionEvent`, `ProjectionSource`, `ProjectionProvenance` and event payload structs) instead of stringly JSON assembly at call sites.
+  - current non-ACP producers (`memory_proposals`, `pair_reflection`, `reflection_conductor`) now project through that shared typed seam rather than bespoke helper shapes.
+  - projection-specific unit coverage now lives beside core implementation, and DB-backed integration coverage validates the projection persistence path independently of ACP-specific helpers.
 
 ### Continuation / tool-settlement seam audit
 

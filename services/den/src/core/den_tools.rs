@@ -26,6 +26,10 @@ use crate::{
             search_memfs_role_memory, write_memfs_core_update, write_memfs_role_memory_entry,
             MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
         },
+        conversation_events::{
+            project_to_conversation, MemoryReviewRequestedPayload, Projection, ProjectionEvent,
+            ProjectionProvenance, ProjectionSource,
+        },
         memory_proposals::{self, CreateMemoryProposal},
         tool_descriptor_guidance::{
             render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
@@ -4300,6 +4304,33 @@ async fn request_memory_review(
         },
     )
     .await?;
+    project_to_conversation(
+        pool,
+        context.bear_id,
+        Some(context.user_id),
+        clean_optional(&context.conversation_id).as_deref(),
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::DenTools,
+                scope_id: source_acp_session_id(context)
+                    .or_else(|| clean_optional(&context.session_id))
+                    .unwrap_or_else(|| format!("bear:{}:role:{}", context.bear_id, role.as_str())),
+            },
+            event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
+                proposal_id: proposal.id,
+                source_role: proposal.source_role.clone(),
+                title: proposal.title.clone(),
+                suggested_action: proposal.suggested_action.clone(),
+                status: proposal.status.clone(),
+                source_paths: proposal.source_paths.clone(),
+            }),
+            workflow_text: format!("Memory review requested: {}", proposal.title),
+            visible_summary: Some(format!(
+                "Review requested for memory proposal '{}' from {}.",
+                proposal.title, proposal.source_role
+            )),
+        },
+    );
     Ok(json!({
         "bear_id": context.bear_id,
         "proposal": proposal,

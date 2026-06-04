@@ -18,6 +18,8 @@ pub mod conversation_persistence;
 mod conversation_events_tests;
 #[cfg(test)]
 mod conversation_persistence_non_acp_integration_tests;
+#[cfg(test)]
+mod den_tools_memory_request_review_projection_tests;
 pub mod den_tools;
 #[cfg(test)]
 mod den_tools_descriptor_guidance_tests;
