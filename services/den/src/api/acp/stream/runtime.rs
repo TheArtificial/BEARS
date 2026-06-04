@@ -158,31 +158,14 @@ pub(in crate::api::acp) fn spawn_canonical_structured_event_persistence(
     provider_message_id: Option<String>,
 ) {
     let persistence = canonical_persistence_context_from_acp(context);
-    let record = match message_type {
-        "tool_event" | "tool_result" => CanonicalConversationRecord::tool_event(
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-        "tool_call" => CanonicalConversationRecord::tool_call_event(
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-        "workflow_event" => CanonicalConversationRecord::workflow_event(
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-        _ => CanonicalConversationRecord::structured_event(
-            message_type,
-            role.map(str::to_string),
-            visibility,
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
-    };
+    let record = CanonicalConversationRecord::normalized_structured_event(
+        message_type.to_string(),
+        role.map(str::to_string),
+        visibility.to_string(),
+        content_text,
+        content_json,
+        provider_message_id,
+    );
     spawn_persist_canonical_conversation_record(persistence, record);
 }
 

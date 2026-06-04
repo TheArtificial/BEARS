@@ -566,7 +566,9 @@ Status: **ACP persistence adapter seam completed for current ACP event set**
 - `api/acp/stream/runtime.rs` now also delegates conversation-resolved and tool-request persistence through ACP adapter helpers, finishing the current ACP-side provenance/context bundling pass while keeping `core/conversation_events.rs` transport-neutral.
 - A follow-on schema-alignment cleanup is now also landed:
   - `core/conversation_events.rs` now persists tool requests as canonical `tool_call` rows and tool-result-style diagnostic events as canonical `tool_result` rows instead of the schema-invalid synthetic `tool_event` type.
-  - `api/acp/stream/runtime.rs` now normalizes older `tool_event` callers onto those schema-valid canonical categories at the ACP adapter boundary.
+- A larger shared-entrypoint cleanup is now also landed:
+  - `core/conversation_events.rs` now owns `normalized_structured_event(...)`, which centralizes schema-valid canonical event-category normalization for structured records.
+  - `api/acp/stream/runtime.rs` now delegates structured canonical category normalization to that shared core entrypoint instead of open-coding the `tool_event` / `tool_call` / `workflow_event` mapping at the ACP adapter edge.
 
 Decision rationale:
 - stop micro-extracting the resume path,

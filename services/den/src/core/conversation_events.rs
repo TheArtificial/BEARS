@@ -325,13 +325,40 @@ impl CanonicalConversationRecord {
         content_json: serde_json::Value,
         provider_message_id: Option<String>,
     ) -> Self {
-        Self::StructuredEvent {
-            message_type: message_type.into(),
+        Self::normalized_structured_event(
+            message_type.into(),
             role,
-            visibility: visibility.into(),
-            content_text: content_text.into(),
+            visibility.into(),
+            content_text.into(),
             content_json,
             provider_message_id,
+        )
+    }
+
+    pub fn normalized_structured_event(
+        message_type: String,
+        role: Option<String>,
+        visibility: String,
+        content_text: String,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        match message_type.as_str() {
+            "tool_event" | "tool_result" => {
+                Self::tool_event(content_text, content_json, provider_message_id)
+            }
+            "tool_call" => Self::tool_call_event(content_text, content_json, provider_message_id),
+            "workflow_event" => {
+                Self::workflow_event(content_text, content_json, provider_message_id)
+            }
+            _ => Self::StructuredEvent {
+                message_type,
+                role,
+                visibility,
+                content_text,
+                content_json,
+                provider_message_id,
+            },
         }
     }
 
