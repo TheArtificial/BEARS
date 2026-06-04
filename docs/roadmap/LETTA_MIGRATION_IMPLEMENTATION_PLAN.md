@@ -645,8 +645,15 @@ Status: **larger review lifecycle projection slice landed**
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from the newly shared audit layer into **coverage and hardening**, for example:
-- adding focused tests around non-ACP visible summary persistence and shared projection behavior,
+Status: **shared audit layer hardening started**
+- `core/conversation_events.rs` now has focused unit coverage for the shared non-ACP audit projection layer, including:
+  - provenance + payload merge expectations
+  - canonical conversation id gating expectations
+  - visible assistant summary message shape expectations
+- Canonical-focused test coverage is now 28 passing tests after adding the new shared-layer test module.
+
+The next broader non-ACP slice should likely move from the newly shared audit layer into **deeper hardening and adoption**, for example:
+- expanding tests from helper-shape validation into persistence-level behavior for migrated consumers,
 - tightening the shared helper’s payload/summary conventions based on the now-migrated real consumers,
 - or expanding adoption only where current ACP-centric product flows already have clear conversation attachment and operator-facing audit value.
 

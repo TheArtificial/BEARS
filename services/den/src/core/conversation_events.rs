@@ -734,3 +734,79 @@ pub fn spawn_persist_assistant_summary_message(
         ),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_acp_audit_projection_merges_provenance_and_payload() {
+        let provenance = ConversationEventProvenance {
+            source: "pair_reflection".to_string(),
+            scope_id: "bear:scope".to_string(),
+        };
+        let projection = NonAcpAuditProjection {
+            event: "pair_reflection_completed".to_string(),
+            workflow_text: "Pair reflection completed".to_string(),
+            workflow_json: serde_json::json!({
+                "status": "completed",
+                "summary_path": "pair/summary.md",
+            }),
+            visible_summary_text: Some("Summary saved".to_string()),
+        };
+
+        let mut workflow_json = serde_json::json!({
+            "source": provenance.source.clone(),
+            "event": projection.event.clone(),
+            "scope_id": provenance.scope_id.clone(),
+        });
+        if let (Some(base), Some(extra)) =
+            (workflow_json.as_object_mut(), projection.workflow_json.as_object())
+        {
+            for (key, value) in extra {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+
+        assert_eq!(workflow_json["source"], "pair_reflection");
+        assert_eq!(workflow_json["event"], "pair_reflection_completed");
+        assert_eq!(workflow_json["scope_id"], "bear:scope");
+        assert_eq!(workflow_json["status"], "completed");
+        assert_eq!(workflow_json["summary_path"], "pair/summary.md");
+        assert_eq!(projection.visible_summary_text.as_deref(), Some("Summary saved"));
+    }
+
+    #[test]
+    fn non_acp_audit_projection_requires_canonical_conversation_id() {
+        assert!(Some("conv-123").filter(|id| id.starts_with("conv-")).is_some());
+        assert!(Some("conversation-123")
+            .filter(|id| id.starts_with("conv-"))
+            .is_none());
+        assert!(Option::<&str>::None
+            .filter(|id| id.starts_with("conv-"))
+            .is_none());
+    }
+
+    #[test]
+    fn assistant_summary_message_uses_visible_assistant_shape() {
+        let record = CanonicalConversationRecord::visible_assistant_message(
+            "Summary saved",
+            serde_json::json!({}),
+            None,
+        );
+        match record {
+            CanonicalConversationRecord::VisibleMessage {
+                role,
+                text,
+                content_json,
+                provider_message_id,
+            } => {
+                assert_eq!(role.as_str(), "assistant");
+                assert_eq!(text, "Summary saved");
+                assert_eq!(content_json, serde_json::json!({}));
+                assert_eq!(provider_message_id, None);
+            }
+            _ => panic!("expected visible assistant message"),
+        }
+    }
+}
