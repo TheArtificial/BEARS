@@ -116,6 +116,24 @@ def parse_sse_data(response):
     return events
 
 
+def stream_acp_prompt_events(session_id, payload, timeout=30):
+    with requests.post(
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
+        json=payload,
+        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+        timeout=timeout,
+        stream=True,
+    ) as response:
+        assert response.status_code == 200, response.text
+        for line in response.iter_lines(decode_unicode=True):
+            if line is None or line == "" or not line.startswith("data:"):
+                continue
+            raw = line[len("data:") :].strip()
+            if not raw or raw == "[DONE]":
+                continue
+            yield __import__("json").loads(raw)
+
+
 def post_acp_prompt_until_conversation_resolved(session_id, payload, timeout=30):
     with requests.post(
         f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
@@ -270,3 +288,86 @@ def test_seeded_user_can_open_seeded_bear_page():
     response = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=5)
     assert response.status_code == 200, response.text
     assert "Test Bear" in response.text
+
+
+def test_acp_tool_result_replay_continues_and_is_idempotent_when_api_enabled():
+    if not API:
+        return
+
+    session_id = f"smoke-tool-replay-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    prompt = {
+        "message": "Please read /workspace/README.md using the available file tools and then summarize it in one sentence.",
+        "conversation_id": f"new-smoke-tool-replay-{uuid.uuid4()}",
+        "client": "zed",
+        "client_context": {"cwd": "/workspace"},
+    }
+
+    tool_request = None
+    conversation_id = None
+    for event in stream_acp_prompt_events(session_id, prompt, timeout=60):
+        if event.get("type") == "conversation_resolved" and event.get("conversation_id"):
+            conversation_id = event["conversation_id"]
+        if event.get("type") == "tool_request":
+            tool_request = event
+            break
+
+    assert tool_request, "expected tool_request event from ACP prompt stream"
+    tool_call_id = tool_request.get("tool_call_id")
+    assert tool_call_id, tool_request
+    tool_name = tool_request.get("name") or tool_request.get("tool_name")
+    assert tool_name, tool_request
+    arguments = tool_request.get("arguments") or {}
+    assert "README.md" in __import__("json").dumps(arguments)
+
+    first_response = request_with_retries(
+        "POST",
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
+        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+        json={
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "status": "ok",
+            "content": "# Smoke README\n\nThis is a replay smoke test result.",
+            "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
+            "diagnostic": {"phase": "smoke-first"},
+        },
+        timeout=30,
+    )
+    assert first_response.status_code == 200, first_response.text
+    first_json = first_response.json()
+    assert first_json["accepted"] is True
+    assert first_json["settlement"] in ("accepted", "delivered", "pending_continuation", None)
+
+    replay_response = request_with_retries(
+        "POST",
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/tool-results/{tool_call_id}",
+        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+        json={
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "status": "ok",
+            "content": "# Smoke README\n\nThis is a replay smoke test result.",
+            "structured_content": {"path": "/workspace/README.md", "kind": "file_excerpt"},
+            "diagnostic": {"phase": "smoke-first"},
+        },
+        timeout=30,
+    )
+    assert replay_response.status_code == 200, replay_response.text
+    replay_json = replay_response.json()
+    assert replay_json["accepted"] is True
+    assert replay_json["reason"] == "duplicate_result_ignored"
+    assert replay_json["settlement"] == "already_settled"
+    assert replay_json["diagnostic"]["tool_call_id"] == tool_call_id
+    assert replay_json["diagnostic"]["status"] == "ok"
+
+    if conversation_id:
+        history = request_with_retries(
+            "GET",
+            f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/conversations/{conversation_id}/history",
+            headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+            timeout=30,
+        )
+        assert history.status_code == 200, history.text
+        body = history.json()
+        messages = body.get("messages") or []
+        assert any(msg.get("role") == "user" for msg in messages), body

@@ -884,6 +884,17 @@ At this point, the migration surface is audited enough to return to implementati
 3. **Add bespoke smoke-stack coverage for replay + continuation if release confidence requires it**
    - current fast-test confidence is strong,
    - but no dedicated stack-level scenario exists yet.
+   - Current smoke audit result:
+     - `scripts/smoke-stack.sh` builds the local stack, seeds data, and delegates to `scripts/smoke.sh`.
+     - `scripts/smoke.sh` runs `tests/smoke/test_stack.py` inside the bundled runner container.
+     - `tests/smoke/test_stack.py` currently covers health checks, ACP auth gating, a prompt/conversation boundary scenario against Letta history, and now a dedicated ACP tool-result replay/idempotency scenario.
+   - Bespoke replay scenario now added:
+     1. create an ACP session/prompt that triggers a known tool request,
+     2. capture the emitted `tool_call_id`,
+     3. POST the matching tool result once and assert accepted continuation behavior,
+     4. POST the same tool result again and assert idempotent replay acceptance (`duplicate_result_ignored` / `already_settled`),
+     5. confirm the conversation remains queryable via ACP history after settlement.
+   - Remaining gap: this smoke scenario now proves the live HTTP replay contract, but it still does not fully assert every downstream resumed-runtime assistant-output path before terminal completion.
 
 4. **Keep smoke-stack integration validation as the release-confidence layer**
    - verify migrated schema presence,
