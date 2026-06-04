@@ -14,6 +14,8 @@ pub mod bifrost;
 pub mod codepool;
 pub mod conversation_events;
 pub mod conversation_persistence;
+#[cfg(test)]
+mod conversation_persistence_non_acp_integration_tests;
 pub mod den_tools;
 #[cfg(test)]
 mod den_tools_descriptor_guidance_tests;
