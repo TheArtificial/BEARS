@@ -3,7 +3,12 @@ use sqlx::{PgPool, Row};
 use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use crate::{
+    core::conversation_events::{
+        project_non_acp_audit_event, ConversationEventProvenance, NonAcpAuditProjection,
+    },
+    errors::CustomError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectionRunRow {
@@ -87,12 +92,12 @@ pub async fn enqueue_memory_curate_for_proposals(
     pool: &PgPool,
     params: ProposalEnqueueParams<'_>,
 ) -> Result<ReflectionRunRow, CustomError> {
-    let proposal_id_values: Vec<serde_json::Value> = params
-        .proposal_ids
-        .into_iter()
+    let proposal_ids = params.proposal_ids;
+    let proposal_id_values: Vec<serde_json::Value> = proposal_ids
+        .iter()
         .map(|id| serde_json::Value::String(id.to_string()))
         .collect();
-    create_run(
+    let row = create_run(
         pool,
         CreateReflectionRun {
             bear_id: params.bear_id,
@@ -108,7 +113,41 @@ pub async fn enqueue_memory_curate_for_proposals(
             error: None,
         },
     )
-    .await
+    .await?;
+    let provenance = ConversationEventProvenance {
+        source: "reflection_conductor".to_string(),
+        scope_id: format!("bear:{}:lane:{}", row.bear_id, row.lane),
+    };
+    project_non_acp_audit_event(
+        pool,
+        row.bear_id,
+        None,
+        row.conversation_id.as_deref(),
+        provenance,
+        NonAcpAuditProjection {
+            event: "memory_curate_enqueued".to_string(),
+            workflow_text: format!("Memory curate enqueued with {} proposal(s)", proposal_ids.len()),
+            workflow_json: serde_json::json!({
+                "reflection_run_id": row.id,
+                "lane": row.lane,
+                "trigger": row.trigger,
+                "status": row.status,
+                "proposal_ids": proposal_ids,
+                "conversation_key": row.conversation_key,
+                "conversation_date": row.conversation_date,
+                "created_at": row.created_at,
+            }),
+            visible_summary_text: Some(format!(
+                "Memory curate was queued for {} proposal(s).",
+                row.input_summary
+                    .get("proposal_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|items| items.len())
+                    .unwrap_or(0)
+            )),
+        },
+    );
+    Ok(row)
 }
 
 fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionRunRow {

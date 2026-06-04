@@ -7,8 +7,8 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            canonical_persistence_context, spawn_persist_assistant_summary_message,
-            spawn_persist_workflow_event, ConversationEventProvenance,
+            project_non_acp_audit_event, ConversationEventProvenance,
+            NonAcpAuditProjection,
         },
     },
     errors::CustomError,
@@ -77,25 +77,6 @@ fn conversation_id_for_proposal(row: &MemoryProposalRow) -> Option<&str> {
         .filter(|value| value.starts_with("conv-"))
 }
 
-fn review_projection_context(
-    pool: &PgPool,
-    row: &MemoryProposalRow,
-) -> Option<(crate::core::conversation_events::ConversationPersistenceContext, ConversationEventProvenance)> {
-    let conversation_id = conversation_id_for_proposal(row)?;
-    let provenance = memory_proposal_provenance(row.bear_id);
-    let context = canonical_persistence_context(
-        pool.clone(),
-        row.bear_id,
-        None,
-        conversation_id.to_string(),
-        None,
-        None,
-        provenance.scope_id.clone(),
-        false,
-    );
-    Some((context, provenance))
-}
-
 fn maybe_project_memory_proposal_lifecycle(
     pool: &PgPool,
     row: &MemoryProposalRow,
@@ -104,28 +85,31 @@ fn maybe_project_memory_proposal_lifecycle(
     summary_text: Option<String>,
     extra_json: serde_json::Value,
 ) {
-    let Some((context, provenance)) = review_projection_context(pool, row) else {
-        return;
-    };
-    let mut content_json = serde_json::json!({
-        "source": provenance.source,
-        "event": event,
-        "scope_id": provenance.scope_id,
+    let mut workflow_json = serde_json::json!({
         "proposal_id": row.id,
         "source_role": row.source_role,
         "suggested_action": row.suggested_action,
         "title": row.title,
         "status": row.status,
     });
-    if let (Some(base), Some(extra)) = (content_json.as_object_mut(), extra_json.as_object()) {
+    if let (Some(base), Some(extra)) = (workflow_json.as_object_mut(), extra_json.as_object()) {
         for (key, value) in extra {
             base.insert(key.clone(), value.clone());
         }
     }
-    spawn_persist_workflow_event(context.clone(), workflow_text, content_json, None);
-    if let Some(summary_text) = summary_text {
-        spawn_persist_assistant_summary_message(context, summary_text, None);
-    }
+    project_non_acp_audit_event(
+        pool,
+        row.bear_id,
+        None,
+        conversation_id_for_proposal(row),
+        memory_proposal_provenance(row.bear_id),
+        NonAcpAuditProjection {
+            event: event.to_string(),
+            workflow_text,
+            workflow_json,
+            visible_summary_text: summary_text,
+        },
+    );
 }
 
 fn maybe_spawn_memory_proposal_created_event(pool: &PgPool, row: &MemoryProposalRow) {

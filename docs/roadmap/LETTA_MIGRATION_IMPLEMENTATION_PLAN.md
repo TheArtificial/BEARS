@@ -645,17 +645,24 @@ Status: **larger review lifecycle projection slice landed**
 
 #### Next likely follow-on after proposal lifecycle events
 
-The next broader non-ACP slice should likely move from the current review lifecycle projection into **broader cross-subsystem audit coverage**, for example:
-- adding focused tests around non-ACP visible summary persistence for proposal lifecycle transitions,
-- taking the same shared projection pattern into other non-ACP subsystems,
-- or projecting additional operator-facing summaries where long-running background/completion workflows finish.
+The next broader non-ACP slice should likely move from the newly shared audit layer into **coverage and hardening**, for example:
+- adding focused tests around non-ACP visible summary persistence and shared projection behavior,
+- tightening the shared helper’s payload/summary conventions based on the now-migrated real consumers,
+- or expanding adoption only where current ACP-centric product flows already have clear conversation attachment and operator-facing audit value.
 
-Status: **projection pattern extended to another non-ACP consumer**
-- `core/pair_reflection/mod.rs` now projects pair-reflection completion into canonical conversation persistence when a canonical conversation id is present.
-- Pair reflection completion now emits:
-  - a canonical workflow event (`pair_reflection_completed`)
-  - a canonical visible assistant-style summary message when the reflection run completed successfully
-- This extends the workflow+visible projection pattern beyond review/memory proposals into another concrete non-ACP completion flow.
+Status: **shared non-ACP audit projection layer landed and adopted by multiple flows**
+- `core/conversation_events.rs` now exposes `project_non_acp_audit_event(...)` plus `NonAcpAuditProjection`, a shared transport-neutral helper for:
+  - canonical conversation attachment when a canonical conversation id is present,
+  - workflow-event projection,
+  - optional visible assistant-style summary projection,
+  - shared provenance handling for non-ACP lifecycle/completion flows.
+- Existing non-ACP consumers now use the shared layer instead of hand-rolled projection glue:
+  - memory proposal lifecycle in `core/memory_proposals.rs`
+  - pair reflection completion in `core/pair_reflection/mod.rs`
+- One additional realistic completion-style consumer is now migrated onto the same shared layer:
+  - memory-curate enqueue in `core/reflection_conductor.rs`
+  - emits canonical `memory_curate_enqueued` workflow events and a visible assistant-style summary when conversation context is available
+- This keeps the architecture grounded in current ACP-centric product reality while avoiding over-fitting projection logic to ACP stream code.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 

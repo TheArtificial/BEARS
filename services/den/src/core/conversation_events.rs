@@ -671,6 +671,55 @@ pub fn spawn_persist_workflow_event(
     );
 }
 
+pub struct NonAcpAuditProjection {
+    pub event: String,
+    pub workflow_text: String,
+    pub workflow_json: serde_json::Value,
+    pub visible_summary_text: Option<String>,
+}
+
+pub fn project_non_acp_audit_event(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    conversation_id: Option<&str>,
+    provenance: ConversationEventProvenance,
+    projection: NonAcpAuditProjection,
+) {
+    let Some(conversation_id) = conversation_id.filter(|id| id.starts_with("conv-")) else {
+        return;
+    };
+    let context = canonical_persistence_context(
+        pool.clone(),
+        bear_id,
+        user_id,
+        conversation_id.to_string(),
+        None,
+        None,
+        provenance.scope_id.clone(),
+        false,
+    );
+    let mut workflow_json = serde_json::json!({
+        "source": provenance.source,
+        "event": projection.event,
+        "scope_id": provenance.scope_id,
+    });
+    if let (Some(base), Some(extra)) = (workflow_json.as_object_mut(), projection.workflow_json.as_object()) {
+        for (key, value) in extra {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    spawn_persist_workflow_event(
+        context.clone(),
+        projection.workflow_text,
+        workflow_json,
+        None,
+    );
+    if let Some(text) = projection.visible_summary_text {
+        spawn_persist_assistant_summary_message(context, text, None);
+    }
+}
+
 pub fn spawn_persist_assistant_summary_message(
     context: ConversationPersistenceContext,
     text: String,

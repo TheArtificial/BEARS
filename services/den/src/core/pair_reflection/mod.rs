@@ -7,8 +7,8 @@ use crate::{
     core::{
         bears::BearAgentRole,
         conversation_events::{
-            canonical_persistence_context, spawn_persist_assistant_summary_message,
-            spawn_persist_workflow_event, ConversationEventProvenance,
+            project_non_acp_audit_event, ConversationEventProvenance,
+            NonAcpAuditProjection,
         },
     },
     errors::CustomError,
@@ -90,53 +90,35 @@ fn reflection_provenance(bear_id: Uuid, acp_session_id: &str) -> ConversationEve
 }
 
 fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionRunRow) {
-    let Some(conversation_id) = row.conversation_id.as_deref().filter(|id| id.starts_with("conv-")) else {
-        return;
-    };
-    let provenance = reflection_provenance(row.bear_id, &row.acp_session_id);
-    let context = canonical_persistence_context(
-        pool.clone(),
+    project_non_acp_audit_event(
+        pool,
         row.bear_id,
         Some(row.user_id),
-        conversation_id.to_string(),
-        None,
-        None,
-        provenance.scope_id.clone(),
-        false,
-    );
-    let workflow_json = serde_json::json!({
-        "source": provenance.source,
-        "event": "pair_reflection_completed",
-        "scope_id": provenance.scope_id,
-        "reflection_run_id": row.id,
-        "acp_session_id": row.acp_session_id,
-        "trigger": row.trigger,
-        "status": row.status,
-        "summary_path": row.summary_path,
-        "summary_commit": row.summary_commit,
-        "considered_message_count": row.considered_message_count,
-        "completed_at": row.completed_at,
-    });
-    spawn_persist_workflow_event(
-        context.clone(),
-        format!("Pair reflection completed for session {}", row.acp_session_id),
-        workflow_json,
-        None,
-    );
-    if row.status == "completed" {
-        spawn_persist_assistant_summary_message(
-            context,
-            format!(
+        row.conversation_id.as_deref(),
+        reflection_provenance(row.bear_id, &row.acp_session_id),
+        NonAcpAuditProjection {
+            event: "pair_reflection_completed".to_string(),
+            workflow_text: format!("Pair reflection completed for session {}", row.acp_session_id),
+            workflow_json: serde_json::json!({
+                "reflection_run_id": row.id,
+                "acp_session_id": row.acp_session_id,
+                "trigger": row.trigger,
+                "status": row.status,
+                "summary_path": row.summary_path,
+                "summary_commit": row.summary_commit,
+                "considered_message_count": row.considered_message_count,
+                "completed_at": row.completed_at,
+            }),
+            visible_summary_text: (row.status == "completed").then(|| format!(
                 "Pair reflection summary completed for session {}{}.",
                 row.acp_session_id,
                 row.summary_path
                     .as_deref()
                     .map(|path| format!(" and saved to {path}"))
                     .unwrap_or_default()
-            ),
-            None,
-        );
-    }
+            )),
+        },
+    );
 }
 
 pub async fn complete_run(
