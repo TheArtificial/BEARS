@@ -41,7 +41,7 @@ pub async fn ensure_conversation_for_external_id(
             current_title
         )
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (bear_id, external_conversation_id)
+        ON CONFLICT ON CONSTRAINT idx_conversations_bear_external_conversation
         DO UPDATE SET
             source_acp_session_id = COALESCE(EXCLUDED.source_acp_session_id, conversations.source_acp_session_id),
             current_title = COALESCE(EXCLUDED.current_title, conversations.current_title),
