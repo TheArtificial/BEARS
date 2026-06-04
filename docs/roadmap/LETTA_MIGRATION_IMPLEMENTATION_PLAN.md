@@ -900,9 +900,10 @@ Recommended next priority:
    - and `conversation_resolved` persistence.
 2. **Then consider bespoke smoke-stack replay/continuation coverage** if release confidence still needs a live-stack proof.
 
-Status: **validation tightening started**
+Status: **validation tightening progressing**
 - Added focused ACP canonical validation for ACP-session provenance helper behavior.
 - Added focused validation that `conversation_resolved` canonical records preserve ACP-session provenance and conversation id metadata through the helper path.
+- Added focused prompt-path validation confirming the canonical user-prompt record shape matches the metadata assembled in `prompt_flow.rs` (`event`, `source`, `scope_id`, `role`, `acp_session_id`, `client`, `request_id`).
 - Canonical ACP test sweep now passes with the added validation coverage.
 
 Why this should be next:

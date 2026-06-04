@@ -3406,6 +3406,53 @@ mod tests {
     }
 
     #[test]
+    fn canonical_user_prompt_record_matches_prompt_flow_persistence_shape() {
+        use crate::core::conversation_events::{
+            CanonicalConversationRecord, ConversationEventProvenance,
+        };
+
+        let session_id = "acp-session-prompt-flow";
+        let client = "zed";
+        let request_id = "req-prompt-flow-123";
+        let provenance = ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: session_id.to_string(),
+        };
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!(session_id);
+        content_json["client"] = serde_json::json!(client);
+        content_json["request_id"] = serde_json::json!(request_id);
+
+        let record = CanonicalConversationRecord::visible_user_message(
+            "prompt from prompt_flow",
+            content_json,
+            None,
+        );
+
+        match record {
+            CanonicalConversationRecord::VisibleMessage {
+                role,
+                text,
+                content_json,
+                provider_message_id,
+            } => {
+                assert_eq!(role.as_str(), "user");
+                assert_eq!(text, "prompt from prompt_flow");
+                assert!(provider_message_id.is_none());
+                assert_eq!(content_json["event"], "user_prompt");
+                assert_eq!(content_json["source"], "acp_prompt");
+                assert_eq!(content_json["scope_id"], session_id);
+                assert_eq!(content_json["role"], "user");
+                assert_eq!(content_json["acp_session_id"], session_id);
+                assert_eq!(content_json["client"], client);
+                assert_eq!(content_json["request_id"], request_id);
+            }
+            _ => panic!("expected visible message"),
+        }
+    }
+
+    #[test]
     fn canonical_conversation_resolved_record_carries_resolution_metadata() {
         use crate::core::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
