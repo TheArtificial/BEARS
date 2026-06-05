@@ -18,9 +18,9 @@ use crate::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
             ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
             RuntimeCleanupRequest, RuntimeCleanupResult, RuntimeContinuation,
-            RuntimeConversationBackend, RuntimeConversationRef, RuntimeEventParser,
-            RuntimeStreamContinuation, RuntimeToolResultStatus, RuntimeTurnBackend,
-            StartTurnRequest, StartTurnResult,
+            RuntimeContinuationEnvelope, RuntimeConversationBackend, RuntimeConversationRef,
+            RuntimeEventParser, RuntimeStreamContinuation, RuntimeToolResultStatus,
+            RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
         },
         runtime_conversations::{
             RuntimeApprovalActionMode, RuntimeApprovalActionRequest, RuntimeApprovalRequest,
@@ -608,30 +608,10 @@ pub async fn start_acp_turn_stream_with_retries(
     .await
 }
 
-pub async fn continue_acp_turn_with_runtime(
-    request: AcpTurnContinueRequest<'_>,
-) -> Result<
-    (
-        crate::core::runtime_contracts::RuntimeStreamContinuation,
-        crate::core::runtime_contracts::RuntimeEventStream,
-    ),
-    CustomError,
-> {
-    let status = match request.continuation {
-        RuntimeContinuation::ToolResult { .. } | RuntimeContinuation::ApprovalDecision { .. } => {
-            request.continuation
-        }
-    };
-    let backend = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0);
-    let parser = backend.event_parser();
-    let stream = backend.continue_turn_stream(ContinueTurnRequest {
-            conversation: request.conversation,
-            turn: None,
-            binding: request.binding.clone(),
-            continuation: status,
-        })
-        .await?;
-    let mut parsed = stream;
+pub fn runtime_byte_stream_to_event_stream(
+    mut parsed: crate::core::runtime_contracts::RuntimeByteStream,
+    parser: RuntimeEventParser,
+) -> crate::core::runtime_contracts::RuntimeEventStream {
     let mut buffer = Vec::new();
     let mut queued_events: std::collections::VecDeque<
         Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>,
@@ -690,9 +670,39 @@ pub async fn continue_acp_turn_with_runtime(
             std::task::Poll::Pending => return std::task::Poll::Pending,
         }
     });
+    Box::pin(stream)
+}
+
+pub async fn continue_acp_turn_with_runtime(
+    request: AcpTurnContinueRequest<'_>,
+) -> Result<
+    (
+        crate::core::runtime_contracts::RuntimeStreamContinuation,
+        crate::core::runtime_contracts::RuntimeEventStream,
+    ),
+    CustomError,
+> {
+    let status = match request.continuation {
+        RuntimeContinuation::ToolResult { .. } | RuntimeContinuation::ApprovalDecision { .. } => {
+            request.continuation
+        }
+    };
+    let backend = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0);
+    let parser = backend.event_parser();
+    let stream = backend.continue_turn_stream(ContinueTurnRequest {
+            conversation: request.conversation,
+            turn: None,
+            binding: request.binding.clone(),
+            continuation: status,
+        })
+        .await?;
+    let _envelope = RuntimeContinuationEnvelope {
+        stream: crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
+        turn: None,
+    };
     Ok((
         crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
-        Box::pin(stream),
+        runtime_byte_stream_to_event_stream(stream, parser),
     ))
 }
 

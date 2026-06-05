@@ -125,6 +125,12 @@ pub struct ContinueTurnResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeContinuationEnvelope {
+    pub stream: RuntimeStreamContinuation,
+    pub turn: Option<RuntimeTurnRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamContinuation {
     Deferred,
     BytesSse,
