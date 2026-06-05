@@ -9,7 +9,7 @@ use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamC
         api::acp::{
             history::{
                 acp_auto_title_instruction, map_acp_history_page,
-                map_canonical_history_page,
+                map_canonical_history_page, map_compaction_status_for_history,
             },
             prompt_context::acp_direct_tool_prompt_context_with_activity,
             stream::{
@@ -113,6 +113,30 @@ use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamC
         );
 
         assert!(!looks_like_runtime_waiting_for_approval_error(&err));
+    }
+
+    #[test]
+    fn compaction_status_for_history_includes_context_envelope_projection() {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "inspect the service"},
+                {"role": "assistant", "content": "I will inspect it"},
+                {"role": "tool", "tool_call_id": "call-1", "tool_name": "fs_read_text_file"},
+                {"role": "assistant", "content": "workflow_state: submitted"},
+                {"role": "assistant", "content": "artifact saved to file:///tmp/output.md"},
+                {"role": "assistant", "content": "follow up next"},
+                {"role": "user", "content": "continue"}
+            ]
+        });
+
+        let status = map_compaction_status_for_history("conv-test", &body);
+        let envelope = status
+            .context_envelope
+            .expect("context envelope should be present");
+        assert!(envelope.get("instructions").is_some());
+        assert!(envelope.get("workflow_state").is_some());
+        assert!(envelope.get("recent_groups").is_some());
+        assert!(envelope.get("compacted_context").is_some());
     }
 
     #[test]

@@ -108,6 +108,7 @@ pub(crate) async fn list_runtime_compaction_events(
                     CustomError::Database(format!("decode compaction diagnostic: {err}"))
                 })?,
             artifact,
+            context_envelope: None,
         });
     }
     Ok(items)

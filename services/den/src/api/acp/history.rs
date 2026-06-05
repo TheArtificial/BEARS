@@ -274,6 +274,7 @@ pub(crate) fn map_compaction_status_for_history(
         body,
         RuntimeCompactionTriggerKind::SemanticGroupCount,
     );
+    let context_envelope = runtime_context_envelope_for_history(body);
     let status = match event.status {
         crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Applied => {
             "applied"
@@ -293,6 +294,7 @@ pub(crate) fn map_compaction_status_for_history(
         source_group_end: event.source_group_end,
         diagnostic: event.diagnostic,
         artifact: event.artifact.and_then(|artifact| serde_json::to_value(artifact).ok()),
+        context_envelope: serde_json::to_value(context_envelope).ok(),
     }
 }
 

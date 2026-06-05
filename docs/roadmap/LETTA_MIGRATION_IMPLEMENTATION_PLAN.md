@@ -656,6 +656,8 @@ What remains after this epic is implementation rollout rather than missing repla
 
 #### Epic B2 — Compaction runtime integration and persistence
 
+**Status:** completed for the initial live runtime/read-model slice.
+
 **Goal:** move compaction from a defined contract/core helper set into live runtime usage, durable observability, and operator-facing read models.
 
 ##### Deliverables
@@ -684,6 +686,51 @@ What remains after this epic is implementation rollout rather than missing repla
 - Compaction events/artifacts are durable or projected in a Den-owned shape.
 - Operators can inspect whether compaction applied, skipped, or failed for migrated runtime paths.
 - Canonical transcript ownership remains separate from compaction artifacts.
+
+##### Implementation status
+
+Epic B2 is now complete for the initial live runtime/read-model slice.
+
+Landed code-facing implementation slices:
+
+- `core/runtime_compaction_store.rs`
+  - durable readback/projection hydration for compaction observability rows.
+- `api/acp/history.rs`
+  - runtime context-envelope assembly for history-backed compaction inspection,
+  - compaction status projection now includes Den-owned `RuntimeContextEnvelope` content.
+- `api/acp/handlers/conversations.rs`
+  - live ACP history path evaluates compaction-oriented context assembly and records compaction observability events.
+- `api/acp/http_types.rs`
+  - ACP compaction status response now exposes `context_envelope` for operator/debug inspection.
+- `api/acp/tests.rs`
+  - regression coverage for context-envelope projection in compaction status.
+
+##### Deliverable mapping
+
+**Runtime integration seam**
+- Satisfied for an initial live path via ACP conversation history.
+- The history path now exercises Den-owned compaction grouping, iterative summary construction, and runtime context-envelope assembly without mutating canonical transcript rows.
+
+**Durable event/artifact persistence path**
+- Satisfied for the current observability slice.
+- Compaction events are recorded/read back in a Den-owned shape, while richer context-envelope payloads remain projected at read time for compatibility with the current durable schema.
+
+**Operator/admin projection support**
+- Satisfied through ACP history-facing compaction status responses.
+- Operators can now inspect:
+  - compaction status,
+  - policy version,
+  - source-group span,
+  - artifact payload when present,
+  - and the Den-owned runtime context envelope that would back compacted prompt assembly.
+
+**Regression validation**
+- Satisfied for the delivered slice.
+- Targeted ACP test coverage now asserts that compaction status projection includes the expected context-envelope sections.
+
+##### Follow-on note
+
+Further rollout can still expand compaction use into more live execution/prompt-assembly paths or persist richer envelope payloads durably, but those are now follow-on enhancements rather than blockers for the initial B2 objective.
 
 ### Current Phase 5 extraction audit
 

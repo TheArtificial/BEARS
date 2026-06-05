@@ -166,6 +166,8 @@ pub(crate) struct AcpCompactionStatusResponse {
     pub(crate) diagnostic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) artifact: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) context_envelope: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
