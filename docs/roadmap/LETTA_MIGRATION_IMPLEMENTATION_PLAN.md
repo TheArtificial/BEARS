@@ -669,19 +669,29 @@ The next broader non-ACP slice should likely move from helper-shape coverage int
 - tightening the shared helper’s payload/summary conventions based on the now-migrated real consumers,
 - or expanding adoption only where current ACP-centric product flows already have clear conversation attachment and operator-facing audit value.
 
-Status: **shared non-ACP audit projection layer landed and adopted by multiple flows**
-- `core/conversation_events.rs` now exposes `project_non_acp_audit_event(...)` plus `NonAcpAuditProjection`, a shared transport-neutral helper for:
-  - canonical conversation attachment when a canonical conversation id is present,
-  - workflow-event projection,
-  - optional visible assistant-style summary projection,
-  - shared provenance handling for non-ACP lifecycle/completion flows.
-- Existing non-ACP consumers now use the shared layer instead of hand-rolled projection glue:
+Status: **shared non-ACP audit projection layer has been superseded by the typed Projection seam and shared proposal lifecycle constructors**
+- `core/conversation_events.rs` now exposes a typed `Projection` seam with transport-neutral payload enums/structs and persistence helpers instead of relying on the older `NonAcpAuditProjection` helper shape.
+- Typed lifecycle projection consumers now include:
   - memory proposal lifecycle in `core/memory_proposals.rs`
   - pair reflection completion in `core/pair_reflection/mod.rs`
-- One additional realistic completion-style consumer is now migrated onto the same shared layer:
   - memory-curate enqueue in `core/reflection_conductor.rs`
-  - emits canonical `memory_curate_enqueued` workflow events and a visible assistant-style summary when conversation context is available
-- This keeps the architecture grounded in current ACP-centric product reality while avoiding over-fitting projection logic to ACP stream code.
+  - Den tool review/request/apply proposal flows in `core/den_tools.rs`
+- Shared proposal lifecycle constructors now centralize proposal-shaped workflow text, visible summaries, and typed payloads:
+  - `memory_proposal_created_projection(...)`
+  - `memory_proposal_resolved_projection(...)`
+  - `memory_review_requested_projection(...)`
+- Projection ownership is now explicit for both proposal creation and proposal resolution:
+  - `CreateMemoryProposal` and `ProposalResolutionParams` each carry `project_to_conversation`
+  - `core/memory_proposals.rs` only emits internal canonical projection when callers opt in
+  - Den tool request/resolve/apply flows explicitly own their `ProjectionSource::DenTools` conversation projection rather than risking duplicate writes from shared persistence helpers
+- Focused DB-backed coverage now validates the shared typed projection seam for:
+  - request-review projection
+  - resolve-proposal projection
+  - apply-core-update projection
+- Test namespace cleanup is also now landed for this area:
+  - conversation event tests live at `core::conversation::events::tests`
+  - den tool projection/session tests are grouped under nested `core::tools::*` namespaces (for example `core::tools::memory::*`, `core::tools::session::*`)
+- This keeps non-ACP canonical projection policy converged across core persistence and Den tool entrypoints while reducing flat module sprawl in `core`.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 

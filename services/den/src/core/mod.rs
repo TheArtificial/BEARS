@@ -15,60 +15,79 @@ pub mod codepool;
 pub mod conversation_events;
 pub mod conversation_persistence;
 pub mod conversation {
-    pub use super::conversation_events as events;
-    pub use super::conversation_persistence as persistence;
+    pub mod events {
+        pub use super::super::conversation_events::*;
 
-    #[cfg(test)]
-    mod events_tests {
-        include!("conversation_events_tests.rs");
+        #[cfg(test)]
+        mod tests {
+            include!("conversation_events_tests.rs");
+        }
     }
 
-    #[cfg(test)]
-    mod persistence_non_acp_integration_tests {
-        include!("conversation_persistence_non_acp_integration_tests.rs");
+    pub mod persistence {
+        pub use super::super::conversation_persistence::*;
+
+        #[cfg(test)]
+        mod non_acp_integration_tests {
+            include!("conversation_persistence_non_acp_integration_tests.rs");
+        }
     }
 }
 pub mod den_tools;
 pub mod tools {
-    #[cfg(test)]
-    mod apply_core_update_projection_tests {
-        include!("den_tools_apply_core_update_projection_tests.rs");
+    pub mod memory {
+        #[cfg(test)]
+        mod apply_core_update_projection_tests {
+            include!("den_tools_apply_core_update_projection_tests.rs");
+        }
+        #[cfg(test)]
+        mod request_review_projection_tests {
+            include!("den_tools_memory_request_review_projection_tests.rs");
+        }
+        #[cfg(test)]
+        mod resolve_proposal_projection_tests {
+            include!("den_tools_memory_resolve_proposal_projection_tests.rs");
+        }
+        #[cfg(test)]
+        mod write_tests {
+            include!("den_tools_memory_write_tests.rs");
+        }
     }
-    #[cfg(test)]
-    mod descriptor_guidance_tests {
-        include!("den_tools_descriptor_guidance_tests.rs");
+
+    pub mod descriptor {
+        #[cfg(test)]
+        mod guidance_tests {
+            include!("den_tools_descriptor_guidance_tests.rs");
+        }
     }
-    #[cfg(test)]
-    mod memory_request_review_projection_tests {
-        include!("den_tools_memory_request_review_projection_tests.rs");
+
+    pub mod session {
+        #[cfg(test)]
+        mod info_tests {
+            include!("den_tools_session_info_tests.rs");
+        }
+        #[cfg(test)]
+        mod role_semantics_tests {
+            include!("den_tools_session_role_semantics_tests.rs");
+        }
     }
-    #[cfg(test)]
-    mod memory_resolve_proposal_projection_tests {
-        include!("den_tools_memory_resolve_proposal_projection_tests.rs");
+
+    pub mod work_surface {
+        #[cfg(test)]
+        mod orientation_tests {
+            include!("den_tools_work_surface_orientation_tests.rs");
+        }
+        #[cfg(test)]
+        mod scaffold_tests {
+            include!("den_tools_work_surface_scaffold_tests.rs");
+        }
     }
-    #[cfg(test)]
-    mod memory_write_tests {
-        include!("den_tools_memory_write_tests.rs");
-    }
-    #[cfg(test)]
-    mod session_info_tests {
-        include!("den_tools_session_info_tests.rs");
-    }
-    #[cfg(test)]
-    mod session_role_semantics_tests {
-        include!("den_tools_session_role_semantics_tests.rs");
-    }
-    #[cfg(test)]
-    mod work_surface_orientation_tests {
-        include!("den_tools_work_surface_orientation_tests.rs");
-    }
-    #[cfg(test)]
-    mod work_surface_scaffold_tests {
-        include!("den_tools_work_surface_scaffold_tests.rs");
-    }
-    #[cfg(test)]
-    mod workflow_state_tests {
-        include!("den_tools_workflow_state_tests.rs");
+
+    pub mod workflow {
+        #[cfg(test)]
+        mod state_tests {
+            include!("den_tools_workflow_state_tests.rs");
+        }
     }
 }
 pub mod email;
