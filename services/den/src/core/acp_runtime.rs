@@ -340,7 +340,7 @@ fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Opti
 }
 
 pub struct LettaRuntimeConversationBackend<'a> {
-    letta: &'a LettaClient,
+    pub letta: &'a LettaClient,
 }
 
 #[allow(async_fn_in_trait)]
@@ -384,10 +384,72 @@ impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
 
     async fn load_history(
         &self,
-        _binding: &RoleRuntimeBinding,
-        _conversation: &RuntimeConversationRef,
+        binding: &RoleRuntimeBinding,
+        conversation: &RuntimeConversationRef,
     ) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
-        Ok(Vec::new())
+        let binding_for_conv = if conversation.id == "default" {
+            Some(binding.binding_id.as_str())
+        } else {
+            None
+        };
+        let body = self
+            .letta
+            .list_conversation_messages(&conversation.id, binding_for_conv, 100, None, true)
+            .await?;
+        let messages = if let Some(array) = body.as_array() {
+            array.clone()
+        } else if let Some(array) = body.get("messages").and_then(serde_json::Value::as_array) {
+            array.clone()
+        } else if let Some(array) = body.get("data").and_then(serde_json::Value::as_array) {
+            array.clone()
+        } else if let Some(array) = body.get("items").and_then(serde_json::Value::as_array) {
+            array.clone()
+        } else {
+            Vec::new()
+        };
+        let mut history = Vec::new();
+        for raw_message in messages {
+            let inner = raw_message.get("contents").unwrap_or(&raw_message);
+            let role = inner
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| raw_message.get("role").and_then(serde_json::Value::as_str))
+                .or_else(|| {
+                    inner
+                        .get("message_type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|message_type| match message_type {
+                            "user_message" => "user",
+                            "assistant_message" => "assistant",
+                            _ => "system",
+                        })
+                })
+                .unwrap_or("system")
+                .to_string();
+            let content = inner
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    inner
+                        .get("content")
+                        .and_then(|v| v.get("text"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            let message_id = raw_message
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| inner.get("id").and_then(serde_json::Value::as_str))
+                .map(str::to_string);
+            history.push(RuntimeHistoryRecord {
+                message_id,
+                role,
+                content,
+            });
+        }
+        Ok(history)
     }
 }
 

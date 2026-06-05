@@ -65,6 +65,7 @@ pub struct AcpTurnContinueRequest<'a> {
     pub state: &'a ApiState,
     pub request_id: Uuid,
     pub acp_session_id: &'a str,
+    pub conversation: RuntimeConversationRef,
     pub binding: &'a RoleRuntimeBinding,
     pub continuation: RuntimeContinuation,
     pub stream_context: AcpTurnStreamContext,
@@ -624,9 +625,7 @@ pub async fn continue_acp_turn_with_runtime(
     let backend = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0);
     let parser = backend.event_parser();
     let stream = backend.continue_turn_stream(ContinueTurnRequest {
-            conversation: RuntimeConversationRef {
-                id: request.acp_session_id.to_string(),
-            },
+            conversation: request.conversation,
             turn: None,
             binding: request.binding.clone(),
             continuation: status,

@@ -9,7 +9,10 @@ use uuid::Uuid;
 use crate::{
     api::service::ApiState,
     core::{
-        acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_access},
+        acp_runtime::{
+            load_acp_history_with_backend, require_pair_runtime_binding, verify_acp_conversation_access,
+            LettaRuntimeConversationBackend,
+        },
         archived_conversations,
         bears::db as bears_db,
         conversation_persistence::{
@@ -17,6 +20,7 @@ use crate::{
             list_conversations_for_bear, list_messages_page,
         },
         runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
+        runtime_contracts::RuntimeConversationRef,
     },
     errors::CustomError,
 };
@@ -201,6 +205,14 @@ pub(super) async fn conversation_history_inner(
         .letta
         .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
         .await?;
+    let _runtime_history = load_acp_history_with_backend(
+        &LettaRuntimeConversationBackend {
+            letta: state.letta.as_ref(),
+        },
+        &runtime_binding,
+        &RuntimeConversationRef { id: conv_id.clone() },
+    )
+    .await?;
     for (index, raw_message) in runtime_messages_for_persistence(&body).iter().enumerate() {
         let inner = raw_message.get("contents").unwrap_or(raw_message);
         let message_type = inner

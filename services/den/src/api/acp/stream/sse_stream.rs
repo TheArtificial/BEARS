@@ -27,6 +27,7 @@ use crate::{
         acp_tool_turns::AcpToolResultRequest,
         acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
         role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
+        runtime_contracts::RuntimeConversationRef,
         runtime_provider::RuntimeStreamEvent,
         bifrost::BifrostClient,
         letta::normalize_display_status_text,
@@ -957,12 +958,20 @@ impl Stream for AcpRuntimeSseStream {
                     let acp_session_id = this.context.acp_session_id.clone();
                     let continuation_request = prepared_continuation.continuation;
                     let stream_context = default_acp_tool_continue_stream_context();
+                    let continuation_conversation = RuntimeConversationRef {
+                        id: this
+                            .context
+                            .resolved_conversation_id
+                            .clone()
+                            .unwrap_or_else(|| this.context.conversation_id.clone()),
+                    };
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                             let prepared = continue_acp_turn_with_runtime(AcpTurnContinueRequest {
                                 state: &api_state,
                                 request_id,
                                 acp_session_id: &acp_session_id,
+                                conversation: continuation_conversation,
                                 binding: &binding,
                                 continuation: continuation_request,
                                 stream_context,
