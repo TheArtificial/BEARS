@@ -45,6 +45,8 @@ pub(crate) struct AcpSessionHttp {
     pub(crate) plan_mode: Option<serde_json::Value>,
     pub(crate) session_policy: serde_json::Value,
     pub(crate) workflow_state: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) prompt_memory_diagnostic: Option<serde_json::Value>,
 }
 
 pub(crate) fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {

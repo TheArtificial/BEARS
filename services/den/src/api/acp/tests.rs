@@ -3833,3 +3833,18 @@ data: "hello"}"#;
         assert!(normalize_acp_conversation_id(Some(legacy)).is_ok());
         assert!(!is_valid_pending_acp_conversation_id(legacy));
     }
+
+
+    #[test]
+    fn compaction_status_for_history_includes_prompt_memory_diagnostic_projection() {
+        let body = serde_json::json!({
+            "messages": [],
+            "context_window": {"summary": "ok"}
+        });
+        let status = map_compaction_status_for_history("conv-test", &body);
+        assert!(status.prompt_memory_diagnostic.is_some());
+        assert_eq!(
+            status.prompt_memory_diagnostic.as_ref().unwrap()["source"],
+            "synthetic_runtime_slice"
+        );
+    }

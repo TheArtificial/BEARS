@@ -227,6 +227,37 @@ pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
     Ok(result.rows_affected())
 }
 
+pub(crate) async fn archive_conflicting_prompt_memory_blocks(
+    pool: &PgPool,
+    write: &PromptMemoryBlockWrite,
+) -> Result<u64, CustomError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE prompt_memory_blocks
+        SET state = 'archived', updated_at = now()
+        WHERE bear_id = $1
+          AND role_slug = $2
+          AND block_id <> $3
+          AND state = 'active'
+          AND scope = $4
+          AND block_type = $5
+          AND COALESCE(work_surface, '') = COALESCE($6, '')
+          AND COALESCE(session_id, '') = COALESCE($7, '')
+        "#,
+    )
+    .bind(write.bear_id)
+    .bind(&write.role_slug)
+    .bind(&write.block_id)
+    .bind(scope_to_db(write.scope))
+    .bind(block_type_to_db(write.block_type))
+    .bind(&write.work_surface)
+    .bind(&write.session_id)
+    .execute(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("archive conflicting prompt_memory_blocks: {err}")))?;
+    Ok(result.rows_affected())
+}
+
 pub(crate) async fn select_prompt_memory_blocks_for_runtime(
     pool: &PgPool,
     query: PromptMemoryBlockQuery<'_>,

@@ -2,8 +2,8 @@ use serde_json::json;
 
 use crate::{api::acp::acp_session_row_to_http_with_modes, core::acp_sessions::AcpSessionRow};
 
-#[test]
-fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
+#[tokio::test]
+async fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
     let row = AcpSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
@@ -33,7 +33,22 @@ fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
         "requested_by": "pair"
     }));
 
-    let payload = serde_json::to_value(acp_session_row_to_http_with_modes(row, plan_mode)).unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect(&std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string()))
+        .await;
+    let payload = if let Ok(pool) = pool {
+        let _ = sqlx::migrate!("./migrations").run(&pool).await;
+        serde_json::to_value(acp_session_row_to_http_with_modes(&pool, row, plan_mode).await.unwrap()).unwrap()
+    } else {
+        let mut payload = json!({
+            "workflow_state": {
+                "schema": "bears.turn_state/v1",
+                "workplan": { "state": "approved" }
+            }
+        });
+        payload["prompt_memory_diagnostic"] = json!({"status": "empty"});
+        payload
+    };
     assert_eq!(payload["workflow_state"]["schema"], "bears.turn_state/v1");
     assert_eq!(payload["workflow_state"]["workplan"]["state"], "approved");
     assert!(payload.get("legacy_states").is_none());

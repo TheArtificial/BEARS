@@ -138,7 +138,7 @@ pub(super) async fn list_acp_sessions_inner(
         .await?
         .map(serde_json::to_value)
         .transpose()?;
-        sessions.push(acp_session_row_to_http_with_modes(row, plan_mode));
+        sessions.push(acp_session_row_to_http_with_modes(&state.sqlx_pool, row, plan_mode).await?);
     }
     Ok(Json(AcpSessionsListHttpResponse {
         sessions,
@@ -604,9 +604,11 @@ pub(super) async fn get_acp_session_inner(
         .filter(|plan| plan.state == "submitted")
         .map(plan_approval_fallback_payload);
     let mut response = serde_json::to_value(acp_session_row_to_http_with_modes(
+        &state.sqlx_pool,
         row,
         plan_mode.map(serde_json::to_value).transpose()?,
-    ))?;
+    )
+    .await?)?;
     if let Some(approval_fallback) = approval_fallback {
         response["approval_fallback"] = approval_fallback;
     }

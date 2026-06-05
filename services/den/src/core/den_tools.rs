@@ -32,6 +32,7 @@ use crate::{
         },
         memory_proposals::{self, CreateMemoryProposal},
         prompt_memory_block_store::{
+            archive_conflicting_prompt_memory_blocks,
             archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_role,
             patch_prompt_memory_block, upsert_prompt_memory_block, PromptMemoryBlockPatch,
             PromptMemoryBlockWrite,
@@ -533,7 +534,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({
                 "type": "object",
                 "properties": {
-                    "include_archived": { "type": "boolean" }
+                    "include_archived": { "type": "boolean" },
+                    "scope": { "type": "string", "enum": ["bear_wide", "role_local", "work_surface", "session"] },
+                    "block_type": { "type": "string", "enum": ["role_guidance", "work_surface_context", "session_focus", "user_instruction"] },
+                    "work_surface": { "type": "string", "maxLength": 500 },
+                    "session_id": { "type": "string", "maxLength": 200 }
                 },
                 "additionalProperties": false
             }),
@@ -1996,6 +2001,14 @@ struct PromptMemoryPatchArguments {
 struct PromptMemoryListArguments {
     #[serde(default)]
     include_archived: bool,
+    #[serde(default)]
+    scope: Option<PromptMemoryBlockScope>,
+    #[serde(default)]
+    block_type: Option<PromptMemoryBlockType>,
+    #[serde(default)]
+    work_surface: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 fn default_prompt_memory_state() -> PromptMemoryBlockState {
@@ -2036,7 +2049,7 @@ pub async fn invoke_den_tool(
         DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
         DEN_SITUATION_GET => session_info(pool, config, &context, role).await,
         DEN_MEMORY_WRITE_ENTRY => write_memory_entry(pool, config, &context, role, arguments).await,
-        DEN_MEMORY_STATUS => memory_status(config, &context, role).await,
+        DEN_MEMORY_STATUS => memory_status(pool, config, &context, role).await,
         DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
@@ -3335,7 +3348,7 @@ async fn bear_environment(
             "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
         })
     } else {
-        memory_status_value(config, context, role)
+        memory_status_value(config, context, role, pool)
             .await
             .unwrap_or_else(|err| {
                 json!({
@@ -3398,7 +3411,7 @@ async fn session_info(
             "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
         })
     } else {
-        memory_status_value(config, context, role)
+        memory_status_value(config, context, role, pool)
             .await
             .unwrap_or_else(|err| {
                 json!({
@@ -3793,26 +3806,28 @@ async fn prompt_memory_upsert(
     let priority = args.priority.unwrap_or(0).clamp(-1000, 1000);
     let metadata = args.metadata.unwrap_or_else(empty_json_object);
     validate_optional_object("metadata", &Some(metadata.clone()))?;
-    upsert_prompt_memory_block(
-        pool,
-        &PromptMemoryBlockWrite {
-            block_id: block_id.clone(),
-            bear_id: Some(context.bear_id),
-            role_slug: Some(role.as_str().to_string()),
-            scope: args.scope,
-            block_type: args.block_type,
-            state: args.state,
-            work_surface: args.work_surface.clone(),
-            session_id: args.session_id.clone(),
-            title: title.clone(),
-            body: body.clone(),
-            priority,
-            created_by_user_id: Some(context.user_id),
-            supersedes_block_id: args.supersedes_block_id.clone(),
-            metadata: metadata.clone(),
-        },
-    )
-    .await?;
+    let write = PromptMemoryBlockWrite {
+        block_id: block_id.clone(),
+        bear_id: Some(context.bear_id),
+        role_slug: Some(role.as_str().to_string()),
+        scope: args.scope,
+        block_type: args.block_type,
+        state: args.state,
+        work_surface: args.work_surface.clone(),
+        session_id: args.session_id.clone(),
+        title: title.clone(),
+        body: body.clone(),
+        priority,
+        created_by_user_id: Some(context.user_id),
+        supersedes_block_id: args.supersedes_block_id.clone(),
+        metadata: metadata.clone(),
+    };
+    let conflicting_archived = if args.state == PromptMemoryBlockState::Active {
+        archive_conflicting_prompt_memory_blocks(pool, &write).await?
+    } else {
+        0
+    };
+    upsert_prompt_memory_block(pool, &write).await?;
     let superseded_archived = if let Some(supersedes_block_id) = args.supersedes_block_id.as_deref() {
         archive_prompt_memory_blocks_superseded_by(
             pool,
@@ -3837,6 +3852,7 @@ async fn prompt_memory_upsert(
         "metadata": metadata,
         "supersedes_block_id": args.supersedes_block_id,
         "superseded_archived_count": superseded_archived,
+        "conflicting_archived_count": conflicting_archived,
         "source": "prompt_memory_blocks"
     }))
 }
@@ -3857,10 +3873,31 @@ async fn prompt_memory_list(
     if !args.include_archived {
         blocks.retain(|block| block.state != PromptMemoryBlockState::Archived);
     }
+    if let Some(scope) = args.scope {
+        blocks.retain(|block| block.scope == scope);
+    }
+    if let Some(block_type) = args.block_type {
+        blocks.retain(|block| block.block_type == block_type);
+    }
+    if let Some(work_surface) = args.work_surface.as_deref() {
+        let normalized = work_surface.trim();
+        blocks.retain(|block| block.work_surface.as_deref() == Some(normalized));
+    }
+    if let Some(session_id) = args.session_id.as_deref() {
+        let normalized = session_id.trim();
+        blocks.retain(|block| block.session_id.as_deref() == Some(normalized));
+    }
     Ok(json!({
         "status": "ok",
         "source": "prompt_memory_blocks",
         "count": blocks.len(),
+        "filters": {
+            "include_archived": args.include_archived,
+            "scope": args.scope,
+            "block_type": args.block_type,
+            "work_surface": args.work_surface,
+            "session_id": args.session_id,
+        },
         "blocks": blocks,
     }))
 }
@@ -3907,18 +3944,83 @@ async fn prompt_memory_patch(
     }))
 }
 
+
+fn prompt_memory_diagnostic_summary_for_bear_role(
+    blocks: &[crate::core::prompt_memory_blocks::PromptMemoryBlock],
+) -> Value {
+    let mut active_by_scope = serde_json::Map::new();
+    let mut active_by_type = serde_json::Map::new();
+    for scope in [
+        PromptMemoryBlockScope::BearWide,
+        PromptMemoryBlockScope::RoleLocal,
+        PromptMemoryBlockScope::WorkSurface,
+        PromptMemoryBlockScope::Session,
+    ] {
+        let key = serde_json::to_string(&scope)
+            .unwrap_or_else(|_| "unknown".to_string())
+            .trim_matches('"')
+            .to_string();
+        let count = blocks
+            .iter()
+            .filter(|block| block.state == PromptMemoryBlockState::Active && block.scope == scope)
+            .count();
+        active_by_scope.insert(key, json!(count));
+    }
+    for block_type in [
+        PromptMemoryBlockType::RoleGuidance,
+        PromptMemoryBlockType::WorkSurfaceContext,
+        PromptMemoryBlockType::SessionFocus,
+        PromptMemoryBlockType::UserInstruction,
+    ] {
+        let key = serde_json::to_string(&block_type)
+            .unwrap_or_else(|_| "unknown".to_string())
+            .trim_matches('"')
+            .to_string();
+        let count = blocks
+            .iter()
+            .filter(|block| block.state == PromptMemoryBlockState::Active && block.block_type == block_type)
+            .count();
+        active_by_type.insert(key, json!(count));
+    }
+    let active_blocks = blocks
+        .iter()
+        .filter(|block| block.state == PromptMemoryBlockState::Active)
+        .map(|block| {
+            json!({
+                "id": block.id,
+                "scope": block.scope,
+                "block_type": block.block_type,
+                "title": block.title,
+                "priority": block.priority,
+                "work_surface": block.work_surface,
+                "session_id": block.session_id,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "status": if active_blocks.is_empty() { "empty" } else { "ok" },
+        "source": "prompt_memory_blocks",
+        "active_count": active_blocks.len(),
+        "active_by_scope": active_by_scope,
+        "active_by_type": active_by_type,
+        "active_blocks": active_blocks,
+    })
+}
+
 async fn memory_status(
+    pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
-    memory_status_value(config, context, role).await
+    memory_status_value(config, context, role, pool).await
 }
 
 async fn memory_status_value(
     config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
+    pool: &PgPool,
 ) -> Result<Value, CustomError> {
     let http = memfs_http_client("MemFS memory status client build failed")?;
     let response = fetch_memfs_role_memory_status(
@@ -3928,11 +4030,14 @@ async fn memory_status_value(
         role.as_str(),
     )
     .await?;
+    let prompt_memory_blocks = list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+    let prompt_memory_diagnostic = prompt_memory_diagnostic_summary_for_bear_role(&prompt_memory_blocks);
     let Some(response) = response else {
         return Ok(json!({
             "configured": false,
             "available": false,
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)",
+            "prompt_memory_diagnostic": prompt_memory_diagnostic,
         }));
     };
     Ok(json!({
@@ -3945,6 +4050,7 @@ async fn memory_status_value(
         "file_count": response.file_count,
         "entry_count_by_kind": response.entry_count_by_kind,
         "registered_view_count": response.registered_view_count,
+        "prompt_memory_diagnostic": prompt_memory_diagnostic,
     }))
 }
 
@@ -5854,6 +5960,150 @@ mod tests {
             .find(|block| block["id"] == replacement["supersedes_block_id"])
             .expect("original block should still be listed when archived included");
         assert_eq!(original["state"], "archived");
+    }
+
+
+
+    #[tokio::test]
+    async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let context = DenToolInvocationContext {
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            role_agent_id: "agent-test".to_string(),
+            agent_role: Some(BearAgentRole::Pair),
+            user_id: 1,
+            username: Some("tester".to_string()),
+            membership_role: Some("owner".to_string()),
+            conversation_id: "conv-test".to_string(),
+            session_id: "sess-test".to_string(),
+            acp_session_id: Some("sess-test".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: Some("req-test".to_string()),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("zed".to_string()),
+                protocol: Some("acp".to_string()),
+            },
+        };
+        prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": format!("pm-conflict-a-{}", Uuid::new_v4()),
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "First focus",
+                "body": "First body",
+                "priority": 3
+            }),
+        )
+        .await
+        .expect("upsert first block");
+        let replacement = prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": format!("pm-conflict-b-{}", Uuid::new_v4()),
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "Second focus",
+                "body": "Second body",
+                "priority": 8
+            }),
+        )
+        .await
+        .expect("upsert second block");
+        assert_eq!(replacement["conflicting_archived_count"], 1);
+        let active = prompt_memory_list(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({"scope": "session", "block_type": "session_focus", "session_id": "sess-test"}),
+        )
+        .await
+        .expect("list active session prompt memory blocks");
+        assert_eq!(active["count"], 1);
+    }
+
+    #[tokio::test]
+    async fn memory_status_includes_prompt_memory_diagnostic_summary() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let context = DenToolInvocationContext {
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            role_agent_id: "agent-test".to_string(),
+            agent_role: Some(BearAgentRole::Pair),
+            user_id: 1,
+            username: Some("tester".to_string()),
+            membership_role: Some("owner".to_string()),
+            conversation_id: "conv-test".to_string(),
+            session_id: "sess-test".to_string(),
+            acp_session_id: Some("sess-test".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: Some("req-test".to_string()),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("zed".to_string()),
+                protocol: Some("acp".to_string()),
+            },
+        };
+        prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": format!("pm-status-{}", Uuid::new_v4()),
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "Status focus",
+                "body": "Status body",
+                "priority": 4
+            }),
+        )
+        .await
+        .expect("upsert status block");
+        let config = Config::test_stub();
+        let status = memory_status_value(&config, &context, BearAgentRole::Pair, &pool)
+            .await
+            .expect("memory status value");
+        assert_eq!(status["prompt_memory_diagnostic"]["source"], "prompt_memory_blocks");
+        assert_eq!(status["prompt_memory_diagnostic"]["active_by_scope"]["session"], 1);
     }
 
     #[test]

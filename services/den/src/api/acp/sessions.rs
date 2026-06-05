@@ -2,7 +2,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 
 use crate::{
-    core::{acp_sessions, work_plans::WorkPlanProjection},
+    core::{
+        acp_sessions,
+        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
+        work_plans::WorkPlanProjection,
+    },
     errors::CustomError,
 };
 
@@ -82,15 +86,41 @@ pub(crate) fn resolve_acp_turn_context(
     }
 }
 
-pub(crate) fn acp_session_row_to_http_with_modes(
+pub(crate) async fn acp_session_row_to_http_with_modes(
+    pool: &sqlx::PgPool,
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
-) -> AcpSessionHttp {
+) -> Result<AcpSessionHttp, CustomError> {
     let plan_mode_row = plan_mode
         .as_ref()
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     let turn_context = resolve_acp_turn_context(&row, plan_mode_row.as_ref(), None);
-    AcpSessionHttp {
+    let prompt_memory_blocks =
+        list_prompt_memory_blocks_for_bear_role(pool, row.bear_id, "pair").await?;
+    let prompt_memory_diagnostic = Some(
+        serde_json::json!({
+            "status": if prompt_memory_blocks.iter().any(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active) { "ok" } else { "empty" },
+            "source": "prompt_memory_blocks",
+            "active_count": prompt_memory_blocks
+                .iter()
+                .filter(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .count(),
+            "active_blocks": prompt_memory_blocks
+                .iter()
+                .filter(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .map(|block| serde_json::json!({
+                    "id": block.id,
+                    "scope": block.scope,
+                    "block_type": block.block_type,
+                    "title": block.title,
+                    "priority": block.priority,
+                    "work_surface": block.work_surface,
+                    "session_id": block.session_id,
+                }))
+                .collect::<Vec<_>>(),
+        }),
+    );
+    Ok(AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
         conversation_id: row.conversation_id,
@@ -111,5 +141,6 @@ pub(crate) fn acp_session_row_to_http_with_modes(
         plan_mode,
         session_policy: turn_context.policy.to_json(),
         workflow_state: turn_context.workflow_state,
-    }
+        prompt_memory_diagnostic,
+    })
 }
