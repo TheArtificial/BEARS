@@ -94,48 +94,79 @@ impl AcpStreamDiagnostics {
     ) {
         self.parsed_events += 1;
         let runtime_type = match event {
-            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => "json_value",
-            crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::RawProviderEvent { .. } => {
+                "raw_provider_event"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },
+            ) => {
                 self.saw_visible_output = true;
                 "assistant_text_delta"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::StatusText { .. },
+            ) => {
+                self.saw_visible_output = true;
+                "status_text"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::RunProgress { .. },
+            ) => {
                 self.saw_visible_output = true;
                 "run_progress"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { reason, .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::RunPaused { reason, .. },
+            ) => {
                 if reason == "awaiting_approval" {
                     self.saw_requires_approval_stop = true;
                 }
                 "run_paused"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { tool_call_id, .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+                    tool_call_id,
+                    ..
+                },
+            ) => {
                 let count = self.tool_request_counts.entry(tool_call_id.clone()).or_insert(0);
                 *count += 1;
                 "tool_call_requested"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Error { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::Error { .. },
+            ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "error"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::ConversationResolved {
+                    conversation,
+                },
+            ) => {
                 let run_id = conversation.id.clone();
                 if !self.run_ids.iter().any(|known| known == &run_id) {
                     self.run_ids.push(run_id);
                 }
                 "conversation_resolved"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCompleted { .. },
+            ) => {
                 self.saw_turn_complete = true;
                 "turn_completed"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::TurnFailed { .. },
+            ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "turn_failed"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCancelled { .. },
+            ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "turn_cancelled"

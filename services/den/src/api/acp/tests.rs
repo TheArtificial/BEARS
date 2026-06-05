@@ -2555,16 +2555,18 @@ use crate::core::prompt_memory_blocks::{
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
         };
-        let runtime_event = RuntimeStreamEvent::ToolCallRequested {
-            tool_call_id: "call-cont-1".to_string(),
-            tool_name: "fs_read_text_file".to_string(),
-            title: Some("Read text file".to_string()),
-            kind: Some("read".to_string()),
-            arguments: serde_json::json!({"path":"/workspace/README.md"}),
-            approval_request_id: Some("approval-cont-1".to_string()),
-            approval_required: true,
-            approval_reason: Some("workspace read".to_string()),
-        };
+        let runtime_event = RuntimeStreamEvent::Semantic(
+            crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-cont-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                title: Some("Read text file".to_string()),
+                kind: Some("read".to_string()),
+                arguments: serde_json::json!({"path":"/workspace/README.md"}),
+                approval_request_id: Some("approval-cont-1".to_string()),
+                approval_required: true,
+                approval_reason: Some("workspace read".to_string()),
+            },
+        );
         let mut diagnostics = AcpStreamDiagnostics::default();
 
         let (events, effect, adapter_result_rx) = futures::executor::block_on(
@@ -2593,11 +2595,13 @@ use crate::core::prompt_memory_blocks::{
         let session_id = "acp-test-session";
 
         let turn_failed = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed {
-                turn: None,
-                category: crate::core::runtime_provider::RuntimeErrorCategory::Internal,
-                message: "runtime failed".to_string(),
-            },
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::TurnFailed {
+                    turn: None,
+                    category: crate::core::runtime_provider::RuntimeErrorCategory::Internal,
+                    message: "runtime failed".to_string(),
+                },
+            ),
             request_id,
             session_id,
         )
@@ -2606,9 +2610,11 @@ use crate::core::prompt_memory_blocks::{
         assert!(matches!(turn_failed[1], AcpGatewayEvent::TurnResult { .. }));
 
         let turn_cancelled = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled {
-                turn: None,
-            },
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCancelled {
+                    turn: None,
+                },
+            ),
             request_id,
             session_id,
         )
@@ -2617,16 +2623,18 @@ use crate::core::prompt_memory_blocks::{
         assert!(matches!(turn_cancelled[1], AcpGatewayEvent::TurnResult { .. }));
 
         let generic_error = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::Error {
-                message: "runtime error".to_string(),
-                detail: Some("detail".to_string()),
-                error_type: Some("runtime_error".to_string()),
-                request_id: Some(request_id.to_string()),
-                context: Some(serde_json::json!({
-                    "component": "den.acp",
-                    "acp_session_id": session_id,
-                })),
-            },
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::Error {
+                    message: "runtime error".to_string(),
+                    detail: Some("detail".to_string()),
+                    error_type: Some("runtime_error".to_string()),
+                    request_id: Some(request_id.to_string()),
+                    context: Some(serde_json::json!({
+                        "component": "den.acp",
+                        "acp_session_id": session_id,
+                    })),
+                },
+            ),
             request_id,
             session_id,
         )

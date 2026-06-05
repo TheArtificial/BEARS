@@ -28,7 +28,7 @@ use crate::{
         acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
         role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
         runtime_contracts::RuntimeConversationRef,
-        runtime_provider::RuntimeStreamEvent,
+        runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
         bifrost::BifrostClient,
         letta::normalize_display_status_text,
     },
@@ -69,7 +69,7 @@ pub(in crate::api::acp) fn runtime_terminal_events(
     acp_session_id: &str,
 ) -> Option<Vec<AcpGatewayEvent>> {
     match event {
-        RuntimeStreamEvent::TurnFailed { message, .. } => Some(vec![
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => Some(vec![
             AcpGatewayEvent::Error {
                 message,
                 detail: None,
@@ -93,7 +93,7 @@ pub(in crate::api::acp) fn runtime_terminal_events(
                 }),
             },
         ]),
-        RuntimeStreamEvent::TurnCancelled { .. } => Some(vec![
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => Some(vec![
             AcpGatewayEvent::Error {
                 message: "Runtime continuation was cancelled.".to_string(),
                 detail: None,
@@ -117,13 +117,13 @@ pub(in crate::api::acp) fn runtime_terminal_events(
                 }),
             },
         ]),
-        RuntimeStreamEvent::Error {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message,
             detail,
             error_type,
             request_id: upstream_request_id,
             context: runtime_context,
-        } => {
+        }) => {
             let terminal_request_id = upstream_request_id
                 .clone()
                 .unwrap_or_else(|| request_id.to_string());
@@ -639,10 +639,13 @@ impl Stream for AcpRuntimeSseStream {
                                                 saw_terminal_event = true;
                                             } else {
                                                 match event {
-                                                RuntimeStreamEvent::AssistantTextDelta { text } => {
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
                                                     queued_events.push(AcpGatewayEvent::AssistantTextDelta { text });
                                                 }
-                                                RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
+                                                    queued_events.push(AcpGatewayEvent::StatusText { text });
+                                                }
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { kind, text, phase: _, detail: _ }) => {
                                                     let rendered = if kind == "status_text" {
                                                         text.unwrap_or_default()
                                                     } else {
@@ -650,20 +653,20 @@ impl Stream for AcpRuntimeSseStream {
                                                     };
                                                     queued_events.push(AcpGatewayEvent::StatusText { text: rendered });
                                                 }
-                                                RuntimeStreamEvent::ConversationResolved { conversation } => {
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
                                                     queued_events.push(AcpGatewayEvent::ConversationResolved {
                                                         conversation_id: conversation.id,
                                                     });
                                                 }
-                                                RuntimeStreamEvent::TurnCompleted { .. } => {
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
                                                     queued_events.push(AcpGatewayEvent::TurnComplete {
                                                         outcome: "ok".to_string(),
                                                     });
                                                     saw_terminal_event = true;
                                                 }
-                                                RuntimeStreamEvent::RunPaused { .. }
-                                                | RuntimeStreamEvent::ToolCallRequested { .. }
-                                                | RuntimeStreamEvent::JsonValue { .. } => {
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. })
+                                                | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
+                                                | RuntimeStreamEvent::RawProviderEvent { .. } => {
                                                     let mut temp_diagnostics = AcpStreamDiagnostics::default();
                                                     let (events, _effect, _adapter_result_rx) = match map_runtime_stream_event_to_acp_adapter_events_with_persistence(
                                                         event,
@@ -681,9 +684,9 @@ impl Stream for AcpRuntimeSseStream {
                                                     }
                                                     queued_events.extend(events);
                                                 }
-                                                RuntimeStreamEvent::TurnFailed { .. }
-                                                | RuntimeStreamEvent::TurnCancelled { .. }
-                                                | RuntimeStreamEvent::Error { .. } => unreachable!(
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                                                | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. })
+                                                | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { .. }) => unreachable!(
                                                     "runtime terminal events are handled before non-terminal match"
                                                 ),
                                                 }
@@ -804,7 +807,7 @@ impl Stream for AcpRuntimeSseStream {
                         let body = strip_trailing_sse_delimiter_owned(frame);
                         let result = match parse_sse_event_body_to_json(&body) {
                             Ok(Some(value)) => map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-                                RuntimeStreamEvent::JsonValue { value },
+                                RuntimeStreamEvent::RawProviderEvent { value },
                                 context,
                                 &mut diagnostics,
                             )

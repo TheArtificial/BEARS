@@ -1,4 +1,7 @@
-use crate::{core::runtime_contracts::RuntimeStreamEvent, errors::CustomError};
+use crate::{
+    core::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
+    errors::CustomError,
+};
 
 pub fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
@@ -70,7 +73,9 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                         )
                     })
                     .unwrap_or_default();
-            Some(RuntimeStreamEvent::AssistantTextDelta { text })
+            Some(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::AssistantTextDelta { text },
+            ))
         }
         "reasoning_message" => {
             let text = inner
@@ -90,14 +95,11 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event)
                 })
                 .unwrap_or_default();
-            Some(RuntimeStreamEvent::RunProgress {
-                kind: "status_text".to_string(),
-                text: Some(text),
-                phase: None,
-                detail: None,
-            })
+            Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text,
+            }))
         }
-        "error_message" => Some(RuntimeStreamEvent::Error {
+        "error_message" => Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message: event
                 .get("message")
                 .and_then(|v| v.as_str())
@@ -116,7 +118,7 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
             context: event.get("context").cloned(),
-        }),
+        })),
         "stop_reason" => {
             let stop_reason = inner
                 .get("stop_reason")
@@ -124,25 +126,27 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                 .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
             if stop_reason == "end_turn" {
-                Some(RuntimeStreamEvent::TurnCompleted { turn: None })
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                ))
             } else if stop_reason == "requires_approval" {
-                Some(RuntimeStreamEvent::RunPaused {
+                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {
                     reason: "awaiting_approval".to_string(),
                     resume_token: None,
                     expires_at: None,
-                })
+                }))
             } else {
-                Some(RuntimeStreamEvent::TurnFailed {
+                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
                     turn: None,
                     category: crate::core::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
                     message: format!(
                         "Letta stopped before producing assistant output: {stop_reason}"
                     ),
-                })
+                }))
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
-            RuntimeStreamEvent::ToolCallRequested {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                 tool_call_id: event
                     .get("tool_call_id")
                     .or_else(|| inner.get("tool_call_id"))
@@ -183,17 +187,17 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     .or_else(|| inner.get("approval_reason"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
-            },
+            }),
         ),
         _ => crate::core::acp_letta_events::native_letta_conversation_resolved_event(event).map(
             |evt| match evt {
                 crate::core::acp_letta_events::AcpGatewayEvent::ConversationResolved {
                     conversation_id,
-                } => RuntimeStreamEvent::ConversationResolved {
+                } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
                     conversation: crate::core::runtime_contracts::RuntimeConversationRef {
                         id: conversation_id,
                     },
-                },
+                }),
                 _ => unreachable!(),
             },
         ),

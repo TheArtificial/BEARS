@@ -166,11 +166,11 @@ pub struct RuntimeCleanupResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum RuntimeStreamEvent {
-    JsonValue {
-        value: serde_json::Value,
-    },
+pub enum RuntimeSemanticEvent {
     AssistantTextDelta {
+        text: String,
+    },
+    StatusText {
         text: String,
     },
     RunProgress {
@@ -214,6 +214,14 @@ pub enum RuntimeStreamEvent {
     },
     TurnCancelled {
         turn: Option<RuntimeTurnRef>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RuntimeStreamEvent {
+    Semantic(RuntimeSemanticEvent),
+    RawProviderEvent {
+        value: serde_json::Value,
     },
 }
 

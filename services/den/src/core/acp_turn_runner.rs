@@ -656,7 +656,7 @@ pub async fn continue_acp_turn_with_runtime(
                                 queued_events.push_back(Ok(event));
                             } else {
                                 queued_events.push_back(Ok(
-                                    crate::core::runtime_contracts::RuntimeStreamEvent::JsonValue {
+                                    crate::core::runtime_contracts::RuntimeStreamEvent::RawProviderEvent {
                                         value,
                                     },
                                 ));
@@ -674,9 +674,11 @@ pub async fn continue_acp_turn_with_runtime(
                 finished = true;
                 if buffer.is_empty() {
                     queued_events.push_back(Ok(
-                        crate::core::runtime_contracts::RuntimeStreamEvent::TurnCompleted {
-                            turn: None,
-                        },
+                        crate::core::runtime_contracts::RuntimeStreamEvent::Semantic(
+                            crate::core::runtime_contracts::RuntimeSemanticEvent::TurnCompleted {
+                                turn: None,
+                            },
+                        ),
                     ));
                 } else {
                     queued_events.push_back(Err(CustomError::System(format!(
