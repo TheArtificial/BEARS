@@ -384,14 +384,16 @@ pub(super) fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) 
     if has_title {
         return None;
     }
-    let has_conversation_binding = session
-        .resolved_conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some()
-        || session.conversation_id.trim().starts_with("conv-")
-        || session.conversation_id.trim().starts_with("new-");
+    let conversation_id = session.conversation_id.trim();
+    let has_conversation_binding = !conversation_id.is_empty()
+        && (session
+            .resolved_conversation_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+            || conversation_id.starts_with("conv-")
+            || conversation_id.starts_with("new-"));
     if !has_conversation_binding {
         return None;
     }

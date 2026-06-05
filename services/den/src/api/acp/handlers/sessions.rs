@@ -41,6 +41,30 @@ use crate::api::acp::{
 
 use super::auth::{authenticate_acp_code_token, authenticate_acp_code_token_with_auth};
 
+fn den_canonical_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+    let conversation_id = session.conversation_id.trim();
+    if conversation_id.is_empty() {
+        None
+    } else {
+        Some(conversation_id.to_string())
+    }
+}
+
+fn runtime_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+    session
+        .resolved_conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let conversation_id = session.conversation_id.trim();
+            conversation_id
+                .starts_with("conv-")
+                .then(|| conversation_id.to_string())
+        })
+}
+
 pub(in crate::api::acp) async fn list_acp_sessions(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
@@ -178,12 +202,7 @@ pub(super) async fn get_acp_session_runtime_inner(
         user_id,
         WorkPlanLookup {
             plan_id: None,
-            source_conversation_id: row.resolved_conversation_id.clone().or_else(|| {
-                let conversation_id = row.conversation_id.trim();
-                conversation_id
-                    .starts_with("conv-")
-                    .then(|| conversation_id.to_string())
-            }),
+            source_conversation_id: den_canonical_conversation_id(&row),
             source_acp_session_id: Some(session_id.to_string()),
         },
     )
@@ -227,7 +246,7 @@ pub(super) async fn get_acp_session_runtime_inner(
         .map(|turn| turn.diagnostic())
         .collect::<Vec<_>>();
     let adapter_environment = if tools_enabled_for_client(&row.client) {
-        row.adapter_environment.unwrap_or_else(|| {
+        row.adapter_environment.clone().unwrap_or_else(|| {
             json!({
                 "status": "unavailable",
                 "note": "ACP adapter has not published an environment snapshot for this session yet.",
@@ -250,12 +269,11 @@ pub(super) async fn get_acp_session_runtime_inner(
             .conversation_title_synced_at
             .map(format_acp_session_timestamp),
         "conversation": {
+            "conversation_id": den_canonical_conversation_id(&row),
             "session_selection": row.conversation_id,
             "resolved_conversation_id": row.resolved_conversation_id,
-            "upstream_target": row.resolved_conversation_id
-                .as_deref()
-                .or_else(|| row.conversation_id.starts_with("conv-").then_some(row.conversation_id.as_str()))
-                .unwrap_or("unresolved"),
+            "upstream_target": runtime_conversation_id(&row)
+                .unwrap_or_else(|| "unresolved".to_string()),
         },
         "active_turn": {
             "active": active_turn.is_some(),
@@ -361,20 +379,14 @@ pub(super) async fn post_adapter_environment_inner(
             Some(client_title),
         )
         .await?;
-        let external_conversation_id = session
-            .resolved_conversation_id
-            .as_deref()
-            .filter(|value| value.starts_with("conv-"))
-            .or_else(|| {
-                let conversation_id = session.conversation_id.as_str();
-                conversation_id.starts_with("conv-").then_some(conversation_id)
-            });
+        let external_conversation_id = runtime_conversation_id(&session)
+            .filter(|value| value.starts_with("conv-"));
         if let Some(external_conversation_id) = external_conversation_id {
             let _ = ensure_conversation_for_external_id(
                 &state.sqlx_pool,
                 session.bear_id,
                 Some(auth.user_id),
-                external_conversation_id,
+                &external_conversation_id,
                 Some(&session_id),
                 Some(client_title),
             )
@@ -382,7 +394,7 @@ pub(super) async fn post_adapter_environment_inner(
             let _ = set_conversation_title(
                 &state.sqlx_pool,
                 session.bear_id,
-                external_conversation_id,
+                &external_conversation_id,
                 client_title,
             )
             .await;
