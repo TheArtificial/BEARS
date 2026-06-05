@@ -68,6 +68,7 @@ pub(in crate::api::acp) struct AcpStreamContext {
     pub(in crate::api::acp) bear_slug: String,
     pub(in crate::api::acp) acp_session_id: String,
     pub(in crate::api::acp) client: String,
+    pub(in crate::api::acp) conversation_id: String,
     pub(in crate::api::acp) conversation_selection: String,
     pub(in crate::api::acp) resolved_conversation_id: Option<String>,
     pub(in crate::api::acp) upstream_target: String,

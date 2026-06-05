@@ -255,6 +255,23 @@ pub async fn ensure_acp_session_conversation(
     .await
 }
 
+pub fn canonical_acp_conversation_id_for_session(
+    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    conversation_resolution: &AcpConversationResolution,
+) -> String {
+    existing_session
+        .map(|session| session.conversation_id.trim())
+        .filter(|id| !id.is_empty())
+        .filter(|id| *id == "default" || id.starts_with("conv-") || id.starts_with("new-"))
+        .map(str::to_string)
+        .or_else(|| {
+            let id = conversation_resolution.session_selection.trim();
+            (!id.is_empty() && (id == "default" || id.starts_with("conv-") || id.starts_with("new-")))
+                .then(|| id.to_string())
+        })
+        .unwrap_or_else(|| conversation_resolution.session_selection.clone())
+}
+
 pub async fn verify_acp_conversation_belongs_to_binding_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     binding: &RoleRuntimeBinding,

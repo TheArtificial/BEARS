@@ -186,7 +186,14 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             client: client.to_string(),
-            conversation_selection: conversation_resolution.session_selection.clone(),
+            conversation_id: conversation_resolution
+                .history_target
+                .as_ref()
+                .map(|conversation| conversation.id.clone())
+                .unwrap_or_else(|| conversation_resolution.session_selection.clone()),
+            conversation_selection: conversation_resolution
+                .session_selection
+                .clone(),
             resolved_conversation_id: conversation_resolution
                 .resolved_conversation
                 .as_ref()

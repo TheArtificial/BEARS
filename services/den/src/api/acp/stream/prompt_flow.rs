@@ -20,8 +20,8 @@ use crate::{
     core::{
         acp_plan_mode,
         acp_runtime::{
-            ensure_acp_session_conversation, require_pair_runtime_binding,
-            verify_acp_conversation_access,
+            canonical_acp_conversation_id_for_session, ensure_acp_session_conversation,
+            require_pair_runtime_binding, verify_acp_conversation_access,
         },
         acp_sessions::{self, UpsertAcpSession},
         conversation_events::{
@@ -163,6 +163,10 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             "ACP created fresh runtime conversation for new session"
         );
     }
+    let canonical_conversation_id = canonical_acp_conversation_id_for_session(
+        existing_session.as_ref(),
+        &conversation_resolution,
+    );
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
     acp_sessions::upsert_session(
         &state.sqlx_pool,
@@ -172,7 +176,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             runtime_session_id: runtime_session_id.clone(),
-            conversation_id: conversation_resolution.session_selection.clone(),
+            conversation_id: canonical_conversation_id.clone(),
             resolved_conversation_id: conversation_resolution
                 .resolved_conversation
                 .as_ref()
@@ -254,7 +258,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         client = %client,
         cwd = %cwd,
         requested_conversation_id = body.conversation_id.as_deref().map(str::trim),
-        conversation_id = %conversation_resolution.session_selection,
+        conversation_id = %canonical_conversation_id,
         conversation_selection_source = %conversation_resolution.selection_source.as_str(),
         resolved_conversation_id = conversation_resolution
             .resolved_conversation
@@ -297,7 +301,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         bear_slug: bear.slug.clone(),
         acp_session_id: session_id.to_string(),
         runtime_session_id: "runtime-test".to_string(),
-        conversation_id: conversation_resolution.session_selection.clone(),
+        conversation_id: canonical_conversation_id.clone(),
         resolved_conversation_id: conversation_resolution
             .resolved_conversation
             .as_ref()

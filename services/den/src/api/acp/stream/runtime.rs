@@ -38,10 +38,7 @@ pub(in crate::api::acp) fn canonical_persistence_context_from_acp(
         context.pool.clone(),
         context.bear_id,
         Some(context.user_id),
-        context
-            .resolved_conversation_id
-            .clone()
-            .unwrap_or_else(|| context.conversation_selection.clone()),
+        context.conversation_id.clone(),
         Some(context.acp_session_id.clone()),
         Some(context.request_id.to_string()),
         context.acp_session_id.clone(),
