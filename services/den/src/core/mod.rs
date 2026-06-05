@@ -93,6 +93,8 @@ pub mod tools {
 pub mod email;
 pub mod letta;
 pub mod letta_runtime_stream_parser;
+#[cfg(test)]
+pub mod letta_runtime_stream_parser_tests;
 pub mod memory_manager_head;
 #[cfg(test)]
 mod memory_manager_head_append_markdown_tests;
