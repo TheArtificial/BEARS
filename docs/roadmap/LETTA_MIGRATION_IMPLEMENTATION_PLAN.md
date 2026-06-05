@@ -243,6 +243,113 @@ The implementation is successful when:
 - ACP-specific logic remains separable from common role-runner behavior.
 - `review` and `watch` migration can reuse extracted seams.
 
+### Migration concern map
+
+This map is intended to keep the remaining Letta extraction work sharply scoped.
+
+The goal is **not** to replace Letta with a generalized pluggable provider framework. The acceptable end state is a Den-owned, internally cohesive runtime where external-provider details are ringfenced at narrow implementation boundaries and do not define the core model.
+
+| Concern | Letta responsibilities today | Target Den-owned boundary | Current maturity | Cutover risk | Recommended next slice |
+|---|---|---|---|---|---|
+| Conversation identity and control plane | Session conversation resolution, creation bias, archive/compact target assumptions, conversation access verification fallback | Den owns canonical ACP session conversation identity and control-plane reads; Letta only materializes runtime conversations at execution time | Strong | Medium | Keep residual reads/writes Den-canonical-first and add regression coverage for lazy runtime conversation materialization. |
+| Turn/run execution lifecycle | Start turns, stream events, pause/resume around tool calls, active-run cleanup, cancellation behavior, terminal outcome delivery | Den-owned role-runner lifecycle contract with Letta reduced to a temporary execution adapter | Partial | High | Continue extracting shared turn lifecycle seams from ACP `pair`, especially resume/start/cancel contracts that are transport-neutral but not ACP-UI-specific. |
+| Canonical transcript vs live runtime state | Conversation state, message ordering, mixed live/runtime history semantics, replay assumptions | Den-owned transcript/event store and read models clearly separated from ephemeral runtime state | Strong | High | Finish explicit boundaries for replay/read-switch rules and ensure no remaining Letta-primary assumptions leak into transcript reads. |
+| Conversation compaction / summarization | Context-pressure compaction, summary continuity, transcript shrinking behavior | Den-owned compaction subsystem with explicit artifacts, triggers, and replay/read semantics | Weak | High | Create a dedicated compaction design slice covering trigger policy, summary artifacts, transcript linkage, and operator visibility. |
+| Editable in-context memory blocks | Provider-managed mutable prompt blocks compiled into active prompt context | Den-owned memory/block model and prompt compiler for editable in-context memory | Weak | High | Write a replacement design for block attachment, mutation, inclusion in prompt assembly, and auditability. |
+| Archival / recall memory | Long-lived memory writes and later retrieval/search over provider-managed archival memory | Den-owned archival memory semantics over canonical memory plus retrieval/index services | Partial | Medium | Define archival write/query semantics and lifecycle independent of transcript and prompt-block systems. |
+| Source / passage ingestion and retrieval | Source registration, chunking, provenance, updates/deletes, indexed passage retrieval | Den-owned ingestion/index pipeline over canonical sources | Weak | Medium | Add a source-ingestion/retrieval design track that separates canonical sources from derived chunks/embeddings. |
+| Tool registry and execution model | Tool schema storage, model-visible tool assembly, server/client/external tool execution patterns | Den-owned tool registry, policy surface, and execution classes with ACP/client mediation at edges | Partial | Medium | Document unified tool-surface parity: schema ownership, execution classes, approval semantics, and continuation behavior. |
+| Role/runtime configuration | Hidden provider-side runtime settings, model/provider config, compaction knobs, role behavior settings | Den-owned role profiles, runtime policy, provider bindings as implementation detail | Partial | Medium | Continue moving configuration authority into role profiles and document which runtime knobs remain compatibility-only during migration. |
+| Admin / diagnostics / operator read models | Agent inspection, recent interaction views, failure/debug visibility, runtime diagnostics | Den-owned admin and operational read models with mixed-origin provenance during transition | Strong | Medium | Preserve operator explainability for mixed-origin sessions and future compaction/memory transitions. |
+| Identity / attachment associations | Agent/user/application attachment assumptions, object ownership and association semantics | Den-owned auth/membership plus Bear/role/work-surface attachment model | Weak | Medium | Explicitly replace the responsibilities Letta identity objects served rather than carrying over provider-shaped mappings. |
+| Background maintenance jobs | Background summarization, memory maintenance, indexing-like upkeep | Den-owned workers / Reflection / maintenance services | Weak | Medium | Decide which background behaviors are required for parity and which can be intentionally dropped in the first Den-native end state. |
+| Migration / backfill / rollback mechanics | Export/import, id mapping, partial history moves, rollback windows | Den-owned migration tooling and explicit dual-write/read-switch controls | Weak | High | Add a concrete migration-tooling track with backfill strategy, id mapping, rollback criteria, and operator procedures. |
+
+### Planning note on architecture destination
+
+For the remaining extraction work, prefer these architectural instincts:
+
+- build **Den-owned seams**, not a generalized provider marketplace,
+- keep provider-specific behavior behind narrow compatibility adapters,
+- avoid introducing new abstract interfaces unless they directly support a real staged migration step,
+- accept a monolithic Den end state if it is clearer, safer, and easier to operate.
+
+In other words: ringfence Letta so it can be removed, but do not accidentally replace it with a permanent arbitrary-provider platform.
+
+### Near-term priority order
+
+The concern map above is intentionally broader than the next implementation sequence. To keep migration momentum high without over-abstracting, the near-term order should prioritize the smallest slices that most reduce Letta authority while preserving runtime safety.
+
+#### Priority 1 — Turn/run execution lifecycle extraction
+
+Reason:
+- this is the largest remaining place where Letta still acts as more than a narrow implementation detail,
+- it sits directly on the critical path for safe ACP/runtime migration,
+- and it is prerequisite groundwork for reusing the extracted runtime core for `review` and `watch`.
+
+Suggested next slices:
+- continue extracting transport-neutral start/resume/cancel lifecycle helpers from ACP `pair`,
+- keep ACP event framing, adapter payloads, and UI-facing policy at the ACP edge,
+- avoid introducing broad runtime-provider abstractions unless a migration step concretely requires them.
+
+#### Priority 2 — Conversation compaction / summarization
+
+Reason:
+- compaction is still weakly specified,
+- Letta currently carries hidden responsibility here,
+- and transcript ownership is not fully complete until Den owns how long-running conversations are compacted and replayed.
+
+Suggested next slices:
+- define compaction triggers and authority,
+- define summary artifact shape and storage location,
+- define how compacted history remains auditable and replayable,
+- define operator/debug visibility for compacted sessions.
+
+#### Priority 3 — Editable in-context memory block replacement
+
+Reason:
+- this is one of the biggest hidden-state risks in the migration,
+- and it is easy to accidentally leave Letta-like prompt-state semantics underdefined while transcript migration advances.
+
+Suggested next slices:
+- define editable block types and attachment semantics,
+- define mutation/audit rules,
+- define prompt-compilation inclusion rules,
+- keep the design Den-native rather than provider-shaped.
+
+#### Priority 4 — Archival / recall memory and ingestion delineation
+
+Reason:
+- archival memory, source ingestion, and retrieval are currently only partially separated,
+- and we should avoid replacing Letta with another blurred storage/retrieval/runtime bundle.
+
+Suggested next slices:
+- define archival memory write/query semantics,
+- define source registration and passage/chunk provenance,
+- define the relationship between canonical memory, canonical sources, and derived retrieval indexes.
+
+#### Priority 5 — Tool surface and role/runtime configuration cleanup
+
+Reason:
+- tools and runtime configuration are still partly framed through compatibility-era assumptions,
+- but this work is safer once execution lifecycle extraction is further along.
+
+Suggested next slices:
+- document unified Den-owned tool schema/policy ownership,
+- continue moving runtime/configuration authority into role profiles,
+- preserve provider bindings as narrow implementation details rather than core identity.
+
+#### Priority 6 — Migration mechanics and operator workflows
+
+Reason:
+- backfill, rollback, and operator explainability become more concrete once the above boundaries are better defined,
+- but they must be explicit before major cutover decisions.
+
+Suggested next slices:
+- define backfill/id-mapping procedures,
+- define rollback windows and read-switch reversal rules,
+- ensure admin surfaces explain mixed-origin and partially migrated state.
+
 ### Current Phase 5 extraction audit
 
 The current ACP `pair` path already exposes a few strong extraction candidates and a few areas that should remain ACP-edge specific.
