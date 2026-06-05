@@ -7,11 +7,11 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use futures::ready;
-use futures::Stream;
+use futures::{Future, Stream};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::conversation_persistence::{ensure_conversation_for_external_id, append_message};
+use crate::core::conversation_persistence::{append_message, ensure_conversation_for_external_id};
 
 use super::metrics;
 
@@ -158,93 +158,122 @@ fn rich_event_status_text(event: &serde_json::Value) -> Option<String> {
     Some(text)
 }
 
-fn persist_bear_channel_event(
-    pool: &PgPool,
-    bear_id: Uuid,
-    user_id: i32,
-    conversation_id: &str,
-    resolved_conversation_id: &mut String,
-    next_sequence_no: &mut i64,
-    canonical_conversation_ready: &mut bool,
-    event: &serde_json::Value,
-) {
-    let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    if ty == "conversation_resolved" {
-        if let Some(conversation_id) = event.get("conversation_id").and_then(|v| v.as_str()) {
-            *resolved_conversation_id = conversation_id.to_string();
+#[derive(Default)]
+struct PendingConversationPersistence {
+    assistant_text: String,
+    reasoning_text: String,
+    resolved_conversation_id: Option<String>,
+    workflow_events: Vec<serde_json::Value>,
+}
+
+impl PendingConversationPersistence {
+    fn ingest(&mut self, event: &serde_json::Value) {
+        match event.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "assistant_delta" => {
+                if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
+                    self.assistant_text.push_str(text);
+                }
+            }
+            "reasoning_delta" => {
+                if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
+                    self.reasoning_text.push_str(text);
+                }
+            }
+            "conversation_resolved" => {
+                if let Some(conversation_id) = event.get("conversation_id").and_then(|v| v.as_str()) {
+                    self.resolved_conversation_id = Some(conversation_id.to_string());
+                }
+                self.workflow_events.push(event.clone());
+            }
+            _ => {}
         }
     }
-    let role = match ty {
-        "assistant_delta" => Some("assistant"),
-        "reasoning_delta" => Some("assistant"),
-        _ => None,
-    };
-    let message_type = match ty {
-        "assistant_delta" => Some("assistant_output"),
-        "reasoning_delta" => Some("assistant_output"),
-        "conversation_resolved" => Some("workflow_event"),
-        _ => None,
-    };
-    let visibility = match ty {
-        "assistant_delta" | "reasoning_delta" => "visible",
-        "conversation_resolved" => "diagnostic_only",
-        _ => return,
-    };
-    let content_text = match ty {
-        "assistant_delta" | "reasoning_delta" => event.get("text").and_then(|v| v.as_str()).unwrap_or(""),
-        "conversation_resolved" => "Conversation resolved",
-        _ => return,
-    };
-    if content_text.is_empty() && ty != "conversation_resolved" {
-        return;
-    }
-    let external_conversation_id = resolved_conversation_id.as_str();
-    if !*canonical_conversation_ready {
-        match tokio::runtime::Handle::current().block_on(ensure_conversation_for_external_id(
+
+    async fn flush(self, pool: &PgPool, bear_id: Uuid, user_id: i32, conversation_id: &str) {
+        let external_conversation_id = self
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or(conversation_id);
+        let canonical = match ensure_conversation_for_external_id(
             pool,
             bear_id,
             Some(user_id),
             external_conversation_id,
             None,
             None,
-        )) {
-            Ok(_) => *canonical_conversation_ready = true,
+        )
+        .await
+        {
+            Ok(conversation) => conversation,
             Err(err) => {
-                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to ensure canonical web chat conversation");
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to ensure canonical web chat conversation during flush");
                 return;
+            }
+        };
+
+        if !self.reasoning_text.is_empty() {
+            if let Err(err) = append_message(
+                pool,
+                canonical.id,
+                "assistant_reasoning",
+                Some("assistant"),
+                "diagnostic_only",
+                &self.reasoning_text,
+                serde_json::json!({
+                    "type": "reasoning_delta_coalesced",
+                    "text": self.reasoning_text,
+                }),
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat reasoning");
+            }
+        }
+
+        if !self.assistant_text.is_empty() {
+            if let Err(err) = append_message(
+                pool,
+                canonical.id,
+                "assistant_output",
+                Some("assistant"),
+                "visible",
+                &self.assistant_text,
+                serde_json::json!({
+                    "type": "assistant_delta_coalesced",
+                    "text": self.assistant_text,
+                }),
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat assistant output");
+            }
+        }
+
+        for event in self.workflow_events {
+            if let Err(err) = append_message(
+                pool,
+                canonical.id,
+                "workflow_event",
+                None,
+                "diagnostic_only",
+                "Conversation resolved",
+                event,
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat workflow event");
             }
         }
     }
-    let canonical = match tokio::runtime::Handle::current().block_on(ensure_conversation_for_external_id(
-        pool,
-        bear_id,
-        Some(user_id),
-        external_conversation_id,
-        None,
-        None,
-    )) {
-        Ok(conversation) => conversation,
-        Err(err) => {
-            tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to load canonical web chat conversation");
-            return;
-        }
-    };
-    if let Err(err) = tokio::runtime::Handle::current().block_on(append_message(
-        pool,
-        canonical.id,
-        message_type.unwrap_or("assistant_output"),
-        role,
-        visibility,
-        content_text,
-        event.clone(),
-        event.get("id").and_then(|v| v.as_str()),
-        None,
-        None,
-    )) {
-        tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat message");
-        return;
-    }
-    *next_sequence_no += 1;
 }
 
 fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Bytes> {
@@ -330,9 +359,9 @@ pub struct BearChannelSseProxyStream {
     terminal: Option<Terminal>,
     buffer: Vec<u8>,
     pending: VecDeque<Bytes>,
-    next_sequence_no: i64,
-    resolved_conversation_id: String,
-    canonical_conversation_ready: bool,
+    persistence: PendingConversationPersistence,
+    flush_started: bool,
+    flush_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl BearChannelSseProxyStream {
@@ -349,7 +378,6 @@ impl BearChannelSseProxyStream {
             request_id,
             user_id,
             bear_id,
-            resolved_conversation_id: conversation_id.clone(),
             conversation_id,
             pool,
             started_at: Instant::now(),
@@ -358,8 +386,9 @@ impl BearChannelSseProxyStream {
             terminal: None,
             buffer: Vec::new(),
             pending: VecDeque::new(),
-            next_sequence_no: 0,
-            canonical_conversation_ready: false,
+            persistence: PendingConversationPersistence::default(),
+            flush_started: false,
+            flush_task: None,
         }
     }
 
@@ -463,16 +492,7 @@ impl Stream for BearChannelSseProxyStream {
                                 continue;
                             }
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                                persist_bear_channel_event(
-                                    &this.pool,
-                                    this.bear_id,
-                                    this.user_id,
-                                    &this.conversation_id,
-                                    &mut this.resolved_conversation_id,
-                                    &mut this.next_sequence_no,
-                                    &mut this.canonical_conversation_ready,
-                                    &value,
-                                );
+                                this.persistence.ingest(&value);
                                 if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
                                     this.pending.push_back(bytes);
                                 }
@@ -500,12 +520,46 @@ impl Stream for BearChannelSseProxyStream {
                 None => {
                     if !this.buffer.is_empty() {
                         let frame = std::mem::take(&mut this.buffer);
-                        for bytes in map_bear_channel_sse_frame(&frame) {
-                            this.pending.push_back(bytes);
+                        let text = String::from_utf8_lossy(&frame);
+                        for line in text.lines() {
+                            let Some(data) = line.strip_prefix("data:") else {
+                                continue;
+                            };
+                            let data = data.trim();
+                            if data.is_empty() || data == "[DONE]" {
+                                continue;
+                            }
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                                this.persistence.ingest(&value);
+                                if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
+                                    this.pending.push_back(bytes);
+                                }
+                            }
                         }
                         if let Some(bytes) = this.pending.pop_front() {
                             this.total_bytes += bytes.len();
                             return Poll::Ready(Some(Ok(bytes)));
+                        }
+                    }
+                    if !this.flush_started {
+                        this.flush_started = true;
+                        let persistence = std::mem::take(&mut this.persistence);
+                        let pool = this.pool.clone();
+                        let bear_id = this.bear_id;
+                        let user_id = this.user_id;
+                        let conversation_id = this.conversation_id.clone();
+                        this.flush_task = Some(tokio::spawn(async move {
+                            persistence.flush(&pool, bear_id, user_id, &conversation_id).await;
+                        }));
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    if let Some(task) = this.flush_task.as_mut() {
+                        match Pin::new(task).poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(Ok(())) | Poll::Ready(Err(_)) => {
+                                this.flush_task = None;
+                            }
                         }
                     }
                     if this.terminal.is_some() {

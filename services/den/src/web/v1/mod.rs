@@ -409,17 +409,33 @@ fn map_persisted_history_page(
         .iter()
         .filter(|row| row.visibility == "visible" && matches!(row.role.as_deref(), Some("user") | Some("assistant")))
         .collect();
-    let has_more = visible_rows.len() >= page_limit;
-    let messages = visible_rows
-        .iter()
-        .take(page_limit)
+
+    let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
+    for row in visible_rows {
+        let role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
+        if let Some((_, last)) = coalesced_desc.last_mut() {
+            if last.role == role && role == "assistant" && row.message_type == "assistant_output" {
+                last.text.push_str(&row.content_text);
+                continue;
+            }
+        }
+        coalesced_desc.push((
+            row.sequence_no,
+            ChatHistoryMessage {
+                role,
+                text: row.content_text.clone(),
+            },
+        ));
+    }
+
+    let has_more = coalesced_desc.len() >= page_limit;
+    let page = coalesced_desc.into_iter().take(page_limit).collect::<Vec<_>>();
+    let next_before = page.last().map(|(sequence_no, _)| sequence_no.to_string());
+    let messages = page
+        .into_iter()
         .rev()
-        .map(|row| ChatHistoryMessage {
-            role: row.role.clone().unwrap_or_else(|| "assistant".to_string()),
-            text: row.content_text.clone(),
-        })
+        .map(|(_, message)| message)
         .collect::<Vec<_>>();
-    let next_before = visible_rows.get(page_limit.saturating_sub(1)).map(|row| row.sequence_no.to_string());
     (messages, has_more, next_before)
 }
 

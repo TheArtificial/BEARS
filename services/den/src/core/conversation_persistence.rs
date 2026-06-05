@@ -62,8 +62,7 @@ pub async fn ensure_conversation_for_external_id(
             r#"
             UPDATE conversations
             SET source_acp_session_id = COALESCE($3, conversations.source_acp_session_id),
-                current_title = COALESCE($4, conversations.current_title),
-                updated_at = NOW()
+                current_title = COALESCE($4, conversations.current_title)
             WHERE bear_id = $1
               AND external_conversation_id = $2
             RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
