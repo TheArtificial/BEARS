@@ -46,6 +46,8 @@ pub struct RuntimeHistoryRecord {
     pub message_id: Option<String>,
     pub role: String,
     pub content: String,
+    pub created_at: Option<String>,
+    pub raw_message: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

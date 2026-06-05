@@ -443,10 +443,17 @@ impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
                 .and_then(serde_json::Value::as_str)
                 .or_else(|| inner.get("id").and_then(serde_json::Value::as_str))
                 .map(str::to_string);
+            let created_at = raw_message
+                .get("date")
+                .or_else(|| raw_message.get("created_at"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
             history.push(RuntimeHistoryRecord {
                 message_id,
                 role,
                 content,
+                created_at,
+                raw_message: Some(raw_message.clone()),
             });
         }
         Ok(history)

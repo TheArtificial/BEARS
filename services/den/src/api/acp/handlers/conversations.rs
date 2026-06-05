@@ -27,8 +27,8 @@ use crate::{
 
 use crate::api::acp::{
     history::{
-        map_acp_history_page, map_canonical_history_page, map_compaction_status_for_history,
-        runtime_compaction_event_for_history, runtime_messages_for_persistence,
+        map_canonical_history_page, map_compaction_status_for_history,
+        runtime_compaction_event_for_history,
     },
     normalize_acp_conversation_id,
     responses::acp_error_response,
@@ -141,7 +141,6 @@ pub(super) async fn conversation_history_inner(
     }
     let runtime_binding =
         require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
-    let agent_id = runtime_binding.binding_id.clone();
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
@@ -164,11 +163,6 @@ pub(super) async fn conversation_history_inner(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let binding_for_conv = if conv_id == "default" {
-        Some(agent_id.as_str())
-    } else {
-        None
-    };
     let before_sequence_no = before.and_then(|value| value.parse::<i64>().ok());
     let canonical_conversation = ensure_conversation_for_external_id(
         &state.sqlx_pool,
@@ -201,11 +195,7 @@ pub(super) async fn conversation_history_inner(
         })
         .into_response());
     }
-    let body = state
-        .letta
-        .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
-        .await?;
-    let _runtime_history = load_acp_history_with_backend(
+    let runtime_history = load_acp_history_with_backend(
         &LettaRuntimeConversationBackend {
             letta: state.letta.as_ref(),
         },
@@ -213,7 +203,17 @@ pub(super) async fn conversation_history_inner(
         &RuntimeConversationRef { id: conv_id.clone() },
     )
     .await?;
-    for (index, raw_message) in runtime_messages_for_persistence(&body).iter().enumerate() {
+    let raw_history_body = serde_json::json!({
+        "messages": runtime_history
+            .iter()
+            .filter_map(|record| record.raw_message.clone())
+            .collect::<Vec<_>>()
+    });
+    for (index, record) in runtime_history.iter().enumerate() {
+        let raw_message = record
+            .raw_message
+            .as_ref()
+            .ok_or_else(|| CustomError::System("runtime history record missing raw_message payload".to_string()))?;
         let inner = raw_message.get("contents").unwrap_or(raw_message);
         let message_type = inner
             .get("message_type")
@@ -224,53 +224,48 @@ pub(super) async fn conversation_history_inner(
             "assistant_message" => "assistant",
             _ => "system",
         };
-        let role = inner
-            .get("role")
-            .and_then(|v| v.as_str())
-            .or_else(|| raw_message.get("role").and_then(|v| v.as_str()));
-        let content_text = inner
-            .get("content")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                inner
-                    .get("content")
-                    .and_then(|v| v.get("text"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-        let provider_message_id = raw_message
-            .get("id")
-            .and_then(|v| v.as_str())
-            .or_else(|| inner.get("id").and_then(|v| v.as_str()));
-        let created_at = raw_message
-            .get("date")
-            .or_else(|| raw_message.get("created_at"))
-            .and_then(|v| v.as_str());
         insert_message_if_absent(
             &state.sqlx_pool,
             canonical_conversation.id,
             index as i64,
             normalized_message_type,
-            role,
+            Some(record.role.as_str()),
             "default",
-            &content_text,
+            &record.content,
             inner.clone(),
-            provider_message_id,
-            created_at,
+            record.message_id.as_deref(),
+            record.created_at.as_deref(),
         )
         .await?;
     }
-    let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
-    let _context_envelope = crate::api::acp::history::runtime_context_envelope_for_history(&body);
+    let messages = runtime_history
+        .iter()
+        .rev()
+        .take(limit as usize)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|record| crate::api::acp::AcpConversationHistoryMessage {
+            id: record.message_id.clone(),
+            role: record.role.clone(),
+            text: record.content.clone(),
+            created_at: record.created_at.clone(),
+        })
+        .collect::<Vec<_>>();
+    let has_more = runtime_history.len() > limit as usize;
+    let next_before = runtime_history
+        .iter()
+        .rev()
+        .nth(limit as usize)
+        .and_then(|record| record.message_id.clone());
+    let _context_envelope = crate::api::acp::history::runtime_context_envelope_for_history(&raw_history_body);
     let event = runtime_compaction_event_for_history(
         &conv_id,
-        &body,
+        &raw_history_body,
         crate::core::runtime_conversations::RuntimeCompactionTriggerKind::SemanticGroupCount,
     );
     let _ = record_runtime_compaction_event(&state.sqlx_pool, &event).await;
-    let compaction = Some(map_compaction_status_for_history(&conv_id, &body));
+    let compaction = Some(map_compaction_status_for_history(&conv_id, &raw_history_body));
     let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
         .await
         .unwrap_or_default();
