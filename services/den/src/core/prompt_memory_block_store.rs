@@ -36,6 +36,12 @@ pub(crate) struct PromptMemoryBlockQuery<'a> {
     pub(crate) work_surfaces: &'a [String],
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PromptMemoryRuntimeSelection {
+    pub(crate) blocks: Vec<PromptMemoryBlock>,
+    pub(crate) diagnostic: serde_json::Value,
+}
+
 pub(crate) async fn upsert_prompt_memory_block(
     pool: &PgPool,
     write: &PromptMemoryBlockWrite,
@@ -125,6 +131,24 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
     .map_err(|err| CustomError::Database(format!("select prompt_memory_blocks: {err}")))?;
 
     rows.into_iter().map(row_to_block).collect()
+}
+
+pub(crate) async fn select_prompt_memory_blocks_for_runtime(
+    pool: &PgPool,
+    query: PromptMemoryBlockQuery<'_>,
+) -> Result<PromptMemoryRuntimeSelection, CustomError> {
+    let blocks = list_prompt_memory_blocks_for_runtime(pool, query.clone()).await?;
+    let diagnostic = serde_json::json!({
+        "source": "prompt_memory_blocks",
+        "persisted": true,
+        "bear_id": query.bear_id.map(|id| id.to_string()),
+        "role_slug": query.role_slug,
+        "session_id": query.session_id,
+        "work_surfaces": query.work_surfaces,
+        "matched_block_ids": blocks.iter().map(|block| block.id.clone()).collect::<Vec<_>>(),
+        "matched_count": blocks.len(),
+    });
+    Ok(PromptMemoryRuntimeSelection { blocks, diagnostic })
 }
 
 fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, CustomError> {

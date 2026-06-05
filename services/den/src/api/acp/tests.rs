@@ -603,6 +603,17 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[test]
+    fn synthetic_prompt_memory_runtime_selection_emits_diagnostic_metadata() {
+        let selection = super::prompt_context::synthetic_prompt_memory_runtime_selection(
+            "sess-1",
+            &["/workspace".to_string()],
+        );
+        assert_eq!(selection.diagnostic["source"], "synthetic_runtime_slice");
+        assert_eq!(selection.diagnostic["persisted"], false);
+        assert!(selection.diagnostic["matched_count"].as_u64().unwrap_or(0) >= 1);
+    }
+
+    #[test]
     fn summarize_letta_event_for_log_redacts_large_tool_return() {
         let event = serde_json::json!({
             "message_type": "tool_return_message",
@@ -798,6 +809,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -1096,6 +1108,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -1150,6 +1163,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime,
             turn_scope: turn_scope.clone(),
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -1282,6 +1296,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -1469,6 +1484,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -1628,6 +1644,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -1775,6 +1792,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
@@ -1863,6 +1881,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
@@ -1997,6 +2016,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -2140,6 +2160,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(config.clone()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
@@ -2224,6 +2245,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(config.clone()),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
@@ -2380,6 +2402,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -2514,6 +2537,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let runtime_event = RuntimeStreamEvent::ToolCallRequested {
             tool_call_id: "call-cont-1".to_string(),
@@ -2778,6 +2802,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
@@ -2912,6 +2937,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3044,6 +3070,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -3168,6 +3195,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3430,6 +3458,7 @@ use crate::core::prompt_memory_blocks::{
             config: Arc::new(crate::config::Config::test_stub()),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
         };
 
         let provenance = super::stream::runtime::acp_session_provenance(&context);
@@ -3467,6 +3496,7 @@ use crate::core::prompt_memory_blocks::{
                 "acp-session-resolved-helper",
                 Some("conv-helper".to_string()),
             ),
+            prompt_memory_diagnostic: serde_json::json!({}),
         });
         let record = crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
             "conv-validated",

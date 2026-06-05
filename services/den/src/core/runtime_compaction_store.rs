@@ -109,6 +109,7 @@ pub(crate) async fn list_runtime_compaction_events(
                 })?,
             artifact,
             context_envelope: None,
+            prompt_memory_diagnostic: None,
         });
     }
     Ok(items)

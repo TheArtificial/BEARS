@@ -9,7 +9,9 @@ use crate::{
     api::{
         acp::{
             acp_error_status_message, acp_stream_tokens_enabled,
-            history::pending_session_title_update_event, AcpGatewayEvent, AcpStreamContext,
+            history::pending_session_title_update_event,
+            prompt_context::synthetic_prompt_memory_runtime_selection,
+            AcpGatewayEvent, AcpStreamContext,
         },
         auth::ApiError,
         service::ApiState,
@@ -33,6 +35,7 @@ pub(in crate::api::acp) struct AcpStreamSetup {
     pub(in crate::api::acp) workspace_roots: Vec<String>,
     pub(in crate::api::acp) stream_tokens: bool,
     pub(in crate::api::acp) turn_runtime_context: String,
+    pub(in crate::api::acp) prompt_memory_diagnostic: serde_json::Value,
 }
 
 pub(in crate::api::acp) async fn build_acp_stream_setup(
@@ -102,6 +105,8 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
+    let prompt_memory_diagnostic =
+        synthetic_prompt_memory_runtime_selection(session_id, &workspace_roots).diagnostic;
     let stream_tokens = acp_stream_tokens_enabled();
 
     Ok(AcpStreamSetup {
@@ -110,6 +115,7 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
         workspace_roots,
         stream_tokens,
         turn_runtime_context,
+        prompt_memory_diagnostic,
     })
 }
 
@@ -212,6 +218,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             config: state.config.clone(),
             role_runtime,
             turn_scope,
+            prompt_memory_diagnostic: setup.prompt_memory_diagnostic.clone(),
         },
         setup.initial_events,
         setup.session_info_event_sent,

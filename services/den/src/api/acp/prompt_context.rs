@@ -10,6 +10,7 @@ use crate::{
     core::{
         acp_plan_mode,
         acp_tools::AcpResolvedSessionPolicy,
+        prompt_memory_block_store::PromptMemoryRuntimeSelection,
         prompt_memory_blocks::{
             compile_prompt_memory_blocks, render_prompt_memory_block_context,
             PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
@@ -50,10 +51,10 @@ use super::{
 };
 
 
-fn prompt_memory_block_prompt_context(
+pub(crate) fn synthetic_prompt_memory_runtime_selection(
     session_id: &str,
     roots: &[String],
-) -> String {
+) -> PromptMemoryRuntimeSelection {
     let mut blocks = vec![PromptMemoryBlock {
         id: "pair-role-guidance".to_string(),
         block_type: PromptMemoryBlockType::RoleGuidance,
@@ -94,6 +95,38 @@ fn prompt_memory_block_prompt_context(
     });
     let compilation = compile_prompt_memory_blocks(
         &blocks,
+        PromptMemoryCompilationInput {
+            role: "pair",
+            work_surfaces: roots,
+            session_id,
+            max_blocks: 6,
+        },
+    );
+    PromptMemoryRuntimeSelection {
+        diagnostic: serde_json::json!({
+            "source": "synthetic_runtime_slice",
+            "persisted": false,
+            "session_id": session_id,
+            "work_surfaces": roots,
+            "matched_block_ids": compilation
+                .included_blocks
+                .iter()
+                .map(|block| block.id.clone())
+                .collect::<Vec<_>>(),
+            "matched_count": compilation.included_blocks.len(),
+            "omitted_block_ids": compilation.omitted_block_ids
+        }),
+        blocks,
+    }
+}
+
+pub(crate) fn render_prompt_memory_runtime_selection(
+    selection: &PromptMemoryRuntimeSelection,
+    session_id: &str,
+    roots: &[String],
+) -> String {
+    let compilation = compile_prompt_memory_blocks(
+        &selection.blocks,
         PromptMemoryCompilationInput {
             role: "pair",
             work_surfaces: roots,
@@ -234,7 +267,12 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
-    guidance.push(prompt_memory_block_prompt_context(session_id, &roots));
+    let prompt_memory_selection = synthetic_prompt_memory_runtime_selection(session_id, &roots);
+    guidance.push(render_prompt_memory_runtime_selection(
+        &prompt_memory_selection,
+        session_id,
+        &roots,
+    ));
     guidance.push(runtime_compaction_prompt_context(session_id, client_context, activity_plan));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());

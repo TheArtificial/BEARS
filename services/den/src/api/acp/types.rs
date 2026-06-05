@@ -80,6 +80,7 @@ pub(in crate::api::acp) struct AcpStreamContext {
     pub(in crate::api::acp) config: Arc<crate::config::Config>,
     pub(in crate::api::acp) role_runtime: RoleRuntime,
     pub(in crate::api::acp) turn_scope: RoleTurnScope,
+    pub(in crate::api::acp) prompt_memory_diagnostic: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -54,6 +54,19 @@ pub(in crate::api::acp) fn acp_session_provenance(
     )
 }
 
+fn prompt_memory_diagnostic_record(
+    context: &AcpStreamContext,
+) -> crate::core::conversation_events::CanonicalConversationRecord {
+    crate::core::conversation_events::CanonicalConversationRecord::StructuredEvent {
+        message_type: "prompt_memory_diagnostic".to_string(),
+        role: Some("system".to_string()),
+        visibility: "diagnostic_only".to_string(),
+        content_text: "Prompt memory runtime selection diagnostic".to_string(),
+        content_json: context.prompt_memory_diagnostic.clone(),
+        provider_message_id: None,
+    }
+}
+
 pub(in crate::api::acp) fn spawn_persist_acp_assistant_output(
     context: &AcpStreamContext,
     content_text: String,
@@ -182,6 +195,10 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
             )
             .await?;
             spawn_persist_acp_conversation_resolved(context, conversation_id.clone());
+            spawn_persist_canonical_conversation_record(
+                canonical_persistence_context_from_acp(context),
+                prompt_memory_diagnostic_record(context),
+            );
         }
         AcpGatewayEvent::ToolRequest {
             tool_call_id,
