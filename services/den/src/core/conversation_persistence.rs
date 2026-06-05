@@ -145,6 +145,26 @@ pub async fn get_conversation_for_external_id(
     .transpose()
 }
 
+pub async fn delete_conversation_for_external_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+) -> Result<u64, CustomError> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM conversations
+        WHERE bear_id = $1
+          AND external_conversation_id = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(external_conversation_id)
+    .execute(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("delete conversation by external id: {err}")))?;
+    Ok(result.rows_affected())
+}
+
 pub async fn set_conversation_title(
     pool: &PgPool,
     bear_id: Uuid,

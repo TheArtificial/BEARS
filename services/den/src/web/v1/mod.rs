@@ -87,7 +87,6 @@ pub struct ChatHistoryQuery {
     #[serde(default)]
     pub conversation_id: Option<String>,
     /// Canonical cursor: messages older than this sequence number.
-    /// Temporary migration fallback still accepts Letta-backed history for not-yet-canonical conversations.
     #[serde(default)]
     pub before: Option<String>,
     #[serde(default)]
@@ -226,35 +225,6 @@ async fn chat_conversations(
         conversations.insert(0, default_row());
     }
 
-    if conversations.len() == 1 && conversations[0].id == "default" && state.web_letta_data.is_enabled() {
-        // TEMPORARY MIGRATION FALLBACK: until all web talk conversations are represented in canonical
-        // Den persistence, fall back to Letta conversation listing when canonical storage only knows
-        // about the default row. Remove this branch after web talk transcript/title persistence fully covers listing.
-        let Some(agent_id) = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
-            .await?
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        else {
-            return Ok(Json(ChatConversationsResponse { conversations }));
-        };
-        let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
-        let letta_rows = snap
-            .all
-            .into_iter()
-            .filter(|r| !r.archived && !archived_ids.contains(&r.id))
-            .map(|r| ChatConversationRow {
-                id: r.id,
-                title: r.title,
-                last_message_at: r.last_message_at,
-            })
-            .collect::<Vec<_>>();
-        if !letta_rows.is_empty() {
-            return Ok(Json(ChatConversationsResponse {
-                conversations: letta_rows,
-            }));
-        }
-    }
-
     Ok(Json(ChatConversationsResponse { conversations }))
 }
 
@@ -288,30 +258,13 @@ async fn chat_conversation_patch(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    if !state.web_letta_data.is_enabled() {
-        return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-        ));
-    }
-
-    let Some(agent_id) = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    else {
-        return Err(CustomError::ValidationError(
-            "this bear is not linked to a talk Letta agent".to_string(),
-        ));
-    };
-
-    let snap = state
-        .web_letta_data
-        .list_agent_conversations(&agent_id)
-        .await?;
-    let found = snap.all.iter().any(|r| r.id == conv_id);
-    if !found {
-        return Err(CustomError::NotFound("conversation not found".to_string()));
-    }
+    conversation_persistence::get_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        &conv_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
 
     let title = body
         .title
@@ -330,7 +283,12 @@ async fn chat_conversation_patch(
     }
 
     if body.deleted == Some(true) {
-        state.web_letta_data.delete_conversation(&conv_id).await?;
+        conversation_persistence::delete_conversation_for_external_id(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+        )
+        .await?;
         archived_conversations::set_archived(
             state.sqlx_pool(),
             bear.id,
@@ -345,10 +303,13 @@ async fn chat_conversation_patch(
 
     if let Some(title) = title {
         let title = title.chars().take(120).collect::<String>();
-        state
-            .web_letta_data
-            .patch_conversation_summary(&conv_id, &title)
-            .await?;
+        let _ = conversation_persistence::set_conversation_title(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+            &title,
+        )
+        .await?;
         let _ = acp_sessions::set_title_for_bear_conversation(
             state.sqlx_pool(),
             bear.id,
@@ -359,10 +320,6 @@ async fn chat_conversation_patch(
     }
 
     if let Some(archived) = body.archived {
-        state
-            .web_letta_data
-            .patch_conversation_archived(&conv_id, archived)
-            .await?;
         archived_conversations::set_archived(
             state.sqlx_pool(),
             bear.id,
@@ -419,55 +376,24 @@ async fn chat_history(
 
     let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
 
-    if let Some(conversation) = conversation_persistence::get_conversation_for_external_id(
+    let Some(conversation) = conversation_persistence::get_conversation_for_external_id(
         state.sqlx_pool(),
         bear.id,
         &conv_id,
     )
     .await?
-    {
-        let rows = conversation_persistence::list_messages_page(
-            state.sqlx_pool(),
-            conversation.id,
-            before_sequence_no,
-            limit,
-        )
-        .await?;
-        let (messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);
-        return Ok(Json(ChatHistoryResponse {
-            messages,
-            has_more,
-            next_before,
-        }));
-    }
-
-    // TEMPORARY MIGRATION FALLBACK: keep Letta history reads only for conversations that do not
-    // yet have a canonical Den conversation row. Remove this branch once web chat history is fully
-    // backed by canonical conversation persistence.
-    if !state.web_letta_data.is_enabled() {
-        return Ok(empty());
-    }
-
-    let Some(agent_id) = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
     else {
         return Ok(empty());
     };
 
-    let agent_for_conv = if conv_id == "default" {
-        Some(agent_id.as_str())
-    } else {
-        None
-    };
-
-    let body = state
-        .web_letta_data
-        .list_conversation_messages(&conv_id, agent_for_conv, limit as u32, None, false)
-        .await?;
-
-    let (messages, has_more, next_before) = map_letta_history_page(&body, limit as u32, q.debug);
+    let rows = conversation_persistence::list_messages_page(
+        state.sqlx_pool(),
+        conversation.id,
+        before_sequence_no,
+        limit,
+    )
+    .await?;
+    let (messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);
     Ok(Json(ChatHistoryResponse {
         messages,
         has_more,
@@ -992,6 +918,33 @@ async fn chat_send_inner(
     let workboard_context =
         web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
     let upstream_message = format!("{}{}", body.message.trim(), workboard_context);
+
+    let canonical_conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    conversation_persistence::append_message(
+        state.sqlx_pool(),
+        canonical_conversation.id,
+        "user_input",
+        Some("user"),
+        "visible",
+        body.message.trim(),
+        serde_json::json!({
+            "type": "user_input",
+            "text": body.message.trim(),
+            "request_id": request_id.to_string(),
+        }),
+        None,
+        Some(&format!("web-chat-user-input:{request_id}")),
+        None,
+    )
+    .await?;
 
     crate::observability::metrics::chat_send_runtime_bear_channel();
 
