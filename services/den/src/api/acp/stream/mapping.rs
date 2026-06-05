@@ -7,8 +7,10 @@ use crate::{
     api::acp::stream::support::AcpStreamDiagnostics,
     core::{
         acp_letta_events::{
-            map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
+            acp_event_to_adapter_sse, map_native_letta_stream_event_to_acp_event_with_accumulator,
+            AcpGatewayEvent,
         },
+        runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
         runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
     },
 };
@@ -106,8 +108,16 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
 ) -> AcpFrameResult {
+    let runtime_event_for_projection = runtime_event.clone();
     let value = runtime_stream_event_to_acp_seed_value(runtime_event)?;
     let observed_run_ids = diagnostics.observe_parsed_event(&value);
+    let direct_projected_events = if let RuntimeStreamEvent::Semantic(semantic_event) =
+        runtime_event_for_projection.clone()
+    {
+        runtime_semantic_event_to_bearwire_gateway_events(semantic_event)
+    } else {
+        Vec::new()
+    };
     if let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
         &value,
         &mut diagnostics.tool_call_accumulator,
@@ -116,7 +126,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             .await
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         let mut adapter_result_rx = None;
-        let events = if let Some(effect) = tool_request_effect.as_mut() {
+        let mut events = if let Some(effect) = tool_request_effect.as_mut() {
             match effect.route {
                 crate::api::acp::ToolExecutionRoute::AdapterLocal => {
                     if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
@@ -148,6 +158,9 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
         } else {
             vec![event]
         };
+        if !direct_projected_events.is_empty() {
+            events = direct_projected_events;
+        }
         for run_id in observed_run_ids {
             if !diagnostics.run_ids.iter().any(|known| known == &run_id) {
                 diagnostics.run_ids.push(run_id);
@@ -164,7 +177,6 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
 pub(in crate::api::acp) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
     use crate::{
         api::acp::stream::support::parse_sse_event_body_to_json,
-        core::acp_letta_events::acp_event_to_adapter_sse,
     };
 
     let Some(value) = parse_sse_event_body_to_json(frame).ok().flatten() else {
