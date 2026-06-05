@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
-        acp_sessions, archived_conversations,
+        acp_sessions, archived_conversations, conversation_persistence,
         bears::{
             db::{self as bears_db, role_is_bear_admin},
             BearAgentRole,
@@ -86,7 +86,8 @@ pub struct ChatHistoryQuery {
     /// runtime conversation: `default` (agent main conversation) or `conv-…`.
     #[serde(default)]
     pub conversation_id: Option<String>,
-    /// Letta cursor: messages older than this id (see `GET /v1/agents/{id}/messages?before=`).
+    /// Canonical cursor: messages older than this sequence number.
+    /// Temporary migration fallback still accepts Letta-backed history for not-yet-canonical conversations.
     #[serde(default)]
     pub before: Option<String>,
     #[serde(default)]
@@ -189,43 +190,70 @@ async fn chat_conversations(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let default_only = || {
-        Json(ChatConversationsResponse {
-            conversations: vec![ChatConversationRow {
-                id: "default".to_string(),
-                title: "Main chat".to_string(),
-                last_message_at: None,
-            }],
-        })
-    };
-
-    if !state.web_letta_data.is_enabled() {
-        return Ok(default_only());
-    }
-
-    let Some(agent_id) = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(default_only());
+    let default_row = || ChatConversationRow {
+        id: "default".to_string(),
+        title: "Main chat".to_string(),
+        last_message_at: None,
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let snap = state
-        .web_letta_data
-        .list_agent_conversations(&agent_id)
-        .await?;
-    let conversations: Vec<ChatConversationRow> = snap
-        .all
+    let mut conversations = conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 100)
+        .await?
         .into_iter()
-        .filter(|r| !r.archived && !archived_ids.contains(&r.id))
-        .map(|r| ChatConversationRow {
-            id: r.id,
-            title: r.title,
-            last_message_at: r.last_message_at,
+        .filter_map(|row| {
+            let id = row.external_conversation_id?;
+            if id.starts_with("new-") || archived_ids.contains(&id) {
+                return None;
+            }
+            Some(ChatConversationRow {
+                id: id.clone(),
+                title: row
+                    .current_title
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        if id == "default" {
+                            "Main chat".to_string()
+                        } else {
+                            id.clone()
+                        }
+                    }),
+                last_message_at: Some(row.updated_at.format(&time::format_description::well_known::Rfc3339).ok()?),
+            })
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    if !conversations.iter().any(|row| row.id == "default") {
+        conversations.insert(0, default_row());
+    }
+
+    if conversations.len() == 1 && conversations[0].id == "default" && state.web_letta_data.is_enabled() {
+        // TEMPORARY MIGRATION FALLBACK: until all web talk conversations are represented in canonical
+        // Den persistence, fall back to Letta conversation listing when canonical storage only knows
+        // about the default row. Remove this branch after web talk transcript/title persistence fully covers listing.
+        let Some(agent_id) = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(Json(ChatConversationsResponse { conversations }));
+        };
+        let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
+        let letta_rows = snap
+            .all
+            .into_iter()
+            .filter(|r| !r.archived && !archived_ids.contains(&r.id))
+            .map(|r| ChatConversationRow {
+                id: r.id,
+                title: r.title,
+                last_message_at: r.last_message_at,
+            })
+            .collect::<Vec<_>>();
+        if !letta_rows.is_empty() {
+            return Ok(Json(ChatConversationsResponse {
+                conversations: letta_rows,
+            }));
+        }
+    }
 
     Ok(Json(ChatConversationsResponse { conversations }))
 }
@@ -391,14 +419,14 @@ async fn chat_history(
 
     let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
 
-    if let Some(conversation) = crate::core::conversation_persistence::get_conversation_for_external_id(
+    if let Some(conversation) = conversation_persistence::get_conversation_for_external_id(
         state.sqlx_pool(),
         bear.id,
         &conv_id,
     )
     .await?
     {
-        let rows = crate::core::conversation_persistence::list_messages_page(
+        let rows = conversation_persistence::list_messages_page(
             state.sqlx_pool(),
             conversation.id,
             before_sequence_no,
@@ -448,7 +476,7 @@ async fn chat_history(
 }
 
 fn map_persisted_history_page(
-    rows: &[crate::core::conversation_persistence::PersistedConversationMessage],
+    rows: &[conversation_persistence::PersistedConversationMessage],
     page_limit: usize,
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let visible_rows: Vec<_> = rows

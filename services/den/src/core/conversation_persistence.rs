@@ -10,6 +10,7 @@ pub struct ConversationRecord {
     pub external_conversation_id: Option<String>,
     pub source_acp_session_id: Option<String>,
     pub current_title: Option<String>,
+    pub updated_at: time::OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ pub async fn ensure_conversation_for_external_id(
         )
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
-        RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title
+        RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
         "#,
     )
     .bind(bear_id)
@@ -65,7 +66,7 @@ pub async fn ensure_conversation_for_external_id(
                 updated_at = NOW()
             WHERE bear_id = $1
               AND external_conversation_id = $2
-            RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title
+            RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
             "#,
         )
         .bind(bear_id)
@@ -93,6 +94,9 @@ pub async fn ensure_conversation_for_external_id(
         current_title: row.try_get("current_title").map_err(|err| {
             CustomError::Database(format!("decode conversation current_title: {err}"))
         })?,
+        updated_at: row
+            .try_get("updated_at")
+            .map_err(|err| CustomError::Database(format!("decode conversation updated_at: {err}")))?,
     })
 }
 
@@ -103,7 +107,7 @@ pub async fn get_conversation_for_external_id(
 ) -> Result<Option<ConversationRecord>, CustomError> {
     let row = sqlx::query(
         r#"
-        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title
+        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
         FROM conversations
         WHERE bear_id = $1
           AND external_conversation_id = $2
@@ -133,6 +137,9 @@ pub async fn get_conversation_for_external_id(
             current_title: row.try_get("current_title").map_err(|err| {
                 CustomError::Database(format!("decode conversation current_title: {err}"))
             })?,
+            updated_at: row
+                .try_get("updated_at")
+                .map_err(|err| CustomError::Database(format!("decode conversation updated_at: {err}")))?,
         })
     })
     .transpose()
@@ -164,6 +171,52 @@ pub async fn set_conversation_title(
     .await
     .map_err(|err| CustomError::Database(format!("update conversation title: {err}")))?;
     Ok(result.rows_affected())
+}
+
+pub async fn list_conversations_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    limit: i64,
+) -> Result<Vec<ConversationRecord>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        FROM conversations
+        WHERE bear_id = $1
+        ORDER BY updated_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(limit.clamp(1, 200))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list conversations for bear: {err}")))?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ConversationRecord {
+                id: row.try_get("id").map_err(|err| {
+                    CustomError::Database(format!("decode conversation id: {err}"))
+                })?,
+                bear_id: row.try_get("bear_id").map_err(|err| {
+                    CustomError::Database(format!("decode conversation bear_id: {err}"))
+                })?,
+                external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
+                    CustomError::Database(format!("decode conversation external_conversation_id: {err}"))
+                })?,
+                source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
+                    CustomError::Database(format!("decode conversation source_acp_session_id: {err}"))
+                })?,
+                current_title: row.try_get("current_title").map_err(|err| {
+                    CustomError::Database(format!("decode conversation current_title: {err}"))
+                })?,
+                updated_at: row.try_get("updated_at").map_err(|err| {
+                    CustomError::Database(format!("decode conversation updated_at: {err}"))
+                })?,
+            })
+        })
+        .collect()
 }
 
 pub async fn list_messages_page(
