@@ -160,6 +160,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             session_id,
             bear_id: bear.id,
             binding: pair_runtime_binding,
+            conversation_selection: &conversation_resolution.session_selection,
             upstream_target: &conversation_resolution.upstream_target,
             prompt,
             client_tools: client_tool_descriptors.clone(),

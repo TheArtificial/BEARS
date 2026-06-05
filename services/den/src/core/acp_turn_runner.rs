@@ -38,6 +38,7 @@ pub struct AcpTurnStartRequest<'a> {
     pub session_id: &'a str,
     pub bear_id: Uuid,
     pub binding: &'a RoleRuntimeBinding,
+    pub conversation_selection: &'a str,
     pub upstream_target: &'a str,
     pub prompt: &'a str,
     pub client_tools: Option<serde_json::Value>,
@@ -498,18 +499,57 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
     }
 }
 
+async fn materialize_acp_runtime_conversation_if_needed(
+    request: &AcpTurnStartRequest<'_>,
+) -> Result<String, CustomError> {
+    if request.upstream_target.starts_with("conv-") {
+        return Ok(request.upstream_target.to_string());
+    }
+    if !request.conversation_selection.starts_with("new-") {
+        return Ok(request.upstream_target.to_string());
+    }
+    let created_response = request
+        .state
+        .letta
+        .create_conversation_for_agent(&request.binding.binding_id)
+        .await?;
+    let conv_id = created_response
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| s.starts_with("conv-"))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            CustomError::System(format!(
+                "Letta create conversation response did not contain a conv-* id: {created_response}"
+            ))
+        })?;
+    sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET resolved_conversation_id = $3, updated_at = NOW()
+        WHERE bear_id = $1 AND acp_session_id = $2
+        "#,
+    )
+    .bind(request.bear_id)
+    .bind(request.session_id)
+    .bind(&conv_id)
+    .execute(&request.state.sqlx_pool)
+    .await?;
+    Ok(conv_id)
+}
+
 pub async fn start_acp_turn_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<Response, CustomError> {
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request).await?;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,
         request.runtime_context_len,
     )
     .post_turn_response(&StartTurnRequest {
-        conversation: RuntimeConversationRef {
-            id: request.upstream_target.to_string(),
-        },
+        conversation: RuntimeConversationRef { id: conversation_id },
         binding: request.binding.clone(),
         human_message: request.prompt.to_string(),
         runtime_context: None,
@@ -523,15 +563,14 @@ pub async fn start_acp_turn_with_retries(
 pub async fn start_acp_turn_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request).await?;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,
         request.runtime_context_len,
     )
     .start_turn_stream(StartTurnRequest {
-        conversation: RuntimeConversationRef {
-            id: request.upstream_target.to_string(),
-        },
+        conversation: RuntimeConversationRef { id: conversation_id },
         binding: request.binding.clone(),
         human_message: request.prompt.to_string(),
         runtime_context: None,

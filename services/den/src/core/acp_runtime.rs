@@ -214,6 +214,7 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
     )?;
     let mut created = false;
     if resolution.session_selection.starts_with("new-")
+        && request.requested_selection.as_deref().is_some()
         && resolution.resolved_conversation.is_none()
     {
         let conversation = backend.create_conversation(&request.binding).await?;
@@ -223,13 +224,12 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
         resolution.upstream_target = conversation.id.clone();
         created = true;
     }
-    let conversation =
-        resolution
-            .resolved_conversation
-            .clone()
-            .unwrap_or_else(|| RuntimeConversationRef {
-                id: resolution.upstream_target.clone(),
-            });
+    let conversation = resolution
+        .resolved_conversation
+        .clone()
+        .unwrap_or_else(|| RuntimeConversationRef {
+            id: resolution.upstream_target.clone(),
+        });
     Ok((
         resolution,
         EnsureConversationResult {
@@ -418,6 +418,7 @@ impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
         &self,
         request: EnsureConversationRequest,
     ) -> Result<EnsureConversationResult, CustomError> {
+        let requested_selection = request.requested_selection.clone();
         let (resolution, result) = ensure_acp_session_conversation(
             self.letta,
             request,
@@ -426,7 +427,16 @@ impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
         )
         .await?;
         let _ = resolution;
-        Ok(result)
+        if requested_selection.is_none() {
+            Ok(EnsureConversationResult {
+                conversation: RuntimeConversationRef {
+                    id: "default".to_string(),
+                },
+                created: false,
+            })
+        } else {
+            Ok(result)
+        }
     }
 
     async fn load_history(
