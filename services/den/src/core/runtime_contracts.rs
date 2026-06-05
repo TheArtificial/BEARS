@@ -47,7 +47,12 @@ pub struct RuntimeHistoryRecord {
     pub role: String,
     pub content: String,
     pub created_at: Option<String>,
-    pub raw_message: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHistoryPage {
+    pub records: Vec<RuntimeHistoryRecord>,
+    pub raw_payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,7 +276,7 @@ pub trait AcpConversationRuntime {
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError>;
+    ) -> Result<RuntimeHistoryPage, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]
@@ -291,7 +296,7 @@ pub trait RuntimeConversationBackend {
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError>;
+    ) -> Result<RuntimeHistoryPage, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

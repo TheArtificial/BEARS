@@ -195,7 +195,7 @@ pub(super) async fn conversation_history_inner(
         })
         .into_response());
     }
-    let runtime_history = load_acp_history_with_backend(
+    let runtime_history_page = load_acp_history_with_backend(
         &LettaRuntimeConversationBackend {
             letta: state.letta.as_ref(),
         },
@@ -203,17 +203,16 @@ pub(super) async fn conversation_history_inner(
         &RuntimeConversationRef { id: conv_id.clone() },
     )
     .await?;
-    let raw_history_body = serde_json::json!({
-        "messages": runtime_history
-            .iter()
-            .filter_map(|record| record.raw_message.clone())
-            .collect::<Vec<_>>()
-    });
-    for (index, record) in runtime_history.iter().enumerate() {
-        let raw_message = record
-            .raw_message
-            .as_ref()
-            .ok_or_else(|| CustomError::System("runtime history record missing raw_message payload".to_string()))?;
+    let raw_history_body = runtime_history_page
+        .raw_payload
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({"messages": []}));
+    for (index, record) in runtime_history_page.records.iter().enumerate() {
+        let raw_message = raw_history_body
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|messages| messages.get(index))
+            .ok_or_else(|| CustomError::System("runtime history page missing raw message payload".to_string()))?;
         let inner = raw_message.get("contents").unwrap_or(raw_message);
         let message_type = inner
             .get("message_type")
@@ -238,7 +237,8 @@ pub(super) async fn conversation_history_inner(
         )
         .await?;
     }
-    let messages = runtime_history
+    let messages = runtime_history_page
+        .records
         .iter()
         .rev()
         .take(limit as usize)
@@ -252,8 +252,9 @@ pub(super) async fn conversation_history_inner(
             created_at: record.created_at.clone(),
         })
         .collect::<Vec<_>>();
-    let has_more = runtime_history.len() > limit as usize;
-    let next_before = runtime_history
+    let has_more = runtime_history_page.records.len() > limit as usize;
+    let next_before = runtime_history_page
+        .records
         .iter()
         .rev()
         .nth(limit as usize)

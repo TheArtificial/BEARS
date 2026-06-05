@@ -386,7 +386,7 @@ impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
+    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
         let binding_for_conv = if conversation.id == "default" {
             Some(binding.binding_id.as_str())
         } else {
@@ -453,10 +453,12 @@ impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
                 role,
                 content,
                 created_at,
-                raw_message: Some(raw_message.clone()),
             });
         }
-        Ok(history)
+        Ok(crate::core::runtime_contracts::RuntimeHistoryPage {
+            records: history,
+            raw_payload: Some(body),
+        })
     }
 }
 
@@ -464,7 +466,7 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     binding: &RoleRuntimeBinding,
     conversation: &RuntimeConversationRef,
-) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
+) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
     backend.load_history(binding, conversation).await
 }
 
@@ -512,7 +514,7 @@ impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
+    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
         load_acp_history_with_backend(
             &LettaRuntimeConversationBackend { letta: self.letta },
             binding,
