@@ -296,9 +296,9 @@ pub(crate) fn map_compaction_status_for_history(
         artifact: event.artifact.and_then(|artifact| serde_json::to_value(artifact).ok()),
         context_envelope: serde_json::to_value(context_envelope).ok(),
         prompt_memory_diagnostic: Some(serde_json::json!({
-            "status": "runtime_prompt_blocks_not_yet_persisted",
-            "source": "synthetic_runtime_slice",
-            "next_step": "wire prompt_memory_block_store into live ACP prompt assembly"
+            "status": "history_projection_only",
+            "source": "prompt_memory_blocks",
+            "note": "history compaction projection does not replay live runtime prompt-memory selection"
         })),
     }
 }

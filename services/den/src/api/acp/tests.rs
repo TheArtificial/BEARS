@@ -3845,7 +3845,7 @@ data: "hello"}"#;
         assert!(status.prompt_memory_diagnostic.is_some());
         assert_eq!(
             status.prompt_memory_diagnostic.as_ref().unwrap()["source"],
-            "synthetic_runtime_slice"
+            "prompt_memory_blocks"
         );
     }
 

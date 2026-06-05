@@ -298,8 +298,19 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
     )
     .await
     {
-        Ok(selection) if !selection.blocks.is_empty() => selection,
-        Ok(_) | Err(_) => synthetic_prompt_memory_runtime_selection(session_id, &roots),
+        Ok(selection) => selection,
+        Err(err) => PromptMemoryRuntimeSelection {
+            diagnostic: serde_json::json!({
+                "source": "prompt_memory_blocks",
+                "persisted": true,
+                "status": "selection_error",
+                "session_id": session_id,
+                "work_surfaces": roots,
+                "error": err.to_string(),
+                "matched_count": 0,
+            }),
+            blocks: Vec::new(),
+        },
     };
     let den_tool_descriptors = acp_pair_den_tool_descriptors();
     let den_tool_names = den_tool_descriptors
