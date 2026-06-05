@@ -22,13 +22,11 @@ pub(super) type AcpFrameResult = Result<
     std::io::Error,
 >;
 
-pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
     runtime_event: RuntimeStreamEvent,
-    context: AcpStreamContext,
-    diagnostics: &mut AcpStreamDiagnostics,
-) -> AcpFrameResult {
-    let value = match runtime_event {
-        RuntimeStreamEvent::RawProviderEvent { value } => value,
+) -> Result<serde_json::Value, std::io::Error> {
+    match runtime_event {
+        RuntimeStreamEvent::RawProviderEvent { value } => Ok(value),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
             tool_name,
@@ -38,7 +36,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             approval_request_id,
             approval_required,
             approval_reason,
-        }) => serde_json::json!({
+        }) => Ok(serde_json::json!({
             "message_type": if approval_required { "approval_request_message" } else { "tool_call_message" },
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
@@ -47,35 +45,35 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             "args": arguments,
             "approval_request_id": approval_request_id,
             "approval_reason": approval_reason,
-        }),
+        })),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { reason, .. }) => {
             let stop_reason = if reason == "awaiting_approval" {
                 "requires_approval".to_string()
             } else {
                 reason
             };
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "message_type": "stop_reason",
                 "stop_reason": stop_reason,
-            })
+            }))
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "message_type": "stop_reason",
                 "stop_reason": "end_turn",
-            })
+            }))
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "message_type": "assistant_message",
                 "content": text,
-            })
+            }))
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "message_type": "reasoning_message",
                 "reasoning": text,
-            })
+            }))
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message,
@@ -83,26 +81,32 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             error_type,
             request_id,
             context,
-        }) => serde_json::json!({
+        }) => Ok(serde_json::json!({
             "message_type": "error_message",
             "message": message,
             "detail": detail,
             "error_type": error_type,
             "request_id": request_id,
             "context": context,
-        }),
+        })),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "type": "conversation_resolved",
                 "conversation_id": conversation.id,
-            })
+            }))
         }
-        other => {
-            return Err(std::io::Error::other(format!(
-                "runtime event not supported by ACP persistence mapper: {other:?}"
-            )));
-        }
-    };
+        other => Err(std::io::Error::other(format!(
+            "runtime event not supported by ACP persistence mapper: {other:?}"
+        ))),
+    }
+}
+
+pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+    runtime_event: RuntimeStreamEvent,
+    context: AcpStreamContext,
+    diagnostics: &mut AcpStreamDiagnostics,
+) -> AcpFrameResult {
+    let value = runtime_stream_event_to_acp_seed_value(runtime_event)?;
     let observed_run_ids = diagnostics.observe_parsed_event(&value);
     if let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
         &value,
