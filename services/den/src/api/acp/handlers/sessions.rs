@@ -26,6 +26,7 @@ use crate::{
         acp_tokens,
         bears::{db as bears_db, BearAgentRole},
         conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
+        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
         role_runtime::{RoleRuntime, RoleTurnScope},
         work_plans::{self, WorkPlanLookup},
     },
@@ -35,8 +36,9 @@ use crate::{
 use crate::api::acp::{
     acp_session_row_to_http_with_modes, decode_acp_sessions_cursor, encode_acp_sessions_cursor,
     format_acp_session_timestamp, resolve_acp_turn_context, tools_enabled_for_client,
-    AcpAdapterEnvironmentRequest, AcpSessionsListHttpResponse, AcpSessionsListQuery,
-    AcpSetModeRequest, AcpSetModeResponse,
+    AcpAdapterEnvironmentRequest, AcpPromptMemoryQuery, AcpPromptMemoryResponse,
+    AcpSessionsListHttpResponse, AcpSessionsListQuery, AcpSetModeRequest,
+    AcpSetModeResponse,
 };
 
 use super::auth::{authenticate_acp_code_token, authenticate_acp_code_token_with_auth};
@@ -63,6 +65,85 @@ fn runtime_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<Stri
                 .starts_with("conv-")
                 .then(|| conversation_id.to_string())
         })
+}
+
+
+pub(in crate::api::acp) async fn get_acp_session_prompt_memory(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    Query(query): Query<AcpPromptMemoryQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match get_acp_session_prompt_memory_inner(state, slug, session_id, query, headers).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+pub(super) async fn get_acp_session_prompt_memory_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    query: AcpPromptMemoryQuery,
+    headers: HeaderMap,
+) -> Result<Response, CustomError> {
+    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("bear not found or you do not have access".to_string())
+        })?;
+    let row = acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id.trim())
+        .await?
+        .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
+    let mut blocks = list_prompt_memory_blocks_for_bear_role(&state.sqlx_pool, bear.id, BearAgentRole::Pair.as_str()).await?;
+    if !query.include_archived {
+        blocks.retain(|block| block.state != crate::core::prompt_memory_blocks::PromptMemoryBlockState::Archived);
+    }
+    if let Some(scope) = query.scope.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        blocks.retain(|block| serde_json::to_value(block.scope).ok().and_then(|v| v.as_str().map(str::to_string)).as_deref() == Some(scope));
+    }
+    if let Some(block_type) = query.block_type.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        blocks.retain(|block| serde_json::to_value(block.block_type).ok().and_then(|v| v.as_str().map(str::to_string)).as_deref() == Some(block_type));
+    }
+    if let Some(work_surface) = query.work_surface.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        blocks.retain(|block| block.work_surface.as_deref() == Some(work_surface));
+    }
+    let effective_session_id = query
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| row.acp_session_id.clone());
+    blocks.retain(|block| block.session_id.is_none() || block.session_id.as_deref() == Some(effective_session_id.as_str()));
+    let blocks_json = blocks
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| CustomError::Parsing(format!("prompt memory blocks serialize: {err}")))?;
+    let prompt_memory_diagnostic = serde_json::json!({
+        "status": if blocks_json.is_empty() { "empty" } else { "ok" },
+        "source": "prompt_memory_blocks",
+        "session_id": effective_session_id,
+        "count": blocks_json.len(),
+    });
+    Ok(Json(AcpPromptMemoryResponse {
+        ok: true,
+        role: BearAgentRole::Pair.as_str().to_string(),
+        count: blocks_json.len(),
+        filters: serde_json::json!({
+            "include_archived": query.include_archived,
+            "scope": query.scope,
+            "block_type": query.block_type,
+            "work_surface": query.work_surface,
+            "session_id": effective_session_id,
+        }),
+        prompt_memory_diagnostic,
+        blocks: blocks_json,
+    })
+    .into_response())
 }
 
 pub(in crate::api::acp) async fn list_acp_sessions(

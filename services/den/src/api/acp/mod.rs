@@ -84,6 +84,10 @@ pub fn router() -> Router<ApiState> {
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
         .route("/bears/{slug}/sessions/{session_id}", get(get_acp_session))
         .route(
+            "/bears/{slug}/sessions/{session_id}/prompt-memory",
+            get(get_acp_session_prompt_memory),
+        )
+        .route(
             "/bears/{slug}/sessions/{session_id}/runtime",
             get(get_acp_session_runtime),
         )
@@ -139,8 +143,9 @@ pub(crate) use self::http_types::{
 use self::http_types::{
     AcpAdapterEnvironmentRequest, AcpCloseSessionResponse, AcpConversationHistoryQuery,
     AcpConversationHistoryResponse, AcpConversationsQuery, AcpConversationsResponse,
-    AcpPermissionDecisionRequest, AcpPermissionDecisionResponse, AcpSessionsListHttpResponse,
-    AcpSessionsListQuery, AcpSetModeRequest, AcpSetModeResponse,
+    AcpPermissionDecisionRequest, AcpPermissionDecisionResponse, AcpPromptMemoryQuery,
+    AcpPromptMemoryResponse, AcpSessionsListHttpResponse, AcpSessionsListQuery,
+    AcpSetModeRequest, AcpSetModeResponse,
 };
 use self::config::pending_web_fetch_approvals;
 use self::config::PendingWebFetchApproval;
@@ -163,8 +168,8 @@ use self::{
         permissions::permission_result,
         session_lifecycle::{cancel_session, close_session, compact_session},
         sessions::{
-            get_acp_session, get_acp_session_runtime, list_acp_sessions,
-            post_adapter_environment, set_session_mode,
+            get_acp_session, get_acp_session_prompt_memory, get_acp_session_runtime,
+            list_acp_sessions, post_adapter_environment, set_session_mode,
         },
         tool_results::tool_result,
     },

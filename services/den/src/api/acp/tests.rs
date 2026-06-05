@@ -3848,3 +3848,12 @@ data: "hello"}"#;
             "synthetic_runtime_slice"
         );
     }
+
+
+
+
+    #[test]
+    fn acp_router_exposes_session_prompt_memory_endpoint() {
+        let source = std::fs::read_to_string("/workspace/services/den/src/api/acp/mod.rs").unwrap();
+        assert!(source.contains("/bears/{slug}/sessions/{session_id}/prompt-memory"));
+    }

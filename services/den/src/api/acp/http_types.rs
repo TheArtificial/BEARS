@@ -119,6 +119,31 @@ pub(crate) struct AcpErrorResponse {
     pub(super) suggested_action: Option<&'static str>,
 }
 
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AcpPromptMemoryQuery {
+    #[serde(default)]
+    pub(super) include_archived: bool,
+    #[serde(default)]
+    pub(super) scope: Option<String>,
+    #[serde(default)]
+    pub(super) block_type: Option<String>,
+    #[serde(default)]
+    pub(super) work_surface: Option<String>,
+    #[serde(default)]
+    pub(super) session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AcpPromptMemoryResponse {
+    pub(super) ok: bool,
+    pub(super) role: String,
+    pub(super) count: usize,
+    pub(super) filters: serde_json::Value,
+    pub(super) prompt_memory_diagnostic: serde_json::Value,
+    pub(super) blocks: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct AcpConversationsQuery {
     #[serde(default)]
