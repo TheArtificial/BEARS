@@ -379,6 +379,43 @@ async fn chat_history(
         })
     };
 
+    let limit = q.limit.unwrap_or(50).clamp(1, 100) as i64;
+    let before_sequence_no = q
+        .before
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::parse::<i64>)
+        .transpose()
+        .map_err(|_| CustomError::ValidationError("before must be a canonical sequence number".to_string()))?;
+
+    let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
+
+    if let Some(conversation) = crate::core::conversation_persistence::get_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        &conv_id,
+    )
+    .await?
+    {
+        let rows = crate::core::conversation_persistence::list_messages_page(
+            state.sqlx_pool(),
+            conversation.id,
+            before_sequence_no,
+            limit,
+        )
+        .await?;
+        let (messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);
+        return Ok(Json(ChatHistoryResponse {
+            messages,
+            has_more,
+            next_before,
+        }));
+    }
+
+    // TEMPORARY MIGRATION FALLBACK: keep Letta history reads only for conversations that do not
+    // yet have a canonical Den conversation row. Remove this branch once web chat history is fully
+    // backed by canonical conversation persistence.
     if !state.web_letta_data.is_enabled() {
         return Ok(empty());
     }
@@ -391,10 +428,6 @@ async fn chat_history(
         return Ok(empty());
     };
 
-    let limit = q.limit.unwrap_or(50).clamp(1, 100);
-    let before = q.before.as_deref().map(str::trim).filter(|s| !s.is_empty());
-
-    let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
     let agent_for_conv = if conv_id == "default" {
         Some(agent_id.as_str())
     } else {
@@ -403,15 +436,37 @@ async fn chat_history(
 
     let body = state
         .web_letta_data
-        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
+        .list_conversation_messages(&conv_id, agent_for_conv, limit as u32, None, false)
         .await?;
 
-    let (messages, has_more, next_before) = map_letta_history_page(&body, limit, q.debug);
+    let (messages, has_more, next_before) = map_letta_history_page(&body, limit as u32, q.debug);
     Ok(Json(ChatHistoryResponse {
         messages,
         has_more,
         next_before,
     }))
+}
+
+fn map_persisted_history_page(
+    rows: &[crate::core::conversation_persistence::PersistedConversationMessage],
+    page_limit: usize,
+) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
+    let visible_rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.visibility == "visible" && matches!(row.role.as_deref(), Some("user") | Some("assistant")))
+        .collect();
+    let has_more = visible_rows.len() >= page_limit;
+    let messages = visible_rows
+        .iter()
+        .take(page_limit)
+        .rev()
+        .map(|row| ChatHistoryMessage {
+            role: row.role.clone().unwrap_or_else(|| "assistant".to_string()),
+            text: row.content_text.clone(),
+        })
+        .collect::<Vec<_>>();
+    let next_before = visible_rows.get(page_limit.saturating_sub(1)).map(|row| row.sequence_no.to_string());
+    (messages, has_more, next_before)
 }
 
 fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {

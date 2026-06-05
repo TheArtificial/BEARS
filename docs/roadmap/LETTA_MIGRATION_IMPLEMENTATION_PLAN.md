@@ -690,7 +690,9 @@ Status: **typed Projection adoption now extends from proposal lifecycle into the
   - marking `memory_curate` runs started
   - marking `memory_curate` runs completed
   - marking `memory_curate` runs failed
-- This is the first stronger non-ACP/Curate-oriented adoption of the shared typed projection seam because it models the lifecycle of Curate work itself, not just proposal row state changes.
+- Current gap: there is still no live executor/dequeue path that consumes queued `bear_reflection_runs` rows for the `memory_curate` lane. Today the only observed production caller is `api/acp/pair_reflection_support.rs`, which enqueues Curate work after pair reflection but does not actually run or settle it.
+- This means the new Curate lifecycle transitions are currently a prepared shared seam, not yet a wired runtime path. The next effective bridge is to introduce one small worker/runner that claims queued `memory_curate` runs and calls the new started/completed/failed helpers at real execution boundaries.
+- This is still the first stronger non-ACP/Curate-oriented adoption of the shared typed projection seam because it models the lifecycle of Curate work itself, not just proposal row state changes, but the execution substrate for that lane remains to be built.
 - Projection ownership remains explicit for both proposal creation and proposal resolution:
   - `CreateMemoryProposal` and `ProposalResolutionParams` each carry `project_to_conversation`
   - `core/memory_proposals.rs` only emits internal canonical projection when callers opt in

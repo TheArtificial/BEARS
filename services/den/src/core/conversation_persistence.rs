@@ -96,6 +96,48 @@ pub async fn ensure_conversation_for_external_id(
     })
 }
 
+pub async fn get_conversation_for_external_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+) -> Result<Option<ConversationRecord>, CustomError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title
+        FROM conversations
+        WHERE bear_id = $1
+          AND external_conversation_id = $2
+        LIMIT 1
+        "#,
+    )
+    .bind(bear_id)
+    .bind(external_conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("get conversation by external id: {err}")))?;
+
+    row.map(|row| {
+        Ok(ConversationRecord {
+            id: row.try_get("id").map_err(|err| {
+                CustomError::Database(format!("decode conversation id: {err}"))
+            })?,
+            bear_id: row.try_get("bear_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation bear_id: {err}"))
+            })?,
+            external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation external_conversation_id: {err}"))
+            })?,
+            source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation source_acp_session_id: {err}"))
+            })?,
+            current_title: row.try_get("current_title").map_err(|err| {
+                CustomError::Database(format!("decode conversation current_title: {err}"))
+            })?,
+        })
+    })
+    .transpose()
+}
+
 pub async fn set_conversation_title(
     pool: &PgPool,
     bear_id: Uuid,
