@@ -328,6 +328,9 @@ Suggested next slices:
 - define source registration and passage/chunk provenance,
 - define the relationship between canonical memory, canonical sources, and derived retrieval indexes.
 
+Status:
+- initial design contract now landed in `docs/architecture/den-archival-memory-and-ingestion-contract.md`.
+
 #### Priority 5 — Tool surface and role/runtime configuration cleanup
 
 Reason:
@@ -339,6 +342,9 @@ Suggested next slices:
 - continue moving runtime/configuration authority into role profiles,
 - preserve provider bindings as narrow implementation details rather than core identity.
 
+Status:
+- initial boundary note now landed in `docs/architecture/den-tool-and-runtime-configuration-boundary.md`.
+
 #### Priority 6 — Migration mechanics and operator workflows
 
 Reason:
@@ -349,6 +355,9 @@ Suggested next slices:
 - define backfill/id-mapping procedures,
 - define rollback windows and read-switch reversal rules,
 - ensure admin surfaces explain mixed-origin and partially migrated state.
+
+Status:
+- initial migration planning baseline now landed in `docs/roadmap/den-migration-backfill-and-rollback-plan.md`.
 
 ### Near-term implementation epics
 
