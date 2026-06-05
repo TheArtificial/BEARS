@@ -54,6 +54,50 @@ fn semantic_tool_call_requested_projects_to_tool_call_seed_value() {
 }
 
 #[test]
+fn semantic_run_paused_projects_to_requires_approval_stop_reason() {
+    let value = runtime_stream_event_to_acp_seed_value(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::RunPaused {
+            reason: "awaiting_approval".to_string(),
+            resume_token: None,
+            expires_at: None,
+        },
+    ))
+    .expect("projection should succeed");
+
+    assert_eq!(value.get("message_type").and_then(|v| v.as_str()), Some("stop_reason"));
+    assert_eq!(
+        value.get("stop_reason").and_then(|v| v.as_str()),
+        Some("requires_approval")
+    );
+}
+
+#[test]
+fn semantic_assistant_text_projects_to_assistant_message_seed_value() {
+    let value = runtime_stream_event_to_acp_seed_value(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::AssistantTextDelta {
+            text: "hello".to_string(),
+        },
+    ))
+    .expect("projection should succeed");
+
+    assert_eq!(value.get("message_type").and_then(|v| v.as_str()), Some("assistant_message"));
+    assert_eq!(value.get("content").and_then(|v| v.as_str()), Some("hello"));
+}
+
+#[test]
+fn semantic_status_text_projects_to_reasoning_message_seed_value() {
+    let value = runtime_stream_event_to_acp_seed_value(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::StatusText {
+            text: "thinking".to_string(),
+        },
+    ))
+    .expect("projection should succeed");
+
+    assert_eq!(value.get("message_type").and_then(|v| v.as_str()), Some("reasoning_message"));
+    assert_eq!(value.get("reasoning").and_then(|v| v.as_str()), Some("thinking"));
+}
+
+#[test]
 fn semantic_error_projects_to_error_seed_value() {
     let value = runtime_stream_event_to_acp_seed_value(RuntimeStreamEvent::Semantic(
         RuntimeSemanticEvent::Error {
