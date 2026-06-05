@@ -21,7 +21,7 @@ use crate::{
         acp_plan_mode,
         acp_runtime::{
             ensure_acp_session_conversation, require_pair_runtime_binding,
-            verify_acp_conversation_belongs_to_binding,
+            verify_acp_conversation_access,
         },
         acp_sessions::{self, UpsertAcpSession},
         conversation_events::{
@@ -140,7 +140,9 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         ApiError::new(status, code, message)
     })?;
     if conversation_resolution.requires_belongs_to_bear_check {
-        verify_acp_conversation_belongs_to_binding(
+        verify_acp_conversation_access(
+            &state.sqlx_pool,
+            bear.id,
             state.letta.as_ref(),
             &pair_runtime_binding,
             &conversation_resolution.session_selection,

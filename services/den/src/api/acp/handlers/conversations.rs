@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     api::service::ApiState,
     core::{
-        acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_belongs_to_binding},
+        acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_access},
         archived_conversations,
         bears::db as bears_db,
         conversation_persistence::{
@@ -145,7 +145,9 @@ pub(super) async fn conversation_history_inner(
         ));
     }
     if conv_id.starts_with("conv-") {
-        verify_acp_conversation_belongs_to_binding(
+        verify_acp_conversation_access(
+            &state.sqlx_pool,
+            bear.id,
             state.letta.as_ref(),
             &runtime_binding,
             &conv_id,

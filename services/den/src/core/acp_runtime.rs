@@ -4,6 +4,7 @@ use crate::{
     core::{
         acp_sessions,
         bears::{db as bears_db, model::BearAgentRole, Bear},
+        conversation_persistence,
         letta::{load_agent_conversations, LettaClient},
         runtime_contracts::{
             AcpConversationRuntime, EnsureConversationRequest, EnsureConversationResult,
@@ -286,6 +287,30 @@ pub async fn verify_acp_conversation_belongs_to_binding(
     let backend = LettaRuntimeConversationBackend { letta };
     verify_acp_conversation_belongs_to_binding_with_backend(&backend, binding, conversation_id)
         .await
+}
+
+pub async fn verify_acp_conversation_access(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    letta: &LettaClient,
+    binding: &RoleRuntimeBinding,
+    conversation_id: &str,
+) -> Result<(), CustomError> {
+    if conversation_id == "default" || conversation_id.starts_with("new-") {
+        return Ok(());
+    }
+    if !conversation_id.starts_with("conv-") {
+        return Err(CustomError::ValidationError(format!(
+            "invalid conversation_id: {conversation_id}"
+        )));
+    }
+    if conversation_persistence::get_conversation_for_external_id(pool, bear_id, conversation_id)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    verify_acp_conversation_belongs_to_binding(letta, binding, conversation_id).await
 }
 
 fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Option<String> {
