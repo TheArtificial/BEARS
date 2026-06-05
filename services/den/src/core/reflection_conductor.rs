@@ -5,8 +5,9 @@ use uuid::Uuid;
 
 use crate::{
     core::conversation_events::{
-        project_to_conversation, MemoryCurateEnqueuedPayload, Projection,
-        ProjectionEvent, ProjectionProvenance, ProjectionSource,
+        memory_curate_completed_projection, memory_curate_enqueued_projection,
+        memory_curate_failed_projection, memory_curate_started_projection, project_to_conversation,
+        ProjectionProvenance, ProjectionSource,
     },
     errors::CustomError,
 };
@@ -89,6 +90,98 @@ pub struct ProposalEnqueueParams<'a> {
     pub proposal_ids: Vec<Uuid>,
 }
 
+fn reflection_conductor_provenance(row: &ReflectionRunRow) -> ProjectionProvenance {
+    ProjectionProvenance {
+        source: ProjectionSource::ReflectionConductor,
+        scope_id: format!("bear:{}:lane:{}", row.bear_id, row.lane),
+    }
+}
+
+fn project_memory_curate_enqueued(pool: &PgPool, row: &ReflectionRunRow, proposal_ids: Vec<Uuid>) {
+    project_to_conversation(
+        pool,
+        row.bear_id,
+        None,
+        row.conversation_id.as_deref(),
+        memory_curate_enqueued_projection(
+            reflection_conductor_provenance(row),
+            row.id,
+            row.lane.clone(),
+            row.trigger.clone(),
+            row.status.clone(),
+            proposal_ids,
+            row.conversation_key.clone(),
+            row.conversation_date,
+            row.created_at,
+        ),
+    );
+}
+
+fn project_memory_curate_started(pool: &PgPool, row: &ReflectionRunRow, proposal_ids: Vec<Uuid>) {
+    project_to_conversation(
+        pool,
+        row.bear_id,
+        None,
+        row.conversation_id.as_deref(),
+        memory_curate_started_projection(
+            reflection_conductor_provenance(row),
+            row.id,
+            row.lane.clone(),
+            row.trigger.clone(),
+            row.status.clone(),
+            proposal_ids,
+            row.conversation_key.clone(),
+            row.conversation_date,
+            row.started_at,
+        ),
+    );
+}
+
+fn project_memory_curate_completed(
+    pool: &PgPool,
+    row: &ReflectionRunRow,
+    proposal_ids: Vec<Uuid>,
+) {
+    project_to_conversation(
+        pool,
+        row.bear_id,
+        None,
+        row.conversation_id.as_deref(),
+        memory_curate_completed_projection(
+            reflection_conductor_provenance(row),
+            row.id,
+            row.lane.clone(),
+            row.trigger.clone(),
+            row.status.clone(),
+            proposal_ids,
+            row.conversation_key.clone(),
+            row.conversation_date,
+            row.completed_at,
+        ),
+    );
+}
+
+fn project_memory_curate_failed(pool: &PgPool, row: &ReflectionRunRow, proposal_ids: Vec<Uuid>) {
+    project_to_conversation(
+        pool,
+        row.bear_id,
+        None,
+        row.conversation_id.as_deref(),
+        memory_curate_failed_projection(
+            reflection_conductor_provenance(row),
+            row.id,
+            row.lane.clone(),
+            row.trigger.clone(),
+            row.status.clone(),
+            proposal_ids,
+            row.conversation_key.clone(),
+            row.conversation_date,
+            row.error.clone(),
+            row.completed_at,
+        ),
+    );
+}
+
 pub async fn enqueue_memory_curate_for_proposals(
     pool: &PgPool,
     params: ProposalEnqueueParams<'_>,
@@ -115,38 +208,104 @@ pub async fn enqueue_memory_curate_for_proposals(
         },
     )
     .await?;
-    project_to_conversation(
-        pool,
-        row.bear_id,
-        None,
-        row.conversation_id.as_deref(),
-        Projection {
-            provenance: ProjectionProvenance {
-                source: ProjectionSource::ReflectionConductor,
-                scope_id: format!("bear:{}:lane:{}", row.bear_id, row.lane),
-            },
-            event: ProjectionEvent::MemoryCurateEnqueued(MemoryCurateEnqueuedPayload {
-                reflection_run_id: row.id,
-                lane: row.lane.clone(),
-                trigger: row.trigger.clone(),
-                status: row.status.clone(),
-                proposal_ids: proposal_ids.clone(),
-                conversation_key: row.conversation_key.clone(),
-                conversation_date: row.conversation_date,
-                created_at: row.created_at,
-            }),
-            workflow_text: format!("Memory curate enqueued with {} proposal(s)", proposal_ids.len()),
-            visible_summary: Some(format!(
-                "Memory curate was queued for {} proposal(s).",
-                row.input_summary
-                    .get("proposal_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|items| items.len())
-                    .unwrap_or(0)
-            )),
-        },
-    );
+    project_memory_curate_enqueued(pool, &row, proposal_ids);
     Ok(row)
+}
+
+pub async fn mark_memory_curate_started(
+    pool: &PgPool,
+    bear_id: Uuid,
+    reflection_run_id: Uuid,
+) -> Result<ReflectionRunRow, CustomError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bear_reflection_runs
+        SET status = 'started',
+            started_at = COALESCE(started_at, NOW())
+        WHERE bear_id = $1 AND id = $2 AND lane = 'memory_curate'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(reflection_run_id)
+    .fetch_one(pool)
+    .await?;
+    let run = row_from_sql(row);
+    project_memory_curate_started(pool, &run, proposal_ids_from_summary(&run.input_summary));
+    Ok(run)
+}
+
+pub async fn mark_memory_curate_completed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    reflection_run_id: Uuid,
+    output_summary: serde_json::Value,
+) -> Result<ReflectionRunRow, CustomError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bear_reflection_runs
+        SET status = 'completed',
+            output_summary = $3,
+            error = NULL,
+            completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'memory_curate'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(reflection_run_id)
+    .bind(output_summary)
+    .fetch_one(pool)
+    .await?;
+    let run = row_from_sql(row);
+    project_memory_curate_completed(pool, &run, proposal_ids_from_summary(&run.input_summary));
+    Ok(run)
+}
+
+pub async fn mark_memory_curate_failed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    reflection_run_id: Uuid,
+    error: &str,
+) -> Result<ReflectionRunRow, CustomError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bear_reflection_runs
+        SET status = 'failed',
+            error = $3,
+            completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'memory_curate'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(reflection_run_id)
+    .bind(error)
+    .fetch_one(pool)
+    .await?;
+    let run = row_from_sql(row);
+    project_memory_curate_failed(pool, &run, proposal_ids_from_summary(&run.input_summary));
+    Ok(run)
+}
+
+fn proposal_ids_from_summary(summary: &serde_json::Value) -> Vec<Uuid> {
+    summary
+        .get("proposal_ids")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .filter_map(|value| Uuid::parse_str(value).ok())
+        .collect()
 }
 
 fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionRunRow {

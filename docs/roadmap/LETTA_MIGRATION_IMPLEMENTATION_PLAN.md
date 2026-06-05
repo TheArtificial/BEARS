@@ -669,18 +669,29 @@ The next broader non-ACP slice should likely move from helper-shape coverage int
 - tightening the shared helper’s payload/summary conventions based on the now-migrated real consumers,
 - or expanding adoption only where current ACP-centric product flows already have clear conversation attachment and operator-facing audit value.
 
-Status: **shared non-ACP audit projection layer has been superseded by the typed Projection seam and shared proposal lifecycle constructors**
+Status: **typed Projection adoption now extends from proposal lifecycle into the first broader Curate-run lifecycle slice**
 - `core/conversation_events.rs` now exposes a typed `Projection` seam with transport-neutral payload enums/structs and persistence helpers instead of relying on the older `NonAcpAuditProjection` helper shape.
 - Typed lifecycle projection consumers now include:
   - memory proposal lifecycle in `core/memory_proposals.rs`
   - pair reflection completion in `core/pair_reflection/mod.rs`
-  - memory-curate enqueue in `core/reflection_conductor.rs`
+  - memory-curate lifecycle in `core/reflection_conductor.rs`
   - Den tool review/request/apply proposal flows in `core/den_tools.rs`
 - Shared proposal lifecycle constructors now centralize proposal-shaped workflow text, visible summaries, and typed payloads:
   - `memory_proposal_created_projection(...)`
   - `memory_proposal_resolved_projection(...)`
   - `memory_review_requested_projection(...)`
-- Projection ownership is now explicit for both proposal creation and proposal resolution:
+- Shared Curate lifecycle constructors now extend the same seam beyond proposal CRUD into run-state projection:
+  - `memory_curate_enqueued_projection(...)`
+  - `memory_curate_started_projection(...)`
+  - `memory_curate_completed_projection(...)`
+  - `memory_curate_failed_projection(...)`
+- `core/reflection_conductor.rs` now owns canonical projection helpers for the `memory_curate` lane and exposes run-state transitions for:
+  - queueing proposal review work
+  - marking `memory_curate` runs started
+  - marking `memory_curate` runs completed
+  - marking `memory_curate` runs failed
+- This is the first stronger non-ACP/Curate-oriented adoption of the shared typed projection seam because it models the lifecycle of Curate work itself, not just proposal row state changes.
+- Projection ownership remains explicit for both proposal creation and proposal resolution:
   - `CreateMemoryProposal` and `ProposalResolutionParams` each carry `project_to_conversation`
   - `core/memory_proposals.rs` only emits internal canonical projection when callers opt in
   - Den tool request/resolve/apply flows explicitly own their `ProjectionSource::DenTools` conversation projection rather than risking duplicate writes from shared persistence helpers
@@ -688,10 +699,11 @@ Status: **shared non-ACP audit projection layer has been superseded by the typed
   - request-review projection
   - resolve-proposal projection
   - apply-core-update projection
+  - `memory_curate` lifecycle projection persistence across queued / started / completed / failed states
 - Test namespace cleanup is also now landed for this area:
   - conversation event tests live at `core::conversation::events::tests`
   - den tool projection/session tests are grouped under nested `core::tools::*` namespaces (for example `core::tools::memory::*`, `core::tools::session::*`)
-- This keeps non-ACP canonical projection policy converged across core persistence and Den tool entrypoints while reducing flat module sprawl in `core`.
+- This keeps non-ACP canonical projection policy converged across core persistence, Curate-run lifecycle, and Den tool entrypoints while reducing flat module sprawl in `core`.
 
 ## Phase 6 — Follow-on migration for `review` and `watch`
 

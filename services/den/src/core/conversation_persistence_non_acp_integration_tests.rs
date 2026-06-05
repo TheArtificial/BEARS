@@ -1,4 +1,5 @@
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 async fn persist_for_test(
@@ -25,7 +26,8 @@ async fn persist_for_test(
 use crate::core::{
     bears::{db::BearParams, db::create_bear, BearAgentRole},
     conversation_events::{
-        canonical_persistence_context, persist_projection, MemoryCurateEnqueuedPayload,
+        canonical_persistence_context, persist_projection, MemoryCurateCompletedPayload,
+        MemoryCurateEnqueuedPayload, MemoryCurateFailedPayload, MemoryCurateStartedPayload,
         MemoryProposalCreatedPayload, MemoryProposalResolvedPayload,
         PairReflectionCompletedPayload, Projection, ProjectionEvent, ProjectionProvenance,
         ProjectionSource,
@@ -166,6 +168,139 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
     assert!(texts.iter().any(|text| text.contains("was approved and applied at core/test.md")));
     assert!(messages.iter().any(|m| m.message_type == "workflow_event"));
     assert!(messages.iter().any(|m| m.role.as_deref() == Some("assistant")));
+    Ok(())
+}
+
+#[sqlx::test]
+async fn non_acp_memory_curate_lifecycle_projection_persists_records_when_conversation_is_valid(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bear_id = create_bear(
+        &pool,
+        BearParams {
+            slug: "test-memory-curate-bear",
+            name: "Test Memory Curate Bear",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(vec![]),
+            context_profile: None,
+        },
+    )
+    .await?;
+    let conversation = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        None,
+        "conv-memory-curate-test",
+        None,
+        None,
+    )
+    .await?;
+    let run_id = Uuid::new_v4();
+    let proposal_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
+    let created_at = OffsetDateTime::now_utc();
+    let started_at = Some(created_at + time::Duration::minutes(1));
+    let completed_at = Some(created_at + time::Duration::minutes(2));
+    for projection in [
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{bear_id}:lane:memory_curate"),
+            },
+            event: ProjectionEvent::MemoryCurateEnqueued(MemoryCurateEnqueuedPayload {
+                reflection_run_id: run_id,
+                lane: "memory_curate".to_string(),
+                trigger: "proposal_review".to_string(),
+                status: "queued".to_string(),
+                proposal_ids: proposal_ids.clone(),
+                conversation_key: Some("conv-memory-curate-test".to_string()),
+                conversation_date: None,
+                created_at,
+            }),
+            workflow_text: "Memory curate enqueued with 2 proposal(s)".to_string(),
+            visible_summary: Some("Memory curate was queued for 2 proposal(s).".to_string()),
+        },
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{bear_id}:lane:memory_curate"),
+            },
+            event: ProjectionEvent::MemoryCurateStarted(MemoryCurateStartedPayload {
+                reflection_run_id: run_id,
+                lane: "memory_curate".to_string(),
+                trigger: "proposal_review".to_string(),
+                status: "started".to_string(),
+                proposal_ids: proposal_ids.clone(),
+                conversation_key: Some("conv-memory-curate-test".to_string()),
+                conversation_date: None,
+                started_at,
+            }),
+            workflow_text: "Memory curate started with 2 proposal(s)".to_string(),
+            visible_summary: Some("Memory curate started for 2 proposal(s).".to_string()),
+        },
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{bear_id}:lane:memory_curate"),
+            },
+            event: ProjectionEvent::MemoryCurateCompleted(MemoryCurateCompletedPayload {
+                reflection_run_id: run_id,
+                lane: "memory_curate".to_string(),
+                trigger: "proposal_review".to_string(),
+                status: "completed".to_string(),
+                proposal_ids: proposal_ids.clone(),
+                conversation_key: Some("conv-memory-curate-test".to_string()),
+                conversation_date: None,
+                completed_at,
+            }),
+            workflow_text: "Memory curate completed with 2 proposal(s)".to_string(),
+            visible_summary: Some("Memory curate completed for 2 proposal(s).".to_string()),
+        },
+        Projection {
+            provenance: ProjectionProvenance {
+                source: ProjectionSource::ReflectionConductor,
+                scope_id: format!("bear:{bear_id}:lane:memory_curate"),
+            },
+            event: ProjectionEvent::MemoryCurateFailed(MemoryCurateFailedPayload {
+                reflection_run_id: run_id,
+                lane: "memory_curate".to_string(),
+                trigger: "proposal_review".to_string(),
+                status: "failed".to_string(),
+                proposal_ids: proposal_ids.clone(),
+                conversation_key: Some("conv-memory-curate-test".to_string()),
+                conversation_date: None,
+                error: Some("worker crashed".to_string()),
+                completed_at,
+            }),
+            workflow_text: "Memory curate failed with 2 proposal(s)".to_string(),
+            visible_summary: Some("Memory curate failed for 2 proposal(s): worker crashed".to_string()),
+        },
+    ] {
+        persist_for_test(
+            &pool,
+            bear_id,
+            "conv-memory-curate-test",
+            &format!("bear:{bear_id}:lane:memory_curate"),
+            projection,
+        )
+        .await?;
+    }
+
+    let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
+    let texts: Vec<_> = messages.iter().map(|m| m.content_text.as_str()).collect();
+    assert!(texts.iter().any(|text| text.contains("Memory curate enqueued with 2 proposal(s)")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate started with 2 proposal(s)")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate completed with 2 proposal(s)")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate failed with 2 proposal(s)")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate was queued for 2 proposal(s).")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate started for 2 proposal(s).")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate completed for 2 proposal(s).")));
+    assert!(texts.iter().any(|text| text.contains("Memory curate failed for 2 proposal(s): worker crashed")));
+    assert!(messages.iter().filter(|m| m.message_type == "workflow_event").count() >= 4);
+    assert!(messages.iter().filter(|m| m.role.as_deref() == Some("assistant")).count() >= 4);
     Ok(())
 }
 

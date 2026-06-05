@@ -699,6 +699,9 @@ pub enum ProjectionEventKind {
     MemoryProposalResolved,
     PairReflectionCompleted,
     MemoryCurateEnqueued,
+    MemoryCurateStarted,
+    MemoryCurateCompleted,
+    MemoryCurateFailed,
     MemoryReviewRequested,
 }
 
@@ -709,6 +712,9 @@ impl ProjectionEventKind {
             Self::MemoryProposalResolved => "memory_proposal_resolved",
             Self::PairReflectionCompleted => "pair_reflection_completed",
             Self::MemoryCurateEnqueued => "memory_curate_enqueued",
+            Self::MemoryCurateStarted => "memory_curate_started",
+            Self::MemoryCurateCompleted => "memory_curate_completed",
+            Self::MemoryCurateFailed => "memory_curate_failed",
             Self::MemoryReviewRequested => "memory_review_requested",
         }
     }
@@ -766,6 +772,43 @@ pub struct MemoryCurateEnqueuedPayload {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryCurateStartedPayload {
+    pub reflection_run_id: Uuid,
+    pub lane: String,
+    pub trigger: String,
+    pub status: String,
+    pub proposal_ids: Vec<Uuid>,
+    pub conversation_key: Option<String>,
+    pub conversation_date: Option<time::Date>,
+    pub started_at: Option<time::OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryCurateCompletedPayload {
+    pub reflection_run_id: Uuid,
+    pub lane: String,
+    pub trigger: String,
+    pub status: String,
+    pub proposal_ids: Vec<Uuid>,
+    pub conversation_key: Option<String>,
+    pub conversation_date: Option<time::Date>,
+    pub completed_at: Option<time::OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryCurateFailedPayload {
+    pub reflection_run_id: Uuid,
+    pub lane: String,
+    pub trigger: String,
+    pub status: String,
+    pub proposal_ids: Vec<Uuid>,
+    pub conversation_key: Option<String>,
+    pub conversation_date: Option<time::Date>,
+    pub error: Option<String>,
+    pub completed_at: Option<time::OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryReviewRequestedPayload {
     pub proposal_id: Uuid,
     pub source_role: String,
@@ -782,6 +825,9 @@ pub enum ProjectionEvent {
     MemoryProposalResolved(MemoryProposalResolvedPayload),
     PairReflectionCompleted(PairReflectionCompletedPayload),
     MemoryCurateEnqueued(MemoryCurateEnqueuedPayload),
+    MemoryCurateStarted(MemoryCurateStartedPayload),
+    MemoryCurateCompleted(MemoryCurateCompletedPayload),
+    MemoryCurateFailed(MemoryCurateFailedPayload),
     MemoryReviewRequested(MemoryReviewRequestedPayload),
 }
 
@@ -792,6 +838,9 @@ impl ProjectionEvent {
             Self::MemoryProposalResolved(_) => ProjectionEventKind::MemoryProposalResolved,
             Self::PairReflectionCompleted(_) => ProjectionEventKind::PairReflectionCompleted,
             Self::MemoryCurateEnqueued(_) => ProjectionEventKind::MemoryCurateEnqueued,
+            Self::MemoryCurateStarted(_) => ProjectionEventKind::MemoryCurateStarted,
+            Self::MemoryCurateCompleted(_) => ProjectionEventKind::MemoryCurateCompleted,
+            Self::MemoryCurateFailed(_) => ProjectionEventKind::MemoryCurateFailed,
             Self::MemoryReviewRequested(_) => ProjectionEventKind::MemoryReviewRequested,
         }
     }
@@ -890,6 +939,130 @@ pub fn memory_review_requested_projection(
             "Review requested for memory proposal '{}' from {}.",
             title, source_role
         )),
+    }
+}
+
+pub fn memory_curate_enqueued_projection(
+    provenance: ProjectionProvenance,
+    reflection_run_id: Uuid,
+    lane: String,
+    trigger: String,
+    status: String,
+    proposal_ids: Vec<Uuid>,
+    conversation_key: Option<String>,
+    conversation_date: Option<time::Date>,
+    created_at: time::OffsetDateTime,
+) -> Projection {
+    let proposal_count = proposal_ids.len();
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryCurateEnqueued(MemoryCurateEnqueuedPayload {
+            reflection_run_id,
+            lane,
+            trigger,
+            status,
+            proposal_ids,
+            conversation_key,
+            conversation_date,
+            created_at,
+        }),
+        workflow_text: format!("Memory curate enqueued with {proposal_count} proposal(s)"),
+        visible_summary: Some(format!("Memory curate was queued for {proposal_count} proposal(s).")),
+    }
+}
+
+pub fn memory_curate_started_projection(
+    provenance: ProjectionProvenance,
+    reflection_run_id: Uuid,
+    lane: String,
+    trigger: String,
+    status: String,
+    proposal_ids: Vec<Uuid>,
+    conversation_key: Option<String>,
+    conversation_date: Option<time::Date>,
+    started_at: Option<time::OffsetDateTime>,
+) -> Projection {
+    let proposal_count = proposal_ids.len();
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryCurateStarted(MemoryCurateStartedPayload {
+            reflection_run_id,
+            lane,
+            trigger,
+            status,
+            proposal_ids,
+            conversation_key,
+            conversation_date,
+            started_at,
+        }),
+        workflow_text: format!("Memory curate started with {proposal_count} proposal(s)"),
+        visible_summary: Some(format!("Memory curate started for {proposal_count} proposal(s).")),
+    }
+}
+
+pub fn memory_curate_completed_projection(
+    provenance: ProjectionProvenance,
+    reflection_run_id: Uuid,
+    lane: String,
+    trigger: String,
+    status: String,
+    proposal_ids: Vec<Uuid>,
+    conversation_key: Option<String>,
+    conversation_date: Option<time::Date>,
+    completed_at: Option<time::OffsetDateTime>,
+) -> Projection {
+    let proposal_count = proposal_ids.len();
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryCurateCompleted(MemoryCurateCompletedPayload {
+            reflection_run_id,
+            lane,
+            trigger,
+            status,
+            proposal_ids,
+            conversation_key,
+            conversation_date,
+            completed_at,
+        }),
+        workflow_text: format!("Memory curate completed with {proposal_count} proposal(s)"),
+        visible_summary: Some(format!("Memory curate completed for {proposal_count} proposal(s).")),
+    }
+}
+
+pub fn memory_curate_failed_projection(
+    provenance: ProjectionProvenance,
+    reflection_run_id: Uuid,
+    lane: String,
+    trigger: String,
+    status: String,
+    proposal_ids: Vec<Uuid>,
+    conversation_key: Option<String>,
+    conversation_date: Option<time::Date>,
+    error: Option<String>,
+    completed_at: Option<time::OffsetDateTime>,
+) -> Projection {
+    let proposal_count = proposal_ids.len();
+    let visible_summary = Some(match error.as_deref() {
+        Some(message) if !message.trim().is_empty() => format!(
+            "Memory curate failed for {proposal_count} proposal(s): {message}"
+        ),
+        _ => format!("Memory curate failed for {proposal_count} proposal(s)."),
+    });
+    Projection {
+        provenance,
+        event: ProjectionEvent::MemoryCurateFailed(MemoryCurateFailedPayload {
+            reflection_run_id,
+            lane,
+            trigger,
+            status,
+            proposal_ids,
+            conversation_key,
+            conversation_date,
+            error,
+            completed_at,
+        }),
+        workflow_text: format!("Memory curate failed with {proposal_count} proposal(s)"),
+        visible_summary,
     }
 }
 
