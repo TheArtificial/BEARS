@@ -431,6 +431,8 @@ The migration target is to keep those Letta-specific execution behaviors in a na
 
 #### Epic B — Conversation compaction / summarization replacement
 
+**Status:** completed at the design-contract and initial core-runtime level.
+
 **Goal:** replace Letta-owned or Letta-implied conversation compaction behavior with a Den-owned compaction subsystem.
 
 ##### Deliverables
@@ -545,7 +547,7 @@ What remains after this epic is not the basic replacement definition, but integr
 - persisting compaction events/artifacts in the final durable schema,
 - and expanding operator/admin read models over the existing event shapes.
 
-That is follow-on rollout work, not a missing compaction replacement definition.
+That work is now tracked as **Epic B2 — Compaction runtime integration and persistence** below.
 
 ##### Acceptance
 
@@ -651,6 +653,37 @@ What remains after this epic is implementation rollout rather than missing repla
 - Prompt-block mutation and audit behavior are explicit.
 - Prompt compilation has clear inclusion and budget rules.
 - The relationship between prompt blocks, transcript history, and archival memory is explicit enough to support migration without hidden state.
+
+#### Epic B2 — Compaction runtime integration and persistence
+
+**Goal:** move compaction from a defined contract/core helper set into live runtime usage, durable observability, and operator-facing read models.
+
+##### Deliverables
+
+1. **Runtime integration seam**
+   - connect compaction evaluation/helpers to real runtime assembly paths without conflating compaction with transcript mutation.
+
+2. **Durable event/artifact persistence path**
+   - persist compaction observability and artifact records in a Den-owned shape suitable for later admin/read-model use.
+
+3. **Operator/admin projection support**
+   - surface compacted-session visibility and recent compaction events through existing history or admin projection paths.
+
+4. **Regression validation**
+   - test applied/skipped/failure compaction visibility and prompt-assembly behavior under protected-floor conditions.
+
+##### Suggested first slices
+
+- add a transport-neutral persisted projection/helper for compaction events,
+- connect ACP/history-facing projection code to consume those events,
+- add a first runtime prompt-assembly call site that can emit a skipped/applied compaction event without changing canonical transcript ownership.
+
+##### Acceptance
+
+- At least one live runtime path can evaluate compaction and emit observable compaction state.
+- Compaction events/artifacts are durable or projected in a Den-owned shape.
+- Operators can inspect whether compaction applied, skipped, or failed for migrated runtime paths.
+- Canonical transcript ownership remains separate from compaction artifacts.
 
 ### Current Phase 5 extraction audit
 

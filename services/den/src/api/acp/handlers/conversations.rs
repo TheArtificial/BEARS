@@ -251,6 +251,7 @@ pub(super) async fn conversation_history_inner(
         .await?;
     }
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
+    let _context_envelope = crate::api::acp::history::runtime_context_envelope_for_history(&body);
     let event = runtime_compaction_event_for_history(
         &conv_id,
         &body,

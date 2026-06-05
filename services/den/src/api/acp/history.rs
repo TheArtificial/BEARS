@@ -8,8 +8,9 @@ use crate::{
         conversation_persistence::PersistedConversationMessage,
         letta::sanitize_visible_transcript_text,
         runtime_compaction::{
-            choose_compaction_decision, semantic_groups_from_runtime_messages,
-            RuntimeCompactionDecision, RuntimeCompactionPolicy,
+            build_runtime_context_envelope, choose_compaction_decision,
+            semantic_groups_from_runtime_messages, RuntimeCompactionDecision,
+            RuntimeCompactionPolicy, RuntimeContextEnvelope, RuntimeContextEnvelopeInput,
         },
         runtime_compaction_observability::{
             build_compaction_applied_event, build_compaction_skipped_event,
@@ -146,6 +147,21 @@ pub(crate) fn runtime_iterative_summary_for_compaction(
 ) -> RuntimeIterativeSummary {
     let groups = runtime_semantic_groups_for_compaction(body);
     build_iterative_summary_from_groups(&groups)
+}
+
+pub(crate) fn runtime_context_envelope_for_history(
+    body: &serde_json::Value,
+) -> RuntimeContextEnvelope {
+    let groups = runtime_semantic_groups_for_compaction(body);
+    let recent_groups = groups.iter().rev().take(3).cloned().collect::<Vec<_>>();
+    let recent_groups = recent_groups.into_iter().rev().collect::<Vec<_>>();
+    let summary = build_iterative_summary_from_groups(&groups);
+    build_runtime_context_envelope(RuntimeContextEnvelopeInput {
+        active_instructions: vec!["acp-history-context".to_string()],
+        workflow_state: summary.workflow_state_refs.clone(),
+        recent_groups,
+        compacted_summary: Some(summary),
+    })
 }
 
 pub(crate) fn default_runtime_compaction_policy() -> RuntimeCompactionPolicy {
