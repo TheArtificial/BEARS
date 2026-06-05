@@ -1,6 +1,6 @@
 use crate::core::{
     acp_letta_events::AcpGatewayEvent,
-    runtime_bearwire_projection::{
+    runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
     },
     runtime_contracts::{
@@ -51,24 +51,32 @@ fn semantic_run_paused_projects_to_status_text_gateway_event() {
 }
 
 #[test]
-fn semantic_tool_call_requested_projects_to_tool_request_gateway_event() {
+fn semantic_tool_call_projects_to_tool_request_gateway_event() {
     let mapped = runtime_semantic_event_to_bearwire_gateway_events(
         RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id: "call-1".to_string(),
             tool_name: "fs_read_text_file".to_string(),
-            title: Some("Read text file".to_string()),
+            title: Some("Read file".to_string()),
             kind: Some("read".to_string()),
-            arguments: serde_json::json!({"path":"/workspace/README.md"}),
+            arguments: serde_json::json!({"path":"/tmp/demo"}),
             approval_request_id: Some("approval-1".to_string()),
             approval_required: true,
-            approval_reason: Some("workspace read".to_string()),
+            approval_reason: Some("Need file access".to_string()),
         },
     );
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::ToolRequest { tool_call_id, tool_name, approval_required, .. }]
-            if tool_call_id == "call-1" && tool_name == "fs_read_text_file" && *approval_required
+        [AcpGatewayEvent::ToolRequest {
+            tool_call_id,
+            tool_name,
+            approval_required,
+            approval_request_id,
+            ..
+        }] if tool_call_id == "call-1"
+            && tool_name == "fs_read_text_file"
+            && *approval_required
+            && approval_request_id.as_deref() == Some("approval-1")
     ));
 }
 
@@ -78,27 +86,33 @@ fn semantic_turn_failed_projects_to_error_gateway_event() {
         RuntimeSemanticEvent::TurnFailed {
             turn: None,
             category: RuntimeErrorCategory::Timeout,
-            message: "timed out".to_string(),
+            message: "runtime timed out".to_string(),
         },
     );
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::Error { message, error_type, .. }]
-            if message == "timed out" && error_type.as_deref() == Some("runtime_timeout")
+        [AcpGatewayEvent::Error {
+            message,
+            error_type,
+            ..
+        }] if message == "runtime timed out"
+            && error_type.as_deref() == Some("runtime_timeout")
     ));
 }
 
 #[test]
-fn semantic_turn_cancelled_projects_to_error_gateway_event() {
+fn semantic_turn_cancelled_projects_to_cancelled_error_gateway_event() {
     let mapped = runtime_semantic_event_to_bearwire_gateway_events(
         RuntimeSemanticEvent::TurnCancelled { turn: None },
     );
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::Error { error_type, .. }]
-            if error_type.as_deref() == Some("runtime_turn_cancelled")
+        [AcpGatewayEvent::Error {
+            error_type,
+            ..
+        }] if error_type.as_deref() == Some("runtime_turn_cancelled")
     ));
 }
 
@@ -106,23 +120,24 @@ fn semantic_turn_cancelled_projects_to_error_gateway_event() {
 fn untranslated_provider_event_does_not_project_to_bearwire_sse() {
     let mapped = runtime_stream_event_to_bearwire_sse(
         RuntimeStreamEvent::UntranslatedProviderEvent {
-            value: serde_json::json!({"message_type":"tool_return_message"}),
+            value: serde_json::json!({"message_type":"provider_only"}),
         },
     );
+
     assert!(mapped.is_empty());
 }
 
 #[test]
-fn semantic_conversation_resolved_projects_to_bearwire_sse() {
-    let bytes = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::Semantic(
+fn conversation_resolved_projects_to_sse() {
+    let mapped = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::Semantic(
         RuntimeSemanticEvent::ConversationResolved {
             conversation: RuntimeConversationRef {
-                id: "conv-test".to_string(),
+                id: "conv-123".to_string(),
             },
         },
     ));
-    assert_eq!(bytes.len(), 1);
-    let text = String::from_utf8(bytes[0].to_vec()).expect("utf8 sse");
+
+    let text = std::str::from_utf8(mapped[0].as_ref()).expect("valid utf8 sse");
     assert!(text.contains("conversation_resolved"));
-    assert!(text.contains("conv-test"));
+    assert!(text.contains("conv-123"));
 }

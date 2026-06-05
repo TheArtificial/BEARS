@@ -10,3 +10,6 @@ pub use crate::core::runtime_contracts::{
     RuntimeToolResultStatus, RuntimeTurnRef, StartTurnRequest, StartTurnResult,
     ToolActuatorRegistry,
 };
+
+#[cfg(test)]
+mod test;

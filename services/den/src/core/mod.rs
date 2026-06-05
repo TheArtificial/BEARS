@@ -7,8 +7,12 @@ pub mod acp_tool_turns;
 pub mod acp_tools;
 pub mod acp_turn_controller;
 pub mod acp_turn_runner;
-#[cfg(test)]
-mod acp_turn_runner_stream_tests;
+pub mod acp_turn_runner_test {
+    #[cfg(test)]
+    pub mod stream {
+        include!("acp_turn_runner_stream_tests.rs");
+    }
+}
 pub mod api_utils;
 pub mod archived_conversations;
 pub mod bears;
@@ -95,8 +99,12 @@ pub mod tools {
 pub mod email;
 pub mod letta;
 pub mod letta_runtime_stream_parser;
-#[cfg(test)]
-pub mod letta_runtime_stream_parser_tests;
+pub mod letta_runtime_stream_parser_test {
+    #[cfg(test)]
+    mod tests {
+        include!("letta_runtime_stream_parser_tests.rs");
+    }
+}
 pub mod memory_manager_head;
 #[cfg(test)]
 mod memory_manager_head_append_markdown_tests;
@@ -107,21 +115,53 @@ pub mod prompt_memory_block_store;
 pub mod prompt_memory_blocks;
 pub mod reflection_conductor;
 pub mod role_runtime;
-#[cfg(test)]
-mod role_runtime_tests;
+pub mod role_runtime_test {
+    #[cfg(test)]
+    mod tests {
+        include!("role_runtime_tests.rs");
+    }
+}
+pub mod runtime_test {}
+pub mod runtime {
+    pub mod bearwire_projection {
+        pub use super::super::runtime_bearwire_projection::*;
+    }
+
+    pub mod compaction {
+        pub use super::super::runtime_compaction::*;
+    }
+
+    pub mod compaction_observability {
+        pub use super::super::runtime_compaction_observability::*;
+    }
+
+    pub mod compaction_store {
+        pub use super::super::runtime_compaction_store::*;
+    }
+
+    pub mod contracts {
+        pub use super::super::runtime_contracts::*;
+    }
+
+    pub mod conversations {
+        pub use super::super::runtime_conversations::*;
+    }
+
+    pub mod provider {
+        pub use super::super::runtime_provider::*;
+    }
+}
+#[path = "runtime/compaction/mod.rs"]
 pub mod runtime_compaction;
 pub mod runtime_compaction_observability;
 pub mod runtime_compaction_store;
+#[path = "runtime/bearwire_projection/mod.rs"]
 pub mod runtime_bearwire_projection;
+#[path = "runtime/contracts/mod.rs"]
 pub mod runtime_contracts;
 pub mod runtime_conversations;
+#[path = "runtime/provider/mod.rs"]
 pub mod runtime_provider;
-#[cfg(test)]
-mod runtime_bearwire_projection_tests;
-#[cfg(test)]
-mod runtime_compaction_eval_tests;
-#[cfg(test)]
-mod runtime_provider_tests;
 pub mod s3;
 pub mod tool_descriptor_guidance;
 pub mod turn_state;

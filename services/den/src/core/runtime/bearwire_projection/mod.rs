@@ -110,3 +110,6 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod test;
