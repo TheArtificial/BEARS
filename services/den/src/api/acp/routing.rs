@@ -9,15 +9,15 @@ pub(crate) fn is_acp_archive_target(conversation_id: &str) -> bool {
 pub(crate) fn acp_archive_target_for_session(
     session: &acp_sessions::AcpSessionRow,
 ) -> Option<&str> {
+    let selection = session.conversation_id.trim();
+    if is_acp_archive_target(selection) {
+        return Some(selection);
+    }
     session
         .resolved_conversation_id
         .as_deref()
         .map(str::trim)
         .filter(|s| is_acp_archive_target(s))
-        .or_else(|| {
-            let selection = session.conversation_id.trim();
-            is_acp_archive_target(selection).then_some(selection)
-        })
 }
 
 pub(crate) fn acp_den_provider_to_canonical_tool_name(

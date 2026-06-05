@@ -62,14 +62,7 @@ pub(super) async fn compact_session_inner(
     else {
         return Err(CustomError::NotFound("ACP session not found".to_string()));
     };
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .or_else(|| {
-            let selection = session.conversation_id.trim();
-            selection.starts_with("conv-").then_some(selection)
-        })
-        .ok_or_else(|| {
+    let conversation_id = acp_archive_target_for_session(&session).ok_or_else(|| {
             CustomError::ValidationError(
                 "ACP session has no resolved runtime conversation to compact".to_string(),
             )

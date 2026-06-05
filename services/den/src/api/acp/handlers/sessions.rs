@@ -211,7 +211,7 @@ pub(super) async fn get_acp_session_runtime_inner(
     let role_scope = RoleTurnScope::acp_pair(
         bear.id,
         session_id.to_string(),
-        row.resolved_conversation_id.clone(),
+        runtime_conversation_id(&row),
     );
     let role_runtime = RoleRuntime::with_turn_cancellations(
         state.acp_tool_turns.clone(),
