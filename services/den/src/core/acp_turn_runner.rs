@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::{
     api::service::ApiState,
     core::{
+        acp_runtime::LettaRuntimeConversationBackend,
         acp_tool_turns::AcpToolTurnCoordinator,
         letta::LettaClient,
         letta_runtime_stream_parser::{
@@ -17,14 +18,14 @@ use crate::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
             ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
             RuntimeCleanupRequest, RuntimeCleanupResult, RuntimeContinuation,
-            RuntimeConversationRef, RuntimeEventParser, RuntimeStreamContinuation,
-            RuntimeToolResultStatus, RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
+            RuntimeConversationBackend, RuntimeConversationRef, RuntimeEventParser,
+            RuntimeStreamContinuation, RuntimeToolResultStatus, RuntimeTurnBackend,
+            StartTurnRequest, StartTurnResult,
         },
         runtime_conversations::{
             RuntimeApprovalActionMode, RuntimeApprovalActionRequest, RuntimeApprovalRequest,
-            RuntimeConversationBackend, RuntimeConversationListRequest,
-            RuntimeConversationMessagesRequest, RuntimeConversationSnapshot,
-            RuntimePendingApproval,
+            RuntimeConversationListRequest, RuntimeConversationMessagesRequest,
+            RuntimeConversationSnapshot, RuntimePendingApproval,
         },
     },
     errors::CustomError,
@@ -108,7 +109,9 @@ impl<'a> LettaRuntimeCancellationBackend<'a> {
 }
 
 #[allow(async_fn_in_trait)]
-impl RuntimeConversationBackend for LettaRuntimeCancellationBackend<'_> {
+impl crate::core::runtime_conversations::RuntimeConversationBackend
+    for LettaRuntimeCancellationBackend<'_>
+{
     async fn list_conversations(
         &self,
         request: RuntimeConversationListRequest,
@@ -509,7 +512,8 @@ pub struct AcpRuntimeMaterializationResult {
     pub created: bool,
 }
 
-pub async fn materialize_acp_runtime_conversation_if_needed(
+pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
+    runtime_conversations: &B,
     request: &AcpTurnStartRequest<'_>,
 ) -> Result<AcpRuntimeMaterializationResult, CustomError> {
     if request.upstream_target.starts_with("conv-") {
@@ -524,22 +528,10 @@ pub async fn materialize_acp_runtime_conversation_if_needed(
             created: false,
         });
     }
-    let created_response = request
-        .state
-        .letta
-        .create_conversation_for_agent(&request.binding.binding_id)
-        .await?;
-    let conv_id = created_response
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| s.starts_with("conv-"))
-        .map(str::to_string)
-        .ok_or_else(|| {
-            CustomError::System(format!(
-                "Letta create conversation response did not contain a conv-* id: {created_response}"
-            ))
-        })?;
+    let conv_id = runtime_conversations
+        .create_conversation(request.binding)
+        .await?
+        .id;
     crate::core::acp_sessions::upsert_session(
         &request.state.sqlx_pool,
         crate::core::acp_sessions::UpsertAcpSession {
@@ -565,9 +557,13 @@ pub async fn materialize_acp_runtime_conversation_if_needed(
 pub async fn start_acp_turn_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<Response, CustomError> {
-    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request)
-        .await?
-        .conversation_id;
+    let runtime_conversations = LettaRuntimeConversationBackend::new(request.state.letta.as_ref());
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(
+        &runtime_conversations,
+        &request,
+    )
+    .await?
+    .conversation_id;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,
@@ -588,9 +584,13 @@ pub async fn start_acp_turn_with_retries(
 pub async fn start_acp_turn_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
-    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request)
-        .await?
-        .conversation_id;
+    let runtime_conversations = LettaRuntimeConversationBackend::new(request.state.letta.as_ref());
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(
+        &runtime_conversations,
+        &request,
+    )
+    .await?
+    .conversation_id;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,

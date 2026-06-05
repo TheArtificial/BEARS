@@ -343,6 +343,12 @@ pub struct LettaRuntimeConversationBackend<'a> {
     pub letta: &'a LettaClient,
 }
 
+impl<'a> LettaRuntimeConversationBackend<'a> {
+    pub fn new(letta: &'a LettaClient) -> Self {
+        Self { letta }
+    }
+}
+
 #[allow(async_fn_in_trait)]
 impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
     async fn create_conversation(
