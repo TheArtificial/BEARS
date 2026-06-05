@@ -1021,6 +1021,7 @@ async fn chat_send_inner(
         user_id,
         body.bear_id,
         conv_id,
+        state.sqlx_pool().clone(),
     );
 
     let request_id_header = HeaderValue::from_str(&request_id.to_string())

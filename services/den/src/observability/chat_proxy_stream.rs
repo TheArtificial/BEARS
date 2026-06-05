@@ -8,7 +8,10 @@ use std::time::Instant;
 use bytes::Bytes;
 use futures::ready;
 use futures::Stream;
+use sqlx::PgPool;
 use uuid::Uuid;
+
+use crate::core::conversation_persistence::{ensure_conversation_for_external_id, append_message};
 
 use super::metrics;
 
@@ -155,6 +158,95 @@ fn rich_event_status_text(event: &serde_json::Value) -> Option<String> {
     Some(text)
 }
 
+fn persist_bear_channel_event(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    conversation_id: &str,
+    resolved_conversation_id: &mut String,
+    next_sequence_no: &mut i64,
+    canonical_conversation_ready: &mut bool,
+    event: &serde_json::Value,
+) {
+    let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if ty == "conversation_resolved" {
+        if let Some(conversation_id) = event.get("conversation_id").and_then(|v| v.as_str()) {
+            *resolved_conversation_id = conversation_id.to_string();
+        }
+    }
+    let role = match ty {
+        "assistant_delta" => Some("assistant"),
+        "reasoning_delta" => Some("assistant"),
+        _ => None,
+    };
+    let message_type = match ty {
+        "assistant_delta" => Some("assistant_output"),
+        "reasoning_delta" => Some("assistant_output"),
+        "conversation_resolved" => Some("workflow_event"),
+        _ => None,
+    };
+    let visibility = match ty {
+        "assistant_delta" | "reasoning_delta" => "visible",
+        "conversation_resolved" => "diagnostic_only",
+        _ => return,
+    };
+    let content_text = match ty {
+        "assistant_delta" | "reasoning_delta" => event.get("text").and_then(|v| v.as_str()).unwrap_or(""),
+        "conversation_resolved" => "Conversation resolved",
+        _ => return,
+    };
+    if content_text.is_empty() && ty != "conversation_resolved" {
+        return;
+    }
+    let external_conversation_id = resolved_conversation_id.as_str();
+    if !*canonical_conversation_ready {
+        match tokio::runtime::Handle::current().block_on(ensure_conversation_for_external_id(
+            pool,
+            bear_id,
+            Some(user_id),
+            external_conversation_id,
+            None,
+            None,
+        )) {
+            Ok(_) => *canonical_conversation_ready = true,
+            Err(err) => {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to ensure canonical web chat conversation");
+                return;
+            }
+        }
+    }
+    let canonical = match tokio::runtime::Handle::current().block_on(ensure_conversation_for_external_id(
+        pool,
+        bear_id,
+        Some(user_id),
+        external_conversation_id,
+        None,
+        None,
+    )) {
+        Ok(conversation) => conversation,
+        Err(err) => {
+            tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to load canonical web chat conversation");
+            return;
+        }
+    };
+    if let Err(err) = tokio::runtime::Handle::current().block_on(append_message(
+        pool,
+        canonical.id,
+        message_type.unwrap_or("assistant_output"),
+        role,
+        visibility,
+        content_text,
+        event.clone(),
+        event.get("id").and_then(|v| v.as_str()),
+        None,
+        None,
+    )) {
+        tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat message");
+        return;
+    }
+    *next_sequence_no += 1;
+}
+
 fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Bytes> {
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let mapped = match ty {
@@ -231,12 +323,16 @@ pub struct BearChannelSseProxyStream {
     user_id: i32,
     bear_id: Uuid,
     conversation_id: String,
+    pool: PgPool,
     started_at: Instant,
     first_byte_at: Option<Instant>,
     total_bytes: usize,
     terminal: Option<Terminal>,
     buffer: Vec<u8>,
     pending: VecDeque<Bytes>,
+    next_sequence_no: i64,
+    resolved_conversation_id: String,
+    canonical_conversation_ready: bool,
 }
 
 impl BearChannelSseProxyStream {
@@ -246,19 +342,24 @@ impl BearChannelSseProxyStream {
         user_id: i32,
         bear_id: Uuid,
         conversation_id: String,
+        pool: PgPool,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
             request_id,
             user_id,
             bear_id,
+            resolved_conversation_id: conversation_id.clone(),
             conversation_id,
+            pool,
             started_at: Instant::now(),
             first_byte_at: None,
             total_bytes: 0,
             terminal: None,
             buffer: Vec::new(),
             pending: VecDeque::new(),
+            next_sequence_no: 0,
+            canonical_conversation_ready: false,
         }
     }
 
@@ -305,14 +406,6 @@ impl BearChannelSseProxyStream {
         }
     }
 
-    fn queue_mapped_frames(&mut self) {
-        while let Some(pos) = self.buffer.windows(2).position(|w| w == b"\n\n") {
-            let frame: Vec<u8> = self.buffer.drain(..pos + 2).collect();
-            for bytes in map_bear_channel_sse_frame(&frame) {
-                self.pending.push_back(bytes);
-            }
-        }
-    }
 }
 
 impl Drop for BearChannelSseProxyStream {
@@ -358,7 +451,34 @@ impl Stream for BearChannelSseProxyStream {
                         );
                     }
                     this.buffer.extend_from_slice(&chunk);
-                    this.queue_mapped_frames();
+                    while let Some(pos) = this.buffer.windows(2).position(|w| w == b"\n\n") {
+                        let frame: Vec<u8> = this.buffer.drain(..pos + 2).collect();
+                        let text = String::from_utf8_lossy(&frame);
+                        for line in text.lines() {
+                            let Some(data) = line.strip_prefix("data:") else {
+                                continue;
+                            };
+                            let data = data.trim();
+                            if data.is_empty() || data == "[DONE]" {
+                                continue;
+                            }
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                                persist_bear_channel_event(
+                                    &this.pool,
+                                    this.bear_id,
+                                    this.user_id,
+                                    &this.conversation_id,
+                                    &mut this.resolved_conversation_id,
+                                    &mut this.next_sequence_no,
+                                    &mut this.canonical_conversation_ready,
+                                    &value,
+                                );
+                                if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
+                                    this.pending.push_back(bytes);
+                                }
+                            }
+                        }
+                    }
                     if let Some(bytes) = this.pending.pop_front() {
                         this.total_bytes += bytes.len();
                         return Poll::Ready(Some(Ok(bytes)));
