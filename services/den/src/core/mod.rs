@@ -110,9 +110,12 @@ mod role_runtime_tests;
 pub mod runtime_compaction;
 pub mod runtime_compaction_observability;
 pub mod runtime_compaction_store;
+pub mod runtime_bearwire_projection;
 pub mod runtime_contracts;
 pub mod runtime_conversations;
 pub mod runtime_provider;
+#[cfg(test)]
+mod runtime_bearwire_projection_tests;
 #[cfg(test)]
 mod runtime_compaction_eval_tests;
 #[cfg(test)]
