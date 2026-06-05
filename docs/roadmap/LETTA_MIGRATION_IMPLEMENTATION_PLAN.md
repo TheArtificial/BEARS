@@ -350,6 +350,162 @@ Suggested next slices:
 - define rollback windows and read-switch reversal rules,
 - ensure admin surfaces explain mixed-origin and partially migrated state.
 
+### Near-term implementation epics
+
+The priorities above are still directional. This section turns the top three priorities into implementation-facing epics with explicit deliverables and acceptance criteria.
+
+#### Epic A — Turn/run execution lifecycle extraction
+
+**Goal:** reduce Letta to a narrow execution adapter by moving turn lifecycle authority into Den-owned contracts and helpers.
+
+##### Deliverables
+
+1. **Shared start/resume/cancel lifecycle helpers**
+   - Continue extracting transport-neutral lifecycle steps from ACP `pair` into shared core support where real reuse exists.
+   - Keep ACP-specific event framing, adapter payloads, and UI projections at the edge.
+
+2. **Explicit lifecycle boundary note**
+   - Document which responsibilities remain:
+     - Den-owned lifecycle/control-plane concerns,
+     - ACP-edge concerns,
+     - temporary Letta execution-adapter concerns.
+
+3. **Lazy runtime materialization invariants**
+   - Preserve the new Den-first session-conversation resolution behavior.
+   - Ensure runtime conversation creation occurs only at actual execution boundaries when needed.
+
+4. **Shared cancellation and stale-run hygiene semantics**
+   - Keep cancellation, stale-run cleanup, and terminal-outcome handling transport-neutral where possible.
+   - Avoid ACP-specific text/status policy leaking into shared lifecycle helpers.
+
+##### Phase boundary note
+
+For this epic, keep the lifecycle boundary explicit:
+
+- **Den-owned lifecycle/control-plane concerns**
+  - session conversation selection and canonical identity,
+  - lazy runtime conversation materialization invariants,
+  - transport-neutral turn lifecycle helpers where reuse is real,
+  - canonical terminal-outcome and tool-settlement bookkeeping,
+  - cancellation and stale-run cleanup contracts.
+
+- **ACP-edge concerns**
+  - SSE framing and adapter-visible event shapes,
+  - ACP-specific approval/status text,
+  - ACP prompt/context assembly,
+  - UI-facing workflow/mode/session-info projections.
+
+- **Temporary Letta execution-adapter concerns**
+  - actual provider-backed conversation creation at execution time,
+  - provider streaming calls,
+  - provider-specific continuation submission,
+  - provider-specific cancellation calls.
+
+The migration target is to keep those Letta-specific execution behaviors in a narrow compatibility adapter while Den remains the owner of lifecycle semantics. This does **not** imply a generalized pluggable provider framework; a monolithic Den with an internal Letta-compatibility seam remains the intended acceptable end state during and after migration.
+
+##### Suggested work items
+
+- audit remaining ACP-side inline lifecycle shaping,
+- extract only the reusable transport-neutral steps,
+- add regression tests for:
+  - lazy runtime conversation creation,
+  - resumed continuation correctness,
+  - cancellation and timeout settlement behavior,
+  - terminal outcome parity under retries and stale-run cleanup.
+
+##### Acceptance
+
+- Den owns the lifecycle contract for starting, resuming, and cancelling role turns at the shared-core level where reuse is real.
+- Letta is no longer treated as the implicit owner of conversation/run lifecycle semantics.
+- ACP-specific transport/UI behavior remains separable from the shared runtime core.
+- `review`/`watch` migration can reuse lifecycle seams without inheriting ACP-only behavior.
+
+#### Epic B — Conversation compaction / summarization replacement
+
+**Goal:** replace Letta-owned or Letta-implied conversation compaction behavior with a Den-owned compaction subsystem.
+
+##### Deliverables
+
+1. **Compaction policy design**
+   - Define triggers for compaction/summarization.
+   - Define what inputs are compacted and what remains verbatim.
+   - Define whether compaction is automatic, operator-initiated, or both.
+
+2. **Compaction artifact model**
+   - Define the canonical stored artifact(s):
+     - summary text,
+     - structured summary metadata,
+     - provenance to transcript span(s),
+     - versioning/replacement semantics.
+
+3. **Replay and read semantics**
+   - Define how compacted conversations are reconstructed for runtime context and operator/history reads.
+   - Define how summaries interact with canonical transcript rows and diagnostic events.
+
+4. **Operational visibility**
+   - Define what operators can inspect about compaction:
+     - when it happened,
+     - what range it covered,
+     - what artifact replaced or summarized it,
+     - whether fallback/recompaction occurred.
+
+##### Suggested work items
+
+- write a dedicated compaction architecture note,
+- define transcript-to-summary linkage rules,
+- define a first minimal persistence model for compaction artifacts,
+- identify the first role surface that should consume Den-owned compaction semantics.
+
+##### Acceptance
+
+- Compaction triggers and authority are explicit.
+- Summary artifacts are Den-owned and auditable.
+- Compacted conversations remain explainable and replayable.
+- Letta is no longer a hidden authority for context shrinking behavior.
+
+#### Epic C — Editable in-context memory block replacement
+
+**Goal:** replace Letta-style editable memory blocks with a Den-owned memory-block and prompt-compilation model.
+
+##### Deliverables
+
+1. **Block model definition**
+   - Define the editable in-context memory block types needed for parity.
+   - Define scope/attachment rules:
+     - Bear-wide,
+     - role-local,
+     - work-surface/resource-attached,
+     - session-scoped if needed.
+
+2. **Mutation and audit semantics**
+   - Define who/what may create, edit, supersede, archive, or delete blocks.
+   - Define audit/provenance expectations for block mutations.
+
+3. **Prompt compilation rules**
+   - Define how blocks are selected for prompt inclusion.
+   - Define ordering, precedence, truncation/budget rules, and interaction with workflow state and transcript context.
+
+4. **Migration boundary from existing memory systems**
+   - Define how this block model relates to:
+     - role-local memory,
+     - core memory,
+     - archival/recall memory,
+     - transcript history.
+
+##### Suggested work items
+
+- write a dedicated prompt-memory/block replacement note,
+- define the minimum block types required for parity,
+- define a first prompt-compilation path using Den-owned block inputs,
+- avoid introducing provider-shaped block or agent attachment semantics in the new model.
+
+##### Acceptance
+
+- Editable in-context memory is defined as a Den-owned concept rather than a provider-managed one.
+- Prompt-block mutation and audit behavior are explicit.
+- Prompt compilation has clear inclusion and budget rules.
+- The relationship between prompt blocks, transcript history, and archival memory is explicit enough to support migration without hidden state.
+
 ### Current Phase 5 extraction audit
 
 The current ACP `pair` path already exposes a few strong extraction candidates and a few areas that should remain ACP-edge specific.

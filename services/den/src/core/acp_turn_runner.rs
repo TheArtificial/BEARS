@@ -35,8 +35,12 @@ pub const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an exp
 pub struct AcpTurnStartRequest<'a> {
     pub state: &'a ApiState,
     pub request_id: Uuid,
+    pub user_id: i32,
     pub session_id: &'a str,
     pub bear_id: Uuid,
+    pub bear_slug: &'a str,
+    pub client: &'a str,
+    pub cwd: Option<&'a str>,
     pub binding: &'a RoleRuntimeBinding,
     pub conversation_selection: &'a str,
     pub upstream_target: &'a str,
@@ -499,14 +503,25 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
     }
 }
 
-async fn materialize_acp_runtime_conversation_if_needed(
+pub struct AcpRuntimeMaterializationResult {
+    pub conversation_id: String,
+    pub created: bool,
+}
+
+pub async fn materialize_acp_runtime_conversation_if_needed(
     request: &AcpTurnStartRequest<'_>,
-) -> Result<String, CustomError> {
+) -> Result<AcpRuntimeMaterializationResult, CustomError> {
     if request.upstream_target.starts_with("conv-") {
-        return Ok(request.upstream_target.to_string());
+        return Ok(AcpRuntimeMaterializationResult {
+            conversation_id: request.upstream_target.to_string(),
+            created: false,
+        });
     }
     if !request.conversation_selection.starts_with("new-") {
-        return Ok(request.upstream_target.to_string());
+        return Ok(AcpRuntimeMaterializationResult {
+            conversation_id: request.upstream_target.to_string(),
+            created: false,
+        });
     }
     let created_response = request
         .state
@@ -524,25 +539,34 @@ async fn materialize_acp_runtime_conversation_if_needed(
                 "Letta create conversation response did not contain a conv-* id: {created_response}"
             ))
         })?;
-    sqlx::query(
-        r#"
-        UPDATE acp_sessions
-        SET resolved_conversation_id = $3, updated_at = NOW()
-        WHERE bear_id = $1 AND acp_session_id = $2
-        "#,
+    crate::core::acp_sessions::upsert_session(
+        &request.state.sqlx_pool,
+        crate::core::acp_sessions::UpsertAcpSession {
+            user_id: request.user_id,
+            bear_id: request.bear_id,
+            bear_slug: request.bear_slug.to_string(),
+            acp_session_id: request.session_id.to_string(),
+            runtime_session_id: format!("acp-api-direct:{}:{}:{}", request.client, request.bear_id, request.session_id),
+            conversation_id: request.conversation_selection.to_string(),
+            resolved_conversation_id: Some(conv_id.clone()),
+            client: request.client.to_string(),
+            cwd: request.cwd.map(str::to_string),
+            current_mode: None,
+        },
     )
-    .bind(request.bear_id)
-    .bind(request.session_id)
-    .bind(&conv_id)
-    .execute(&request.state.sqlx_pool)
     .await?;
-    Ok(conv_id)
+    Ok(AcpRuntimeMaterializationResult {
+        conversation_id: conv_id,
+        created: true,
+    })
 }
 
 pub async fn start_acp_turn_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<Response, CustomError> {
-    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request).await?;
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request)
+        .await?
+        .conversation_id;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,
@@ -563,7 +587,9 @@ pub async fn start_acp_turn_with_retries(
 pub async fn start_acp_turn_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
-    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request).await?;
+    let conversation_id = materialize_acp_runtime_conversation_if_needed(&request)
+        .await?
+        .conversation_id;
     LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,

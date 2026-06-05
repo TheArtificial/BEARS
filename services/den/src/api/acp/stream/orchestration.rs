@@ -157,8 +157,12 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         crate::core::acp_turn_runner::AcpTurnStartRequest {
             state: &state,
             request_id,
+            user_id,
             session_id,
             bear_id: bear.id,
+            bear_slug: &bear.slug,
+            client,
+            cwd: None,
             binding: pair_runtime_binding,
             conversation_selection: &conversation_resolution.session_selection,
             upstream_target: &conversation_resolution.upstream_target,
