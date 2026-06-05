@@ -29,6 +29,16 @@ pub(crate) struct PromptMemoryBlockWrite {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct PromptMemoryBlockPatch {
+    pub(crate) state: PromptMemoryBlockState,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) priority: i32,
+    pub(crate) supersedes_block_id: Option<String>,
+    pub(crate) metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct PromptMemoryBlockQuery<'a> {
     pub(crate) bear_id: Option<uuid::Uuid>,
     pub(crate) role_slug: &'a str,
@@ -103,6 +113,42 @@ pub(crate) async fn upsert_prompt_memory_block(
     Ok(())
 }
 
+pub(crate) async fn patch_prompt_memory_block(
+    pool: &PgPool,
+    block_id: &str,
+    patch: &PromptMemoryBlockPatch,
+) -> Result<(), CustomError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE prompt_memory_blocks
+        SET state = $2,
+            title = $3,
+            body = $4,
+            priority = $5,
+            supersedes_block_id = $6,
+            metadata = $7,
+            updated_at = now()
+        WHERE block_id = $1
+        "#,
+    )
+    .bind(block_id)
+    .bind(state_to_db(patch.state))
+    .bind(&patch.title)
+    .bind(&patch.body)
+    .bind(patch.priority)
+    .bind(&patch.supersedes_block_id)
+    .bind(&patch.metadata)
+    .execute(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("patch prompt_memory_blocks: {err}")))?;
+    if result.rows_affected() == 0 {
+        return Err(CustomError::NotFound(format!(
+            "prompt memory block not found: {block_id}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) async fn list_prompt_memory_blocks_for_runtime(
     pool: &PgPool,
     query: PromptMemoryBlockQuery<'_>,
@@ -129,6 +175,29 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
     .fetch_all(pool)
     .await
     .map_err(|err| CustomError::Database(format!("select prompt_memory_blocks: {err}")))?;
+
+    rows.into_iter().map(row_to_block).collect()
+}
+
+pub(crate) async fn list_prompt_memory_blocks_for_bear_role(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    role_slug: &str,
+) -> Result<Vec<PromptMemoryBlock>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT block_id, scope, block_type, state, role_slug, work_surface, session_id, title, body, priority
+        FROM prompt_memory_blocks
+        WHERE bear_id = $1
+          AND role_slug = $2
+        ORDER BY updated_at DESC, priority DESC
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role_slug)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list prompt_memory_blocks for bear role: {err}")))?;
 
     rows.into_iter().map(row_to_block).collect()
 }

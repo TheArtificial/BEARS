@@ -31,6 +31,13 @@ use crate::{
             project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
         memory_proposals::{self, CreateMemoryProposal},
+        prompt_memory_block_store::{
+            list_prompt_memory_blocks_for_bear_role, patch_prompt_memory_block,
+            upsert_prompt_memory_block, PromptMemoryBlockPatch, PromptMemoryBlockWrite,
+        },
+        prompt_memory_blocks::{
+            PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
+        },
         tool_descriptor_guidance::{
             render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
             ToolScopeKind, ToolSideEffectKind,
@@ -154,6 +161,12 @@ pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER: &str =
     "memory_create_work_surface_scaffold";
 pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
 pub const DEN_MEMORY_REQUEST_REVIEW_PROVIDER: &str = "memory_request_review";
+pub const DEN_PROMPT_MEMORY_UPSERT: &str = "den.prompt_memory.upsert";
+pub const DEN_PROMPT_MEMORY_UPSERT_PROVIDER: &str = "upsert_prompt_memory";
+pub const DEN_PROMPT_MEMORY_LIST: &str = "den.prompt_memory.list";
+pub const DEN_PROMPT_MEMORY_LIST_PROVIDER: &str = "list_prompt_memory";
+pub const DEN_PROMPT_MEMORY_PATCH: &str = "den.prompt_memory.patch";
+pub const DEN_PROMPT_MEMORY_PATCH_PROVIDER: &str = "patch_prompt_memory";
 pub const DEN_MEMORY_LIST_PROPOSALS: &str = "den.memory.list_proposals";
 pub const DEN_MEMORY_LIST_PROPOSALS_PROVIDER: &str = "memory_list_proposals";
 pub const DEN_MEMORY_READ_PROPOSAL: &str = "den.memory.read_proposal";
@@ -222,6 +235,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
             return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string()
         }
         DEN_MEMORY_REQUEST_REVIEW => return DEN_MEMORY_REQUEST_REVIEW_PROVIDER.to_string(),
+        DEN_PROMPT_MEMORY_UPSERT => return DEN_PROMPT_MEMORY_UPSERT_PROVIDER.to_string(),
+        DEN_PROMPT_MEMORY_LIST => return DEN_PROMPT_MEMORY_LIST_PROVIDER.to_string(),
+        DEN_PROMPT_MEMORY_PATCH => return DEN_PROMPT_MEMORY_PATCH_PROVIDER.to_string(),
         DEN_MEMORY_LIST_PROPOSALS => return DEN_MEMORY_LIST_PROPOSALS_PROVIDER.to_string(),
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
@@ -496,6 +512,39 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.review.request"],
             PAIR_ROLES,
             memory_request_review_schema(),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_UPSERT,
+            "Upsert prompt memory block",
+            "Create or replace a Den-owned prompt memory block for the current bear role. Use this for editable runtime prompt memory, not semantic memory notes.",
+            "bear.memory",
+            &["memory.entry.write"],
+            PAIR_ROLES,
+            prompt_memory_upsert_schema(),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_LIST,
+            "List prompt memory blocks",
+            "List Den-owned prompt memory blocks for the current bear role.",
+            "bear.memory",
+            &["memory.status.read"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "include_archived": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_PATCH,
+            "Patch prompt memory block",
+            "Update lifecycle/content fields for an existing Den-owned prompt memory block.",
+            "bear.memory",
+            &["memory.entry.write"],
+            PAIR_ROLES,
+            prompt_memory_patch_schema(),
         ),
         descriptor(
             DEN_MEMORY_LIST_PROPOSALS,
@@ -1478,6 +1527,44 @@ fn set_conversation_title_schema() -> Value {
     })
 }
 
+fn prompt_memory_upsert_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "block_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "scope": { "type": "string", "enum": ["bear_wide", "role_local", "work_surface", "session"] },
+            "block_type": { "type": "string", "enum": ["role_guidance", "work_surface_context", "session_focus", "user_instruction"] },
+            "state": { "type": "string", "enum": ["draft", "active", "superseded", "archived"] },
+            "work_surface": { "type": "string", "maxLength": 500 },
+            "session_id": { "type": "string", "maxLength": 200 },
+            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "body": { "type": "string", "minLength": 1, "maxLength": 50000 },
+            "priority": { "type": "integer", "minimum": -1000, "maximum": 1000 },
+            "supersedes_block_id": { "type": "string", "maxLength": 200 },
+            "metadata": { "type": "object" }
+        },
+        "required": ["block_id", "scope", "block_type", "title", "body"],
+        "additionalProperties": false
+    })
+}
+
+fn prompt_memory_patch_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "block_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "state": { "type": "string", "enum": ["draft", "active", "superseded", "archived"] },
+            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "body": { "type": "string", "minLength": 1, "maxLength": 50000 },
+            "priority": { "type": "integer", "minimum": -1000, "maximum": 1000 },
+            "supersedes_block_id": { "type": "string", "maxLength": 200 },
+            "metadata": { "type": "object" }
+        },
+        "required": ["block_id", "title", "body"],
+        "additionalProperties": false
+    })
+}
+
 fn memory_write_entry_schema() -> Value {
     json!({
         "type": "object",
@@ -1561,6 +1648,9 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_MEMORY_SEARCH => &["den_memory_search"],
         DEN_MEMORY_ORIENT_WORK_SURFACE => &["den_memory_orient_work_surface"],
         DEN_MEMORY_REQUEST_REVIEW => &["den_memory_request_review"],
+        DEN_PROMPT_MEMORY_UPSERT => &["den_prompt_memory_upsert"],
+        DEN_PROMPT_MEMORY_LIST => &["den_prompt_memory_list"],
+        DEN_PROMPT_MEMORY_PATCH => &["den_prompt_memory_patch"],
         DEN_MEMORY_LIST_PROPOSALS => &["den_memory_list_proposals"],
         DEN_MEMORY_READ_PROPOSAL => &["den_memory_read_proposal"],
         DEN_MEMORY_RESOLVE_PROPOSAL => &["den_memory_resolve_proposal"],
@@ -1599,6 +1689,9 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_MEMORY_ORIENT_WORK_SURFACE
             | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
             | DEN_MEMORY_REQUEST_REVIEW
+            | DEN_PROMPT_MEMORY_UPSERT
+            | DEN_PROMPT_MEMORY_LIST
+            | DEN_PROMPT_MEMORY_PATCH
             | DEN_MEMORY_LIST_PROPOSALS
             | DEN_MEMORY_READ_PROPOSAL
             | DEN_MEMORY_RESOLVE_PROPOSAL
@@ -1862,6 +1955,52 @@ struct MemoryRequestReviewArguments {
     proposed_patch: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PromptMemoryUpsertArguments {
+    block_id: String,
+    scope: PromptMemoryBlockScope,
+    block_type: PromptMemoryBlockType,
+    #[serde(default = "default_prompt_memory_state")]
+    state: PromptMemoryBlockState,
+    #[serde(default)]
+    work_surface: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    title: String,
+    body: String,
+    #[serde(default)]
+    priority: Option<i32>,
+    #[serde(default)]
+    supersedes_block_id: Option<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptMemoryPatchArguments {
+    block_id: String,
+    #[serde(default = "default_prompt_memory_state")]
+    state: PromptMemoryBlockState,
+    title: String,
+    body: String,
+    #[serde(default)]
+    priority: Option<i32>,
+    #[serde(default)]
+    supersedes_block_id: Option<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptMemoryListArguments {
+    #[serde(default)]
+    include_archived: bool,
+}
+
+fn default_prompt_memory_state() -> PromptMemoryBlockState {
+    PromptMemoryBlockState::Active
+}
+
 fn empty_json_object() -> Value {
     json!({})
 }
@@ -1901,6 +2040,9 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
         DEN_MEMORY_ORIENT_WORK_SURFACE => memory_orient_work_surface(config, &context, role).await,
+        DEN_PROMPT_MEMORY_UPSERT => prompt_memory_upsert(pool, &context, role, arguments).await,
+        DEN_PROMPT_MEMORY_LIST => prompt_memory_list(pool, &context, role, arguments).await,
+        DEN_PROMPT_MEMORY_PATCH => prompt_memory_patch(pool, &context, role, arguments).await,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
             create_work_surface_scaffold(config, &context, role, arguments).await
         }
@@ -3627,6 +3769,130 @@ async fn write_memory_entry(
     }))
 }
 
+async fn prompt_memory_upsert(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Pair {
+        return Err(CustomError::Authorization(
+            "den.prompt_memory.upsert is currently available only to the pair role".to_string(),
+        ));
+    }
+    let args: PromptMemoryUpsertArguments = serde_json::from_value(arguments)?;
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
+    let block_id = validate_bounded_text("block_id", &args.block_id, 1, 200)?;
+    validate_prompt_memory_scope(
+        args.scope,
+        args.work_surface.as_deref(),
+        args.session_id.as_deref(),
+    )?;
+    let priority = args.priority.unwrap_or(0).clamp(-1000, 1000);
+    let metadata = args.metadata.unwrap_or_else(empty_json_object);
+    validate_optional_object("metadata", &Some(metadata.clone()))?;
+    upsert_prompt_memory_block(
+        pool,
+        &PromptMemoryBlockWrite {
+            block_id: block_id.clone(),
+            bear_id: Some(context.bear_id),
+            role_slug: Some(role.as_str().to_string()),
+            scope: args.scope,
+            block_type: args.block_type,
+            state: args.state,
+            work_surface: args.work_surface.clone(),
+            session_id: args.session_id.clone(),
+            title: title.clone(),
+            body: body.clone(),
+            priority,
+            created_by_user_id: Some(context.user_id),
+            supersedes_block_id: args.supersedes_block_id.clone(),
+            metadata: metadata.clone(),
+        },
+    )
+    .await?;
+    Ok(json!({
+        "status": "ok",
+        "block_id": block_id,
+        "scope": args.scope,
+        "block_type": args.block_type,
+        "state": args.state,
+        "title": title,
+        "priority": priority,
+        "work_surface": args.work_surface,
+        "session_id": args.session_id,
+        "metadata": metadata,
+        "source": "prompt_memory_blocks"
+    }))
+}
+
+async fn prompt_memory_list(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Pair {
+        return Err(CustomError::Authorization(
+            "den.prompt_memory.list is currently available only to the pair role".to_string(),
+        ));
+    }
+    let args: PromptMemoryListArguments = serde_json::from_value(arguments)?;
+    let mut blocks = list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+    if !args.include_archived {
+        blocks.retain(|block| block.state != PromptMemoryBlockState::Archived);
+    }
+    Ok(json!({
+        "status": "ok",
+        "source": "prompt_memory_blocks",
+        "count": blocks.len(),
+        "blocks": blocks,
+    }))
+}
+
+async fn prompt_memory_patch(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Pair {
+        return Err(CustomError::Authorization(
+            "den.prompt_memory.patch is currently available only to the pair role".to_string(),
+        ));
+    }
+    let args: PromptMemoryPatchArguments = serde_json::from_value(arguments)?;
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
+    let block_id = validate_bounded_text("block_id", &args.block_id, 1, 200)?;
+    let priority = args.priority.unwrap_or(0).clamp(-1000, 1000);
+    let metadata = args.metadata.unwrap_or_else(empty_json_object);
+    validate_optional_object("metadata", &Some(metadata.clone()))?;
+    patch_prompt_memory_block(
+        pool,
+        &block_id,
+        &PromptMemoryBlockPatch {
+            state: args.state,
+            title: title.clone(),
+            body: body.clone(),
+            priority,
+            supersedes_block_id: args.supersedes_block_id.clone(),
+            metadata: metadata.clone(),
+        },
+    )
+    .await?;
+    Ok(json!({
+        "status": "ok",
+        "block_id": block_id,
+        "state": args.state,
+        "title": title,
+        "priority": priority,
+        "metadata": metadata,
+        "source": "prompt_memory_blocks"
+    }))
+}
+
 async fn memory_status(
     config: &Config,
     context: &DenToolInvocationContext,
@@ -4593,6 +4859,22 @@ fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
     }
 }
 
+pub(crate) fn validate_prompt_memory_scope(
+    scope: PromptMemoryBlockScope,
+    work_surface: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<(), CustomError> {
+    match scope {
+        PromptMemoryBlockScope::WorkSurface if work_surface.is_none() => Err(CustomError::ValidationError(
+            "prompt memory scope `work_surface` requires `work_surface`".to_string(),
+        )),
+        PromptMemoryBlockScope::Session if session_id.is_none() => Err(CustomError::ValidationError(
+            "prompt memory scope `session` requires `session_id`".to_string(),
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn validate_memory_write_entry_semantics(
     args: &MemoryWriteEntryArguments,
     _context: &DenToolInvocationContext,
@@ -5246,6 +5528,7 @@ fn format_rfc3339(value: time::OffsetDateTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgPoolOptions;
     use std::collections::HashSet;
 
     fn names_for_role(role: BearAgentRole) -> HashSet<&'static str> {
@@ -5253,6 +5536,106 @@ mod tests {
             .into_iter()
             .map(|descriptor| descriptor.name)
             .collect()
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_tools_round_trip_through_store() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        let migrate = sqlx::migrate!("./migrations").run(&pool).await;
+        if migrate.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let context = DenToolInvocationContext {
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            role_agent_id: "agent-test".to_string(),
+            agent_role: Some(BearAgentRole::Pair),
+            user_id: 1,
+            username: Some("tester".to_string()),
+            membership_role: Some("owner".to_string()),
+            conversation_id: "conv-test".to_string(),
+            session_id: "sess-test".to_string(),
+            acp_session_id: Some("sess-test".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: Some("req-test".to_string()),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("zed".to_string()),
+                protocol: Some("acp".to_string()),
+            },
+        };
+        let upsert = prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": format!("pm-{}", Uuid::new_v4()),
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "Current focus",
+                "body": "Prioritize persisted prompt memory runtime wiring.",
+                "priority": 7
+            }),
+        )
+        .await
+        .expect("upsert prompt memory block");
+        assert_eq!(upsert["status"], "ok");
+        let block_id = upsert["block_id"].as_str().unwrap().to_string();
+        let listed = prompt_memory_list(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({}),
+        )
+        .await
+        .expect("list prompt memory blocks");
+        assert!(listed["blocks"].as_array().unwrap().iter().any(|b| b["id"] == block_id));
+        let patched = prompt_memory_patch(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": block_id,
+                "state": "archived",
+                "title": "Current focus (archived)",
+                "body": "Archived prompt memory block.",
+                "priority": 1
+            }),
+        )
+        .await
+        .expect("patch prompt memory block");
+        assert_eq!(patched["state"], "archived");
+        let listed_active = prompt_memory_list(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({}),
+        )
+        .await
+        .expect("list active prompt memory blocks");
+        assert!(!listed_active["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
+        let listed_all = prompt_memory_list(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({"include_archived": true}),
+        )
+        .await
+        .expect("list all prompt memory blocks");
+        assert!(listed_all["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
     }
 
     #[test]
