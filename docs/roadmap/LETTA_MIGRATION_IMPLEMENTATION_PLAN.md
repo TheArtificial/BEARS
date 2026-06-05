@@ -574,12 +574,67 @@ That is follow-on rollout work, not a missing compaction replacement definition.
      - archival/recall memory,
      - transcript history.
 
-##### Suggested work items
+##### Implementation status
 
-- write a dedicated prompt-memory/block replacement note,
-- define the minimum block types required for parity,
-- define a first prompt-compilation path using Den-owned block inputs,
-- avoid introducing provider-shaped block or agent attachment semantics in the new model.
+Epic C is now in place at the design-contract level through Den-owned prompt memory block documents.
+
+Landed design artifacts:
+
+- `docs/architecture/den-prompt-memory-block-contract.md`
+- `docs/architecture/den-prompt-memory-block-schema.md`
+- `docs/architecture/den-prompt-memory-block-guide.md`
+
+##### Deliverable mapping
+
+**Block model definition**
+- Covered by `den-prompt-memory-block-contract.md`.
+- Initial Den-owned block types are defined as:
+  - role guidance block,
+  - work-surface context block,
+  - session focus block,
+  - user/operator instruction block.
+- Initial attachment scopes are defined as:
+  - Bear-wide,
+  - role-local,
+  - work-surface-attached,
+  - session-scoped.
+
+**Mutation and audit semantics**
+- Covered by the contract and schema direction docs.
+- Lifecycle/mutation semantics explicitly include:
+  - create,
+  - edit,
+  - supersede,
+  - archive,
+  - delete-request semantics where allowed.
+- Audit expectations are explicit via provenance-preserving mutation and a recommended revision/audit entity in the schema direction.
+
+**Prompt compilation rules**
+- Covered by the contract doc.
+- Prompt compilation explicitly defines:
+  - eligibility,
+  - ordering,
+  - precedence,
+  - budgeting.
+- The contract also states that blocks must remain distinguishable from transcript, retrieval, workflow, and compaction inputs.
+
+**Migration boundary from existing memory systems**
+- Covered by the contract plus alignment with `docs/architecture/memory-model.md`.
+- The relationship is now explicitly defined between prompt blocks and:
+  - transcript history,
+  - durable memory,
+  - archival retrieval,
+  - compaction artifacts.
+- The design explicitly avoids provider-shaped agent attachment semantics and does not require a pluggable backend architecture.
+
+##### Remaining execution note
+
+What remains after this epic is implementation rollout rather than missing replacement definition:
+
+- persistent schema implementation,
+- block mutation workflows/tools,
+- prompt compiler integration,
+- and eventual diagnostics/admin visibility for block inclusion behavior.
 
 ##### Acceptance
 
