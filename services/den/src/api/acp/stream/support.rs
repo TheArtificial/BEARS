@@ -18,6 +18,27 @@ pub(in crate::api::acp) use super::support_sse::{
     find_sse_frame_end, parse_sse_event_body_to_json, strip_trailing_sse_delimiter_owned,
 };
 
+pub(in crate::api::acp) fn classify_untranslated_provider_event(value: &serde_json::Value) -> String {
+    value
+        .get("message_type")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|message_type| format!("message_type:{message_type}"))
+        .or_else(|| {
+            value
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|event_type| format!("type:{event_type}"))
+        })
+        .or_else(|| value.as_object().map(|_| "object:unknown".to_string()))
+        .or_else(|| value.as_array().map(|_| "array:unknown".to_string()))
+        .or_else(|| value.as_str().map(|_| "string:unknown".to_string()))
+        .unwrap_or_else(|| "value:unknown".to_string())
+}
+
 #[derive(Default)]
 pub(in crate::api::acp) struct AcpStreamDiagnostics {
     pub(in crate::api::acp) upstream_frames: usize,
@@ -29,6 +50,7 @@ pub(in crate::api::acp) struct AcpStreamDiagnostics {
     pub(in crate::api::acp) adapter_event_types: BTreeMap<String, usize>,
     pub(in crate::api::acp) tool_request_counts: BTreeMap<String, usize>,
     pub(in crate::api::acp) tool_call_accumulator: LettaToolCallAccumulator,
+    pub(in crate::api::acp) untranslated_event_classes: BTreeMap<String, usize>,
     pub(in crate::api::acp) unmapped_event_samples: Vec<String>,
     pub(in crate::api::acp) run_ids: Vec<String>,
     pub(in crate::api::acp) saw_visible_output: bool,
@@ -68,6 +90,9 @@ impl AcpStreamDiagnostics {
         }
         for (key, value) in other.tool_request_counts {
             *self.tool_request_counts.entry(key).or_insert(0) += value;
+        }
+        for (key, value) in other.untranslated_event_classes {
+            *self.untranslated_event_classes.entry(key).or_insert(0) += value;
         }
         for sample in other.unmapped_event_samples {
             if self.unmapped_event_samples.len() < 5 {
@@ -248,6 +273,8 @@ impl AcpStreamDiagnostics {
 
     pub(in crate::api::acp) fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
         self.unmapped_events += 1;
+        let class = classify_untranslated_provider_event(value);
+        *self.untranslated_event_classes.entry(class).or_insert(0) += 1;
         if self.unmapped_event_samples.len() < 5 {
             self.unmapped_event_samples
                 .push(super::logging::summarize_letta_event_for_log(value).to_string());
@@ -271,6 +298,7 @@ impl AcpStreamDiagnostics {
             context: Some(json!({
                 "acp_session_id": context.acp_session_id,
                 "unmapped_event_samples": self.unmapped_event_samples,
+                "untranslated_event_classes": self.untranslated_event_classes,
                 "run_ids": self.run_ids,
             })),
         })
@@ -292,6 +320,7 @@ impl AcpStreamDiagnostics {
             "native_event_types": self.native_event_types,
             "adapter_event_types": self.adapter_event_types,
             "tool_request_counts": self.tool_request_counts,
+            "untranslated_event_classes": self.untranslated_event_classes,
             "run_ids": self.run_ids,
             "saw_visible_output": self.saw_visible_output,
             "saw_error": self.saw_error,
@@ -340,6 +369,7 @@ impl AcpStreamDiagnostics {
             native_event_types = ?self.native_event_types,
             adapter_event_types = ?self.adapter_event_types,
             tool_request_counts = ?self.tool_request_counts,
+            untranslated_event_classes = ?self.untranslated_event_classes,
             pending_tool_argument_buffers = self.tool_call_accumulator.pending_argument_buffers(),
             pending_tool_name_buffers = self.tool_call_accumulator.pending_name_buffers(),
             unmapped_event_samples = ?self.unmapped_event_samples,

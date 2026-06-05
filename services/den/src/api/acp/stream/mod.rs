@@ -6,6 +6,8 @@ pub(super) mod mapping_projection_tests;
 pub(super) mod untranslated_provider_event_tests;
 #[cfg(test)]
 pub(super) mod mapping_direct_projection_tests;
+#[cfg(test)]
+pub(super) mod untranslated_observability_tests;
 pub(super) mod orchestration;
 pub(super) mod plan;
 pub(super) mod prompt_flow;
