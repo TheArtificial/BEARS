@@ -1,16 +1,19 @@
 use uuid::Uuid;
 
 use crate::{
-    api::acp::{
+    api::{acp::{
         acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context,
         history::{
             runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
         },
-    },
+    }, service::ApiState},
     core::{
         acp_plan_mode,
         acp_tools::AcpResolvedSessionPolicy,
-        prompt_memory_block_store::PromptMemoryRuntimeSelection,
+        prompt_memory_block_store::{
+            select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
+            PromptMemoryRuntimeSelection,
+        },
         prompt_memory_blocks::{
             compile_prompt_memory_blocks, render_prompt_memory_block_context,
             PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
@@ -24,6 +27,7 @@ use crate::{
     errors::CustomError,
 };
 
+
 #[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
@@ -32,14 +36,57 @@ pub(crate) fn acp_direct_tool_prompt_context(
     tools_enabled: bool,
     policy: &AcpResolvedSessionPolicy,
 ) -> String {
-    acp_direct_tool_prompt_context_with_activity(
+    let roots = client_context
+        .get("workspace_roots")
+        .or_else(|| client_context.get("workspaceRoots"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec![cwd.to_string()]);
+    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
+    let den_tool_descriptors = acp_pair_den_tool_descriptors();
+    let den_tool_names = den_tool_descriptors
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut guidance = vec![render_turn_state_summary_with_activity(
         session_id,
-        cwd,
-        client_context,
-        tools_enabled,
+        &roots,
+        &tool_names,
+        &den_tool_names,
         policy,
         None,
-        None,
+    )];
+    guidance.push(format!(
+        "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
+        policy.mode_label,
+        policy.allowed_tool_classes().join(", "),
+    ));
+    guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
+    let prompt_memory_selection = synthetic_prompt_memory_runtime_selection(session_id, &roots);
+    guidance.push(render_prompt_memory_runtime_selection(
+        &prompt_memory_selection,
+        session_id,
+        &roots,
+    ));
+    guidance.push(runtime_compaction_prompt_context(session_id, client_context, None));
+    guidance.extend(maybe_workspace_tool_guidance(&tool_names));
+    guidance.extend(server_memory_tool_guidance());
+    guidance.push(tool_loop_rule_guidance());
+    format!(
+        "\n\n<system-reminder>{}</system-reminder>",
+        guidance.join(" ")
     )
 }
 
@@ -208,7 +255,9 @@ fn runtime_compaction_prompt_context(
     )
 }
 
-pub(super) fn acp_direct_tool_prompt_context_with_activity(
+pub(super) async fn acp_direct_tool_prompt_context_with_activity(
+    state: &ApiState,
+    bear_id: Uuid,
     session_id: &str,
     cwd: &str,
     client_context: &serde_json::Value,
@@ -216,9 +265,13 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     policy: &AcpResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
     auto_title_guidance: Option<&str>,
-) -> String {
+) -> Result<(String, serde_json::Value), CustomError> {
     if !tools_enabled {
-        return String::new();
+        return Ok((String::new(), serde_json::json!({
+            "source": "disabled_tools",
+            "persisted": false,
+            "matched_count": 0
+        })));
     }
     let roots = client_context
         .get("workspace_roots")
@@ -234,6 +287,20 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
     let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
+    let prompt_memory_selection = match select_prompt_memory_blocks_for_runtime(
+        &state.sqlx_pool,
+        PromptMemoryBlockQuery {
+            bear_id: Some(bear_id),
+            role_slug: "pair",
+            session_id,
+            work_surfaces: &roots,
+        },
+    )
+    .await
+    {
+        Ok(selection) if !selection.blocks.is_empty() => selection,
+        Ok(_) | Err(_) => synthetic_prompt_memory_runtime_selection(session_id, &roots),
+    };
     let den_tool_descriptors = acp_pair_den_tool_descriptors();
     let den_tool_names = den_tool_descriptors
         .as_array()
@@ -267,7 +334,6 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
-    let prompt_memory_selection = synthetic_prompt_memory_runtime_selection(session_id, &roots);
     guidance.push(render_prompt_memory_runtime_selection(
         &prompt_memory_selection,
         session_id,
@@ -277,10 +343,13 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());
     guidance.push(tool_loop_rule_guidance());
-    format!(
-        "\n\n<system-reminder>{}</system-reminder>",
-        guidance.join(" ")
-    )
+    Ok((
+        format!(
+            "\n\n<system-reminder>{}</system-reminder>",
+            guidance.join(" ")
+        ),
+        prompt_memory_selection.diagnostic,
+    ))
 }
 
 pub(super) async fn acp_plan_mode_prompt_context(

@@ -581,10 +581,23 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(client_title, Some("Fallback title"));
     }
 
-    #[test]
-    fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
+    #[tokio::test]
+    async fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
         let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask", None);
-        let context = acp_direct_tool_prompt_context_with_activity(
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
+            .unwrap();
+        let state = crate::api::service::ApiState {
+            sqlx_pool: pool,
+            config: std::sync::Arc::new(crate::config::Config::test_stub()),
+            letta: std::sync::Arc::new(crate::core::letta::LettaClient::new(&crate::config::Config::test_stub())),
+            bifrost: std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(&crate::config::Config::test_stub())),
+            acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
+            acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+        };
+        let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
+            &state,
+            uuid::Uuid::nil(),
             "acp-test-session",
             "/workspace",
             &serde_json::json!({
@@ -595,11 +608,14 @@ use crate::core::prompt_memory_blocks::{
             &policy,
             None,
             Some("This conversation is currently untitled. Once the main subject is clear enough to summarize in a short, specific title, proactively call `set_conversation_title` in that turn without waiting for the user to ask."),
-        );
+        )
+        .await
+        .expect("prompt context");
         assert!(
             context.contains("Conversation title status for this ACP session: currently untitled.")
         );
         assert!(context.contains("set_conversation_title"));
+        assert!(diagnostic["source"].is_string());
     }
 
     #[test]

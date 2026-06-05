@@ -9,9 +9,7 @@ use crate::{
     api::{
         acp::{
             acp_error_status_message, acp_stream_tokens_enabled,
-            history::pending_session_title_update_event,
-            prompt_context::synthetic_prompt_memory_runtime_selection,
-            AcpGatewayEvent, AcpStreamContext,
+            history::pending_session_title_update_event, AcpGatewayEvent, AcpStreamContext,
         },
         auth::ApiError,
         service::ApiState,
@@ -50,6 +48,7 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
     plan_mode_context: &str,
     activity_context: &str,
     tool_prompt_context: &str,
+    prompt_memory_diagnostic: serde_json::Value,
     prompt: &str,
     request_id: Uuid,
 ) -> Result<AcpStreamSetup, ApiError> {
@@ -105,8 +104,6 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    let prompt_memory_diagnostic =
-        synthetic_prompt_memory_runtime_selection(session_id, &workspace_roots).diagnostic;
     let stream_tokens = acp_stream_tokens_enabled();
 
     Ok(AcpStreamSetup {

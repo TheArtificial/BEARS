@@ -357,7 +357,9 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })?;
-    let tool_prompt_context = acp_direct_tool_prompt_context_with_activity(
+    let (tool_prompt_context, prompt_memory_diagnostic) = acp_direct_tool_prompt_context_with_activity(
+        &state,
+        bear.id,
         session_id,
         &cwd,
         &body.client_context,
@@ -365,7 +367,12 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         &resolved_policy,
         current_activity_plan.as_ref(),
         auto_title_guidance.as_deref(),
-    );
+    )
+    .await
+    .map_err(|err| {
+        let (status, code, message) = acp_error_status_message(&err);
+        ApiError::new(status, code, message)
+    })?;
     let merged_client_tool_descriptors = tools_enabled.then(|| {
         super::super::merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
@@ -453,6 +460,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         &plan_mode_context,
         &activity_context,
         &tool_prompt_context,
+        prompt_memory_diagnostic,
         prompt,
         request_id,
     )
