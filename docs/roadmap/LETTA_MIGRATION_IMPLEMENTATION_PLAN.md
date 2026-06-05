@@ -449,12 +449,94 @@ The migration target is to keep those Letta-specific execution behaviors in a na
      - what artifact replaced or summarized it,
      - whether fallback/recompaction occurred.
 
-##### Suggested work items
+##### Implementation status
 
-- write a dedicated compaction architecture note,
-- define transcript-to-summary linkage rules,
-- define a first minimal persistence model for compaction artifacts,
-- identify the first role surface that should consume Den-owned compaction semantics.
+Epic B is now substantively in place through a Den-owned compaction design set plus initial runtime contract/types.
+
+Landed design artifacts:
+
+- `docs/decisions/adr-0032-den-context-compaction-architecture.md`
+- `docs/architecture/den-context-compaction-contract.md`
+- `docs/architecture/den-context-compaction-schema.md`
+- `docs/architecture/den-context-compaction-observability.md`
+- `docs/guides/context-compaction-guide.md`
+
+Landed code-facing implementation slices:
+
+- `core/runtime_conversations.rs`
+  - semantic-group types,
+  - compaction trigger/boundary/artifact reference types,
+  - iterative summary type.
+- `core/runtime_compaction.rs`
+  - semantic grouping helpers,
+  - trigger/target compaction decision helper,
+  - iterative summary merge helper,
+  - prompt-context envelope builder.
+- `core/runtime_compaction_observability.rs`
+  - applied/skipped compaction event model,
+  - provenance-bearing observability helpers.
+- `api/acp/history.rs`
+  - ACP/admin-facing history projection support for runtime compaction observability events.
+
+##### Deliverable mapping
+
+**Compaction policy design**
+- Covered by the ADR and contract documents.
+- Triggers are explicitly modeled as:
+  - token pressure,
+  - semantic-group count,
+  - manual/operator trigger,
+  - model safety margin.
+- The contract defines protected floors for:
+  - unresolved tool spans,
+  - unresolved approval spans,
+  - active workflow state,
+  - active constraints/decisions,
+  - active artifact references.
+- Automatic and manual/operator-triggered compaction are both part of the design.
+
+**Compaction artifact model**
+- Covered by the schema direction plus shared runtime types.
+- Initial Den-owned artifacts include:
+  - iterative summaries,
+  - collapsed tool bundles,
+  - structured workflow summaries.
+- Artifact provenance includes:
+  - source semantic-group start/end,
+  - policy version,
+  - artifact kind,
+  - supersession/rebuild expectations in schema guidance.
+
+**Replay and read semantics**
+- Covered by the ADR, contract, and runtime context envelope helpers.
+- Resumed/runtime context is assembled from:
+  - active instructions/runtime policy,
+  - active workflow state,
+  - recent uncompacted semantic groups,
+  - derived compacted context artifacts,
+  - separately governed memory/retrieval inputs.
+- Canonical transcript remains the source of truth; compacted state is derived and explicitly distinguished.
+
+**Operational visibility**
+- Covered by the observability note and runtime event model.
+- Applied/skipped compaction events include:
+  - trigger,
+  - policy version,
+  - retained/compacted boundary,
+  - source group range,
+  - artifact reference,
+  - diagnostic reason.
+- This is sufficient for operator/debug visibility and future persistence/read-model work.
+
+##### Remaining execution note
+
+What remains after this epic is not the basic replacement definition, but integration rollout:
+
+- connecting compaction evaluation to more runtime execution paths,
+- persisting compaction events/artifacts in the final durable schema,
+- and expanding operator/admin read models over the existing event shapes.
+
+That is follow-on rollout work, not a missing compaction replacement definition.
 
 ##### Acceptance
 
