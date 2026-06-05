@@ -477,3 +477,21 @@ pub async fn insert_message_if_absent(
     Ok(())
 }
 
+pub async fn count_visible_messages(
+    pool: &PgPool,
+    conversation_id: Uuid,
+) -> Result<i64, CustomError> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM conversation_messages
+        WHERE conversation_id = $1
+          AND visibility != 'diagnostic_only'
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("count visible conversation messages: {err}")))
+}
+

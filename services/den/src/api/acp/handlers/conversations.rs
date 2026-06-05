@@ -13,9 +13,9 @@ use crate::{
         archived_conversations,
         bears::db as bears_db,
         conversation_persistence::{
-            ensure_conversation_for_external_id, insert_message_if_absent, list_messages_page,
+            count_visible_messages, ensure_conversation_for_external_id, insert_message_if_absent,
+            list_conversations_for_bear, list_messages_page,
         },
-        letta::load_agent_conversations as load_runtime_conversations,
         runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
     },
     errors::CustomError,
@@ -60,52 +60,42 @@ pub(super) async fn conversations_inner(
             CustomError::NotFound("bear not found or you do not have access".to_string())
         })?;
 
-    let default_only = || {
-        Json(AcpConversationsResponse {
-            conversations: vec![AcpConversationRow {
-                id: "default".to_string(),
-                title: "Main chat".to_string(),
-                last_message_at: None,
-                archived: false,
-            }],
-        })
-        .into_response()
-    };
-
-    if !state.letta.is_enabled() {
-        return Ok(default_only());
-    }
-    let runtime_binding =
-        require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
-    let runtime_binding_id = runtime_binding.binding_id;
-
     let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
-    let snap = load_runtime_conversations(state.letta.as_ref(), &runtime_binding_id).await;
-    let source: Vec<_> = if query.include_archived {
-        snap.all
-            .into_iter()
-            .map(|mut row| {
-                if archived_ids.contains(&row.id) {
-                    row.archived = true;
-                }
-                row
-            })
-            .collect()
-    } else {
-        snap.all
-            .into_iter()
-            .filter(|row| !row.archived && !archived_ids.contains(&row.id))
-            .collect()
-    };
-    let conversations = source
+    let canonical = list_conversations_for_bear(&state.sqlx_pool, bear.id, 200).await?;
+    let mut conversations: Vec<AcpConversationRow> = canonical
         .into_iter()
-        .map(|row| AcpConversationRow {
-            id: row.id,
-            title: row.title,
-            last_message_at: row.last_message_at,
-            archived: row.archived,
+        .filter_map(|row| {
+            let id = row.external_conversation_id?;
+            let archived = archived_ids.contains(&id);
+            if archived && !query.include_archived {
+                return None;
+            }
+            Some(AcpConversationRow {
+                id,
+                title: row.current_title.unwrap_or_else(|| "Main chat".to_string()),
+                last_message_at: Some(row.updated_at.to_string()),
+                archived,
+            })
         })
         .collect();
+
+    if conversations.is_empty() {
+        conversations.push(AcpConversationRow {
+            id: "default".to_string(),
+            title: "Main chat".to_string(),
+            last_message_at: None,
+            archived: false,
+        });
+    } else if !conversations.iter().any(|row| row.id == "default") && !query.include_archived {
+        conversations.push(AcpConversationRow {
+            id: "default".to_string(),
+            title: "Main chat".to_string(),
+            last_message_at: None,
+            archived: false,
+        });
+    }
+
+    conversations.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at).then_with(|| a.id.cmp(&b.id)));
     Ok(Json(AcpConversationsResponse { conversations }).into_response())
 }
 
@@ -190,21 +180,20 @@ pub(super) async fn conversation_history_inner(
         i64::from(limit),
     )
     .await?;
-    if !canonical_rows.is_empty() {
+    let canonical_visible_count = count_visible_messages(&state.sqlx_pool, canonical_conversation.id).await?;
+    if canonical_visible_count > 0 {
         let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
-        if !messages.is_empty() {
-            let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
-                .await
-                .unwrap_or_default();
-            return Ok(Json(AcpConversationHistoryResponse {
-                messages,
-                has_more,
-                next_before,
-                compaction: None,
-                compaction_history,
-            })
-            .into_response());
-        }
+        let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
+            .await
+            .unwrap_or_default();
+        return Ok(Json(AcpConversationHistoryResponse {
+            messages,
+            has_more,
+            next_before,
+            compaction: None,
+            compaction_history,
+        })
+        .into_response());
     }
     let body = state
         .letta
