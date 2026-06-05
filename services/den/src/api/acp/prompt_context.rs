@@ -28,7 +28,6 @@ use crate::{
 };
 
 
-#[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
@@ -98,6 +97,7 @@ use super::{
 };
 
 
+#[cfg(test)]
 pub(crate) fn synthetic_prompt_memory_runtime_selection(
     session_id: &str,
     roots: &[String],

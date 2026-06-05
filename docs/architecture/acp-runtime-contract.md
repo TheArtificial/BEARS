@@ -521,6 +521,20 @@ The migration is still incomplete. The following concerns remain partially Letta
 - normalized Den-owned runtime error categories used consistently across all ACP runtime operations
 - runtime health/capability reporting for a future non-Letta implementation
 - ACP still owns the final bridge from continuation stream events into ACP wire events, which should eventually be driven by structured runtime events rather than raw backend SSE payloads
+- prompt-memory lifecycle is now Den-owned for persisted ACP runtime guidance selection, admin/status inspection, and diagnostics, but it is not yet part of a broader backend-agnostic runtime contract surface alongside conversation/history abstractions
+
+### Prompt-memory checkpoint
+
+Prompt-memory extraction has advanced to a meaningful Den-owned checkpoint:
+
+- persisted prompt-memory blocks are stored and selected by Den rather than synthesized in normal ACP runtime assembly
+- live ACP prompt assembly now uses persisted prompt-memory selection as the normal path
+- synthetic prompt-memory selection is isolated to test/helper behavior rather than production runtime fallback
+- ACP admin/status visibility exists through session HTTP, memory status, compaction/history diagnostics, and a dedicated ACP prompt-memory inspection endpoint
+- mutation/admin operations exist through Den tool surfaces (`den.prompt_memory.upsert`, `den.prompt_memory.patch`, `den.prompt_memory.list`)
+- same-scope active block conflicts are archived on upsert so runtime prompt slots converge on a single active block per scope/type tuple
+
+What remains is mostly documentation, broader contract placement, and eventual alignment with future backend-independent runtime abstractions.
 
 ### Transitional entrypoints
 
