@@ -23,13 +23,6 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    prompt_guidance::{
-        maybe_workspace_tool_guidance, server_memory_tool_guidance, tool_loop_rule_guidance,
-    },
-    workflow::render_turn_state_summary_with_activity,
-};
-
 #[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
@@ -48,6 +41,14 @@ pub(crate) fn acp_direct_tool_prompt_context(
         None,
     )
 }
+
+use super::{
+    prompt_guidance::{
+        maybe_workspace_tool_guidance, server_memory_tool_guidance, tool_loop_rule_guidance,
+    },
+    workflow::render_turn_state_summary_with_activity,
+};
+
 
 fn prompt_memory_block_prompt_context(
     session_id: &str,
@@ -97,7 +98,7 @@ fn prompt_memory_block_prompt_context(
             role: "pair",
             work_surfaces: roots,
             session_id,
-            max_blocks: 4,
+            max_blocks: 6,
         },
     );
     render_prompt_memory_block_context(&compilation)

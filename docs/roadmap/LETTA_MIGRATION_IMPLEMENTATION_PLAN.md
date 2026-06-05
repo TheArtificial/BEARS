@@ -652,6 +652,10 @@ Landed code-facing implementation slices:
   - precedence-aware compilation,
   - prompt-budget omission handling,
   - render helper for prompt inclusion.
+- `core/prompt_memory_block_store.rs`
+  - initial durable store/query seam for persisted prompt memory blocks.
+- `migrations/20260605150000_prompt_memory_blocks.up.sql`
+  - Den-owned durable schema foundation for scoped prompt memory block persistence.
 - `api/acp/prompt_context.rs`
   - ACP prompt assembly now includes a Den-owned prompt-memory-block context layer before workflow/transcript compaction context.
   - The current slice compiles representative role-local, work-surface, and session-scoped blocks to exercise the Den-owned compilation model in a live runtime path.
@@ -682,7 +686,7 @@ Landed code-facing implementation slices:
 
 ##### Follow-on note
 
-Further rollout can still add persistent schema, mutation tools/workflows, and richer diagnostics/admin visibility, but the core Letta replacement responsibility—Den-owned scoped prompt-block compilation into runtime context—is now live and tested.
+Further rollout can still add runtime use of persisted block rows, mutation tools/workflows, and richer diagnostics/admin visibility, but the core Letta replacement responsibility—Den-owned scoped prompt-block compilation into runtime context—is now live and tested, and durable schema/store groundwork is now in place.
 
 ##### Acceptance
 

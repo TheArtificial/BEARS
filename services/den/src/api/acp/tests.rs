@@ -214,6 +214,7 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(ids, vec!["session", "surface", "role", "bear"]);
     }
 
+
     #[test]
     fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
         for reason in [ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON] {
