@@ -26,7 +26,7 @@ pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
     runtime_event: RuntimeStreamEvent,
 ) -> Result<serde_json::Value, std::io::Error> {
     match runtime_event {
-        RuntimeStreamEvent::RawProviderEvent { value } => Ok(value),
+        RuntimeStreamEvent::UntranslatedProviderEvent { value } => Ok(value),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
             tool_name,

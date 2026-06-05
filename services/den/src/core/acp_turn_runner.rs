@@ -656,7 +656,7 @@ pub async fn continue_acp_turn_with_runtime(
                                 queued_events.push_back(Ok(event));
                             } else {
                                 queued_events.push_back(Ok(
-                                    crate::core::runtime_contracts::RuntimeStreamEvent::RawProviderEvent {
+                                    crate::core::runtime_contracts::RuntimeStreamEvent::UntranslatedProviderEvent {
                                         value,
                                     },
                                 ));

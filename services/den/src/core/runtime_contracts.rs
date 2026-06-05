@@ -220,7 +220,7 @@ pub enum RuntimeSemanticEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     Semantic(RuntimeSemanticEvent),
-    RawProviderEvent {
+    UntranslatedProviderEvent {
         value: serde_json::Value,
     },
 }

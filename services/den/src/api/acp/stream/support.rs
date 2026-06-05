@@ -94,8 +94,8 @@ impl AcpStreamDiagnostics {
     ) {
         self.parsed_events += 1;
         let runtime_type = match event {
-            crate::core::runtime_provider::RuntimeStreamEvent::RawProviderEvent { .. } => {
-                "raw_provider_event"
+            crate::core::runtime_provider::RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
+                "untranslated_provider_event"
             }
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
                 crate::core::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },

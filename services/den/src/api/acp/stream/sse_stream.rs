@@ -666,7 +666,7 @@ impl Stream for AcpRuntimeSseStream {
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. })
                                                 | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
-                                                | RuntimeStreamEvent::RawProviderEvent { .. } => {
+                                                | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
                                                     let mut temp_diagnostics = AcpStreamDiagnostics::default();
                                                     let (events, _effect, _adapter_result_rx) = match map_runtime_stream_event_to_acp_adapter_events_with_persistence(
                                                         event,
@@ -807,7 +807,7 @@ impl Stream for AcpRuntimeSseStream {
                         let body = strip_trailing_sse_delimiter_owned(frame);
                         let result = match parse_sse_event_body_to_json(&body) {
                             Ok(Some(value)) => map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-                                RuntimeStreamEvent::RawProviderEvent { value },
+                                RuntimeStreamEvent::UntranslatedProviderEvent { value },
                                 context,
                                 &mut diagnostics,
                             )
