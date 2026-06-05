@@ -1,5 +1,6 @@
 use crate::core::den_tools::{
-    builtin_den_tool_descriptors, DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
+    builtin_den_tool_descriptors, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+    DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
     DEN_WORK_PLAN_UPDATE_PROVIDER,
 };
 
@@ -51,4 +52,16 @@ fn work_plan_update_descriptor_includes_active_work_state_guidance() {
         .description
         .contains("Side effect: updates active work state"));
     assert!(descriptor.description.contains("session_info"));
+}
+
+
+#[test]
+fn prompt_memory_upsert_descriptor_mentions_runtime_prompt_memory() {
+    let descriptor = builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_name == DEN_PROMPT_MEMORY_UPSERT_PROVIDER)
+        .expect("upsert_prompt_memory descriptor");
+
+    assert!(descriptor.description.contains("editable runtime prompt memory"));
+    assert!(descriptor.description.contains("semantic memory"));
 }

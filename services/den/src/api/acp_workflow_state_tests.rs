@@ -400,3 +400,14 @@ fn resolve_turn_context_returns_matching_policy_and_turn_state() {
         true
     );
 }
+
+
+#[test]
+fn acp_prompt_guidance_distinguishes_prompt_memory_from_semantic_memory() {
+    let guidance = crate::api::acp::prompt_guidance::server_memory_tool_guidance().join(" ");
+    assert!(guidance.contains("upsert_prompt_memory"));
+    assert!(guidance.contains("patch_prompt_memory"));
+    assert!(guidance.contains("list_prompt_memory"));
+    assert!(guidance.contains("future prompt assembly"));
+    assert!(guidance.contains("durable recallable semantic memory"));
+}
