@@ -202,6 +202,31 @@ pub(crate) async fn list_prompt_memory_blocks_for_bear_role(
     rows.into_iter().map(row_to_block).collect()
 }
 
+pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    role_slug: &str,
+    supersedes_block_id: &str,
+) -> Result<u64, CustomError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE prompt_memory_blocks
+        SET state = 'archived', updated_at = now()
+        WHERE bear_id = $1
+          AND role_slug = $2
+          AND block_id = $3
+          AND state <> 'archived'
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role_slug)
+    .bind(supersedes_block_id)
+    .execute(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("archive superseded prompt_memory_blocks: {err}")))?;
+    Ok(result.rows_affected())
+}
+
 pub(crate) async fn select_prompt_memory_blocks_for_runtime(
     pool: &PgPool,
     query: PromptMemoryBlockQuery<'_>,

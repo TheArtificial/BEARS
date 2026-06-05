@@ -32,8 +32,9 @@ use crate::{
         },
         memory_proposals::{self, CreateMemoryProposal},
         prompt_memory_block_store::{
-            list_prompt_memory_blocks_for_bear_role, patch_prompt_memory_block,
-            upsert_prompt_memory_block, PromptMemoryBlockPatch, PromptMemoryBlockWrite,
+            archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_role,
+            patch_prompt_memory_block, upsert_prompt_memory_block, PromptMemoryBlockPatch,
+            PromptMemoryBlockWrite,
         },
         prompt_memory_blocks::{
             PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
@@ -3812,6 +3813,17 @@ async fn prompt_memory_upsert(
         },
     )
     .await?;
+    let superseded_archived = if let Some(supersedes_block_id) = args.supersedes_block_id.as_deref() {
+        archive_prompt_memory_blocks_superseded_by(
+            pool,
+            context.bear_id,
+            role.as_str(),
+            supersedes_block_id,
+        )
+        .await?
+    } else {
+        0
+    };
     Ok(json!({
         "status": "ok",
         "block_id": block_id,
@@ -3823,6 +3835,8 @@ async fn prompt_memory_upsert(
         "work_surface": args.work_surface,
         "session_id": args.session_id,
         "metadata": metadata,
+        "supersedes_block_id": args.supersedes_block_id,
+        "superseded_archived_count": superseded_archived,
         "source": "prompt_memory_blocks"
     }))
 }
@@ -5636,6 +5650,210 @@ mod tests {
         .await
         .expect("list all prompt memory blocks");
         assert!(listed_all["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
+    }
+
+
+    #[tokio::test]
+    async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_then_bear() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let role_slug = BearAgentRole::Pair.as_str();
+        let session_id = format!("sess-{}", Uuid::new_v4());
+        let work_surface = format!("ws-{}", Uuid::new_v4());
+        let ids = [
+            format!("pm-bear-{}", Uuid::new_v4()),
+            format!("pm-role-{}", Uuid::new_v4()),
+            format!("pm-surface-{}", Uuid::new_v4()),
+            format!("pm-session-{}", Uuid::new_v4()),
+        ];
+        let writes = vec![
+            PromptMemoryBlockWrite {
+                block_id: ids[0].clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.to_string()),
+                scope: PromptMemoryBlockScope::BearWide,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Bear".to_string(),
+                body: "Bear-wide guidance".to_string(),
+                priority: 1,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: ids[1].clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.to_string()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Role".to_string(),
+                body: "Role guidance".to_string(),
+                priority: 1,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: ids[2].clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.to_string()),
+                scope: PromptMemoryBlockScope::WorkSurface,
+                block_type: PromptMemoryBlockType::WorkSurfaceContext,
+                state: PromptMemoryBlockState::Active,
+                work_surface: Some(work_surface.clone()),
+                session_id: None,
+                title: "Surface".to_string(),
+                body: "Work-surface context".to_string(),
+                priority: 1,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: ids[3].clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.to_string()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Session".to_string(),
+                body: "Session focus".to_string(),
+                priority: 1,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: json!({}),
+            },
+        ];
+        for write in &writes {
+            upsert_prompt_memory_block(&pool, write).await.expect("seed prompt memory block");
+        }
+        let selection = crate::core::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
+            &pool,
+            crate::core::prompt_memory_block_store::PromptMemoryBlockQuery {
+                bear_id: Some(bear_id),
+                role_slug,
+                session_id: &session_id,
+                work_surfaces: std::slice::from_ref(&work_surface),
+            },
+        )
+        .await
+        .expect("runtime selection");
+        let compiled = crate::core::prompt_memory_blocks::compile_prompt_memory_blocks(
+            &selection.blocks,
+            crate::core::prompt_memory_blocks::PromptMemoryCompilationInput {
+                role: role_slug,
+                work_surfaces: std::slice::from_ref(&work_surface),
+                session_id: &session_id,
+                max_blocks: 4,
+            },
+        );
+        let included_ids = compiled
+            .included_blocks
+            .iter()
+            .map(|block| block.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(included_ids, vec![ids[3].clone(), ids[2].clone(), ids[1].clone(), ids[0].clone()]);
+        assert_eq!(selection.diagnostic["matched_count"], 4);
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_upsert_archives_superseded_block() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let context = DenToolInvocationContext {
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            role_agent_id: "agent-test".to_string(),
+            agent_role: Some(BearAgentRole::Pair),
+            user_id: 1,
+            username: Some("tester".to_string()),
+            membership_role: Some("owner".to_string()),
+            conversation_id: "conv-test".to_string(),
+            session_id: "sess-test".to_string(),
+            acp_session_id: Some("sess-test".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: Some("req-test".to_string()),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("zed".to_string()),
+                protocol: Some("acp".to_string()),
+            },
+        };
+        let original_block_id = format!("pm-original-{}", Uuid::new_v4());
+        prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": original_block_id,
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "Original focus",
+                "body": "Original body",
+                "priority": 3
+            }),
+        )
+        .await
+        .expect("upsert original block");
+        let replacement = prompt_memory_upsert(
+            &pool,
+            &context,
+            BearAgentRole::Pair,
+            json!({
+                "block_id": format!("pm-replacement-{}", Uuid::new_v4()),
+                "scope": "session",
+                "block_type": "session_focus",
+                "session_id": "sess-test",
+                "title": "Replacement focus",
+                "body": "Replacement body",
+                "priority": 5,
+                "supersedes_block_id": original_block_id
+            }),
+        )
+        .await
+        .expect("upsert replacement block");
+        assert_eq!(replacement["superseded_archived_count"], 1);
+        let listed_all = prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({"include_archived": true}))
+            .await
+            .expect("list prompt memory blocks");
+        let original = listed_all["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|block| block["id"] == replacement["supersedes_block_id"])
+            .expect("original block should still be listed when archived included");
+        assert_eq!(original["state"], "archived");
     }
 
     #[test]
