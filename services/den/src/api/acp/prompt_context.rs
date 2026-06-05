@@ -10,6 +10,11 @@ use crate::{
     core::{
         acp_plan_mode,
         acp_tools::AcpResolvedSessionPolicy,
+        prompt_memory_blocks::{
+            compile_prompt_memory_blocks, render_prompt_memory_block_context,
+            PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
+            PromptMemoryBlockType, PromptMemoryCompilationInput,
+        },
         runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
         runtime_compaction_observability::RuntimeCompactionEventStatus,
         runtime_conversations::RuntimeCompactionTriggerKind,
@@ -42,6 +47,60 @@ pub(crate) fn acp_direct_tool_prompt_context(
         None,
         None,
     )
+}
+
+fn prompt_memory_block_prompt_context(
+    session_id: &str,
+    roots: &[String],
+) -> String {
+    let mut blocks = vec![PromptMemoryBlock {
+        id: "pair-role-guidance".to_string(),
+        block_type: PromptMemoryBlockType::RoleGuidance,
+        scope: PromptMemoryBlockScope::RoleLocal,
+        state: PromptMemoryBlockState::Active,
+        role: Some("pair".to_string()),
+        work_surface: None,
+        session_id: None,
+        title: "pair-role-guidance".to_string(),
+        body: "Prompt memory blocks are Den-owned editable in-context state. Treat them as distinct from transcript history, retrieval results, and compaction artifacts.".to_string(),
+        priority: 50,
+    }];
+    for root in roots {
+        blocks.push(PromptMemoryBlock {
+            id: format!("workspace-surface:{}", root),
+            block_type: PromptMemoryBlockType::WorkSurfaceContext,
+            scope: PromptMemoryBlockScope::WorkSurface,
+            state: PromptMemoryBlockState::Active,
+            role: None,
+            work_surface: Some(root.clone()),
+            session_id: None,
+            title: format!("workspace-surface:{}", root),
+            body: format!("Work-surface-attached prompt context applies to workspace root `{}` and should outrank broader Bear defaults for this surface.", root),
+            priority: 40,
+        });
+    }
+    blocks.push(PromptMemoryBlock {
+        id: format!("session-focus:{}", session_id),
+        block_type: PromptMemoryBlockType::SessionFocus,
+        scope: PromptMemoryBlockScope::Session,
+        state: PromptMemoryBlockState::Active,
+        role: None,
+        work_surface: None,
+        session_id: Some(session_id.to_string()),
+        title: format!("session-focus:{}", session_id),
+        body: "Session-scoped prompt focus may temporarily outrank broader role-local context for the current ACP session.".to_string(),
+        priority: 60,
+    });
+    let compilation = compile_prompt_memory_blocks(
+        &blocks,
+        PromptMemoryCompilationInput {
+            role: "pair",
+            work_surfaces: roots,
+            session_id,
+            max_blocks: 4,
+        },
+    );
+    render_prompt_memory_block_context(&compilation)
 }
 
 fn runtime_compaction_prompt_context(
@@ -174,6 +233,7 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
+    guidance.push(prompt_memory_block_prompt_context(session_id, &roots));
     guidance.push(runtime_compaction_prompt_context(session_id, client_context, activity_plan));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());

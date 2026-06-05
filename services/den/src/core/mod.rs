@@ -99,6 +99,7 @@ mod memory_manager_head_append_markdown_tests;
 pub mod memory_proposals;
 pub mod pair_reflection;
 pub mod pair_turn;
+pub mod prompt_memory_blocks;
 pub mod reflection_conductor;
 pub mod role_runtime;
 #[cfg(test)]

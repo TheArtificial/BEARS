@@ -1,6 +1,10 @@
 use super::*;
 use uuid::Uuid;
 use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
+use crate::core::prompt_memory_blocks::{
+    compile_prompt_memory_blocks, PromptMemoryBlock, PromptMemoryBlockScope,
+    PromptMemoryBlockState, PromptMemoryBlockType, PromptMemoryCompilationInput,
+};
 
     use bytes::Bytes;
     use reqwest::StatusCode;
@@ -137,6 +141,77 @@ use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamC
         assert!(envelope.get("workflow_state").is_some());
         assert!(envelope.get("recent_groups").is_some());
         assert!(envelope.get("compacted_context").is_some());
+    }
+
+    #[test]
+    fn prompt_memory_block_compilation_prefers_session_then_surface_then_role_scope() {
+        let work_surfaces = vec!["/workspace".to_string()];
+        let blocks = vec![
+            PromptMemoryBlock {
+                id: "bear".to_string(),
+                block_type: PromptMemoryBlockType::UserInstruction,
+                scope: PromptMemoryBlockScope::BearWide,
+                state: PromptMemoryBlockState::Active,
+                role: None,
+                work_surface: None,
+                session_id: None,
+                title: "bear".to_string(),
+                body: "bear default".to_string(),
+                priority: 1,
+            },
+            PromptMemoryBlock {
+                id: "role".to_string(),
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                scope: PromptMemoryBlockScope::RoleLocal,
+                state: PromptMemoryBlockState::Active,
+                role: Some("pair".to_string()),
+                work_surface: None,
+                session_id: None,
+                title: "role".to_string(),
+                body: "role guidance".to_string(),
+                priority: 1,
+            },
+            PromptMemoryBlock {
+                id: "surface".to_string(),
+                block_type: PromptMemoryBlockType::WorkSurfaceContext,
+                scope: PromptMemoryBlockScope::WorkSurface,
+                state: PromptMemoryBlockState::Active,
+                role: None,
+                work_surface: Some("/workspace".to_string()),
+                session_id: None,
+                title: "surface".to_string(),
+                body: "surface context".to_string(),
+                priority: 1,
+            },
+            PromptMemoryBlock {
+                id: "session".to_string(),
+                block_type: PromptMemoryBlockType::SessionFocus,
+                scope: PromptMemoryBlockScope::Session,
+                state: PromptMemoryBlockState::Active,
+                role: None,
+                work_surface: None,
+                session_id: Some("sess-1".to_string()),
+                title: "session".to_string(),
+                body: "session focus".to_string(),
+                priority: 1,
+            },
+        ];
+
+        let compiled = compile_prompt_memory_blocks(
+            &blocks,
+            PromptMemoryCompilationInput {
+                role: "pair",
+                work_surfaces: &work_surfaces,
+                session_id: "sess-1",
+                max_blocks: 4,
+            },
+        );
+        let ids = compiled
+            .included_blocks
+            .iter()
+            .map(|block| block.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["session", "surface", "role", "bear"]);
     }
 
     #[test]

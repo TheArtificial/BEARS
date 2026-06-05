@@ -558,6 +558,8 @@ That work is now tracked as **Epic B2 — Compaction runtime integration and per
 
 #### Epic C — Editable in-context memory block replacement
 
+**Status:** completed for the initial runtime prompt-compilation slice.
+
 **Goal:** replace Letta-style editable memory blocks with a Den-owned memory-block and prompt-compilation model.
 
 ##### Deliverables
@@ -638,14 +640,49 @@ Landed design artifacts:
   - compaction artifacts.
 - The design explicitly avoids provider-shaped agent attachment semantics and does not require a pluggable backend architecture.
 
-##### Remaining execution note
+##### Implementation status
 
-What remains after this epic is implementation rollout rather than missing replacement definition:
+Epic C is now complete for the initial runtime prompt-compilation slice.
 
-- persistent schema implementation,
-- block mutation workflows/tools,
-- prompt compiler integration,
-- and eventual diagnostics/admin visibility for block inclusion behavior.
+Landed code-facing implementation slices:
+
+- `core/prompt_memory_blocks.rs`
+  - Den-owned prompt memory block types,
+  - scope/lifecycle enums,
+  - precedence-aware compilation,
+  - prompt-budget omission handling,
+  - render helper for prompt inclusion.
+- `api/acp/prompt_context.rs`
+  - ACP prompt assembly now includes a Den-owned prompt-memory-block context layer before workflow/transcript compaction context.
+  - The current slice compiles representative role-local, work-surface, and session-scoped blocks to exercise the Den-owned compilation model in a live runtime path.
+- `api/acp/tests.rs`
+  - regression coverage for prompt memory block precedence and compilation order.
+
+##### Deliverable mapping
+
+**Block model definition**
+- Satisfied for the initial runtime slice.
+- Den now has explicit block types, scopes, lifecycle state, identity, title/body content, and priority ordering in code.
+
+**Mutation and audit semantics**
+- Partially satisfied for this slice.
+- Lifecycle semantics are now represented in code (`draft`, `active`, `superseded`, `archived`), but full persisted mutation workflows remain follow-on work.
+
+**Prompt compilation rules**
+- Satisfied for the initial runtime slice.
+- Compilation now explicitly enforces:
+  - scope eligibility,
+  - scope precedence,
+  - priority ordering,
+  - and bounded inclusion with omitted-block reporting.
+
+**Migration boundary from existing memory systems**
+- Satisfied for runtime prompt assembly in this slice.
+- ACP prompt context now treats prompt memory blocks as a distinct layer, separate from compaction context, workflow state, transcript, and tool guidance.
+
+##### Follow-on note
+
+Further rollout can still add persistent schema, mutation tools/workflows, and richer diagnostics/admin visibility, but the core Letta replacement responsibility—Den-owned scoped prompt-block compilation into runtime context—is now live and tested.
 
 ##### Acceptance
 
