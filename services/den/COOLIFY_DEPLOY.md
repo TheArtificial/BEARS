@@ -145,13 +145,13 @@ A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../../.github/wor
 The workflow:
 
 - Builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata (no database needed at build time).
-- Tags images as **`ghcr.io/theartificial/den:latest`** and **`ghcr.io/theartificial/den:<short-sha>`**.
+- Tags images as **`ghcr.io/bears-ai/den:latest`** and **`ghcr.io/theartificial/den:<short-sha>`**.
 - Uses GitHub Actions layer cache (`type=gha`) so unchanged layers are reused across builds.
 
 ### Coolify setup
 
 1. **Add New Resource** → **Docker Image**.
-2. Set **Image** to `ghcr.io/theartificial/den:latest` (or pin a SHA tag for reproducibility).
+2. Set **Image** to `ghcr.io/bears-ai/den:latest` (or pin a SHA tag for reproducibility).
 3. If the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
    ```
    echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USER> --password-stdin

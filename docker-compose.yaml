@@ -246,7 +246,7 @@ services:
         # Pre-built image (native deps compile in CI). Build in CI:
         # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
         # Local smoke/dev build from source: set CODEPOOL_IMAGE=bears-codepool-dev:latest and CODEPOOL_PULL_POLICY=never.
-        image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
+        image: ${CODEPOOL_IMAGE:-ghcr.io/bears-ai/codepool:latest}
         # CI pushes :latest to GHCR; production pulls always. Dev/smoke sets CODEPOOL_PULL_POLICY=never
         # with CODEPOOL_IMAGE=bears-codepool-dev:latest so source changes are tested.
         pull_policy: ${CODEPOOL_PULL_POLICY:-always}
@@ -307,7 +307,7 @@ services:
         # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
         # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
         # Local smoke/dev build from source: set DEN_IMAGE=bears-den-dev:latest and DEN_PULL_POLICY=never.
-        image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
+        image: ${DEN_IMAGE:-ghcr.io/bears-ai/den:latest}
         # Same as bears-codepool: production pulls always. Dev/smoke sets DEN_PULL_POLICY=never
         # with DEN_IMAGE=bears-den-dev:latest so source changes are tested.
         pull_policy: ${DEN_PULL_POLICY:-always}
