@@ -806,6 +806,113 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn acp_runtime_sse_stream_holds_terminal_until_tool_result_continuation_is_drained() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4();
+        let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let (_result_tx_unused, result_rx) = tokio::sync::oneshot::channel();
+
+        let active_turn_guard = tool_turns
+            .acquire_active_turn(&acp_session_id, request_id, Some(conversation_id.clone()))
+            .expect("acquire active turn");
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: tool_turns.clone(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id,
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(tool_turns.clone()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
+        let mut stream = AcpRuntimeSseStream::new(inner, context, Vec::new(), false, crate::core::role_runtime::RoleTurnGuard { guard: active_turn_guard });
+        stream.waiting_adapter_tool_result = Some((
+            tool_call_id.clone(),
+            "functions.fs.read_text_file".to_string(),
+            AcpResolvedToolResult::Receiver(result_rx),
+        ));
+        stream.turn_controller.on_tool_request(
+            tool_call_id.clone(),
+            "functions.fs.read_text_file".to_string(),
+            crate::core::acp_turn_controller::AcpToolExecutionRoute::DenServer,
+        );
+        stream.turn_controller.on_stream_end();
+
+        let role_result = stream.context.role_runtime.turn_result(
+            crate::core::role_runtime::TurnResultStatus::Ok,
+            crate::core::role_runtime::TurnResultReason::StreamComplete,
+            request_id,
+            stream.context.turn_scope.clone(),
+            false,
+            serde_json::json!({"test": "continuation_hold"}),
+        );
+        stream.push_terminal_result_when_ready(role_result);
+        assert!(stream.pending.is_empty(), "terminal should be held while tool continuation is pending");
+
+        stream.persist_future = Some(AcpPendingFuture::Tool(Box::pin(async move {
+            Some(Box::new(AcpToolResultRequest {
+                request_id: Some(request_id.to_string()),
+                tool_call_id: Some(tool_call_id.clone()),
+                tool_name: Some("functions.fs.read_text_file".to_string()),
+                status: "timed_out".to_string(),
+                content: Some("tool timed out".to_string()),
+                structured_content: serde_json::json!({"kind": "timeout"}),
+                diagnostic: serde_json::json!({"timeout": true}),
+                ..Default::default()
+            }))
+        })));
+
+        use futures::StreamExt;
+        let first = stream.next().await.expect("tool result event frame").expect("ok frame");
+        let first_text = String::from_utf8(first.to_vec()).expect("utf8 frame");
+        assert!(first_text.contains("tool_result"), "expected tool_result frame, got: {first_text}");
+
+        assert!(stream.queued_tool_result_continuation.is_some(), "tool result should queue runtime continuation");
+        assert!(stream.pending.iter().all(|frame| !String::from_utf8_lossy(frame).contains("turn_result")));
+    }
+
+    #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;

@@ -331,7 +331,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    guard: crate::core::acp_tool_turns::AcpActiveTurnGuard,
+    pub(crate) guard: crate::core::acp_tool_turns::AcpActiveTurnGuard,
 }
 
 impl RoleTurnGuard {
