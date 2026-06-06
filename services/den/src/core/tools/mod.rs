@@ -1,6 +1,10 @@
 pub mod descriptor;
-pub mod memory;
+pub mod memfs;
+pub mod memory_read;
+pub mod memory_write;
+pub mod prompt_memory;
 pub mod session;
+pub mod support;
 pub mod web;
 pub mod work_surface;
 pub mod workflow;

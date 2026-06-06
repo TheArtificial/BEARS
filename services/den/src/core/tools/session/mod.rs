@@ -31,6 +31,17 @@ use crate::core::den_tools::{
     DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_REQUEST_HANDOFF,
     DEN_WORK_PLAN_UPDATE, DenToolChannelContext, ToolPreflight,
 };
+use crate::core::tools::{
+    memfs::{fetch_role_memory_tree, memfs_http_client},
+    memory_read::{memory_browse, memory_read, memory_search, memory_status},
+    memory_write::write_memory_entry,
+    prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
+    web::{web_fetch, web_search},
+    work_surface::{
+        build_work_surface_orientation_payload, collect_memory_tree_paths,
+        create_work_surface_scaffold, infer_work_surface_hint, work_surface_candidate_slug,
+    },
+};
 
 fn clean_optional(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -39,6 +50,37 @@ fn clean_optional(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+async fn memory_orient_work_surface(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let hint_payload = infer_work_surface_hint(context, role);
+    let candidate_slug = work_surface_candidate_slug(context);
+    let http = memfs_http_client("MemFS work-surface orientation client build failed")?;
+    let tree = fetch_role_memory_tree(&http, &config.letta_memfs_service_url, context.bear_id, role.as_str()).await?;
+    let Some(tree) = tree else {
+        return Ok(json!({
+            "ok": false,
+            "configured": false,
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)",
+            "orientation": build_work_surface_orientation_payload(role, &hint_payload, &[], candidate_slug),
+        }));
+    };
+    let mut files = Vec::new();
+    collect_memory_tree_paths(&tree.files, &mut files);
+    let orientation =
+        build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+    Ok(json!({
+        "ok": tree.ok,
+        "configured": true,
+        "bear_id": context.bear_id,
+        "role": role.as_str(),
+        "canonical_tip": tree.canonical_tip,
+        "orientation": orientation,
+    }))
 }
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {
@@ -143,19 +185,25 @@ pub async fn invoke_den_tool(
         DEN_CONVERSATION_SET_TITLE => {
             set_conversation_title(pool, config, &context, arguments).await
         }
-        DEN_WEB_FETCH
-        | DEN_WEB_SEARCH
-        | DEN_MEMORY_WRITE_ENTRY
-        | DEN_MEMORY_STATUS
-        | DEN_MEMORY_TREE
-        | DEN_MEMORY_READ
-        | DEN_MEMORY_SEARCH
-        | DEN_MEMORY_ORIENT_WORK_SURFACE
-        | DEN_PROMPT_MEMORY_UPSERT
-        | DEN_PROMPT_MEMORY_LIST
-        | DEN_PROMPT_MEMORY_PATCH
-        | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
-        | DEN_MEMORY_REQUEST_REVIEW
+        DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
+        DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
+        DEN_MEMORY_WRITE_ENTRY => {
+            write_memory_entry(pool, config, &context, role, arguments).await
+        }
+        DEN_MEMORY_STATUS => memory_status(pool, config, &context, role).await,
+        DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
+        DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
+        DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
+        DEN_MEMORY_ORIENT_WORK_SURFACE => {
+            memory_orient_work_surface(config, &context, role).await
+        }
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
+            create_work_surface_scaffold(config, &context, role, arguments).await
+        }
+        DEN_PROMPT_MEMORY_UPSERT => prompt_memory_upsert(pool, &context, role, arguments).await,
+        DEN_PROMPT_MEMORY_LIST => prompt_memory_list(pool, &context, role, arguments).await,
+        DEN_PROMPT_MEMORY_PATCH => prompt_memory_patch(pool, &context, role, arguments).await,
+        DEN_MEMORY_REQUEST_REVIEW
         | DEN_MEMORY_LIST_PROPOSALS
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
