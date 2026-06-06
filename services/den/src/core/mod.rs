@@ -43,57 +43,27 @@ pub mod den_tools;
 pub mod tools {
     pub mod memory {
         #[cfg(test)]
-        mod apply_core_update_projection_tests {
-            include!("den_tools_apply_core_update_projection_tests.rs");
-        }
-        #[cfg(test)]
-        mod request_review_projection_tests {
-            include!("den_tools_memory_request_review_projection_tests.rs");
-        }
-        #[cfg(test)]
-        mod resolve_proposal_projection_tests {
-            include!("den_tools_memory_resolve_proposal_projection_tests.rs");
-        }
-        #[cfg(test)]
-        mod write_tests {
-            include!("den_tools_memory_write_tests.rs");
-        }
+        mod test;
     }
 
     pub mod descriptor {
         #[cfg(test)]
-        mod guidance_tests {
-            include!("den_tools_descriptor_guidance_tests.rs");
-        }
+        mod test;
     }
 
     pub mod session {
         #[cfg(test)]
-        mod info_tests {
-            include!("den_tools_session_info_tests.rs");
-        }
-        #[cfg(test)]
-        mod role_semantics_tests {
-            include!("den_tools_session_role_semantics_tests.rs");
-        }
+        mod test;
     }
 
     pub mod work_surface {
         #[cfg(test)]
-        mod orientation_tests {
-            include!("den_tools_work_surface_orientation_tests.rs");
-        }
-        #[cfg(test)]
-        mod scaffold_tests {
-            include!("den_tools_work_surface_scaffold_tests.rs");
-        }
+        mod test;
     }
 
     pub mod workflow {
         #[cfg(test)]
-        mod state_tests {
-            include!("den_tools_workflow_state_tests.rs");
-        }
+        mod test;
     }
 }
 pub mod email;
