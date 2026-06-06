@@ -419,8 +419,8 @@ use crate::core::prompt_memory_blocks::{
             request_id,
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::default(),
-            turn_scope: RoleTurnScope::Session { acp_session_id: acp_session_id.clone() },
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
         };
 
@@ -433,12 +433,21 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let stored_session = acp_sessions::get_by_session_id(&pool, user_id, bear_id, &acp_session_id)
-            .await
-            .expect("reload acp session")
-            .expect("session exists");
+        let stored_session_resolved = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            SELECT resolved_conversation_id
+            FROM acp_sessions
+            WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+            "#,
+        )
+        .bind(user_id)
+        .bind(bear_id)
+        .bind(&acp_session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("reload resolved conversation id");
         assert_eq!(
-            stored_session.resolved_conversation_id.as_deref(),
+            stored_session_resolved.as_deref(),
             Some(resolved_conversation_id.as_str())
         );
 
@@ -462,13 +471,21 @@ use crate::core::prompt_memory_blocks::{
         .expect("list canonical messages");
         let resolved_event = page
             .into_iter()
-            .find(|message| {
-                message.message_type == "workflow_event"
-                    && message.content_text == "Conversation resolved"
-            })
+            .find(|message| message.message_type == "workflow_event")
             .expect("conversation_resolved workflow event persisted");
-        let content_json: serde_json::Value = serde_json::from_str(&resolved_event.content_text)
-            .unwrap_or_else(|_| resolved_event.content_json.clone());
+        assert_eq!(resolved_event.content_text, "Conversation resolved");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(resolved_event.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load workflow event content_json");
         assert_eq!(content_json["event"], serde_json::json!("conversation_resolved"));
         assert_eq!(
             content_json["conversation_id"],
