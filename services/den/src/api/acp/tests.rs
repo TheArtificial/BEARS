@@ -371,6 +371,117 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn acp_conversation_resolved_side_effect_persists_canonical_workflow_event() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let pending_conversation_id = format!("new-{}", Uuid::new_v4());
+        let resolved_conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4();
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: pending_conversation_id.clone(),
+                resolved_conversation_id: None,
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: pending_conversation_id.clone(),
+            conversation_selection: pending_conversation_id.clone(),
+            resolved_conversation_id: None,
+            upstream_target: resolved_conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id,
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::default(),
+            turn_scope: RoleTurnScope::Session { acp_session_id: acp_session_id.clone() },
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        let mut event = AcpGatewayEvent::ConversationResolved {
+            conversation_id: resolved_conversation_id.clone(),
+        };
+        super::stream::runtime::persist_stream_event_side_effects(&context, &mut event)
+            .await
+            .expect("persist stream side effects");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let stored_session = acp_sessions::get_by_session_id(&pool, user_id, bear_id, &acp_session_id)
+            .await
+            .expect("reload acp session")
+            .expect("session exists");
+        assert_eq!(
+            stored_session.resolved_conversation_id.as_deref(),
+            Some(resolved_conversation_id.as_str())
+        );
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &resolved_conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(
+            &pool,
+            canonical.id,
+            None,
+            20,
+        )
+        .await
+        .expect("list canonical messages");
+        let resolved_event = page
+            .into_iter()
+            .find(|message| {
+                message.message_type == "workflow_event"
+                    && message.content_text == "Conversation resolved"
+            })
+            .expect("conversation_resolved workflow event persisted");
+        let content_json: serde_json::Value = serde_json::from_str(&resolved_event.content_text)
+            .unwrap_or_else(|_| resolved_event.content_json.clone());
+        assert_eq!(content_json["event"], serde_json::json!("conversation_resolved"));
+        assert_eq!(
+            content_json["conversation_id"],
+            serde_json::json!(resolved_conversation_id)
+        );
+        assert_eq!(content_json["source"], serde_json::json!("acp"));
+        assert_eq!(
+            content_json["scope_id"],
+            serde_json::json!(format!("acp:{}", acp_session_id))
+        );
+    }
+
+    #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
