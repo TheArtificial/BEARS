@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::Arc;
+use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
 use crate::core::tools::constants::{
@@ -16,8 +18,9 @@ use crate::core::prompt_memory_blocks::{
     use bytes::Bytes;
     use reqwest::StatusCode;
     use crate::{
+        config::Config,
         errors::CustomError,
-        api::acp::{
+        api::{acp::{
             history::{
                 acp_auto_title_instruction, map_acp_history_page,
                 map_canonical_history_page, map_compaction_status_for_history,
@@ -35,7 +38,7 @@ use crate::core::prompt_memory_blocks::{
                 text::AcpTextChunker,
             },
             tool_results::acp_tool_result_response_from_delivery,
-        },
+        }, service::ApiState},
         core::{
             acp_letta_events::AcpGatewayEvent,
             acp_runtime::{
@@ -47,7 +50,9 @@ use crate::core::prompt_memory_blocks::{
                 AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
                 AcpToolTurnRegistration,
             },
-            acp_tools::AcpToolStatus,
+            acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
+            bears::BearAgentRole,
+            prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
             acp_turn_controller::{
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
@@ -56,6 +61,205 @@ use crate::core::prompt_memory_blocks::{
             role_runtime::{RoleRuntime, RoleTurnScope},
         },
     };
+
+    fn prompt_memory_test_state(pool: sqlx::PgPool) -> ApiState {
+        ApiState {
+            sqlx_pool: pool,
+            config: Arc::new(Config::test_stub()),
+            letta: Arc::new(crate::core::letta::LettaClient::new(&Config::test_stub())),
+            bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(&Config::test_stub())),
+            acp_tool_turns: AcpToolTurnCoordinator::new(),
+            acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+        }
+    }
+
+    fn prompt_memory_test_policy() -> AcpResolvedSessionPolicy {
+        AcpResolvedSessionPolicy {
+            mode_label: "Write",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::AllTools,
+            plan_mode_state: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn acp_prompt_context_with_activity_uses_persisted_prompt_memory_blocks() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let session_id = format!("sess-{}", Uuid::new_v4());
+        let root = format!("/workspace/test-{}", Uuid::new_v4());
+        upsert_prompt_memory_block(
+            &pool,
+            &PromptMemoryBlockWrite {
+                block_id: format!("pm-session-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Current focus".to_string(),
+                body: "Use persisted prompt memory from storage.".to_string(),
+                priority: 5,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await
+        .expect("seed prompt memory block");
+        let state = prompt_memory_test_state(pool);
+        let policy = prompt_memory_test_policy();
+        let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
+            &state,
+            bear_id,
+            &session_id,
+            &root,
+            &serde_json::json!({ "workspace_roots": [root.clone()] }),
+            true,
+            &policy,
+            None,
+            None,
+        )
+        .await
+        .expect("prompt context");
+        assert!(prompt.contains("Current focus"));
+        assert!(prompt.contains("Use persisted prompt memory from storage."));
+        assert_eq!(diagnostic["source"], "prompt_memory_blocks");
+        assert_eq!(diagnostic["persisted"], true);
+        assert_eq!(diagnostic["matched_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn acp_prompt_context_with_activity_excludes_archived_blocks_from_runtime_prompt_memory() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let session_id = format!("sess-{}", Uuid::new_v4());
+        let root = format!("/workspace/test-{}", Uuid::new_v4());
+        upsert_prompt_memory_block(
+            &pool,
+            &PromptMemoryBlockWrite {
+                block_id: format!("pm-archived-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Archived,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Archived focus".to_string(),
+                body: "This archived block should not appear.".to_string(),
+                priority: 5,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await
+        .expect("seed archived prompt memory block");
+        let state = prompt_memory_test_state(pool);
+        let policy = prompt_memory_test_policy();
+        let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
+            &state,
+            bear_id,
+            &session_id,
+            &root,
+            &serde_json::json!({ "workspace_roots": [root.clone()] }),
+            true,
+            &policy,
+            None,
+            None,
+        )
+        .await
+        .expect("prompt context");
+        assert!(!prompt.contains("Archived focus"));
+        assert!(!prompt.contains("This archived block should not appear."));
+        assert_eq!(diagnostic["matched_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn acp_prompt_context_with_activity_reports_persisted_prompt_memory_precedence() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let session_id = format!("sess-{}", Uuid::new_v4());
+        let root = format!("/workspace/test-{}", Uuid::new_v4());
+        let role_slug = BearAgentRole::Pair.as_str().to_string();
+        for (scope, block_type, work_surface, block_session_id, title, body) in [
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::RoleGuidance, None, None, "Bear", "bear default"),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role", "role guidance"),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface", "surface context"),
+            (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session", "session focus"),
+        ] {
+            upsert_prompt_memory_block(
+                &pool,
+                &PromptMemoryBlockWrite {
+                    block_id: format!("pm-{}-{}", title.to_ascii_lowercase(), Uuid::new_v4()),
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope,
+                    block_type,
+                    state: PromptMemoryBlockState::Active,
+                    work_surface,
+                    session_id: block_session_id,
+                    title: title.to_string(),
+                    body: body.to_string(),
+                    priority: 1,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("seed prompt memory block");
+        }
+        let state = prompt_memory_test_state(pool);
+        let policy = prompt_memory_test_policy();
+        let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
+            &state,
+            bear_id,
+            &session_id,
+            &root,
+            &serde_json::json!({ "workspace_roots": [root.clone()] }),
+            true,
+            &policy,
+            None,
+            None,
+        )
+        .await
+        .expect("prompt context");
+        let session_index = prompt.find("Session").expect("session block present");
+        let surface_index = prompt.find("Surface").expect("surface block present");
+        let role_index = prompt.find("Role").expect("role block present");
+        let bear_index = prompt.find("Bear").expect("bear block present");
+        assert!(session_index < surface_index);
+        assert!(surface_index < role_index);
+        assert!(role_index < bear_index);
+        assert_eq!(diagnostic["matched_count"], 4);
+    }
 
     #[test]
     fn acp_prompt_requested_mode_is_normalized() {

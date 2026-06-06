@@ -28,6 +28,11 @@ use crate::{
 };
 
 
+/// Lightweight direct-tool prompt context used by workflow-state and descriptor-surface tests.
+///
+/// This path intentionally uses synthetic prompt-memory scaffolding rather than persisted
+/// selection from storage. Production/runtime prompt assembly should use
+/// `acp_direct_tool_prompt_context_with_activity`, which consults the prompt-memory store.
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
