@@ -1,6 +1,7 @@
 pub mod descriptor;
 pub mod memfs;
 pub mod memory_read;
+pub mod memory_review;
 pub mod memory_write;
 pub mod prompt_memory;
 pub mod session;

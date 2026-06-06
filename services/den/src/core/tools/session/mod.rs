@@ -34,6 +34,10 @@ use crate::core::den_tools::{
 use crate::core::tools::{
     memfs::{fetch_role_memory_tree, memfs_http_client},
     memory_read::{memory_browse, memory_read, memory_search, memory_status},
+    memory_review::{
+        apply_core_update, list_memory_proposals, read_memory_proposal,
+        request_memory_review, resolve_memory_proposal,
+    },
     memory_write::write_memory_entry,
     prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
     web::{web_fetch, web_search},
@@ -203,11 +207,11 @@ pub async fn invoke_den_tool(
         DEN_PROMPT_MEMORY_UPSERT => prompt_memory_upsert(pool, &context, role, arguments).await,
         DEN_PROMPT_MEMORY_LIST => prompt_memory_list(pool, &context, role, arguments).await,
         DEN_PROMPT_MEMORY_PATCH => prompt_memory_patch(pool, &context, role, arguments).await,
-        DEN_MEMORY_REQUEST_REVIEW
-        | DEN_MEMORY_LIST_PROPOSALS
-        | DEN_MEMORY_READ_PROPOSAL
-        | DEN_MEMORY_RESOLVE_PROPOSAL
-        | DEN_MEMORY_APPLY_CORE_UPDATE
+        DEN_MEMORY_REQUEST_REVIEW => request_memory_review(pool, &context, role, arguments).await,
+        DEN_MEMORY_LIST_PROPOSALS => list_memory_proposals(pool, &context, role, arguments).await,
+        DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
+        DEN_MEMORY_RESOLVE_PROPOSAL => resolve_memory_proposal(pool, &context, role, arguments).await,
+        DEN_MEMORY_APPLY_CORE_UPDATE => apply_core_update(pool, config, &context, role, arguments).await,
         | DEN_WORK_PLAN_LIST
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
