@@ -25,7 +25,10 @@ use crate::core::prompt_memory_blocks::{
                 acp_auto_title_instruction, map_acp_history_page,
                 map_canonical_history_page, map_compaction_status_for_history,
             },
-            prompt_context::acp_direct_tool_prompt_context_with_activity,
+            prompt_context::{
+                acp_direct_tool_prompt_context_with_activity,
+                render_prompt_memory_runtime_selection,
+            },
             stream::{
                 mapping::{
                     map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
@@ -52,7 +55,10 @@ use crate::core::prompt_memory_blocks::{
             },
             acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
             bears::BearAgentRole,
-            prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
+            prompt_memory_block_store::{
+                select_prompt_memory_blocks_for_runtime, upsert_prompt_memory_block,
+                PromptMemoryBlockQuery, PromptMemoryBlockWrite,
+            },
             acp_turn_controller::{
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
@@ -273,6 +279,99 @@ use crate::core::prompt_memory_blocks::{
             diagnostic["matched_block_ids"],
             serde_json::json!(seeded_block_ids)
         );
+    }
+
+    #[tokio::test]
+    async fn persisted_prompt_memory_runtime_selection_render_reports_budget_omissions() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+        let pool = match PgPoolOptions::new().connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(_) => return,
+        };
+        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+            return;
+        }
+        let bear_id = Uuid::new_v4();
+        let session_id = format!("sess-{}", Uuid::new_v4());
+        let root = format!("/workspace/test-{}", Uuid::new_v4());
+        let role_slug = BearAgentRole::Pair.as_str().to_string();
+        let seed_specs = vec![
+            (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session focus", "session focus", 100),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface alpha", "surface alpha", 90),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface beta", "surface beta", 80),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role alpha", "role alpha", 70),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role beta", "role beta", 60),
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::UserInstruction, None, None, "Bear alpha", "bear alpha", 50),
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::UserInstruction, None, None, "Bear beta", "bear beta", 40),
+        ];
+        let mut seeded_block_ids = Vec::new();
+        let mut expected_omitted_ids = Vec::new();
+        for (index, (scope, block_type, work_surface, block_session_id, title, body, priority)) in
+            seed_specs.into_iter().enumerate()
+        {
+            let block_id = format!("pm-budget-{}-{}", index, Uuid::new_v4());
+            if index >= 6 {
+                expected_omitted_ids.push(block_id.clone());
+            }
+            seeded_block_ids.push(block_id.clone());
+            upsert_prompt_memory_block(
+                &pool,
+                &PromptMemoryBlockWrite {
+                    block_id,
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope,
+                    block_type,
+                    state: PromptMemoryBlockState::Active,
+                    work_surface,
+                    session_id: block_session_id,
+                    title: title.to_string(),
+                    body: body.to_string(),
+                    priority,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("seed prompt memory block");
+        }
+        let selection = select_prompt_memory_blocks_for_runtime(
+            &pool,
+            PromptMemoryBlockQuery {
+                bear_id: Some(bear_id),
+                role_slug: role_slug.as_str(),
+                work_surfaces: std::slice::from_ref(&root),
+                session_id: session_id.as_str(),
+            },
+        )
+        .await
+        .expect("persisted runtime selection");
+        assert_eq!(selection.diagnostic["source"], "prompt_memory_blocks");
+        assert_eq!(selection.diagnostic["persisted"], true);
+        assert_eq!(selection.diagnostic["matched_count"], 7);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!(seeded_block_ids)
+        );
+
+        let rendered = render_prompt_memory_runtime_selection(
+            &selection,
+            &session_id,
+            &[root.clone()],
+        );
+        assert!(rendered.contains("Session focus"));
+        assert!(rendered.contains("Surface alpha"));
+        assert!(rendered.contains("Surface beta"));
+        assert!(rendered.contains("Role alpha"));
+        assert!(rendered.contains("Role beta"));
+        assert!(rendered.contains("Bear alpha"));
+        assert!(!rendered.contains("Bear beta"));
+        assert!(rendered.contains("Omitted lower-priority blocks due to prompt budgeting:"));
+        for omitted_id in expected_omitted_ids {
+            assert!(rendered.contains(&omitted_id));
+        }
     }
 
     #[test]
