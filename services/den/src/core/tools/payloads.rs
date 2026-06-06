@@ -5,15 +5,16 @@ use crate::{
     core::{
         bears::{db::role_is_bear_admin, BearAgentRole},
         tools::{
+            constants::{
+                DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER,
+                DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE_PROVIDER,
+                DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+            },
             descriptor::builtin_den_tool_descriptors_for_role,
             memory_write::source_acp_session_id,
             session::DenToolInvocationContext,
             support::{memory_read_scopes, memory_write_scopes},
             work_surface::infer_work_surface_hint,
-        },
-        den_tools::{
-            DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_STATUS_PROVIDER,
-            DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
         },
         user,
     },

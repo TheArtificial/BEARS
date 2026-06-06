@@ -3,7 +3,19 @@ use uuid::Uuid;
 
 use crate::{
     api::acp::AcpPromptRequest,
-    core::{bears::BearAgentRole, den_tools},
+    core::{
+        bears::BearAgentRole,
+        tools::{
+            constants::{
+                DEN_CONVERSATION_SET_TITLE, DEN_MEMORY_READ, DEN_MEMORY_REQUEST_REVIEW,
+                DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE,
+                DEN_MEMORY_WRITE_ENTRY, DEN_SITUATION_GET, DEN_WEB_FETCH,
+                DEN_WEB_SEARCH, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST,
+                DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
+            },
+            descriptor::builtin_den_tool_descriptors_for_role,
+        },
+    },
     errors::CustomError,
 };
 
@@ -61,25 +73,25 @@ pub(crate) fn new_acp_conversation_id(client: &str) -> String {
 }
 
 pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
-    let descriptors = den_tools::builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
+    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
         .into_iter()
         .filter(|descriptor| {
             matches!(
                 descriptor.name,
-                den_tools::DEN_CONVERSATION_SET_TITLE
-                    | den_tools::DEN_WEB_FETCH
-                    | den_tools::DEN_WEB_SEARCH
-                    | den_tools::DEN_SITUATION_GET
-                    | den_tools::DEN_MEMORY_WRITE_ENTRY
-                    | den_tools::DEN_MEMORY_STATUS
-                    | den_tools::DEN_MEMORY_TREE
-                    | den_tools::DEN_MEMORY_READ
-                    | den_tools::DEN_MEMORY_SEARCH
-                    | den_tools::DEN_MEMORY_REQUEST_REVIEW
-                    | den_tools::DEN_WORK_PLAN_LIST
-                    | den_tools::DEN_WORK_PLAN_GET_STATUS
-                    | den_tools::DEN_WORK_PLAN_UPDATE
-                    | den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
+                DEN_CONVERSATION_SET_TITLE
+                    | DEN_WEB_FETCH
+                    | DEN_WEB_SEARCH
+                    | DEN_SITUATION_GET
+                    | DEN_MEMORY_WRITE_ENTRY
+                    | DEN_MEMORY_STATUS
+                    | DEN_MEMORY_TREE
+                    | DEN_MEMORY_READ
+                    | DEN_MEMORY_SEARCH
+                    | DEN_MEMORY_REQUEST_REVIEW
+                    | DEN_WORK_PLAN_LIST
+                    | DEN_WORK_PLAN_GET_STATUS
+                    | DEN_WORK_PLAN_UPDATE
+                    | DEN_WORK_PLAN_REQUEST_HANDOFF
             )
         })
         .map(|descriptor| {

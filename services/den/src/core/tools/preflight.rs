@@ -1,13 +1,11 @@
 use serde_json::{json, Value};
 
 use crate::{
-    core::{
-        den_tools::DEN_MEMORY_WRITE_ENTRY,
-        tools::{
-            memory_write::MemoryWriteEntryArguments,
-            session::DenToolInvocationContext,
-            support::{assess_unlabeled_memory_misuse, validate_memory_write_entry_semantics},
-        },
+    core::tools::{
+        constants::DEN_MEMORY_WRITE_ENTRY,
+        memory_write::MemoryWriteEntryArguments,
+        session::DenToolInvocationContext,
+        support::{assess_unlabeled_memory_misuse, validate_memory_write_entry_semantics},
     },
     errors::CustomError,
 };

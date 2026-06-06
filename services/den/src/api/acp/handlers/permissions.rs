@@ -19,7 +19,7 @@ use crate::{
         acp_plan_mode, acp_sessions, acp_tokens,
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
         acp_tools::acp_tool_policy_json_for_provider,
-        den_tools, web_policy,
+        web_policy,
     },
     errors::CustomError,
 };
@@ -237,7 +237,7 @@ pub(super) async fn permission_result_inner(
     let result = if matches!(decision, "allow_once" | "allow_url" | "allow_host") {
         invoke_acp_den_tool(
             &pending.context,
-            den_tools::DEN_WEB_FETCH,
+            crate::core::tools::constants::DEN_WEB_FETCH,
             &pending.provider_name,
             &pending.tool_call_id,
             pending.approval_request_id.as_deref(),

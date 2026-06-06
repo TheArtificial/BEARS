@@ -14,7 +14,11 @@ const WORK_ROLES: &[&str] = &["work"];
 use crate::core::{
     acp_tools::AcpToolDisplayDescriptor,
     bears::BearAgentRole,
-    den_tools::{
+    tool_descriptor_guidance::{
+        render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
+        ToolScopeKind, ToolSideEffectKind,
+    },
+    tools::constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER,
         DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
@@ -47,10 +51,6 @@ use crate::core::{
         DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF,
         DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER, DEN_WORK_PLAN_UPDATE,
         DEN_WORK_PLAN_UPDATE_PROVIDER,
-    },
-    tool_descriptor_guidance::{
-        render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
-        ToolScopeKind, ToolSideEffectKind,
     },
 };
 

@@ -1,4 +1,7 @@
-use crate::core::{acp_sessions, den_tools};
+use crate::core::{
+    acp_sessions,
+    tools::descriptor::builtin_den_tool_descriptor_for_provider_name,
+};
 
 use super::ToolExecutionRoute;
 
@@ -23,7 +26,7 @@ pub(crate) fn acp_archive_target_for_session(
 pub(crate) fn acp_den_provider_to_canonical_tool_name(
     provider_name: &str,
 ) -> Option<&'static str> {
-    den_tools::builtin_den_tool_descriptor_for_provider_name(provider_name)
+    builtin_den_tool_descriptor_for_provider_name(provider_name)
         .map(|descriptor| descriptor.name)
 }
 

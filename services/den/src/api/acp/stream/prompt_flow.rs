@@ -31,7 +31,6 @@ use crate::{
         acp_tokens,
         acp_tools::acp_client_tool_descriptors_for_client_context,
         bears::{db as bears_db, BearAgentRole},
-        den_tools,
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -386,7 +385,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             items.iter().any(|item| {
                 item.get("name")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|name| name == den_tools::DEN_CONVERSATION_SET_TITLE_PROVIDER)
+                    .is_some_and(|name| name == crate::core::tools::constants::DEN_CONVERSATION_SET_TITLE_PROVIDER)
             })
         });
     tracing::info!(

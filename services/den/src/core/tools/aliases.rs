@@ -1,12 +1,21 @@
-use crate::core::den_tools::{
-    DEN_BEAR_ENVIRONMENT, DEN_CONVERSATION_SET_TITLE, DEN_MEMORY_APPLY_CORE_UPDATE,
-    DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ,
-    DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL,
-    DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_TREE_LEGACY_PROVIDER,
-    DEN_MEMORY_WRITE_ENTRY, DEN_PLAN_MODE_RECORD_APPROVAL, DEN_PROMPT_MEMORY_LIST,
-    DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT, DEN_SITUATION_GET,
-    DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER,
-    DEN_WEB_SEARCH,
+use crate::core::tools::constants::{
+    DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS,
+    DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
+    DEN_CORE_WRITE_RESULT_SUMMARY, DEN_MEMORY_APPLY_CORE_UPDATE,
+    DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_LIST_PROPOSALS,
+    DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
+    DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL, DEN_MEMORY_SEARCH,
+    DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_TREE_LEGACY_PROVIDER,
+    DEN_MEMORY_WRITE_ENTRY, DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL,
+    DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_EXIT, DEN_PLAN_MODE_RECORD_APPROVAL,
+    DEN_PLAN_MODE_STATUS, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST,
+    DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT, DEN_RUN_WRITE_RESULT,
+    DEN_SITUATION_GET, DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SKILL_APPROVE_PROPOSAL,
+    DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL, DEN_TASK_APPROVE_INTENT,
+    DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT, DEN_USER_GET_CURRENT,
+    DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_SEARCH,
+    DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_REQUEST_HANDOFF,
+    DEN_WORK_PLAN_UPDATE,
 };
 
 pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
@@ -43,49 +52,49 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
 pub fn is_builtin_den_tool(name: &str) -> bool {
     matches!(
         name,
-        crate::core::den_tools::DEN_BEAR_GET_SELF
-            | crate::core::den_tools::DEN_USER_GET_CURRENT
-            | crate::core::den_tools::DEN_BEAR_LIST_MEMBERS
-            | crate::core::den_tools::DEN_CAPABILITIES_LIST_SELF
-            | crate::core::den_tools::DEN_CHANNEL_GET_CONTEXT
-            | crate::core::den_tools::DEN_POLICY_GET_SELF
-            | crate::core::den_tools::DEN_BEAR_ENVIRONMENT
-            | crate::core::den_tools::DEN_CONVERSATION_SET_TITLE
-            | crate::core::den_tools::DEN_WEB_FETCH
-            | crate::core::den_tools::DEN_WEB_SEARCH
-            | crate::core::den_tools::DEN_SITUATION_GET
-            | crate::core::den_tools::DEN_MEMORY_WRITE_ENTRY
-            | crate::core::den_tools::DEN_MEMORY_STATUS
-            | crate::core::den_tools::DEN_MEMORY_TREE
-            | crate::core::den_tools::DEN_MEMORY_READ
-            | crate::core::den_tools::DEN_MEMORY_SEARCH
-            | crate::core::den_tools::DEN_MEMORY_ORIENT_WORK_SURFACE
-            | crate::core::den_tools::DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
-            | crate::core::den_tools::DEN_MEMORY_REQUEST_REVIEW
-            | crate::core::den_tools::DEN_PROMPT_MEMORY_UPSERT
-            | crate::core::den_tools::DEN_PROMPT_MEMORY_LIST
-            | crate::core::den_tools::DEN_PROMPT_MEMORY_PATCH
-            | crate::core::den_tools::DEN_MEMORY_LIST_PROPOSALS
-            | crate::core::den_tools::DEN_MEMORY_READ_PROPOSAL
-            | crate::core::den_tools::DEN_MEMORY_RESOLVE_PROPOSAL
-            | crate::core::den_tools::DEN_MEMORY_APPLY_CORE_UPDATE
-            | crate::core::den_tools::DEN_SKILL_PROPOSE
-            | crate::core::den_tools::DEN_SKILL_APPROVE_PROPOSAL
-            | crate::core::den_tools::DEN_SKILL_REJECT_PROPOSAL
-            | crate::core::den_tools::DEN_WORK_PLAN_LIST
-            | crate::core::den_tools::DEN_WORK_PLAN_GET_STATUS
-            | crate::core::den_tools::DEN_WORK_PLAN_UPDATE
-            | crate::core::den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
-            | crate::core::den_tools::DEN_PLAN_MODE_ENTER
-            | crate::core::den_tools::DEN_PLAN_MODE_STATUS
-            | crate::core::den_tools::DEN_PLAN_MODE_RECORD_APPROVAL
-            | crate::core::den_tools::DEN_PLAN_MODE_EXIT
-            | crate::core::den_tools::DEN_PLAN_MODE_CANCEL
-            | crate::core::den_tools::DEN_TASK_WRITE_INTENT
-            | crate::core::den_tools::DEN_TASK_APPROVE_INTENT
-            | crate::core::den_tools::DEN_TASK_REJECT_INTENT
-            | crate::core::den_tools::DEN_CORE_WRITE_RESULT_SUMMARY
-            | crate::core::den_tools::DEN_OBSERVATION_WRITE
-            | crate::core::den_tools::DEN_RUN_WRITE_RESULT
+        DEN_BEAR_GET_SELF
+            | DEN_USER_GET_CURRENT
+            | DEN_BEAR_LIST_MEMBERS
+            | DEN_CAPABILITIES_LIST_SELF
+            | DEN_CHANNEL_GET_CONTEXT
+            | DEN_POLICY_GET_SELF
+            | DEN_BEAR_ENVIRONMENT
+            | DEN_CONVERSATION_SET_TITLE
+            | DEN_WEB_FETCH
+            | DEN_WEB_SEARCH
+            | DEN_SITUATION_GET
+            | DEN_MEMORY_WRITE_ENTRY
+            | DEN_MEMORY_STATUS
+            | DEN_MEMORY_TREE
+            | DEN_MEMORY_READ
+            | DEN_MEMORY_SEARCH
+            | DEN_MEMORY_ORIENT_WORK_SURFACE
+            | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
+            | DEN_MEMORY_REQUEST_REVIEW
+            | DEN_PROMPT_MEMORY_UPSERT
+            | DEN_PROMPT_MEMORY_LIST
+            | DEN_PROMPT_MEMORY_PATCH
+            | DEN_MEMORY_LIST_PROPOSALS
+            | DEN_MEMORY_READ_PROPOSAL
+            | DEN_MEMORY_RESOLVE_PROPOSAL
+            | DEN_MEMORY_APPLY_CORE_UPDATE
+            | DEN_SKILL_PROPOSE
+            | DEN_SKILL_APPROVE_PROPOSAL
+            | DEN_SKILL_REJECT_PROPOSAL
+            | DEN_WORK_PLAN_LIST
+            | DEN_WORK_PLAN_GET_STATUS
+            | DEN_WORK_PLAN_UPDATE
+            | DEN_WORK_PLAN_REQUEST_HANDOFF
+            | DEN_PLAN_MODE_ENTER
+            | DEN_PLAN_MODE_STATUS
+            | DEN_PLAN_MODE_RECORD_APPROVAL
+            | DEN_PLAN_MODE_EXIT
+            | DEN_PLAN_MODE_CANCEL
+            | DEN_TASK_WRITE_INTENT
+            | DEN_TASK_APPROVE_INTENT
+            | DEN_TASK_REJECT_INTENT
+            | DEN_CORE_WRITE_RESULT_SUMMARY
+            | DEN_OBSERVATION_WRITE
+            | DEN_RUN_WRITE_RESULT
     )
 }
