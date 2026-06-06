@@ -239,12 +239,16 @@ pub async fn run() -> Result<(), StartupError> {
 
     if let Some(token) = worker_token_opt.clone() {
         let t = token.clone();
+        let worker_pool = sqlx_pool.clone();
         task_set.spawn(async move {
-            tracing::info!(
-                "Workers: idle until shutdown (this slim starter has no import/report jobs)"
-            );
-            t.cancelled().await;
-            Ok(())
+            tracing::info!("Workers: memory_curate runner loop enabled");
+            crate::core::reflection_conductor::run_memory_curate_worker_loop(
+                worker_pool,
+                t,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .map_err(std::io::Error::other)
         });
     } else {
         tracing::info!("Workers disabled (RUN_WORKERS=false or not set)");

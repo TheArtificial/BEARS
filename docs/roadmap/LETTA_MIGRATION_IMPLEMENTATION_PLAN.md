@@ -1248,8 +1248,13 @@ Status: **typed Projection adoption now extends from proposal lifecycle into the
   - marking `memory_curate` runs started
   - marking `memory_curate` runs completed
   - marking `memory_curate` runs failed
-- Current gap: there is still no live executor/dequeue path that consumes queued `bear_reflection_runs` rows for the `memory_curate` lane. Today the only observed production caller is `api/acp/pair_reflection_support.rs`, which enqueues Curate work after pair reflection but does not actually run or settle it.
-- This means the new Curate lifecycle transitions are currently a prepared shared seam, not yet a wired runtime path. The next effective bridge is to introduce one small worker/runner that claims queued `memory_curate` runs and calls the new started/completed/failed helpers at real execution boundaries.
+- The original gap was that no live executor/dequeue path consumed queued `bear_reflection_runs` rows for the `memory_curate` lane. Today the production caller still only enqueues Curate work from `api/acp/pair_reflection_support.rs`, but the core seam is now stronger:
+  - `core/reflection_conductor.rs` now exposes `list_queued_memory_curate_runs(...)` and `claim_next_memory_curate_run(...)`, providing a stable queue-consumption boundary for a future worker/runner.
+  - DB-backed coverage now proves queued-run listing order and oldest-first claim/start behavior for the `memory_curate` lane.
+- This means the Curate lifecycle transitions are no longer only a prepared projection seam; there is now a minimal executable runner boundary in core:
+  - `core/reflection_conductor.rs` now exposes `run_next_memory_curate_once(...)`, which claims the next queued `memory_curate` run, resolves still-pending linked proposals into a deterministic `needs_human_review` outcome, and marks the run completed or failed with output/error summaries.
+  - Focused DB-backed coverage now proves the runner can claim a queued run, update linked proposal state, and settle the run to completion.
+- A real background/live worker is still follow-on work, but the core execution path it would call now exists.
 - This is still the first stronger non-ACP/Curate-oriented adoption of the shared typed projection seam because it models the lifecycle of Curate work itself, not just proposal row state changes, but the execution substrate for that lane remains to be built.
 - Projection ownership remains explicit for both proposal creation and proposal resolution:
   - `CreateMemoryProposal` and `ProposalResolutionParams` each carry `project_to_conversation`
