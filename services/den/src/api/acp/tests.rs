@@ -56,7 +56,11 @@ use crate::core::prompt_memory_blocks::{
             acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
             bears::BearAgentRole,
             prompt_memory_block_store::{
-                select_prompt_memory_blocks_for_runtime, upsert_prompt_memory_block,
+                archive_conflicting_prompt_memory_blocks,
+                archive_prompt_memory_blocks_superseded_by,
+                list_prompt_memory_blocks_for_bear_role,
+                patch_prompt_memory_block, select_prompt_memory_blocks_for_runtime,
+                upsert_prompt_memory_block, PromptMemoryBlockPatch,
                 PromptMemoryBlockQuery, PromptMemoryBlockWrite,
             },
             acp_turn_controller::{
@@ -87,24 +91,79 @@ use crate::core::prompt_memory_blocks::{
         }
     }
 
-    #[tokio::test]
-    async fn acp_prompt_context_with_activity_uses_persisted_prompt_memory_blocks() {
+    async fn prompt_memory_test_pool() -> Option<sqlx::PgPool> {
         let database_url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-        let pool = match PgPoolOptions::new().connect(&database_url).await {
-            Ok(pool) => pool,
-            Err(_) => return,
-        };
-        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
-            return;
+        let pool = PgPoolOptions::new().connect(&database_url).await.ok()?;
+        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        Some(pool)
+    }
+
+    fn prompt_memory_test_context() -> (Uuid, String, String, String) {
+        (
+            Uuid::new_v4(),
+            format!("sess-{}", Uuid::new_v4()),
+            format!("/workspace/test-{}", Uuid::new_v4()),
+            BearAgentRole::Pair.as_str().to_string(),
+        )
+    }
+
+    async fn seed_prompt_memory_block(
+        pool: &sqlx::PgPool,
+        write: PromptMemoryBlockWrite,
+    ) -> String {
+        let block_id = write.block_id.clone();
+        upsert_prompt_memory_block(pool, &write)
+            .await
+            .expect("seed prompt memory block");
+        block_id
+    }
+
+    fn prompt_memory_runtime_query<'a>(
+        bear_id: Uuid,
+        role_slug: &'a str,
+        session_id: &'a str,
+        root: &'a String,
+    ) -> PromptMemoryBlockQuery<'a> {
+        PromptMemoryBlockQuery {
+            bear_id: Some(bear_id),
+            role_slug,
+            work_surfaces: std::slice::from_ref(root),
+            session_id,
         }
-        let bear_id = Uuid::new_v4();
-        let session_id = format!("sess-{}", Uuid::new_v4());
-        let root = format!("/workspace/test-{}", Uuid::new_v4());
+    }
+
+    async fn select_rendered_prompt_memory_runtime(
+        pool: &sqlx::PgPool,
+        bear_id: Uuid,
+        role_slug: &str,
+        session_id: &str,
+        root: &String,
+    ) -> (crate::core::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
+        let selection = select_prompt_memory_blocks_for_runtime(
+            pool,
+            prompt_memory_runtime_query(bear_id, role_slug, session_id, root),
+        )
+        .await
+        .expect("persisted runtime selection");
+        let rendered = render_prompt_memory_runtime_selection(
+            &selection,
+            session_id,
+            std::slice::from_ref(root),
+        );
+        (selection, rendered)
+    }
+
+    #[tokio::test]
+    async fn acp_prompt_context_with_activity_uses_persisted_prompt_memory_blocks() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, _) = prompt_memory_test_context();
         let seeded_block_id = format!("pm-session-{}", Uuid::new_v4());
-        upsert_prompt_memory_block(
+        seed_prompt_memory_block(
             &pool,
-            &PromptMemoryBlockWrite {
+            PromptMemoryBlockWrite {
                 block_id: seeded_block_id.clone(),
                 bear_id: Some(bear_id),
                 role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
@@ -121,8 +180,7 @@ use crate::core::prompt_memory_blocks::{
                 metadata: serde_json::json!({}),
             },
         )
-        .await
-        .expect("seed prompt memory block");
+        .await;
         let state = prompt_memory_test_state(pool);
         let policy = prompt_memory_test_policy();
         let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
@@ -151,21 +209,13 @@ use crate::core::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn acp_prompt_context_with_activity_excludes_archived_blocks_from_runtime_prompt_memory() {
-        let database_url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-        let pool = match PgPoolOptions::new().connect(&database_url).await {
-            Ok(pool) => pool,
-            Err(_) => return,
-        };
-        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+        let Some(pool) = prompt_memory_test_pool().await else {
             return;
-        }
-        let bear_id = Uuid::new_v4();
-        let session_id = format!("sess-{}", Uuid::new_v4());
-        let root = format!("/workspace/test-{}", Uuid::new_v4());
-        upsert_prompt_memory_block(
+        };
+        let (bear_id, session_id, root, _) = prompt_memory_test_context();
+        seed_prompt_memory_block(
             &pool,
-            &PromptMemoryBlockWrite {
+            PromptMemoryBlockWrite {
                 block_id: format!("pm-archived-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
                 role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
@@ -182,8 +232,7 @@ use crate::core::prompt_memory_blocks::{
                 metadata: serde_json::json!({}),
             },
         )
-        .await
-        .expect("seed archived prompt memory block");
+        .await;
         let state = prompt_memory_test_state(pool);
         let policy = prompt_memory_test_policy();
         let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
@@ -208,19 +257,10 @@ use crate::core::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn acp_prompt_context_with_activity_reports_persisted_prompt_memory_precedence() {
-        let database_url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-        let pool = match PgPoolOptions::new().connect(&database_url).await {
-            Ok(pool) => pool,
-            Err(_) => return,
-        };
-        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+        let Some(pool) = prompt_memory_test_pool().await else {
             return;
-        }
-        let bear_id = Uuid::new_v4();
-        let session_id = format!("sess-{}", Uuid::new_v4());
-        let root = format!("/workspace/test-{}", Uuid::new_v4());
-        let role_slug = BearAgentRole::Pair.as_str().to_string();
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
         let mut seeded_block_ids = Vec::new();
         for (scope, block_type, work_surface, block_session_id, title, body) in [
             (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::RoleGuidance, None, None, "Bear", "bear default"),
@@ -230,9 +270,9 @@ use crate::core::prompt_memory_blocks::{
         ] {
             let block_id = format!("pm-{}-{}", title.to_ascii_lowercase(), Uuid::new_v4());
             seeded_block_ids.push(block_id.clone());
-            upsert_prompt_memory_block(
+            seed_prompt_memory_block(
                 &pool,
-                &PromptMemoryBlockWrite {
+                PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
                     role_slug: Some(role_slug.clone()),
@@ -249,8 +289,7 @@ use crate::core::prompt_memory_blocks::{
                     metadata: serde_json::json!({}),
                 },
             )
-            .await
-            .expect("seed prompt memory block");
+            .await;
         }
         let state = prompt_memory_test_state(pool);
         let policy = prompt_memory_test_policy();
@@ -283,19 +322,10 @@ use crate::core::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn persisted_prompt_memory_runtime_selection_render_reports_budget_omissions() {
-        let database_url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-        let pool = match PgPoolOptions::new().connect(&database_url).await {
-            Ok(pool) => pool,
-            Err(_) => return,
-        };
-        if sqlx::migrate!("./migrations").run(&pool).await.is_err() {
+        let Some(pool) = prompt_memory_test_pool().await else {
             return;
-        }
-        let bear_id = Uuid::new_v4();
-        let session_id = format!("sess-{}", Uuid::new_v4());
-        let root = format!("/workspace/test-{}", Uuid::new_v4());
-        let role_slug = BearAgentRole::Pair.as_str().to_string();
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
         let seed_specs = vec![
             (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session focus", "session focus", 100),
             (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface alpha", "surface alpha", 90),
@@ -315,9 +345,9 @@ use crate::core::prompt_memory_blocks::{
                 expected_omitted_ids.push(block_id.clone());
             }
             seeded_block_ids.push(block_id.clone());
-            upsert_prompt_memory_block(
+            seed_prompt_memory_block(
                 &pool,
-                &PromptMemoryBlockWrite {
+                PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
                     role_slug: Some(role_slug.clone()),
@@ -334,20 +364,16 @@ use crate::core::prompt_memory_blocks::{
                     metadata: serde_json::json!({}),
                 },
             )
-            .await
-            .expect("seed prompt memory block");
+            .await;
         }
-        let selection = select_prompt_memory_blocks_for_runtime(
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
-            PromptMemoryBlockQuery {
-                bear_id: Some(bear_id),
-                role_slug: role_slug.as_str(),
-                work_surfaces: std::slice::from_ref(&root),
-                session_id: session_id.as_str(),
-            },
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
         )
-        .await
-        .expect("persisted runtime selection");
+        .await;
         assert_eq!(selection.diagnostic["source"], "prompt_memory_blocks");
         assert_eq!(selection.diagnostic["persisted"], true);
         assert_eq!(selection.diagnostic["matched_count"], 7);
@@ -356,11 +382,6 @@ use crate::core::prompt_memory_blocks::{
             serde_json::json!(seeded_block_ids)
         );
 
-        let rendered = render_prompt_memory_runtime_selection(
-            &selection,
-            &session_id,
-            &[root.clone()],
-        );
         assert!(rendered.contains("Session focus"));
         assert!(rendered.contains("Surface alpha"));
         assert!(rendered.contains("Surface beta"));
@@ -372,6 +393,375 @@ use crate::core::prompt_memory_blocks::{
         for omitted_id in expected_omitted_ids {
             assert!(rendered.contains(&omitted_id));
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+
+        let active_session_id = seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-session-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Session active".to_string(),
+                body: "session active body".to_string(),
+                priority: 90,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+        let active_surface_id = seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-surface-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::WorkSurface,
+                block_type: PromptMemoryBlockType::WorkSurfaceContext,
+                state: PromptMemoryBlockState::Active,
+                work_surface: Some(root.clone()),
+                session_id: None,
+                title: "Surface active".to_string(),
+                body: "surface active body".to_string(),
+                priority: 80,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+        let active_role_id = seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-role-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Role active".to_string(),
+                body: "role active body".to_string(),
+                priority: 70,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+        let active_bear_id = seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-bear-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::BearWide,
+                block_type: PromptMemoryBlockType::UserInstruction,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Bear active".to_string(),
+                body: "bear active body".to_string(),
+                priority: 60,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+
+        for write in [
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-draft-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Draft,
+                work_surface: None,
+                session_id: None,
+                title: "Role draft".to_string(),
+                body: "role draft body".to_string(),
+                priority: 100,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-superseded-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Superseded,
+                work_surface: None,
+                session_id: None,
+                title: "Role superseded".to_string(),
+                body: "role superseded body".to_string(),
+                priority: 99,
+                created_by_user_id: Some(1),
+                supersedes_block_id: Some(active_role_id.clone()),
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-archived-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Archived,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Session archived".to_string(),
+                body: "session archived body".to_string(),
+                priority: 98,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-other-session-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: Some(format!("other-{}", Uuid::new_v4())),
+                title: "Session mismatch".to_string(),
+                body: "session mismatch body".to_string(),
+                priority: 97,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-other-surface-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::WorkSurface,
+                block_type: PromptMemoryBlockType::WorkSurfaceContext,
+                state: PromptMemoryBlockState::Active,
+                work_surface: Some(format!("/workspace/other-{}", Uuid::new_v4())),
+                session_id: None,
+                title: "Surface mismatch".to_string(),
+                body: "surface mismatch body".to_string(),
+                priority: 96,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-matrix-other-role-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some("watch".to_string()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Role mismatch".to_string(),
+                body: "role mismatch body".to_string(),
+                priority: 95,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        ] {
+            seed_prompt_memory_block(&pool, write).await;
+        }
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        let expected_ids = vec![
+            active_session_id.clone(),
+            active_surface_id.clone(),
+            active_role_id.clone(),
+            active_bear_id.clone(),
+        ];
+        assert_eq!(selection.diagnostic["source"], "prompt_memory_blocks");
+        assert_eq!(selection.diagnostic["persisted"], true);
+        assert_eq!(selection.diagnostic["matched_count"], 4);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!(expected_ids)
+        );
+        assert!(rendered.contains("Session active"));
+        assert!(rendered.contains("Surface active"));
+        assert!(rendered.contains("Role active"));
+        assert!(rendered.contains("Bear active"));
+        for excluded in [
+            "Role draft",
+            "Role superseded",
+            "Session archived",
+            "Session mismatch",
+            "Surface mismatch",
+            "Role mismatch",
+        ] {
+            assert!(!rendered.contains(excluded), "render unexpectedly contained {excluded}");
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let original_block_id = format!("pm-role-original-{}", Uuid::new_v4());
+        let replacement_block_id = format!("pm-role-replacement-{}", Uuid::new_v4());
+        let draft_block_id = format!("pm-draft-{}", Uuid::new_v4());
+
+        seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: original_block_id.clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Role original".to_string(),
+                body: "original role guidance".to_string(),
+                priority: 25,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+
+        seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: draft_block_id.clone(),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Draft,
+                work_surface: None,
+                session_id: None,
+                title: "Role draft".to_string(),
+                body: "draft role guidance".to_string(),
+                priority: 5,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+
+        let replacement_write = PromptMemoryBlockWrite {
+            block_id: replacement_block_id.clone(),
+            bear_id: Some(bear_id),
+            role_slug: Some(role_slug.clone()),
+            scope: PromptMemoryBlockScope::RoleLocal,
+            block_type: PromptMemoryBlockType::RoleGuidance,
+            state: PromptMemoryBlockState::Active,
+            work_surface: None,
+            session_id: None,
+            title: "Role replacement".to_string(),
+            body: "replacement role guidance".to_string(),
+            priority: 30,
+            created_by_user_id: Some(1),
+            supersedes_block_id: Some(original_block_id.clone()),
+            metadata: serde_json::json!({"source":"test"}),
+        };
+        seed_prompt_memory_block(&pool, replacement_write.clone()).await;
+
+        let archived_conflicts = archive_conflicting_prompt_memory_blocks(&pool, &replacement_write)
+            .await
+            .expect("archive conflicts");
+        assert_eq!(archived_conflicts, 1);
+
+        let archived_superseded = archive_prompt_memory_blocks_superseded_by(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            original_block_id.as_str(),
+        )
+        .await
+        .expect("archive superseded");
+        assert_eq!(archived_superseded, 0);
+
+        patch_prompt_memory_block(
+            &pool,
+            &draft_block_id,
+            &PromptMemoryBlockPatch {
+                state: PromptMemoryBlockState::Superseded,
+                title: "Role draft superseded".to_string(),
+                body: "draft role guidance superseded".to_string(),
+                priority: 5,
+                supersedes_block_id: Some(original_block_id.clone()),
+                metadata: serde_json::json!({"patched":true}),
+            },
+        )
+        .await
+        .expect("patch draft block");
+
+        let all_blocks = list_prompt_memory_blocks_for_bear_role(&pool, bear_id, role_slug.as_str())
+            .await
+            .expect("list prompt memory blocks");
+        let original = all_blocks
+            .iter()
+            .find(|block| block.id == original_block_id)
+            .expect("original block present");
+        let replacement = all_blocks
+            .iter()
+            .find(|block| block.id == replacement_block_id)
+            .expect("replacement block present");
+        let draft = all_blocks
+            .iter()
+            .find(|block| block.id == draft_block_id)
+            .expect("draft block present");
+
+        assert_eq!(original.state, PromptMemoryBlockState::Archived);
+        assert_eq!(replacement.state, PromptMemoryBlockState::Active);
+        assert_eq!(draft.state, PromptMemoryBlockState::Superseded);
+        assert_eq!(draft.title, "Role draft superseded");
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        assert_eq!(selection.diagnostic["matched_count"], 1);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!([replacement_block_id])
+        );
+        assert!(rendered.contains("Role replacement"));
+        assert!(rendered.contains("replacement role guidance"));
+        assert!(!rendered.contains("Role original"));
+        assert!(!rendered.contains("original role guidance"));
+        assert!(!rendered.contains("Role draft superseded"));
     }
 
     #[test]

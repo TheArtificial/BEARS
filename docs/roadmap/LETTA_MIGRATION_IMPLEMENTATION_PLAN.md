@@ -688,6 +688,34 @@ Landed code-facing implementation slices:
 
 Further rollout can still add runtime use of persisted block rows, mutation tools/workflows, and richer diagnostics/admin visibility, but the core Letta replacement responsibility—Den-owned scoped prompt-block compilation into runtime context—is now live and tested, and durable schema/store groundwork is now in place.
 
+##### Current follow-up status
+
+The immediate post-landing validation pass is now active and should be kept current here so remaining work does not require re-inspecting source to reconstruct status.
+
+Current status:
+
+- completed validation already landed in `api/acp/tests.rs` now covers:
+  - persisted prompt-memory inclusion through the ACP prompt-context path,
+  - archived-block exclusion from runtime prompt memory,
+  - persisted scope-precedence ordering across session/work-surface/role/bear scopes,
+  - render parity for an over-budget persisted selection with explicit omitted-block reporting.
+- persisted runtime diagnostics currently prove:
+  - `source = prompt_memory_blocks`,
+  - `persisted = true`,
+  - `matched_count`,
+  - `matched_block_ids`,
+  - no-match fallback rendering for empty active selections.
+- the longer follow-up plan for this pass is tracked in `pair/plans/gerwitz/longer-prompt-memory-validation-follow-up-plan.md` and is currently being executed under the active Bear plan “Prompt-memory validation broader pass”.
+
+Remaining follow-up work:
+
+- partially completed: repeated persisted prompt-memory DB/test setup has now been factored into shared helpers in `api/acp/tests.rs` (`prompt_memory_test_pool`, `prompt_memory_test_context`, `seed_prompt_memory_block`, runtime query/render helpers), but more consolidation is still possible as broader cases land,
+- add a broader persisted runtime-selection matrix covering active vs inactive lifecycle states and exact diagnostic/render expectations,
+- expand persisted compile/render parity coverage for exact-fit, deterministic tie ordering, and no-match cases,
+- completed initial mutation validation: `api/acp/tests.rs` now covers conflict-archive and supersession-adjacent mutation flow at the store/runtime seam via `prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows`,
+- add a broader ACP integration test around persisted prompt-memory budgeting/selection behavior,
+- then trim or merge smaller redundant tests once broader matrix coverage subsumes them.
+
 ##### Acceptance
 
 - Editable in-context memory is defined as a Den-owned concept rather than a provider-managed one.
