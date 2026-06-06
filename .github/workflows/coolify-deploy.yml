@@ -2,7 +2,7 @@ name: Coolify deploy
 
 on:
     push:
-        branches: [main]
+        branches: [main, off-letta]
         paths:
             - "docker-compose.yaml"
             - ".github/workflows/coolify-deploy.yml"
@@ -21,7 +21,7 @@ permissions:
     contents: read
 
 concurrency:
-    group: coolify-deploy-main
+    group: coolify-deploy-${{ github.ref_name }}
     cancel-in-progress: true
 
 jobs:
@@ -41,6 +41,7 @@ jobs:
                   SHA: ${{ github.sha }}
                   BEFORE: ${{ github.event.before }}
                   EVENT_NAME: ${{ github.event_name }}
+                  REF_NAME: ${{ github.ref_name }}
               run: |
                   set -euo pipefail
 
@@ -86,7 +87,7 @@ jobs:
                         --repo "${REPO}" \
                         --workflow "${workflow_file}" \
                         --commit "${SHA}" \
-                        --branch main \
+                        --branch "${REF_NAME}" \
                         --limit 1 \
                         --json databaseId \
                         --jq '.[0].databaseId // empty')

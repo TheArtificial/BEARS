@@ -3,7 +3,7 @@ name: Codepool – build & push image
 
 on:
     push:
-        branches: [main]
+        branches: [main, off-letta]
         paths:
             - "services/codepool/**"
             - ".github/workflows/codepool-image.yml"
@@ -44,6 +44,7 @@ jobs:
                   images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
                   tags: |
                       type=sha,prefix=
+                      type=raw,value=off-letta,enable=${{ github.ref_name == 'off-letta' }}
                       type=raw,value=latest,enable={{is_default_branch}}
 
             - name: Build and push
