@@ -40,32 +40,7 @@ pub mod conversation {
     }
 }
 pub mod den_tools;
-pub mod tools {
-    pub mod memory {
-        #[cfg(test)]
-        mod test;
-    }
-
-    pub mod descriptor {
-        #[cfg(test)]
-        mod test;
-    }
-
-    pub mod session {
-        #[cfg(test)]
-        mod test;
-    }
-
-    pub mod work_surface {
-        #[cfg(test)]
-        mod test;
-    }
-
-    pub mod workflow {
-        #[cfg(test)]
-        mod test;
-    }
-}
+pub mod tools;
 pub mod email;
 pub mod letta;
 pub mod letta_runtime_stream_parser;
