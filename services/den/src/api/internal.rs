@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 
 use crate::{
     api::service::ApiState,
-    core::den_tools::{self, DenToolInvocationContext},
+    core::tools::{
+        aliases::is_builtin_den_tool,
+        session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
+    },
     errors::CustomError,
 };
 
@@ -43,7 +46,7 @@ async fn invoke_den_tool(
     }
 
     let tool_name = payload.tool_name.trim().to_string();
-    if !den_tools::is_builtin_den_tool(&tool_name) {
+    if !is_builtin_den_tool(&tool_name) {
         return json_error(
             StatusCode::NOT_FOUND,
             "not_found",
@@ -60,7 +63,7 @@ async fn invoke_den_tool(
         "den tool invocation started"
     );
 
-    match den_tools::invoke_den_tool(
+    match run_den_tool(
         &state.sqlx_pool,
         state.config.as_ref(),
         &tool_name,

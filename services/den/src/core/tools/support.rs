@@ -13,8 +13,12 @@ use crate::{
     errors::CustomError,
 };
 
-use super::session::DenToolInvocationContext;
-use crate::core::den_tools::{MemoryWriteEntryArguments, ToolPreflight, ToolSemanticWarning, DEN_MEMORY_WRITE_ENTRY};
+use super::{
+    constants::DEN_MEMORY_WRITE_ENTRY,
+    memory_write::MemoryWriteEntryArguments,
+    preflight::{ToolPreflight, ToolSemanticWarning},
+    session::DenToolInvocationContext,
+};
 
 pub(crate) fn validate_prompt_memory_scope(
     scope: PromptMemoryBlockScope,

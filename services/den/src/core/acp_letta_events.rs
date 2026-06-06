@@ -10,7 +10,9 @@ use crate::core::{
         acp_diag_phase, acp_tool_policy_json_for_provider, supported_provider_tool_names,
         AcpToolName,
     },
-    den_tools,
+    tools::descriptor::{
+        builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
+    },
     work_plans::{WorkPlanItemStatus, WorkPlanProjection},
 };
 
@@ -364,13 +366,13 @@ fn native_letta_tool_request_event_with_args(
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let acp_tool = AcpToolName::from_provider_alias(tool_name);
     let den_server_tool =
-        den_tools::builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
+        builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
     let unsupported_tool_detail = if acp_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        for descriptor in den_tools::builtin_den_tool_descriptors() {
+        for descriptor in builtin_den_tool_descriptors() {
             supported.push(descriptor.provider_name);
             supported.extend(
                 descriptor
@@ -877,7 +879,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             result_tx: _,
             result_rx: _,
         } => {
-            let display = den_tools::builtin_den_tool_descriptor_for_provider_name(&tool_name)
+            let display = builtin_den_tool_descriptor_for_provider_name(&tool_name)
                 .map(|descriptor| descriptor.display)
                 .unwrap_or_else(|| {
                     crate::core::acp_tools::acp_tool_display_for_provider(&tool_name, &args)

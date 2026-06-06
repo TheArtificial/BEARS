@@ -19,7 +19,11 @@ use crate::{
             canonical_persistence_context, spawn_persist_canonical_conversation_record,
             CanonicalConversationRecord,
         },
-        den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
+        tools::{
+            arguments::DenToolChannelContext,
+            constants::{DEN_BEAR_ENVIRONMENT, DEN_WEB_FETCH},
+            session::{invoke_den_tool, DenToolInvocationContext},
+        },
         web_policy,
     },
     errors::CustomError,
@@ -284,7 +288,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                     let canonical_name = acp_den_provider_to_canonical_tool_name(&effect_tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
                     let tool_request_id = request_id.clone();
-                    if canonical_name == den_tools::DEN_WEB_FETCH {
+                    if canonical_name == DEN_WEB_FETCH {
                         route_web_fetch_tool_request(context, event, false).await?;
                     } else {
                         route_direct_den_tool_request(context, event, canonical_name).await?;
@@ -459,7 +463,7 @@ pub(in crate::api::acp) async fn route_web_fetch_tool_request(
     }
     let result = invoke_acp_den_tool(
         context,
-        den_tools::DEN_WEB_FETCH,
+        DEN_WEB_FETCH,
         tool_name,
         tool_call_id,
         approval_request_id.as_deref(),
@@ -473,7 +477,7 @@ pub(in crate::api::acp) async fn route_web_fetch_tool_request(
         tool_request_id = %request_id,
         tool_call_id = %tool_call_id,
         tool_name = %tool_name,
-        canonical_tool_name = %den_tools::DEN_WEB_FETCH,
+        canonical_tool_name = %DEN_WEB_FETCH,
         web_approval_decision = %decision.as_str(),
         "ACP Den web_fetch tool executed"
     );
@@ -613,10 +617,10 @@ pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
                     protocol: Some("acp".to_string()),
                 },
             };
-            match den_tools::invoke_den_tool(
+            match invoke_den_tool(
                 &context.pool,
                 context.config.as_ref(),
-                den_tools::DEN_BEAR_ENVIRONMENT,
+                DEN_BEAR_ENVIRONMENT,
                 args,
                 tool_context,
             )
@@ -685,7 +689,7 @@ pub(in crate::api::acp) async fn invoke_acp_den_tool(
     approval_request_id: Option<&str>,
     args: serde_json::Value,
 ) -> AcpToolResultRequest {
-    if canonical_name == den_tools::DEN_BEAR_ENVIRONMENT {
+    if canonical_name == DEN_BEAR_ENVIRONMENT {
         return invoke_acp_runtime_local_tool(context, "bear_environment", tool_call_id, args)
             .await;
     }
@@ -730,7 +734,7 @@ pub(in crate::api::acp) async fn invoke_acp_den_tool(
             protocol: Some("acp".to_string()),
         },
     };
-    match den_tools::invoke_den_tool(
+    match invoke_den_tool(
         &context.pool,
         context.config.as_ref(),
         canonical_name,
