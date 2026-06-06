@@ -1,3 +1,4 @@
+pub mod activity_payloads;
 pub mod descriptor;
 pub mod environment;
 pub mod memfs;

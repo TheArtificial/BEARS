@@ -40,76 +40,6 @@ use crate::{
     errors::CustomError,
 };
 
-pub(crate) fn plan_mode_workplan_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> Value {
-    turn_state::turn_state_from_sources(
-        &crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: if row.state == "approved" {
-                "Write"
-            } else {
-                "Plan"
-            },
-            tool_enablement: if row.state == "approved" {
-                crate::core::acp_tools::AcpToolEnablementState::AllTools
-            } else {
-                crate::core::acp_tools::AcpToolEnablementState::ReadOnly
-            },
-            plan_mode_state: Some(row.state.clone()),
-        },
-        Some(row),
-        None,
-    )["workplan"]
-        .clone()
-}
-
-pub(crate) fn no_active_workplan_payload() -> Value {
-    json!({
-        "domain": "workplan",
-        "plan_id": Value::Null,
-        "id": Value::Null,
-        "state": "inactive",
-        "approval_status": "inactive",
-        "raw_state": Value::Null,
-        "submitted_plan_present": false,
-        "artifact_path": Value::Null,
-        "title": Value::Null,
-        "summary": Value::Null,
-        "execution_unlocked": false,
-    })
-}
-
-pub(crate) fn activity_payload(plan: Option<&work_plans::WorkPlanProjection>) -> Value {
-    match plan {
-        Some(plan) => json!({
-            "domain": "activity",
-            "plan_id": plan.id,
-            "id": plan.id,
-            "status": plan.status.clone(),
-            "title": plan.title.clone(),
-            "summary": plan.summary.clone(),
-            "current_item": plan.current_item.clone(),
-            "items": plan.items.clone(),
-            "visibility": plan.visibility.clone(),
-            "owner_role": plan.owner_role.clone(),
-            "version": plan.version,
-            "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
-            "handoff_intent_path": plan.handoff_intent_path.clone(),
-            "handoff_task_id": plan.handoff_task_id.clone(),
-            "updated_at": plan.updated_at,
-        }),
-        None => json!({
-            "domain": "activity",
-            "plan_id": Value::Null,
-            "id": Value::Null,
-            "status": "inactive",
-            "title": Value::Null,
-            "summary": Value::Null,
-            "current_item": Value::Null,
-            "items": [],
-            "handoff_requested": false,
-        }),
-    }
-}
-
 // Den-executed server tools. Adding a new Den tool here and to
 // `builtin_den_tool_descriptors` should not require an ACP adapter update when
 // it uses existing stream/result shapes. Keep provider names semantic and
@@ -293,6 +223,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
 pub use crate::core::tools::session::DenToolInvocationContext;
 pub(crate) use crate::core::tools::support::validate_memory_write_entry_semantics;
 pub(crate) use crate::core::tools::{
+    activity_payloads::{activity_payload, no_active_workplan_payload, plan_mode_workplan_payload},
     environment::{bear_environment, fetch_acp_adapter_environment, session_info},
     memory_read::{memory_browse, memory_read, memory_search, memory_status, memory_status_value},
     payloads::{bear_environment_payload, session_info_payload},
