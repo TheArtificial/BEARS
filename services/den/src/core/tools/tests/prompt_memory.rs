@@ -1,13 +1,3 @@
-use super::tools::{
-    aliases::is_builtin_den_tool,
-    arguments::DenToolChannelContext,
-    constants::*,
-    descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role},
-};
-use sqlx::postgres::PgPoolOptions;
-use std::collections::HashSet;
-use uuid::Uuid;
-
 use crate::{
     config::Config,
     core::{
@@ -17,24 +7,16 @@ use crate::{
             PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
         },
         tools::{
+            arguments::DenToolChannelContext,
             memory_read::memory_status_value,
-            payloads::bear_environment_payload,
-            prompt_memory::prompt_memory_list,
-            prompt_memory::prompt_memory_patch,
-            prompt_memory::prompt_memory_upsert,
-            session::{authorize_tool_for_role, DenToolInvocationContext},
-            web::web_search_inner,
+            prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
+            session::DenToolInvocationContext,
         },
     },
 };
 use serde_json::json;
-
-fn names_for_role(role: BearAgentRole) -> HashSet<&'static str> {
-    builtin_den_tool_descriptors_for_role(role)
-        .into_iter()
-        .map(|descriptor| descriptor.name)
-        .collect()
-}
+use sqlx::postgres::PgPoolOptions;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn prompt_memory_tools_round_trip_through_store() {
@@ -214,7 +196,9 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         },
     ];
     for write in &writes {
-        upsert_prompt_memory_block(&pool, write).await.expect("seed prompt memory block");
+        upsert_prompt_memory_block(&pool, write)
+            .await
+            .expect("seed prompt memory block");
     }
     let selection = crate::core::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
         &pool,
@@ -241,7 +225,10 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         .iter()
         .map(|block| block.id.clone())
         .collect::<Vec<_>>();
-    assert_eq!(included_ids, vec![ids[3].clone(), ids[2].clone(), ids[1].clone(), ids[0].clone()]);
+    assert_eq!(
+        included_ids,
+        vec![ids[3].clone(), ids[2].clone(), ids[1].clone(), ids[0].clone()]
+    );
     assert_eq!(selection.diagnostic["matched_count"], 4);
 }
 
@@ -317,9 +304,10 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     .await
     .expect("upsert replacement block");
     assert_eq!(replacement["superseded_archived_count"], 1);
-    let listed_all = prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({"include_archived": true}))
-        .await
-        .expect("list prompt memory blocks");
+    let listed_all =
+        prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({"include_archived": true}))
+            .await
+            .expect("list prompt memory blocks");
     let original = listed_all["blocks"]
         .as_array()
         .unwrap()
@@ -403,7 +391,11 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
         &pool,
         &context,
         BearAgentRole::Pair,
-        json!({"scope": "session", "block_type": "session_focus", "session_id": "sess-test"}),
+        json!({
+            "scope": "session",
+            "block_type": "session_focus",
+            "session_id": "sess-test"
+        }),
     )
     .await
     .expect("list active session prompt memory blocks");
@@ -469,305 +461,4 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
         .expect("memory status value");
     assert_eq!(status["prompt_memory_diagnostic"]["source"], "prompt_memory_blocks");
     assert_eq!(status["prompt_memory_diagnostic"]["active_by_scope"]["session"], 1);
-}
-
-#[test]
-fn provider_names_are_safe_and_unique() {
-    let descriptors = builtin_den_tool_descriptors();
-    let mut provider_names = HashSet::new();
-    for descriptor in descriptors {
-        assert!(
-            descriptor
-                .provider_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
-            "provider name must be Letta/provider-safe: {}",
-            descriptor.provider_name
-        );
-        assert!(!descriptor.provider_name.contains('.'));
-        assert!(!descriptor.provider_name.contains('/'));
-        assert!(
-            provider_names.insert(descriptor.provider_name.clone()),
-            "duplicate provider name: {}",
-            descriptor.provider_name
-        );
-    }
-}
-
-#[test]
-fn canonical_dotted_names_map_to_provider_safe_aliases() {
-    let descriptors = builtin_den_tool_descriptors();
-    let task = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_TASK_WRITE_INTENT)
-        .expect("task intent descriptor exists");
-    assert_eq!(task.provider_name, "den_task_write_intent");
-
-    let skill = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_SKILL_PROPOSE)
-        .expect("skill proposal descriptor exists");
-    assert_eq!(skill.provider_name, "den_skill_propose");
-
-    let conversation_title = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_CONVERSATION_SET_TITLE)
-        .expect("conversation title descriptor exists");
-    assert_eq!(
-        conversation_title.provider_name,
-        DEN_CONVERSATION_SET_TITLE_PROVIDER
-    );
-
-    let web_fetch = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_WEB_FETCH)
-        .expect("web fetch descriptor exists");
-    assert_eq!(web_fetch.provider_name, DEN_WEB_FETCH_PROVIDER);
-
-    let web_search = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_WEB_SEARCH)
-        .expect("web search descriptor exists");
-    assert_eq!(web_search.provider_name, DEN_WEB_SEARCH_PROVIDER);
-
-    let bear_environment = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_BEAR_ENVIRONMENT)
-        .expect("bear environment descriptor exists");
-    assert_eq!(
-        bear_environment.provider_name,
-        DEN_BEAR_ENVIRONMENT_PROVIDER
-    );
-
-    let situation = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_SITUATION_GET)
-        .expect("situation descriptor exists");
-    assert_eq!(situation.provider_name, DEN_SITUATION_GET_PROVIDER);
-    assert_eq!(situation.provider_name, "session_info");
-    assert_ne!(situation.provider_name, "situation_get");
-    assert_ne!(situation.provider_name, "den_situation_get");
-
-    let memory_browse = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_MEMORY_TREE)
-        .expect("memory browse descriptor exists");
-    assert_eq!(memory_browse.provider_name, DEN_MEMORY_TREE_PROVIDER);
-    assert_eq!(memory_browse.provider_name, "memory_browse");
-    assert_ne!(memory_browse.provider_name, "memory_tree");
-
-    let memory = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_MEMORY_WRITE_ENTRY)
-        .expect("memory write descriptor exists");
-    assert_eq!(memory.provider_name, DEN_MEMORY_WRITE_ENTRY_PROVIDER);
-
-    let update_plan = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
-        .expect("work plan update descriptor exists");
-    assert_eq!(update_plan.provider_name, DEN_WORK_PLAN_UPDATE_PROVIDER);
-    assert_eq!(update_plan.provider_name, "update_plan");
-
-    let enter_plan_mode = descriptors
-        .iter()
-        .find(|descriptor| descriptor.name == DEN_PLAN_MODE_ENTER)
-        .expect("enter plan mode descriptor exists");
-    assert_eq!(enter_plan_mode.provider_name, DEN_PLAN_MODE_ENTER_PROVIDER);
-    assert_eq!(enter_plan_mode.provider_name, "enter_plan_mode");
-}
-
-#[test]
-fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
-    let provider_names = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
-        .into_iter()
-        .map(|descriptor| descriptor.provider_name)
-        .collect::<HashSet<_>>();
-    assert!(provider_names.contains("session_info"));
-    assert!(provider_names.contains("bear_environment"));
-    assert!(provider_names.contains("set_conversation_title"));
-    assert!(provider_names.contains("web_search"));
-    assert!(provider_names.contains("memory_browse"));
-    assert!(provider_names.contains("memory_read"));
-    assert!(provider_names.contains("update_plan"));
-    assert!(provider_names.contains("enter_plan_mode"));
-    assert!(provider_names.contains("record_plan_approval"));
-    assert!(provider_names.contains("exit_plan_mode"));
-    assert!(provider_names.contains("cancel_plan_mode"));
-    assert!(!provider_names.contains("situation_get"));
-    assert!(!provider_names.contains("memory_tree"));
-    assert!(!provider_names.contains("den_situation_get"));
-    assert!(!provider_names.contains("den_web_search"));
-    assert!(!provider_names.contains("den_memory_read"));
-    assert!(!provider_names.contains("den_work_plan_update"));
-    assert!(!provider_names.contains("den_plan_mode_enter"));
-}
-
-#[test]
-fn bear_environment_payload_exposes_baseline_sections() {
-    let context = DenToolInvocationContext {
-        bear_id: Uuid::nil(),
-        bear_slug: "meta".to_string(),
-        role_agent_id: "agent-123".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
-        user_id: 7,
-        username: Some("gerwitz".to_string()),
-        membership_role: Some("admin".to_string()),
-        conversation_id: "conv-123".to_string(),
-        session_id: "sess-123".to_string(),
-        acp_session_id: Some("acp-123".to_string()),
-        conversation_selection: Some("conv-123".to_string()),
-        runtime_target: Some("conv-123".to_string()),
-        workspace_roots: vec!["/workspace".to_string()],
-        session_policy: Some(json!({ "mode_label": "Write" })),
-        activity: None,
-        runtime: Some(json!({
-            "state": "running",
-            "active_turn": { "present": true, "pending_obligations": 0 }
-        })),
-        context_budget: Some(json!({ "status": "unavailable" })),
-        request_id: Some("req-123".to_string()),
-        channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
-            client: Some("api-direct".to_string()),
-            protocol: Some("acp".to_string()),
-        },
-    };
-    let payload = bear_environment_payload(
-        &context,
-        &Config::test_stub(),
-        BearAgentRole::Pair,
-        None,
-        2,
-        json!({ "configured": false, "available": false }),
-        json!({
-            "status": "ok",
-            "runtime": { "ok": true, "channel_kind": "acp_session" },
-            "adapter_environment": {
-                "browser": { "active_source": "host_bridge", "status": "ok" },
-                "services": { "den": { "status": "ok" } },
-                "diagnostics": { "warnings": ["adapter warning"], "errors": [] }
-            }
-        }),
-    );
-
-    assert_eq!(payload["bear"]["slug"], "meta");
-    assert_eq!(payload["runtime"]["state"], "running");
-    assert_eq!(payload["session"]["id"], "sess-123");
-    assert_eq!(payload["workspace"]["cwd"], "/workspace");
-    assert_eq!(payload["browser"]["active_source"], "host_bridge");
-    assert_eq!(payload["environment_variants"]["acp"]["status"], "ok");
-    assert_eq!(payload["environment_variants"]["adapter"]["status"], "ok");
-    assert_eq!(payload["diagnostics"]["warnings"][0], "adapter warning");
-    assert!(payload["tools"]["available_den_tools"].is_array());
-}
-
-#[test]
-fn privileged_descriptors_are_role_scoped() {
-    let talk = names_for_role(BearAgentRole::Talk);
-    assert!(talk.contains(DEN_TASK_WRITE_INTENT));
-    assert!(talk.contains(DEN_SKILL_PROPOSE));
-    assert!(!talk.contains(DEN_OBSERVATION_WRITE));
-    assert!(!talk.contains(DEN_RUN_WRITE_RESULT));
-
-    let pair = names_for_role(BearAgentRole::Pair);
-    assert!(pair.contains(DEN_TASK_WRITE_INTENT));
-    assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
-    assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
-    assert!(pair.contains(DEN_SKILL_PROPOSE));
-    assert!(!pair.contains(DEN_OBSERVATION_WRITE));
-    assert!(!pair.contains(DEN_RUN_WRITE_RESULT));
-
-    let curate = names_for_role(BearAgentRole::Curate);
-    assert!(curate.contains(DEN_TASK_APPROVE_INTENT));
-    assert!(curate.contains(DEN_TASK_REJECT_INTENT));
-    assert!(curate.contains(DEN_CORE_WRITE_RESULT_SUMMARY));
-    assert!(curate.contains(DEN_SKILL_APPROVE_PROPOSAL));
-    assert!(curate.contains(DEN_SKILL_REJECT_PROPOSAL));
-    assert!(curate.contains(DEN_SKILL_PROPOSE));
-    assert!(!curate.contains(DEN_TASK_WRITE_INTENT));
-    assert!(!curate.contains(DEN_OBSERVATION_WRITE));
-    assert!(!curate.contains(DEN_RUN_WRITE_RESULT));
-
-    let watch = names_for_role(BearAgentRole::Watch);
-    assert!(watch.contains(DEN_OBSERVATION_WRITE));
-    assert!(watch.contains(DEN_SKILL_PROPOSE));
-    assert!(!watch.contains(DEN_WORK_PLAN_LIST));
-    assert!(!watch.contains(DEN_WORK_PLAN_UPDATE));
-    assert!(!watch.contains(DEN_TASK_WRITE_INTENT));
-    assert!(!watch.contains(DEN_RUN_WRITE_RESULT));
-
-    let work = names_for_role(BearAgentRole::Work);
-    assert!(work.contains(DEN_RUN_WRITE_RESULT));
-    assert!(work.contains(DEN_WORK_PLAN_LIST));
-    assert!(work.contains(DEN_WORK_PLAN_UPDATE));
-    assert!(!work.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
-    assert!(work.contains(DEN_SKILL_PROPOSE));
-    assert!(!work.contains(DEN_TASK_WRITE_INTENT));
-    assert!(!work.contains(DEN_OBSERVATION_WRITE));
-}
-
-#[test]
-fn all_descriptors_are_known_tools() {
-    for descriptor in builtin_den_tool_descriptors() {
-        assert!(
-            is_builtin_den_tool(descriptor.name),
-            "unknown descriptor name: {}",
-            descriptor.name
-        );
-    }
-}
-
-#[test]
-fn pair_has_web_memory_and_activity_tools() {
-    let pair = names_for_role(BearAgentRole::Pair);
-    assert!(pair.contains(DEN_CONVERSATION_SET_TITLE));
-    assert!(pair.contains(DEN_WEB_FETCH));
-    assert!(pair.contains(DEN_WEB_SEARCH));
-    assert!(pair.contains(DEN_BEAR_ENVIRONMENT));
-    assert!(pair.contains(DEN_SITUATION_GET));
-    assert!(pair.contains(DEN_MEMORY_WRITE_ENTRY));
-    assert!(pair.contains(DEN_MEMORY_STATUS));
-    assert!(pair.contains(DEN_MEMORY_TREE));
-    assert!(pair.contains(DEN_MEMORY_READ));
-    assert!(pair.contains(DEN_MEMORY_SEARCH));
-    assert!(pair.contains(DEN_WORK_PLAN_LIST));
-    assert!(pair.contains(DEN_WORK_PLAN_GET_STATUS));
-    assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
-    assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
-    assert!(pair.contains(DEN_PLAN_MODE_ENTER));
-    assert!(pair.contains(DEN_PLAN_MODE_STATUS));
-    assert!(pair.contains(DEN_PLAN_MODE_RECORD_APPROVAL));
-    assert!(pair.contains(DEN_PLAN_MODE_EXIT));
-    assert!(pair.contains(DEN_PLAN_MODE_CANCEL));
-
-    let talk = names_for_role(BearAgentRole::Talk);
-    assert!(talk.contains(DEN_CONVERSATION_SET_TITLE));
-    assert!(!talk.contains(DEN_WEB_FETCH));
-    assert!(!talk.contains(DEN_WEB_SEARCH));
-    assert!(!talk.contains(DEN_MEMORY_WRITE_ENTRY));
-}
-
-#[tokio::test]
-async fn web_search_reports_missing_provider_config() {
-    let config = Config::test_stub();
-    let err = web_search_inner(None, &config, None, json!({ "query": "rust docs" }))
-        .await
-        .expect_err("missing provider should fail clearly");
-    assert!(err.to_string().contains("DEN_SEARCH_PROVIDER"));
-}
-
-#[test]
-fn role_authorization_rejects_disallowed_tools() {
-    assert!(authorize_tool_for_role(DEN_TASK_WRITE_INTENT, BearAgentRole::Talk).is_ok());
-    assert!(authorize_tool_for_role(DEN_TASK_WRITE_INTENT, BearAgentRole::Watch).is_err());
-    assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Work).is_ok());
-    assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Talk).is_err());
-    assert!(authorize_tool_for_role(DEN_TASK_APPROVE_INTENT, BearAgentRole::Curate).is_ok());
-    assert!(authorize_tool_for_role(DEN_TASK_APPROVE_INTENT, BearAgentRole::Pair).is_err());
-    assert!(authorize_tool_for_role(DEN_SKILL_APPROVE_PROPOSAL, BearAgentRole::Curate).is_ok());
-    assert!(authorize_tool_for_role(DEN_SKILL_APPROVE_PROPOSAL, BearAgentRole::Work).is_err());
-    assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Pair).is_ok());
-    assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Watch).is_err());
-    assert!(authorize_tool_for_role(DEN_WORK_PLAN_REQUEST_HANDOFF, BearAgentRole::Work).is_err());
 }

@@ -19,3 +19,6 @@ pub mod workflow;
 pub mod support;
 pub mod web;
 pub mod work_surface;
+
+#[cfg(test)]
+mod tests;
