@@ -729,6 +729,82 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(content_json["tool_name"], serde_json::json!("functions.process.run"));
     }
 
+    #[test]
+    fn tool_result_prepare_runtime_continuation_maps_timeout_status_to_runtime_timeout() {
+        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+            tool_call_id: Some("tool-call-timeout".to_string()),
+            tool_name: Some("functions.fs.read_text_file".to_string()),
+            approval_request_id: None,
+            status: "timeout".to_string(),
+            content: Some("timed out".to_string()),
+            ..Default::default()
+        })
+        .expect("prepare continuation");
+
+        match prepared.continuation {
+            crate::core::runtime::contracts::RuntimeContinuation::ToolResult {
+                tool_call_id,
+                approval_request_id,
+                status,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "tool-call-timeout");
+                assert_eq!(approval_request_id, None);
+                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Timeout);
+                assert_eq!(content, "timed out");
+            }
+            other => panic!("expected tool-result continuation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_prepare_runtime_continuation_maps_timed_out_status_to_runtime_error_today() {
+        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+            tool_call_id: Some("tool-call-timed-out".to_string()),
+            tool_name: Some("functions.fs.read_text_file".to_string()),
+            approval_request_id: None,
+            status: "timed_out".to_string(),
+            content: Some("timed out variant".to_string()),
+            ..Default::default()
+        })
+        .expect("prepare continuation");
+
+        match prepared.continuation {
+            crate::core::runtime::contracts::RuntimeContinuation::ToolResult { status, .. } => {
+                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Error);
+            }
+            other => panic!("expected tool-result continuation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_prepare_runtime_continuation_with_approval_request_maps_to_approval_decision() {
+        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+            tool_call_id: Some("tool-call-approval".to_string()),
+            tool_name: Some("functions.process.run".to_string()),
+            approval_request_id: Some("approval-123".to_string()),
+            status: "error".to_string(),
+            content: Some("user denied".to_string()),
+            ..Default::default()
+        })
+        .expect("prepare continuation");
+
+        match prepared.continuation {
+            crate::core::runtime::contracts::RuntimeContinuation::ApprovalDecision {
+                approval_request_id,
+                tool_call_id,
+                decision,
+                reason,
+            } => {
+                assert_eq!(approval_request_id, "approval-123");
+                assert_eq!(tool_call_id.as_deref(), Some("tool-call-approval"));
+                assert_eq!(decision, crate::core::runtime::contracts::RuntimeApprovalDecision::Deny);
+                assert_eq!(reason.as_deref(), Some("user denied"));
+            }
+            other => panic!("expected approval-decision continuation, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
