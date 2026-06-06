@@ -667,7 +667,7 @@ impl AcpToolTurnCoordinator {
                 approval_request_id: None,
                 status: match result.status.as_str() {
                     "ok" => RuntimeToolResultStatus::Ok,
-                    "timeout" => RuntimeToolResultStatus::Timeout,
+                    "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
                     _ => RuntimeToolResultStatus::Error,
                 },
                 content,

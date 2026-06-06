@@ -758,7 +758,7 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[test]
-    fn tool_result_prepare_runtime_continuation_maps_timed_out_status_to_runtime_error_today() {
+    fn tool_result_prepare_runtime_continuation_maps_timed_out_status_to_runtime_timeout() {
         let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
             tool_call_id: Some("tool-call-timed-out".to_string()),
             tool_name: Some("functions.fs.read_text_file".to_string()),
@@ -771,7 +771,7 @@ use crate::core::prompt_memory_blocks::{
 
         match prepared.continuation {
             crate::core::runtime::contracts::RuntimeContinuation::ToolResult { status, .. } => {
-                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Error);
+                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Timeout);
             }
             other => panic!("expected tool-result continuation, got {other:?}"),
         }
