@@ -39,8 +39,13 @@ use crate::core::tools::{
         request_memory_review, resolve_memory_proposal,
     },
     memory_write::write_memory_entry,
+    plan_mode::{
+        cancel_plan_mode, enter_plan_mode, exit_plan_mode, plan_mode_status,
+        record_plan_approval,
+    },
     prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
     web::{web_fetch, web_search},
+    workflow::{get_work_plan_status, list_work_plans, update_work_plan},
     work_surface::{
         build_work_surface_orientation_payload, collect_memory_tree_paths,
         create_work_surface_scaffold, infer_work_surface_hint, work_surface_candidate_slug,
@@ -212,15 +217,46 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
         DEN_MEMORY_RESOLVE_PROPOSAL => resolve_memory_proposal(pool, &context, role, arguments).await,
         DEN_MEMORY_APPLY_CORE_UPDATE => apply_core_update(pool, config, &context, role, arguments).await,
-        | DEN_WORK_PLAN_LIST
-        | DEN_WORK_PLAN_GET_STATUS
-        | DEN_WORK_PLAN_UPDATE
-        | DEN_PLAN_MODE_ENTER
-        | DEN_PLAN_MODE_STATUS
-        | DEN_PLAN_MODE_RECORD_APPROVAL
-        | DEN_PLAN_MODE_EXIT
-        | DEN_PLAN_MODE_CANCEL
-        | DEN_BEAR_ENVIRONMENT
+        DEN_WORK_PLAN_LIST => {
+            list_work_plans(
+                pool,
+                config,
+                &context,
+                role,
+                arguments,
+                crate::core::den_tools::activity_payload,
+                crate::core::den_tools::plan_mode_workplan_payload,
+            )
+            .await
+        }
+        DEN_WORK_PLAN_GET_STATUS => {
+            get_work_plan_status(pool, &context, role, arguments, crate::core::den_tools::activity_payload).await
+        }
+        DEN_WORK_PLAN_UPDATE => {
+            update_work_plan(pool, &context, role, arguments, crate::core::den_tools::activity_payload).await
+        }
+        DEN_PLAN_MODE_ENTER => {
+            enter_plan_mode(pool, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
+        }
+        DEN_PLAN_MODE_STATUS => {
+            plan_mode_status(
+                pool,
+                &context,
+                crate::core::den_tools::plan_mode_workplan_payload,
+                crate::core::den_tools::no_active_workplan_payload,
+            )
+            .await
+        }
+        DEN_PLAN_MODE_RECORD_APPROVAL => {
+            record_plan_approval(pool, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
+        }
+        DEN_PLAN_MODE_EXIT => {
+            exit_plan_mode(pool, config, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
+        }
+        DEN_PLAN_MODE_CANCEL => {
+            cancel_plan_mode(pool, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
+        }
+        DEN_BEAR_ENVIRONMENT
         | DEN_SITUATION_GET
         | DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
