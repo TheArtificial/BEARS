@@ -499,6 +499,237 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn acp_tool_result_side_effect_persists_timeout_like_variant_payload() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
+        let request_id = format!("req-{}", Uuid::new_v4());
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id: Uuid::new_v4(),
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        super::stream::runtime::spawn_persist_acp_tool_result(
+            &context,
+            Some("functions.fs.read_text_file".to_string()),
+            tool_call_id.clone(),
+            Some("approval-timeout-1".to_string()),
+            "timed_out".to_string(),
+            Some("Tool execution timed out waiting for result delivery.".to_string()),
+            serde_json::json!({
+                "retryable": true,
+                "kind": "timeout",
+                "partial": false,
+            }),
+            serde_json::json!({
+                "component": "den.acp",
+                "phase": "tool_result",
+                "timeout": true,
+            }),
+            Some(request_id.clone()),
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let tool_result = page
+            .into_iter()
+            .find(|message| message.message_type == "tool_event")
+            .expect("tool_result event persisted");
+        assert_eq!(tool_result.content_text, "Tool result: functions.fs.read_text_file");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(tool_result.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load tool result content_json");
+        assert_eq!(content_json["event"], serde_json::json!("tool_result"));
+        assert_eq!(content_json["status"], serde_json::json!("timed_out"));
+        assert_eq!(content_json["tool_call_id"], serde_json::json!(tool_call_id));
+        assert_eq!(content_json["approval_request_id"], serde_json::json!("approval-timeout-1"));
+        assert_eq!(content_json["request_id"], serde_json::json!(request_id));
+        assert_eq!(content_json["structured_content"]["kind"], serde_json::json!("timeout"));
+        assert_eq!(content_json["structured_content"]["retryable"], serde_json::json!(true));
+        assert_eq!(content_json["diagnostic"]["timeout"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn acp_tool_result_side_effect_persists_error_like_variant_payload() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id: Uuid::new_v4(),
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        super::stream::runtime::spawn_persist_acp_tool_result(
+            &context,
+            Some("functions.process.run".to_string()),
+            tool_call_id.clone(),
+            None,
+            "error".to_string(),
+            Some("Process execution failed with exit code 1".to_string()),
+            serde_json::json!({
+                "retryable": false,
+                "kind": "error",
+                "exit_code": 1,
+            }),
+            serde_json::json!({
+                "component": "den.acp",
+                "phase": "tool_result",
+                "stderr_excerpt": "boom",
+            }),
+            Some(format!("req-{}", Uuid::new_v4())),
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let tool_result = page
+            .into_iter()
+            .find(|message| {
+                message.message_type == "tool_event"
+                    && message.content_text == "Tool result: functions.process.run"
+            })
+            .expect("error-like tool_result event persisted");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(tool_result.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load error-like tool result content_json");
+        assert_eq!(content_json["event"], serde_json::json!("tool_result"));
+        assert_eq!(content_json["status"], serde_json::json!("error"));
+        assert_eq!(content_json["structured_content"]["kind"], serde_json::json!("error"));
+        assert_eq!(content_json["structured_content"]["exit_code"], serde_json::json!(1));
+        assert_eq!(content_json["diagnostic"]["stderr_excerpt"], serde_json::json!("boom"));
+        assert_eq!(content_json["tool_name"], serde_json::json!("functions.process.run"));
+    }
+
+    #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
