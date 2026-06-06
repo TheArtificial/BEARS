@@ -122,7 +122,10 @@ pub struct Config {
     /// Enable the API server (`RUN_API`, default false).
     pub run_api: bool,
 
-    /// Background worker slot (`RUN_WORKERS`); this slim starter has no domain workers yet.
+    /// Enable background workers (`RUN_WORKERS`).
+    ///
+    /// Current worker set includes the memory-curate queue runner used to process
+    /// queued `memory_curate` reflection runs.
     pub run_workers: bool,
 
     /// Enable the API-only ACP gateway (`ACP_GATEWAY_ENABLED`).

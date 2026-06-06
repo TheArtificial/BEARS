@@ -1254,7 +1254,11 @@ Status: **typed Projection adoption now extends from proposal lifecycle into the
 - This means the Curate lifecycle transitions are no longer only a prepared projection seam; there is now a minimal executable runner boundary in core:
   - `core/reflection_conductor.rs` now exposes `run_next_memory_curate_once(...)`, which claims the next queued `memory_curate` run, resolves still-pending linked proposals into a deterministic `needs_human_review` outcome, and marks the run completed or failed with output/error summaries.
   - Focused DB-backed coverage now proves the runner can claim a queued run, update linked proposal state, and settle the run to completion.
-- A real background/live worker is still follow-on work, but the core execution path it would call now exists.
+- A first background/live worker wiring is now also landed:
+  - `core/reflection_conductor.rs` now exposes `run_memory_curate_worker_loop(...)`, which polls for bears with queued `memory_curate` runs and processes them until cancellation.
+  - `den::run()` now uses the `RUN_WORKERS` slot to launch that loop instead of leaving workers idle.
+  - Focused DB-backed coverage proves the worker loop can process queued runs and stop cleanly on cancellation.
+- Richer worker orchestration remains follow-on work (for example configurable poll policy, concurrency limits, metrics, and non-memory-curate lanes), but the first live background execution path now exists.
 - This is still the first stronger non-ACP/Curate-oriented adoption of the shared typed projection seam because it models the lifecycle of Curate work itself, not just proposal row state changes, but the execution substrate for that lane remains to be built.
 - Projection ownership remains explicit for both proposal creation and proposal resolution:
   - `CreateMemoryProposal` and `ProposalResolutionParams` each carry `project_to_conversation`

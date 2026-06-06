@@ -4,7 +4,11 @@ use den::seeds::SeedProfile;
 
 /// Den control-plane binary (BEARS Phase 1).
 ///
-/// Enable services with `RUN_WEB`, `RUN_API`, `RUN_WORKERS` (see `README.md` and [`den::config::Config`]).
+/// Enable services with `RUN_WEB`, `RUN_API`, and `RUN_WORKERS`.
+///
+/// Current `RUN_WORKERS=true` behavior starts the in-process memory-curate worker,
+/// which polls queued `memory_curate` reflection runs and processes them until shutdown.
+/// See `README.md`, `.env.example`, and [`den::config::Config`].
 #[tokio::main]
 async fn main() {
     if let Err(e) = run_main().await {
