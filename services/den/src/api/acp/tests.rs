@@ -95,10 +95,11 @@ use crate::core::prompt_memory_blocks::{
         let bear_id = Uuid::new_v4();
         let session_id = format!("sess-{}", Uuid::new_v4());
         let root = format!("/workspace/test-{}", Uuid::new_v4());
+        let seeded_block_id = format!("pm-session-{}", Uuid::new_v4());
         upsert_prompt_memory_block(
             &pool,
             &PromptMemoryBlockWrite {
-                block_id: format!("pm-session-{}", Uuid::new_v4()),
+                block_id: seeded_block_id.clone(),
                 bear_id: Some(bear_id),
                 role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
                 scope: PromptMemoryBlockScope::Session,
@@ -136,6 +137,10 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(diagnostic["source"], "prompt_memory_blocks");
         assert_eq!(diagnostic["persisted"], true);
         assert_eq!(diagnostic["matched_count"], 1);
+        assert_eq!(
+            diagnostic["matched_block_ids"],
+            serde_json::json!([seeded_block_id])
+        );
     }
 
     #[tokio::test]
@@ -190,7 +195,9 @@ use crate::core::prompt_memory_blocks::{
         .expect("prompt context");
         assert!(!prompt.contains("Archived focus"));
         assert!(!prompt.contains("This archived block should not appear."));
+        assert!(prompt.contains("No prompt memory blocks are active for this runtime context."));
         assert_eq!(diagnostic["matched_count"], 0);
+        assert_eq!(diagnostic["matched_block_ids"], serde_json::json!([]));
     }
 
     #[tokio::test]
@@ -208,16 +215,19 @@ use crate::core::prompt_memory_blocks::{
         let session_id = format!("sess-{}", Uuid::new_v4());
         let root = format!("/workspace/test-{}", Uuid::new_v4());
         let role_slug = BearAgentRole::Pair.as_str().to_string();
+        let mut seeded_block_ids = Vec::new();
         for (scope, block_type, work_surface, block_session_id, title, body) in [
             (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::RoleGuidance, None, None, "Bear", "bear default"),
             (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role", "role guidance"),
             (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface", "surface context"),
             (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session", "session focus"),
         ] {
+            let block_id = format!("pm-{}-{}", title.to_ascii_lowercase(), Uuid::new_v4());
+            seeded_block_ids.push(block_id.clone());
             upsert_prompt_memory_block(
                 &pool,
                 &PromptMemoryBlockWrite {
-                    block_id: format!("pm-{}-{}", title.to_ascii_lowercase(), Uuid::new_v4()),
+                    block_id,
                     bear_id: Some(bear_id),
                     role_slug: Some(role_slug.clone()),
                     scope,
@@ -259,6 +269,10 @@ use crate::core::prompt_memory_blocks::{
         assert!(surface_index < role_index);
         assert!(role_index < bear_index);
         assert_eq!(diagnostic["matched_count"], 4);
+        assert_eq!(
+            diagnostic["matched_block_ids"],
+            serde_json::json!(seeded_block_ids)
+        );
     }
 
     #[test]
@@ -837,6 +851,8 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(selection.diagnostic["source"], "synthetic_runtime_slice");
         assert_eq!(selection.diagnostic["persisted"], false);
         assert!(selection.diagnostic["matched_count"].as_u64().unwrap_or(0) >= 1);
+        assert!(selection.diagnostic["matched_block_ids"].is_array());
+        assert!(selection.diagnostic["omitted_block_ids"].is_array());
     }
 
     #[test]
