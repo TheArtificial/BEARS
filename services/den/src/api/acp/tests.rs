@@ -623,6 +623,192 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn persisted_prompt_memory_runtime_selection_exact_fit_omits_no_blocks() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let mut seeded_block_ids = Vec::new();
+        for (index, (scope, block_type, work_surface, block_session_id, title, body, priority)) in [
+            (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session exact", "session exact", 100),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface exact a", "surface exact a", 90),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface exact b", "surface exact b", 80),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role exact a", "role exact a", 70),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role exact b", "role exact b", 60),
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::UserInstruction, None, None, "Bear exact", "bear exact", 50),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let block_id = format!("pm-exact-fit-{}-{}", index, Uuid::new_v4());
+            seeded_block_ids.push(block_id.clone());
+            seed_prompt_memory_block(
+                &pool,
+                PromptMemoryBlockWrite {
+                    block_id,
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope,
+                    block_type,
+                    state: PromptMemoryBlockState::Active,
+                    work_surface,
+                    session_id: block_session_id,
+                    title: title.to_string(),
+                    body: body.to_string(),
+                    priority,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await;
+        }
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        assert_eq!(selection.diagnostic["matched_count"], 6);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!(seeded_block_ids)
+        );
+        assert!(rendered.contains("Session exact"));
+        assert!(rendered.contains("Surface exact a"));
+        assert!(rendered.contains("Surface exact b"));
+        assert!(rendered.contains("Role exact a"));
+        assert!(rendered.contains("Role exact b"));
+        assert!(rendered.contains("Bear exact"));
+        assert!(!rendered.contains("Omitted lower-priority blocks due to prompt budgeting:"));
+    }
+
+    #[tokio::test]
+    async fn persisted_prompt_memory_runtime_selection_no_match_renders_empty_fallback() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+
+        for write in [
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-no-match-archived-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Archived,
+                work_surface: None,
+                session_id: Some(session_id.clone()),
+                title: "Archived no match".to_string(),
+                body: "archived no match".to_string(),
+                priority: 10,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-no-match-other-session-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::Session,
+                block_type: PromptMemoryBlockType::SessionFocus,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: Some(format!("other-{}", Uuid::new_v4())),
+                title: "Other session no match".to_string(),
+                body: "other session no match".to_string(),
+                priority: 9,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        ] {
+            seed_prompt_memory_block(&pool, write).await;
+        }
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        assert_eq!(selection.diagnostic["matched_count"], 0);
+        assert_eq!(selection.diagnostic["matched_block_ids"], serde_json::json!([]));
+        assert_eq!(
+            rendered,
+            "No prompt memory blocks are active for this runtime context."
+        );
+    }
+
+    #[tokio::test]
+    async fn persisted_prompt_memory_runtime_selection_tie_breaks_deterministically_by_title() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let titles = ["Zulu role", "Alpha role", "Mike role"];
+        let mut ids_by_title = std::collections::BTreeMap::new();
+        for title in titles {
+            let block_id = format!("pm-tie-{}-{}", title.replace(' ', "-").to_ascii_lowercase(), Uuid::new_v4());
+            ids_by_title.insert(title.to_string(), block_id.clone());
+            seed_prompt_memory_block(
+                &pool,
+                PromptMemoryBlockWrite {
+                    block_id,
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope: PromptMemoryBlockScope::RoleLocal,
+                    block_type: PromptMemoryBlockType::RoleGuidance,
+                    state: PromptMemoryBlockState::Active,
+                    work_surface: None,
+                    session_id: None,
+                    title: title.to_string(),
+                    body: format!("{title} body"),
+                    priority: 42,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await;
+        }
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        let expected_ids = vec![
+            ids_by_title["Alpha role"].clone(),
+            ids_by_title["Mike role"].clone(),
+            ids_by_title["Zulu role"].clone(),
+        ];
+        assert_eq!(selection.diagnostic["matched_count"], 3);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!(expected_ids)
+        );
+        let alpha_index = rendered.find("Alpha role").expect("alpha present");
+        let mike_index = rendered.find("Mike role").expect("mike present");
+        let zulu_index = rendered.find("Zulu role").expect("zulu present");
+        assert!(alpha_index < mike_index);
+        assert!(mike_index < zulu_index);
+        assert!(!rendered.contains("Omitted lower-priority blocks due to prompt budgeting:"));
+    }
+
+    #[tokio::test]
     async fn prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
