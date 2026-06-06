@@ -1,15 +1,16 @@
 use serde_json::{json, Value};
 
 use crate::{
-    core::tools::{
-        memory_write::{MemoryWriteEntryArguments, validate_memory_write_entry_semantics},
-        session::DenToolInvocationContext,
-        support::assess_unlabeled_memory_misuse,
+    core::{
+        den_tools::DEN_MEMORY_WRITE_ENTRY,
+        tools::{
+            memory_write::MemoryWriteEntryArguments,
+            session::DenToolInvocationContext,
+            support::{assess_unlabeled_memory_misuse, validate_memory_write_entry_semantics},
+        },
     },
     errors::CustomError,
 };
-
-use super::memory_write::DEN_MEMORY_WRITE_ENTRY;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolSemanticWarning {

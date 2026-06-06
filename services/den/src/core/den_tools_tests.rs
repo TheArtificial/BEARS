@@ -11,13 +11,14 @@ use crate::{
         prompt_memory_blocks::{
             PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
         },
+        den_tools::DenToolChannelContext,
         tools::{
             memory_read::memory_status_value,
             payloads::bear_environment_payload,
             prompt_memory::prompt_memory_list,
             prompt_memory::prompt_memory_patch,
             prompt_memory::prompt_memory_upsert,
-            session::{authorize_tool_for_role, DenToolChannelContext, DenToolInvocationContext},
+            session::{authorize_tool_for_role, DenToolInvocationContext},
             web::web_search_inner,
         },
     },

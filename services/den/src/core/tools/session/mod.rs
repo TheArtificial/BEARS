@@ -24,6 +24,7 @@ use crate::core::den_tools::{
     DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_WRITE_ENTRY,
     DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL, DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_EXIT,
     DEN_PLAN_MODE_RECORD_APPROVAL, DEN_PLAN_MODE_STATUS, DEN_POLICY_GET_SELF,
+    DEN_SITUATION_GET_PROVIDER,
     DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT,
     DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET, DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE,
     DEN_SKILL_REJECT_PROPOSAL, DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT,
@@ -32,6 +33,7 @@ use crate::core::den_tools::{
     DEN_WORK_PLAN_UPDATE, DenToolChannelContext, ToolPreflight,
 };
 use crate::core::tools::{
+    arguments::SetConversationTitleArguments,
     memfs::{fetch_role_memory_tree, memfs_http_client},
     environment::{bear_environment, session_info},
     memory_read::{memory_browse, memory_read, memory_search, memory_status},
@@ -165,11 +167,6 @@ pub struct DenToolInvocationContext {
     pub channel: DenToolChannelContext,
 }
 
-#[derive(Debug, Deserialize)]
-struct SetConversationTitleArguments {
-    title: String,
-}
-
 pub async fn invoke_den_tool(
     pool: &PgPool,
     config: &Config,
@@ -192,7 +189,9 @@ pub async fn invoke_den_tool(
         DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
-        DEN_SESSION_INFO => session_info(pool, config, &context, role).await,
+        DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {
+            session_info(pool, config, &context, role).await
+        }
         DEN_CONVERSATION_SET_TITLE => {
             set_conversation_title(pool, config, &context, arguments).await
         }
@@ -259,8 +258,7 @@ pub async fn invoke_den_tool(
             cancel_plan_mode(pool, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
         }
         DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
-        DEN_SITUATION_GET
-        | DEN_SKILL_PROPOSE
+        DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
         | DEN_SKILL_REJECT_PROPOSAL
         | DEN_WORK_PLAN_REQUEST_HANDOFF

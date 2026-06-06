@@ -1,44 +1,3 @@
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sqlx::PgPool;
-use uuid::Uuid;
-
-use crate::{
-    config::Config,
-    core::{
-        acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
-        acp_sessions,
-        bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
-        memory_manager_head::{
-            append_markdown_section, fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
-            fetch_memfs_role_memory_tree, fetch_memfs_role_plan_artifacts,
-            search_memfs_role_memory, write_memfs_core_update, write_memfs_role_memory_entry,
-            MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
-        },
-        conversation_events::{
-            memory_proposal_resolved_projection, memory_review_requested_projection,
-            project_to_conversation, ProjectionProvenance, ProjectionSource,
-        },
-        memory_proposals::{self, CreateMemoryProposal},
-        prompt_memory_block_store::{
-            archive_conflicting_prompt_memory_blocks,
-            archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_role,
-            patch_prompt_memory_block, upsert_prompt_memory_block, PromptMemoryBlockPatch,
-            PromptMemoryBlockWrite,
-        },
-        prompt_memory_blocks::{
-            PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
-        },
-        turn_state, user,
-        work_plans::{
-            self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
-            WorkPlanUpsert, WorkPlanVisibility,
-        },
-    },
-    errors::CustomError,
-};
 
 // Den-executed server tools. Adding a new Den tool here and to
 // `builtin_den_tool_descriptors` should not require an ACP adapter update when
@@ -122,16 +81,6 @@ pub const DEN_CORE_WRITE_RESULT_SUMMARY: &str = "den.core.write_result_summary";
 pub const DEN_OBSERVATION_WRITE: &str = "den.observation.write";
 pub const DEN_RUN_WRITE_RESULT: &str = "den.run.write_result";
 
-const ALL_ROLES: &[&str] = &["talk", "pair", "curate", "work", "watch"];
-const WORK_PLAN_READ_ROLES: &[&str] = &["talk", "pair", "curate", "work"];
-const WORK_PLAN_UPDATE_ROLES: &[&str] = &["talk", "pair", "work"];
-const TALK_AND_PAIR_ROLES: &[&str] = &["talk", "pair"];
-const PAIR_ROLES: &[&str] = &["pair"];
-const PAIR_AND_CURATE_ROLES: &[&str] = &["pair", "curate"];
-const CURATE_ROLES: &[&str] = &["curate"];
-const WATCH_ROLES: &[&str] = &["watch"];
-const WORK_ROLES: &[&str] = &["work"];
-
 pub use crate::core::tools::aliases::{is_builtin_den_tool, provider_aliases_for_tool};
 pub use crate::core::tools::descriptor::{
     builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role,
@@ -140,8 +89,16 @@ pub use crate::core::tools::descriptor::{
 };
 
 
-pub use crate::core::tools::session::DenToolInvocationContext;
+pub use crate::core::tools::{
+    arguments::{
+        DenToolChannelContext, MemoryCreateWorkSurfaceScaffoldArguments,
+        SetConversationTitleArguments,
+    },
+    session::DenToolInvocationContext,
+};
+#[allow(unused_imports)]
 pub(crate) use crate::core::tools::support::validate_memory_write_entry_semantics;
+#[allow(unused_imports)]
 pub(crate) use crate::core::tools::{
     activity_payloads::{activity_payload, no_active_workplan_payload, plan_mode_workplan_payload},
     environment::{bear_environment, fetch_acp_adapter_environment, session_info},
@@ -174,43 +131,10 @@ pub(crate) use crate::core::tools::{
     },
     work_surface::{
         build_work_surface_orientation_payload, collect_memory_tree_paths,
-        create_work_surface_scaffold, infer_work_surface_hint, work_surface_anchor_paths,
-        work_surface_candidate_slug, work_surface_entry_body, work_surface_index_file_body,
-        work_surface_scaffold_requests,
+        create_work_surface_scaffold, infer_work_surface_hint, normalize_work_surface_slug,
+        work_surface_anchor_paths, work_surface_candidate_slug, work_surface_entry_body,
+        work_surface_index_file_body, work_surface_scaffold_requests,
     },
 };
-use crate::core::tools::session::authorize_tool_for_role;
-use crate::core::tools::support::{
-    assess_unlabeled_memory_misuse, clean_limited_strings, clean_optional,
-    memory_read_scopes, memory_write_scopes, validate_bounded_text,
-    validate_optional_object, validate_prompt_memory_scope,
-};
-
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct DenToolChannelContext {
-    pub family: Option<String>,
-    pub client: Option<String>,
-    pub protocol: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SetConversationTitleArguments {
-    title: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryCreateWorkSurfaceScaffoldArguments {
-    work_surface_slug: String,
-    work_surface_name: String,
-    overview: String,
-    #[serde(default)]
-    glossary: Option<String>,
-    #[serde(default)]
-    current_understanding: Option<String>,
-}
-
 pub use crate::core::tools::session::invoke_den_tool;
 
-#[cfg(test)]
-mod den_tools_tests;

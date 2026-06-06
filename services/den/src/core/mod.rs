@@ -40,6 +40,8 @@ pub mod conversation {
     }
 }
 pub mod den_tools;
+#[cfg(test)]
+mod den_tools_tests;
 pub mod tools;
 pub mod email;
 pub mod letta;
