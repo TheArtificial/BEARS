@@ -1,4 +1,5 @@
 pub mod descriptor;
+pub mod environment;
 pub mod memfs;
 pub mod memory_read;
 pub mod memory_review;

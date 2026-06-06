@@ -33,6 +33,7 @@ use crate::core::den_tools::{
 };
 use crate::core::tools::{
     memfs::{fetch_role_memory_tree, memfs_http_client},
+    environment::{bear_environment, session_info},
     memory_read::{memory_browse, memory_read, memory_search, memory_status},
     memory_review::{
         apply_core_update, list_memory_proposals, read_memory_proposal,
@@ -191,6 +192,7 @@ pub async fn invoke_den_tool(
         DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
+        DEN_SESSION_INFO => session_info(pool, config, &context, role).await,
         DEN_CONVERSATION_SET_TITLE => {
             set_conversation_title(pool, config, &context, arguments).await
         }
@@ -256,8 +258,8 @@ pub async fn invoke_den_tool(
         DEN_PLAN_MODE_CANCEL => {
             cancel_plan_mode(pool, &context, arguments, crate::core::den_tools::plan_mode_workplan_payload).await
         }
-        DEN_BEAR_ENVIRONMENT
-        | DEN_SITUATION_GET
+        DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
+        DEN_SITUATION_GET
         | DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
         | DEN_SKILL_REJECT_PROPOSAL
