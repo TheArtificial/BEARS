@@ -27,10 +27,15 @@ fn pair_context() -> DenToolInvocationContext {
 use crate::core::{
     acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
-    den_tools::{
-        activity_payload, builtin_den_tool_descriptor_for_provider_name, invoke_den_tool,
-        no_active_workplan_payload, plan_mode_workplan_payload, tool_warning_payload,
-        validate_memory_write_entry_semantics, DenToolInvocationContext, ToolSemanticWarning,
+    tools::{
+        activity_payloads::{
+            activity_payload, no_active_workplan_payload, plan_mode_workplan_payload,
+        },
+        descriptor::builtin_den_tool_descriptor_for_provider_name,
+        memory_write::MemoryWriteEntryArguments,
+        preflight::{tool_warning_payload, ToolSemanticWarning},
+        session::{invoke_den_tool, DenToolInvocationContext},
+        support::validate_memory_write_entry_semantics,
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
@@ -131,7 +136,7 @@ fn work_plan_payload_is_activity_native() {
 
 #[test]
 fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
-    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+    let args: MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "note",
         "title": "workflow-ish",
         "body": "do thing",
@@ -147,7 +152,7 @@ fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
 
 #[test]
 fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
-    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+    let args: MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "summary",
         "title": "activity status",
         "body": "item one is in progress",
@@ -204,8 +209,7 @@ fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observatio
     ];
 
     for (label, value, expected) in cases {
-        let args: crate::core::den_tools::MemoryWriteEntryArguments =
-            serde_json::from_value(value).unwrap();
+        let args: MemoryWriteEntryArguments = serde_json::from_value(value).unwrap();
         let result = validate_memory_write_entry_semantics(&args, &pair_context());
         let err = match result {
             Err(err) => err.to_string(),
@@ -220,7 +224,7 @@ fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observatio
 
 #[test]
 fn memory_write_entry_semantics_allows_plain_semantic_memory() {
-    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+    let args: MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "decision",
         "title": "Prefer descriptor-owned naming",
         "body": "Provider-facing tool names should stay concise, while descriptor metadata carries ontology and permission information."
@@ -323,7 +327,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
 
 #[test]
 fn memory_write_entry_semantics_reject_activity_content_class_before_db_access() {
-    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+    let args: MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "summary",
         "title": "activity-ish",
         "body": "status changed",

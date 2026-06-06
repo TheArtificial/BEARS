@@ -1,4 +1,9 @@
-use super::den_tools::*;
+use super::tools::{
+    aliases::is_builtin_den_tool,
+    arguments::DenToolChannelContext,
+    constants::*,
+    descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role},
+};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -11,7 +16,6 @@ use crate::{
         prompt_memory_blocks::{
             PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
         },
-        den_tools::DenToolChannelContext,
         tools::{
             memory_read::memory_status_value,
             payloads::bear_environment_payload,

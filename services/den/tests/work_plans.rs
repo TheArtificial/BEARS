@@ -4,7 +4,10 @@ use den::{
     config::Config,
     core::{
         bears::{db as bears_db, db::BearParams, BearAgentRole},
-        den_tools::{self, DenToolInvocationContext, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
+        tools::{
+            constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
+            session::{invoke_den_tool, DenToolInvocationContext},
+        },
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,
             WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
@@ -261,7 +264,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     .await;
 
     let config = Config::load();
-    let update_result = den_tools::invoke_den_tool(
+    let update_result = invoke_den_tool(
         &pool,
         &config,
         DEN_WORK_PLAN_UPDATE,
@@ -284,7 +287,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     assert_eq!(update_result["plan"]["title"], "Pair implementation plan");
     assert_eq!(update_result["plan"]["version"], 1);
 
-    let list_result = den_tools::invoke_den_tool(
+    let list_result = invoke_den_tool(
         &pool,
         &config,
         DEN_WORK_PLAN_LIST,

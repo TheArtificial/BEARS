@@ -23,7 +23,11 @@ use crate::{
             db::{self as bears_db, role_is_bear_admin},
             BearAgentRole,
         },
-        den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
+        tools::{
+            arguments::DenToolChannelContext,
+            constants::DEN_CONVERSATION_SET_TITLE,
+            session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
+        },
         letta::sanitize_visible_transcript_text,
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
@@ -821,10 +825,10 @@ async fn maybe_handle_direct_set_conversation_title(
             protocol: Some("den_chat".to_string()),
         },
     };
-    let value = den_tools::invoke_den_tool(
+    let value = run_den_tool(
         state.sqlx_pool(),
         state.config.as_ref(),
-        den_tools::DEN_CONVERSATION_SET_TITLE,
+        DEN_CONVERSATION_SET_TITLE,
         serde_json::json!({ "title": title }),
         context,
     )

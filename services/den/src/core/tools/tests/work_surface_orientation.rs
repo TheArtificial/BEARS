@@ -2,9 +2,12 @@ use serde_json::json;
 
 use crate::core::{
     bears::BearAgentRole,
-    den_tools::{
-        build_work_surface_orientation_payload, collect_memory_tree_paths, infer_work_surface_hint,
-        work_surface_anchor_paths, work_surface_candidate_slug, DenToolInvocationContext,
+    tools::{
+        session::DenToolInvocationContext,
+        work_surface::{
+            build_work_surface_orientation_payload, collect_memory_tree_paths,
+            infer_work_surface_hint, work_surface_anchor_paths, work_surface_candidate_slug,
+        },
     },
 };
 

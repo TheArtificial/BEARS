@@ -1,7 +1,9 @@
-use crate::core::den_tools::{
-    builtin_den_tool_descriptors, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-    DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-    DEN_WORK_PLAN_UPDATE_PROVIDER,
+use crate::core::tools::{
+    constants::{
+        DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_PROMPT_MEMORY_UPSERT_PROVIDER,
+        DEN_SITUATION_GET_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+    },
+    descriptor::builtin_den_tool_descriptors,
 };
 
 #[test]

@@ -1,6 +1,13 @@
 use super::*;
 use uuid::Uuid;
 use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
+use crate::core::tools::constants::{
+    DEN_PLAN_MODE_CANCEL_PROVIDER, DEN_PLAN_MODE_ENTER_PROVIDER,
+    DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
+    DEN_PLAN_MODE_STATUS_PROVIDER, DEN_WORK_PLAN_GET_STATUS_PROVIDER,
+    DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
+    DEN_WORK_PLAN_UPDATE_PROVIDER,
+};
 use crate::core::prompt_memory_blocks::{
     compile_prompt_memory_blocks, PromptMemoryBlock, PromptMemoryBlockScope,
     PromptMemoryBlockState, PromptMemoryBlockType, PromptMemoryCompilationInput,
@@ -36,7 +43,6 @@ use crate::core::prompt_memory_blocks::{
                 AcpConversationResolution, AcpConversationSelectionSource,
             },
             acp_sessions,
-            den_tools,
             acp_tool_turns::{
                 AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
                 AcpToolTurnRegistration,
@@ -87,20 +93,20 @@ use crate::core::prompt_memory_blocks::{
             .collect::<Vec<_>>();
 
         for expected in [
-            den_tools::DEN_WORK_PLAN_UPDATE_PROVIDER,
-            den_tools::DEN_WORK_PLAN_GET_STATUS_PROVIDER,
-            den_tools::DEN_WORK_PLAN_LIST_PROVIDER,
-            den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
+            DEN_WORK_PLAN_UPDATE_PROVIDER,
+            DEN_WORK_PLAN_GET_STATUS_PROVIDER,
+            DEN_WORK_PLAN_LIST_PROVIDER,
+            DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
         ] {
             assert!(names.contains(&expected), "missing {expected}");
         }
 
         for hidden in [
-            den_tools::DEN_PLAN_MODE_ENTER_PROVIDER,
-            den_tools::DEN_PLAN_MODE_STATUS_PROVIDER,
-            den_tools::DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
-            den_tools::DEN_PLAN_MODE_EXIT_PROVIDER,
-            den_tools::DEN_PLAN_MODE_CANCEL_PROVIDER,
+            DEN_PLAN_MODE_ENTER_PROVIDER,
+            DEN_PLAN_MODE_STATUS_PROVIDER,
+            DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
+            DEN_PLAN_MODE_EXIT_PROVIDER,
+            DEN_PLAN_MODE_CANCEL_PROVIDER,
         ] {
             assert!(
                 !names.contains(&hidden),

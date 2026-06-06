@@ -1,4 +1,4 @@
 #[cfg(test)]
 mod guidance_tests {
-    include!("../../den_tools_descriptor_guidance_tests.rs");
+    include!("../tests/descriptor_guidance.rs");
 }

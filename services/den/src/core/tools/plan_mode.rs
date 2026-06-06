@@ -208,7 +208,7 @@ pub(crate) async fn exit_plan_mode(
         refs: None,
         lifecycle: Some(json!({ "scope": "role-local", "retention": "durable" })),
         source: Some(json!({
-            "tool": crate::core::den_tools::DEN_PLAN_MODE_EXIT,
+            "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
             "acp_session_id": acp_session_id,
             "conversation_id": clean_optional(&context.conversation_id),
         })),

@@ -2,11 +2,17 @@ use serde_json::json;
 
 use crate::core::{
     bears::BearAgentRole,
-    den_tools::{
-        builtin_den_tool_descriptors_for_role, infer_work_surface_hint, DenToolInvocationContext,
-        DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER,
-        DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_PLAN_MODE_ENTER_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-        DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+    tools::{
+        constants::{
+            DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_MEMORY_READ_PROVIDER,
+            DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+            DEN_PLAN_MODE_ENTER_PROVIDER, DEN_SITUATION_GET_PROVIDER,
+            DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+        },
+        descriptor::builtin_den_tool_descriptors_for_role,
+        payloads::session_info_payload,
+        session::DenToolInvocationContext,
+        work_surface::infer_work_surface_hint,
     },
 };
 
@@ -71,7 +77,7 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
     let context = pair_context();
     let member_count = 2;
     let memory_status = json!({ "available": true });
-    let payload = crate::core::den_tools::session_info_payload(
+    let payload = session_info_payload(
         &context,
         BearAgentRole::Pair,
         None,
@@ -99,7 +105,7 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
 #[test]
 fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
     let context = pair_context();
-    let payload = crate::core::den_tools::session_info_payload(
+    let payload = session_info_payload(
         &context,
         BearAgentRole::Pair,
         None,
@@ -150,7 +156,7 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
         "remaining_tokens": 9000,
         "source": "test"
     }));
-    let payload = crate::core::den_tools::session_info_payload(
+    let payload = session_info_payload(
         &context,
         BearAgentRole::Pair,
         None,

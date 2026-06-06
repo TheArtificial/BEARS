@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod info_tests {
-    include!("../../den_tools_session_info_tests.rs");
+    include!("../tests/session_info.rs");
 }
 
 #[cfg(test)]
 mod role_semantics_tests {
-    include!("../../den_tools_session_role_semantics_tests.rs");
+    include!("../tests/session_role_semantics.rs");
 }

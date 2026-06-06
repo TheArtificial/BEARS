@@ -1,7 +1,11 @@
 use crate::core::{
     acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
-    den_tools::{self, validate_memory_write_entry_semantics, MemoryWriteEntryArguments},
+    tools::{
+        descriptor::builtin_den_tool_descriptor_for_provider_name,
+        memory_write::MemoryWriteEntryArguments,
+        support::validate_memory_write_entry_semantics,
+    },
     turn_state::{approval_status_label, workflow_state_label},
 };
 
@@ -106,19 +110,19 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
     assert!(prompt.contains("memory.active_plan_write_allowed=false"));
     assert!(prompt.contains("execution.execution_unlocked=true"));
     assert_eq!(
-        den_tools::builtin_den_tool_descriptor_for_provider_name("enter_plan_mode")
+        builtin_den_tool_descriptor_for_provider_name("enter_plan_mode")
             .expect("enter_plan_mode descriptor")
             .domain,
         "workplan"
     );
     assert_eq!(
-        den_tools::builtin_den_tool_descriptor_for_provider_name("exit_plan_mode")
+        builtin_den_tool_descriptor_for_provider_name("exit_plan_mode")
             .expect("exit_plan_mode descriptor")
             .domain,
         "workplan"
     );
     assert_eq!(
-        den_tools::builtin_den_tool_descriptor_for_provider_name("record_plan_approval")
+        builtin_den_tool_descriptor_for_provider_name("record_plan_approval")
             .expect("record_plan_approval descriptor")
             .domain,
         "workplan"
@@ -136,7 +140,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
     .unwrap();
     let err = validate_memory_write_entry_semantics(
         &invalid_memory,
-        &crate::core::den_tools::DenToolInvocationContext {
+        &crate::core::tools::session::DenToolInvocationContext {
             bear_id: uuid::Uuid::nil(),
             bear_slug: "test".to_string(),
             role_agent_id: "agent".to_string(),

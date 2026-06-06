@@ -1,8 +1,10 @@
-use crate::core::den_tools::{
-    normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
-    work_surface_scaffold_requests,
+use crate::core::{
+    bears::BearAgentRole,
+    tools::work_surface::{
+        normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
+        work_surface_scaffold_requests,
+    },
 };
-use crate::core::bears::BearAgentRole;
 
 #[test]
 fn normalize_work_surface_slug_collapses_non_alphanumeric_runs() {
