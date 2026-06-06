@@ -705,16 +705,16 @@ Current status:
   - `matched_count`,
   - `matched_block_ids`,
   - no-match fallback rendering for empty active selections.
-- the longer follow-up plan for this pass is tracked in `pair/plans/gerwitz/longer-prompt-memory-validation-follow-up-plan.md` and is currently being executed under the active Bear plan “Prompt-memory validation broader pass”.
+- the longer follow-up plan for this pass is tracked in `pair/plans/gerwitz/longer-prompt-memory-validation-follow-up-plan.md`; the broader validation pass described there has now been completed.
 
-Remaining follow-up work:
+Completed follow-up work in this pass:
 
-- partially completed: repeated persisted prompt-memory DB/test setup has now been factored into shared helpers in `api/acp/tests.rs` (`prompt_memory_test_pool`, `prompt_memory_test_context`, `seed_prompt_memory_block`, runtime query/render helpers), but more consolidation is still possible as broader cases land,
-- completed initial persisted runtime-selection matrix coverage: `api/acp/tests.rs` now includes `prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks`, proving active-only inclusion plus exclusion for draft, superseded, archived, session-mismatched, work-surface-mismatched, and role-mismatched rows with exact diagnostic/render expectations,
-- expand persisted compile/render parity coverage for exact-fit, deterministic tie ordering, and no-match cases,
-- completed initial mutation validation: `api/acp/tests.rs` now covers conflict-archive and supersession-adjacent mutation flow at the store/runtime seam via `prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows`,
-- add a broader ACP integration test around persisted prompt-memory budgeting/selection behavior,
-- then trim or merge smaller redundant tests once broader matrix coverage subsumes them.
+- repeated persisted prompt-memory DB/test setup was factored into shared helpers in `api/acp/tests.rs` (`prompt_memory_test_pool`, `prompt_memory_test_context`, `seed_prompt_memory_block`, runtime query/render helpers),
+- persisted runtime-selection matrix coverage now includes `prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks` plus `persisted_prompt_memory_runtime_selection_excludes_each_inactive_state_individually`, proving active-only inclusion and explicit exclusion for draft, superseded, archived, session-mismatched, work-surface-mismatched, and role-mismatched rows with exact diagnostic/render expectations,
+- persisted compile/render parity coverage now includes exact-fit/no-omission, no-match/empty-fallback, deterministic same-priority title-order cases, and the existing over-budget omission case,
+- persisted mutation validation now covers conflict-archive and supersession-adjacent mutation flow at the store/runtime seam via `prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows`,
+- ACP persisted-seam budgeting coverage now includes `acp_prompt_context_with_activity_reports_budgeted_persisted_prompt_memory_diagnostics`, proving the production ACP prompt-context path preserves persisted diagnostics while rendering only the budgeted prompt-memory subset,
+- narrower redundant prompt-memory tests were trimmed where the broader coverage subsumed them.
 
 ##### Acceptance
 

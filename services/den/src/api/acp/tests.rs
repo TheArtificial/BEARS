@@ -155,32 +155,48 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
-    async fn acp_prompt_context_with_activity_uses_persisted_prompt_memory_blocks() {
+    async fn acp_prompt_context_with_activity_reports_budgeted_persisted_prompt_memory_diagnostics() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, _) = prompt_memory_test_context();
-        let seeded_block_id = format!("pm-session-{}", Uuid::new_v4());
-        seed_prompt_memory_block(
-            &pool,
-            PromptMemoryBlockWrite {
-                block_id: seeded_block_id.clone(),
-                bear_id: Some(bear_id),
-                role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
-                scope: PromptMemoryBlockScope::Session,
-                block_type: PromptMemoryBlockType::SessionFocus,
-                state: PromptMemoryBlockState::Active,
-                work_surface: None,
-                session_id: Some(session_id.clone()),
-                title: "Current focus".to_string(),
-                body: "Use persisted prompt memory from storage.".to_string(),
-                priority: 5,
-                created_by_user_id: Some(1),
-                supersedes_block_id: None,
-                metadata: serde_json::json!({}),
-            },
-        )
-        .await;
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let mut seeded_block_ids = Vec::new();
+        for (index, (scope, block_type, work_surface, block_session_id, title, body, priority)) in [
+            (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session budget", "session budget", 100),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface budget a", "surface budget a", 90),
+            (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface budget b", "surface budget b", 80),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role budget a", "role budget a", 70),
+            (PromptMemoryBlockScope::RoleLocal, PromptMemoryBlockType::RoleGuidance, None, None, "Role budget b", "role budget b", 60),
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::UserInstruction, None, None, "Bear budget a", "bear budget a", 50),
+            (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::UserInstruction, None, None, "Bear budget b", "bear budget b", 40),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let block_id = format!("pm-acp-budget-{}-{}", index, Uuid::new_v4());
+            seeded_block_ids.push(block_id.clone());
+            seed_prompt_memory_block(
+                &pool,
+                PromptMemoryBlockWrite {
+                    block_id,
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope,
+                    block_type,
+                    state: PromptMemoryBlockState::Active,
+                    work_surface,
+                    session_id: block_session_id,
+                    title: title.to_string(),
+                    body: body.to_string(),
+                    priority,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: None,
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await;
+        }
+
         let state = prompt_memory_test_state(pool);
         let policy = prompt_memory_test_policy();
         let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
@@ -196,63 +212,22 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("prompt context");
-        assert!(prompt.contains("Current focus"));
-        assert!(prompt.contains("Use persisted prompt memory from storage."));
+
         assert_eq!(diagnostic["source"], "prompt_memory_blocks");
         assert_eq!(diagnostic["persisted"], true);
-        assert_eq!(diagnostic["matched_count"], 1);
+        assert_eq!(diagnostic["matched_count"], 7);
         assert_eq!(
             diagnostic["matched_block_ids"],
-            serde_json::json!([seeded_block_id])
+            serde_json::json!(seeded_block_ids)
         );
-    }
-
-    #[tokio::test]
-    async fn acp_prompt_context_with_activity_excludes_archived_blocks_from_runtime_prompt_memory() {
-        let Some(pool) = prompt_memory_test_pool().await else {
-            return;
-        };
-        let (bear_id, session_id, root, _) = prompt_memory_test_context();
-        seed_prompt_memory_block(
-            &pool,
-            PromptMemoryBlockWrite {
-                block_id: format!("pm-archived-{}", Uuid::new_v4()),
-                bear_id: Some(bear_id),
-                role_slug: Some(BearAgentRole::Pair.as_str().to_string()),
-                scope: PromptMemoryBlockScope::Session,
-                block_type: PromptMemoryBlockType::SessionFocus,
-                state: PromptMemoryBlockState::Archived,
-                work_surface: None,
-                session_id: Some(session_id.clone()),
-                title: "Archived focus".to_string(),
-                body: "This archived block should not appear.".to_string(),
-                priority: 5,
-                created_by_user_id: Some(1),
-                supersedes_block_id: None,
-                metadata: serde_json::json!({}),
-            },
-        )
-        .await;
-        let state = prompt_memory_test_state(pool);
-        let policy = prompt_memory_test_policy();
-        let (prompt, diagnostic) = acp_direct_tool_prompt_context_with_activity(
-            &state,
-            bear_id,
-            &session_id,
-            &root,
-            &serde_json::json!({ "workspace_roots": [root.clone()] }),
-            true,
-            &policy,
-            None,
-            None,
-        )
-        .await
-        .expect("prompt context");
-        assert!(!prompt.contains("Archived focus"));
-        assert!(!prompt.contains("This archived block should not appear."));
-        assert!(prompt.contains("No prompt memory blocks are active for this runtime context."));
-        assert_eq!(diagnostic["matched_count"], 0);
-        assert_eq!(diagnostic["matched_block_ids"], serde_json::json!([]));
+        assert!(prompt.contains("Session budget"));
+        assert!(prompt.contains("Surface budget a"));
+        assert!(prompt.contains("Surface budget b"));
+        assert!(prompt.contains("Role budget a"));
+        assert!(prompt.contains("Role budget b"));
+        assert!(prompt.contains("Bear budget a"));
+        assert!(!prompt.contains("Bear budget b"));
+        assert!(prompt.contains("Omitted lower-priority blocks due to prompt budgeting:"));
     }
 
     #[tokio::test]
@@ -746,6 +721,84 @@ use crate::core::prompt_memory_blocks::{
             rendered,
             "No prompt memory blocks are active for this runtime context."
         );
+    }
+
+    #[tokio::test]
+    async fn persisted_prompt_memory_runtime_selection_excludes_each_inactive_state_individually() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let active_block_id = seed_prompt_memory_block(
+            &pool,
+            PromptMemoryBlockWrite {
+                block_id: format!("pm-lifecycle-active-{}", Uuid::new_v4()),
+                bear_id: Some(bear_id),
+                role_slug: Some(role_slug.clone()),
+                scope: PromptMemoryBlockScope::RoleLocal,
+                block_type: PromptMemoryBlockType::RoleGuidance,
+                state: PromptMemoryBlockState::Active,
+                work_surface: None,
+                session_id: None,
+                title: "Lifecycle active".to_string(),
+                body: "lifecycle active body".to_string(),
+                priority: 40,
+                created_by_user_id: Some(1),
+                supersedes_block_id: None,
+                metadata: serde_json::json!({}),
+            },
+        )
+        .await;
+
+        for (state, label) in [
+            (PromptMemoryBlockState::Draft, "Lifecycle draft"),
+            (PromptMemoryBlockState::Superseded, "Lifecycle superseded"),
+            (PromptMemoryBlockState::Archived, "Lifecycle archived"),
+        ] {
+            seed_prompt_memory_block(
+                &pool,
+                PromptMemoryBlockWrite {
+                    block_id: format!("pm-lifecycle-{}-{}", label.replace(' ', "-").to_ascii_lowercase(), Uuid::new_v4()),
+                    bear_id: Some(bear_id),
+                    role_slug: Some(role_slug.clone()),
+                    scope: PromptMemoryBlockScope::RoleLocal,
+                    block_type: PromptMemoryBlockType::RoleGuidance,
+                    state,
+                    work_surface: None,
+                    session_id: None,
+                    title: label.to_string(),
+                    body: format!("{label} body"),
+                    priority: 100,
+                    created_by_user_id: Some(1),
+                    supersedes_block_id: Some(active_block_id.clone()),
+                    metadata: serde_json::json!({}),
+                },
+            )
+            .await;
+        }
+
+        let (selection, rendered) = select_rendered_prompt_memory_runtime(
+            &pool,
+            bear_id,
+            role_slug.as_str(),
+            session_id.as_str(),
+            &root,
+        )
+        .await;
+
+        assert_eq!(selection.diagnostic["matched_count"], 1);
+        assert_eq!(
+            selection.diagnostic["matched_block_ids"],
+            serde_json::json!([active_block_id])
+        );
+        assert!(rendered.contains("Lifecycle active"));
+        for excluded in [
+            "Lifecycle draft",
+            "Lifecycle superseded",
+            "Lifecycle archived",
+        ] {
+            assert!(!rendered.contains(excluded), "inactive lifecycle block leaked into render: {excluded}");
+        }
     }
 
     #[tokio::test]
