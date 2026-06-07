@@ -49,6 +49,27 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 
 This control-plane placement holds **only** because task *execution* stays inside the Bear. Den dispatches a task to the Bear's own role runtime (e.g. `work`) **running with the Bear's scoped memory context**. Den schedules, gates (acceptance criteria), and records; it does **not** execute task `body` content via generic, non-Bear subagents. If Den ever executed task bodies outside the Bear's memory context, the task tree would be Bear cognition smuggled into the control plane, and the storage decision in principle 7 (and the ADR-0031 amendment it rests on) would no longer be justified.
 
+### Docket, `pair`, and the bear/Den boundary
+
+The job-management platform described by this ADR is named **Docket**. Docket is a Den control-plane subsystem: it is the system of record for all tasks and the orchestrator for jobs. The bear/Den boundary that [ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) protects is drawn at **memory** (bear-canonical, SQLite), **not** at tasks. Tasks and jobs are Docket-canonical (Postgres). There is no bear-local task store and no sync seam.
+
+This matters because `pair` is a Den-hosted runtime (it is already API-direct to Den for memory, situation, and search tools). `pair` using Docket for tasks is therefore *not* a new boundary crossing — it is the same Den surface `pair` already uses. The clean boundary is `pair` ↔ bear *memory*, which stays in SQLite and is untouched by task work.
+
+Three usage patterns all resolve to the same single store, with no data crossing a store boundary:
+
+1. **In-session focus (no job).** `pair` creates **session-bound** tasks (`session_anchor_id` set, `job_id` null) to stay focused mid-conversation. These are owned by the pair session.
+2. **ACP plans.** The `pair` harness renders task state as ACP plan entries. This is a **projection** for the client; the canonical store remains the one Docket table.
+3. **Taking a job.** `pair` adopts a Docket job by binding the job's active run to the session (`session_anchor_id` on the run). No migration or copy occurs — the tasks were already in Docket; the same ACP-plan projection now renders the job's tasks.
+
+#### Session-bound vs. job-bound ownership
+
+Within Docket, a task's **ownership and retention** distinguish the two lifecycles without splitting the concept or the store:
+
+- **Session-bound** (`session_anchor_id`, null `job_id`): owned by a pair session; ephemeral; archivable or garbage-collected with the session. Persisted so a session can resume and recover its live plan.
+- **Job-bound** (`job_id` set): owned by a job; durable; subject to the full run/observability model.
+
+Same table, same `bear_tasks` concept, different ownership and retention policy.
+
 ### Schema
 
 All tables are in Den Postgres. Domain labels per ADR-0027 are noted.
