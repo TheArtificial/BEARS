@@ -37,7 +37,9 @@ We also want the Bear state layer to remain distinct from Den's administrative P
 
 ## Decision
 
-BEARS will use **SQLite as the canonical store for Bear agent memory and tasks**.
+BEARS will use **SQLite as the canonical store for Bear agent memory and Bear-internal task state**.
+
+> **Scope amendment (see [ADR-0034](adr-0034-jobs-and-tasks-work-management.md)):** This ADR originally claimed *all* task state for SQLite. That is narrowed here. **Human-initiated, Den-orchestrated work — jobs and their task trees, runs, dispatch, acceptance-criteria gating, and operator/cross-Bear visibility — is Den control-plane state and lives in Den Postgres** per ADR-0034. The deciding metaphor: a Bear *uses* Den's job-management platform to organize its work, the way a person uses a project tracker. The tracker is infrastructure the Bear plugs into, not part of the Bear. SQLite remains canonical for what is genuinely Bear cognition — role-scoped and shared/promoted **memory** — because that is where the pollution-risk and portability concerns below actually bite. This split holds only under the execution invariant stated in ADR-0034: Den dispatches task work to the Bear's own role runtime *within the Bear's scoped memory context*, and must not execute task bodies via generic non-Bear subagents. If that invariant were broken, task state would be smuggling Bear cognition into the control plane and this amendment would no longer hold.
 
 Each Bear will have a canonical SQLite database managed by Rust services through **`sqlx`**.
 
@@ -46,10 +48,10 @@ SQLite will store:
 - role-scoped memory records,
 - shared/promoted memory records,
 - discovered references,
-- task records,
-- task event history,
 - promotion/review records,
 - and change-tracking metadata.
+
+(Bear-internal task scratch may also live here, but the canonical jobs/tasks orchestration records are Den Postgres per the scope amendment above and ADR-0034.)
 
 All writes to a Bear database will go through a **single logical write path** owned by application code. Within one process, that should be enforced with a dedicated write pool or connection configured for one writer. Across multiple processes, SQLite itself remains the serialization mechanism through WAL locking and `busy_timeout`; application pooling does not replace engine-level write serialization.
 
@@ -63,7 +65,7 @@ Git remains the canonical store for human-authored artifacts such as:
 - tests, fixtures, and examples,
 - and optionally exported curated summaries.
 
-Den's Postgres database remains the control-plane and administrative store for Den concerns and is not the canonical store for Bear runtime memory and tasks.
+Den's Postgres database remains the control-plane and administrative store for Den concerns. It is not the canonical store for Bear runtime *memory*. It *is*, per the scope amendment above and ADR-0034, the canonical store for Den-orchestrated jobs/tasks work-management records.
 
 ## Why SQLite
 
@@ -159,6 +161,8 @@ Task changes should use:
 - constrained legal transitions,
 - explicit ownership or handoff,
 - and optional lease or claim semantics only where needed.
+
+> **Note (jobs/tasks work-management model):** Per the scope amendment in the Decision section, the canonical jobs/tasks orchestration records live in **Den Postgres** ([ADR-0034](adr-0034-jobs-and-tasks-work-management.md)), not per-Bear SQLite. ADR-0034 adopts this ADR's append-only event-history-plus-projections shape (constrained transitions, explicit ownership/handoff, strong provenance) and implements it in Postgres. The append-only/event-history guidance here still applies to any Bear-internal task scratch that does live in SQLite.
 
 ## Proposed schema shape
 

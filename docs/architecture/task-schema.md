@@ -1,5 +1,7 @@
 # Bear Den Tasks Schema
 
+> **Scope:** This document specifies the MemFS file formats for the unattended, `review`-gated task pipeline (intent → approved task → result). Human-initiated, goal-directed work uses the relational **jobs and tasks** model in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface and does not depend on these file formats.
+
 This document specifies the file formats and lifecycle for the task-management subsystem described in the `multi-role-runtime-architecture` ADR (section 5, "Task request flow") and operationalized by `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` (phases 4–8).
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on task artifact shapes and lifecycle.

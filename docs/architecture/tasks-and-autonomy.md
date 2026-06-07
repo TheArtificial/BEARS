@@ -1,5 +1,7 @@
 # Tasks and Autonomy
 
+> **Scope:** This document describes the unattended, `review`-gated autonomy pipeline (intent → approved task → result). Human-initiated, goal-directed work is modeled separately as **jobs and tasks** in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface.
+
 Tasks are how a Bear turns a user's request or an external observation into reviewed background work. Autonomy flows through intent, review, policy, execution, and result promotion.
 
 For the canonical role model and role names, see [bear roles](bear-roles.md). This document focuses on task and autonomy flow rather than restating the full role architecture.

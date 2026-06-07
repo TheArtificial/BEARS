@@ -1,5 +1,7 @@
 # Task System Implementation Plan
 
+> **Partially superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md).** That ADR evolves `bear_work_plans` + JSONB `items` into a relational jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events) and is the canonical spec for the work-management schema. **Phases 1–4 below are superseded** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by job/task creation and the `den.job.*` / `den.task.*` tools). **Phases 5–6 remain valid** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034. The `den.work_plan.*` tool names and `bear_work_plan_events` are retired in favor of the ADR-0034 surface.
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This plan turns the multi-agent task architecture into implementable Den work. It complements [`tasks-schema.md`](../architecture/tasks-schema.md), which remains the canonical file format for MemFS task intents, approved tasks, and work results.
 
