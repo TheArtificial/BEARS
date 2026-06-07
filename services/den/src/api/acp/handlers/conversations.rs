@@ -9,27 +9,19 @@ use uuid::Uuid;
 use crate::{
     api::service::ApiState,
     core::{
-        acp_runtime::{
-            load_acp_history_with_backend, require_pair_runtime_binding, verify_acp_conversation_access,
-            LettaRuntimeConversationBackend,
-        },
         archived_conversations,
         bears::db as bears_db,
         conversation_persistence::{
-            count_visible_messages, ensure_conversation_for_external_id, insert_message_if_absent,
-            list_conversations_for_bear, list_messages_page,
+            count_visible_messages, ensure_conversation_for_external_id, list_conversations_for_bear,
+            list_messages_page,
         },
-        runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
-        runtime_contracts::RuntimeConversationRef,
+        runtime_compaction_store::list_runtime_compaction_events,
     },
     errors::CustomError,
 };
 
 use crate::api::acp::{
-    history::{
-        map_canonical_history_page, map_compaction_status_for_history,
-        runtime_compaction_event_for_history,
-    },
+    history::map_canonical_history_page,
     normalize_acp_conversation_id,
     responses::acp_error_response,
     AcpConversationHistoryQuery, AcpConversationHistoryResponse, AcpConversationRow,
@@ -129,33 +121,11 @@ pub(super) async fn conversation_history_inner(
         .ok_or_else(|| {
             CustomError::NotFound("bear not found or you do not have access".to_string())
         })?;
-    if !state.letta.is_enabled() {
-        return Ok(Json(AcpConversationHistoryResponse {
-            messages: vec![],
-            has_more: false,
-            next_before: None,
-            compaction: None,
-            compaction_history: vec![],
-        })
-        .into_response());
-    }
-    let runtime_binding =
-        require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
             "history is only available for default or saved conv- conversations".to_string(),
         ));
-    }
-    if conv_id.starts_with("conv-") {
-        verify_acp_conversation_access(
-            &state.sqlx_pool,
-            bear.id,
-            state.letta.as_ref(),
-            &runtime_binding,
-            &conv_id,
-        )
-        .await?;
     }
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let before = query
@@ -181,95 +151,26 @@ pub(super) async fn conversation_history_inner(
     )
     .await?;
     let canonical_visible_count = count_visible_messages(&state.sqlx_pool, canonical_conversation.id).await?;
-    if canonical_visible_count > 0 {
-        let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
-        let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
-            .await
-            .unwrap_or_default();
-        return Ok(Json(AcpConversationHistoryResponse {
-            messages,
-            has_more,
-            next_before,
-            compaction: None,
-            compaction_history,
-        })
-        .into_response());
-    }
-    let runtime_history_page = load_acp_history_with_backend(
-        &LettaRuntimeConversationBackend {
-            letta: state.letta.as_ref(),
-        },
-        &runtime_binding,
-        &RuntimeConversationRef { id: conv_id.clone() },
-    )
-    .await?;
-    let raw_history_body = runtime_history_page
-        .raw_payload
-        .clone()
-        .unwrap_or_else(|| serde_json::json!({"messages": []}));
-    for (index, record) in runtime_history_page.records.iter().enumerate() {
-        let raw_message = raw_history_body
-            .get("messages")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|messages| messages.get(index))
-            .ok_or_else(|| CustomError::System("runtime history page missing raw message payload".to_string()))?;
-        let inner = raw_message.get("contents").unwrap_or(raw_message);
-        let message_type = inner
-            .get("message_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("system_message");
-        let normalized_message_type = match message_type {
-            "user_message" => "user",
-            "assistant_message" => "assistant",
-            _ => "system",
-        };
-        insert_message_if_absent(
-            &state.sqlx_pool,
-            canonical_conversation.id,
-            index as i64,
-            normalized_message_type,
-            Some(record.role.as_str()),
-            "default",
-            &record.content,
-            inner.clone(),
-            record.message_id.as_deref(),
-            record.created_at.as_deref(),
-        )
-        .await?;
-    }
-    let messages = runtime_history_page
-        .records
-        .iter()
-        .rev()
-        .take(limit as usize)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|record| crate::api::acp::AcpConversationHistoryMessage {
-            id: record.message_id.clone(),
-            role: record.role.clone(),
-            text: record.content.clone(),
-            created_at: record.created_at.clone(),
-        })
-        .collect::<Vec<_>>();
-    let has_more = runtime_history_page.records.len() > limit as usize;
-    let next_before = runtime_history_page
-        .records
-        .iter()
-        .rev()
-        .nth(limit as usize)
-        .and_then(|record| record.message_id.clone());
-    let _context_envelope = crate::api::acp::history::runtime_context_envelope_for_history(&raw_history_body);
-    let event = runtime_compaction_event_for_history(
-        &conv_id,
-        &raw_history_body,
-        crate::core::runtime_conversations::RuntimeCompactionTriggerKind::SemanticGroupCount,
-    );
-    let _ = record_runtime_compaction_event(&state.sqlx_pool, &event).await;
-    let compaction = Some(map_compaction_status_for_history(&conv_id, &raw_history_body));
+    let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
     let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
         .await
         .unwrap_or_default();
+    let compaction = if canonical_visible_count > 0 {
+        None
+    } else {
+        Some(crate::api::acp::AcpCompactionStatusResponse {
+            status: "unavailable".to_string(),
+            policy_version: "canonical_only".to_string(),
+            source_group_start: None,
+            source_group_end: None,
+            diagnostic: Some(
+                "Canonical ACP conversation history is not yet available for this conversation. Live Letta history fallback has been disabled for pair ACP reads during migration.".to_string(),
+            ),
+            artifact: None,
+            context_envelope: None,
+            prompt_memory_diagnostic: None,
+        })
+    };
     Ok(Json(AcpConversationHistoryResponse {
         messages,
         has_more,

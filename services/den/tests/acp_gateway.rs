@@ -1019,6 +1019,122 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
 }
 
 #[tokio::test]
+async fn acp_conversation_history_returns_canonical_only_when_letta_is_unavailable() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        concat!(
+            "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
+            "data: {\"message_type\":\"assistant_message\",\"content\":\"first response\"}\n\n",
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+        )
+        .to_string(),
+    ]);
+
+    let prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-history-canonical-only",
+        Some(&user_bear.raw_token),
+        json!({ "message": "hello canonical history", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let _ = response_text(prompt).await;
+
+    let session = acp_sessions::find_for_user_bear_session(
+        &fixture.pool,
+        user_bear.user_id,
+        &user_bear.bear_slug,
+        "session-history-canonical-only",
+    )
+    .await
+    .expect("load acp session")
+    .expect("acp session present");
+    let conversation_id = session
+        .resolved_conversation_id
+        .clone()
+        .expect("resolved conversation id");
+    let context = den::core::conversation_events::ConversationPersistenceContext {
+        pool: fixture.pool.clone(),
+        bear_id: user_bear.bear_id,
+        user_id: Some(user_bear.user_id),
+        external_conversation_id: conversation_id.clone(),
+        source_session_id: Some("session-history-canonical-only".to_string()),
+        request_id: Some("req-history-canonical-only".to_string()),
+        persistence_scope_id: "session-history-canonical-only".to_string(),
+        skip_persistence: false,
+    };
+    den::core::conversation_events::persist_canonical_conversation_record(
+        &context,
+        &den::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            "hello canonical history",
+            json!({
+                "source": "test",
+                "event": "user_prompt",
+                "scope_id": "session-history-canonical-only",
+                "role": "user"
+            }),
+            None,
+        ),
+    )
+    .await
+    .expect("persist canonical user prompt");
+    den::core::conversation_events::persist_canonical_conversation_record(
+        &context,
+        &den::core::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            "first response",
+            json!({
+                "source": "test",
+                "event": "assistant_output",
+                "scope_id": "session-history-canonical-only",
+                "role": "assistant"
+            }),
+            None,
+        ),
+    )
+    .await
+    .expect("persist canonical assistant output");
+
+    let disabled_config = {
+        let mut config = Config::load();
+        config.database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
+        config.run_api = true;
+        config.acp_gateway_enabled = true;
+        config.letta_base_url = String::new();
+        config.codepool_base_url = String::new();
+        config.api_server_url = "http://localhost:3001".to_string();
+        config.web_server_url = "http://localhost:3000".to_string();
+        Arc::new(config)
+    };
+    let disabled_store = PostgresStore::new(fixture.pool.clone());
+    let disabled_app = api::create_api_app(fixture.pool.clone(), disabled_store, disabled_config)
+        .await
+        .expect("build api router with Letta disabled");
+
+    let history = get_conversation_history(
+        disabled_app,
+        &user_bear.bear_slug,
+        &conversation_id,
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(history.status(), StatusCode::OK);
+    let history_json: Value = serde_json::from_str(&response_text(history).await).unwrap();
+    let messages = history_json["messages"].as_array().expect("history messages array");
+    assert!(messages.iter().any(|message| {
+        message["role"] == json!("user") && message["text"] == json!("hello canonical history")
+    }), "history should include canonical user prompt even without Letta runtime access: {history_json}");
+    assert!(messages.iter().any(|message| {
+        message["role"] == json!("assistant") && message["text"] == json!("first response")
+    }), "history should include canonical assistant output even without Letta runtime access: {history_json}");
+    assert!(
+        history_json.get("compaction").is_none() || history_json["compaction"].is_null(),
+        "canonical history should not require runtime compaction payload when visible rows exist: {history_json}"
+    );
+}
+
+#[tokio::test]
 async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
