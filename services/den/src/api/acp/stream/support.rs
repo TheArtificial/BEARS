@@ -213,9 +213,6 @@ impl AcpStreamDiagnostics {
             }
         }
         Self::increment(&mut self.native_message_types, message_type);
-        if message_type == "tool_return_message" {
-            self.saw_tool_return_ack = true;
-        }
         let stop_reason = value
             .get("stop_reason")
             .and_then(|v| v.as_str())

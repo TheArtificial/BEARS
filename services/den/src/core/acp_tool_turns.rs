@@ -243,6 +243,7 @@ pub struct AcpToolTurnCoordinator {
     turns: Arc<Mutex<HashMap<String, AcpToolTurn>>>,
     settled_results: Arc<Mutex<HashMap<String, AcpSettledToolResult>>>,
     active_turns: Arc<Mutex<HashMap<String, AcpActiveTurn>>>,
+    orphaned_result_txs: Arc<Mutex<HashMap<String, oneshot::Sender<AcpToolResultRequest>>>>,
 }
 
 #[derive(Debug)]
@@ -285,6 +286,7 @@ impl AcpToolTurnCoordinator {
             turns: Arc::new(Mutex::new(HashMap::new())),
             settled_results: Arc::new(Mutex::new(HashMap::new())),
             active_turns: Arc::new(Mutex::new(HashMap::new())),
+            orphaned_result_txs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -730,8 +732,15 @@ impl AcpToolTurnCoordinator {
     }
 
     pub fn remove(&self, session_id: &str, tool_call_id: &str) {
+        let key = Self::key(session_id, tool_call_id);
         if let Ok(mut turns) = self.turns.lock() {
-            turns.remove(&Self::key(session_id, tool_call_id));
+            if let Some(mut turn) = turns.remove(&key) {
+                if let Some(result_tx) = turn.result_tx.take() {
+                    if let Ok(mut orphaned) = self.orphaned_result_txs.lock() {
+                        orphaned.insert(key.clone(), result_tx);
+                    }
+                }
+            }
         }
     }
 

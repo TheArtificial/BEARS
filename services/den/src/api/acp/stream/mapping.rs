@@ -107,12 +107,28 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
     let runtime_event_for_projection = runtime_event.clone();
     let value = runtime_stream_event_to_acp_seed_value(runtime_event)?;
     let observed_run_ids = diagnostics.observe_parsed_event(&value);
-    let direct_projected_events = if let RuntimeStreamEvent::Semantic(semantic_event) =
-        runtime_event_for_projection.clone()
-    {
-        runtime_semantic_event_to_bearwire_gateway_events(semantic_event)
-    } else {
-        Vec::new()
+    let direct_projected_events = match runtime_event_for_projection.clone() {
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::AssistantTextDelta { .. }
+            | RuntimeSemanticEvent::StatusText { .. }
+            | RuntimeSemanticEvent::ConversationResolved { .. }
+            | RuntimeSemanticEvent::TurnCompleted { .. }
+            | RuntimeSemanticEvent::TurnFailed { .. }
+            | RuntimeSemanticEvent::TurnCancelled { .. }
+            | RuntimeSemanticEvent::Error { .. }
+            | RuntimeSemanticEvent::RunProgress { .. },
+        ) => {
+            if let RuntimeStreamEvent::Semantic(semantic_event) = runtime_event_for_projection.clone() {
+                runtime_semantic_event_to_bearwire_gateway_events(semantic_event)
+            } else {
+                Vec::new()
+            }
+        }
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested { .. }
+            | RuntimeSemanticEvent::RunPaused { .. },
+        )
+        | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     };
     if let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
         &value,

@@ -1048,16 +1048,16 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     let slug = user_bear.bear_slug.clone();
     let token = user_bear.raw_token.clone();
     let prompt_task = tokio::spawn(async move {
-        let response = post_prompt(
+        post_prompt(
             app_for_prompt,
             &slug,
             "session-read-e2e",
             Some(&token),
             json!({ "message": "read a file", "client": "zed" }),
         )
-        .await;
-        response
+        .await
     });
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     let result = post_tool_result(
         fixture.app.clone(),
         &user_bear.bear_slug,
@@ -1082,6 +1082,7 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
     let text = response_text(prompt).await;
+    assert!(text.contains("\"type\":\"tool_request\""));
     assert!(text.contains("\"type\":\"tool_request\""));
     assert!(text.contains("fs_read_text_file"));
     assert!(text.contains("Local tool fs_read_text_file completed"));

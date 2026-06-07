@@ -56,6 +56,8 @@ pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) session_info_event_sent: bool,
     pub(in crate::api::acp) text_chunker: AcpTextChunker,
     pub(in crate::api::acp) active_turn_guard: Option<RoleTurnGuard>,
+    pub(in crate::api::acp) parked_adapter_result_rx:
+        Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::api::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     pub(in crate::api::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
     pub(in crate::api::acp) turn_controller: AcpTurnController,
@@ -306,6 +308,7 @@ impl AcpRuntimeSseStream {
             session_info_event_sent,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             active_turn_guard: Some(active_turn_guard),
+            parked_adapter_result_rx: None,
             cancel_rx: None,
             cancel_handle: None,
             turn_controller: {
@@ -336,6 +339,9 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::api::acp) fn cleanup_active_tool_turns(&mut self) {
+        if self.turn_controller.phase() != AcpTurnPhase::Terminal {
+            return;
+        }
         for pending in self
             .context
             .tool_turns
@@ -352,10 +358,6 @@ impl AcpRuntimeSseStream {
     pub(in crate::api::acp) fn log_summary_once(&mut self) {
         if !self.logged_summary {
             self.cleanup_active_tool_turns();
-            self.cancel_handle.take();
-            if let Some(guard) = self.active_turn_guard.take() {
-                guard.release();
-            }
             self.diagnostics.log_summary(&self.context);
             self.logged_summary = true;
         }
@@ -364,11 +366,10 @@ impl AcpRuntimeSseStream {
 
 impl Drop for AcpRuntimeSseStream {
     fn drop(&mut self) {
-        self.cleanup_active_tool_turns();
-        self.cancel_handle.take();
-        if let Some(guard) = self.active_turn_guard.take() {
-            guard.release();
+        if let Some(waiting) = self.waiting_adapter_tool_result.take() {
+            self.parked_adapter_result_rx = Some(waiting);
         }
+        self.cleanup_active_tool_turns();
     }
 }
 
@@ -382,6 +383,10 @@ impl Stream for AcpRuntimeSseStream {
         let this = self.as_mut().get_mut();
         if let Some(bytes) = this.pending.pop_front() {
             return Poll::Ready(Some(Ok(bytes)));
+        }
+
+        if this.waiting_adapter_tool_result.is_none() {
+            this.waiting_adapter_tool_result = this.parked_adapter_result_rx.take();
         }
 
         if this
@@ -676,7 +681,7 @@ impl Stream for AcpRuntimeSseStream {
                                                 | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
                                                 | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
                                                     let mut temp_diagnostics = AcpStreamDiagnostics::default();
-                                                    let (events, _effect, _adapter_result_rx) = match map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                                                    let (events, _effect, adapter_result_rx) = match map_runtime_stream_event_to_acp_adapter_events_with_persistence(
                                                         event,
                                                         context.clone(),
                                                         &mut temp_diagnostics,
@@ -684,6 +689,12 @@ impl Stream for AcpRuntimeSseStream {
                                                         Ok(ok) => ok,
                                                         Err(err) => return (Err(err), AcpStreamDiagnostics::default()),
                                                     };
+                                                    if adapter_result_rx.is_some() {
+                                                        // A continued runtime turn can immediately request another adapter-local tool.
+                                                        // Do not allow the resumed stream collector to swallow that receiver; leave
+                                                        // terminal emission to the outer stream, which owns the waiting/continuation loop.
+                                                        break;
+                                                    }
                                                     if events.iter().any(|event| matches!(event, AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. } | AcpGatewayEvent::Error { .. })) {
                                                         saw_terminal_event = true;
                                                     }
@@ -801,6 +812,10 @@ impl Stream for AcpRuntimeSseStream {
 
         if this.turn_controller.phase() == AcpTurnPhase::Terminal {
             this.log_summary_once();
+            this.cancel_handle.take();
+            if let Some(guard) = this.active_turn_guard.take() {
+                guard.release();
+            }
             return Poll::Ready(None);
         }
 
@@ -1072,6 +1087,14 @@ impl Stream for AcpRuntimeSseStream {
                     }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
+                    }
+                    if this.turn_controller.phase() != AcpTurnPhase::Terminal
+                        && (!this.outstanding_tool_obligations().is_empty()
+                            || this.waiting_adapter_tool_result.is_some()
+                            || this.queued_tool_result_continuation.is_some())
+                    {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     }
                     this.log_summary_once();
                     Poll::Ready(None)
