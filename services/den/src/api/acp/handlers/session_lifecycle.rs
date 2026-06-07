@@ -67,6 +67,30 @@ pub(super) async fn compact_session_inner(
                 "ACP session has no resolved runtime conversation to compact".to_string(),
             )
         })?;
+    if !state.letta.is_enabled() {
+        tracing::warn!(
+            acp_session_id = %session_id,
+            bear_id = %session.bear_id,
+            conversation_id,
+            "ACP session compact requested but live Letta compaction is unavailable during migration"
+        );
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "compacted": false,
+            "acp_session_id": session_id,
+            "conversation_id": conversation_id,
+            "approval_recovery": {
+                "attempted": false,
+                "reason": "compaction_only"
+            },
+            "compact_result": {
+                "status": "unavailable",
+                "reason": "letta_disabled",
+                "diagnostic": "Live Letta compaction is unavailable during ACP migration; canonical transcript history remains intact."
+            }
+        }))
+        .into_response());
+    }
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
     tracing::warn!(
         acp_session_id = %session_id,

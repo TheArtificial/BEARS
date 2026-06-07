@@ -509,6 +509,28 @@ async fn post_cancel_session(
         .expect("ACP cancel session response")
 }
 
+async fn post_compact_session(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+    mut body: Value,
+) -> axum::response::Response {
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!("/acp/bears/{slug}/sessions/{session_id}/compact"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP compact session response")
+}
+
 async fn get_acp_session_runtime(
     app: axum::Router,
     slug: &str,
@@ -1236,6 +1258,62 @@ async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
     assert!(messages.iter().any(|message| {
         message["kind"] == json!("assistant") && message["text"] == json!("read complete")
     }), "history should include final assistant output: {history_json}");
+}
+
+#[tokio::test]
+async fn acp_compact_session_returns_unavailable_when_letta_is_disabled() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.push(
+        concat!(
+            "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
+            "data: {\"message_type\":\"assistant_message\",\"content\":\"first response\"}\n\n",
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+        )
+        .to_string(),
+    );
+
+    let prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-compact-disabled",
+        Some(&user_bear.raw_token),
+        json!({ "message": "hello compact", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let _ = response_text(prompt).await;
+
+    let disabled_config = {
+        let mut config = Config::load();
+        config.database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
+        config.run_api = true;
+        config.acp_gateway_enabled = true;
+        config.letta_base_url = String::new();
+        config.codepool_base_url = String::new();
+        config.api_server_url = "http://localhost:3001".to_string();
+        config.web_server_url = "http://localhost:3000".to_string();
+        Arc::new(config)
+    };
+    let disabled_store = PostgresStore::new(fixture.pool.clone());
+    let disabled_app = api::create_api_app(fixture.pool.clone(), disabled_store, disabled_config)
+        .await
+        .expect("build api router with Letta disabled");
+
+    let compact = post_compact_session(
+        disabled_app,
+        &user_bear.bear_slug,
+        "session-compact-disabled",
+        Some(&user_bear.raw_token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(compact.status(), StatusCode::OK);
+    let compact_json: Value = serde_json::from_str(&response_text(compact).await).unwrap();
+    assert_eq!(compact_json["ok"], json!(true), "{compact_json}");
+    assert_eq!(compact_json["compacted"], json!(false), "{compact_json}");
+    assert_eq!(compact_json["compact_result"]["status"], json!("unavailable"), "{compact_json}");
+    assert_eq!(compact_json["compact_result"]["reason"], json!("letta_disabled"), "{compact_json}");
 }
 
 #[tokio::test]
