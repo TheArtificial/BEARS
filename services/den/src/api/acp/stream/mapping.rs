@@ -1,14 +1,10 @@
-#[cfg(test)]
-use bytes::Bytes;
-
 use crate::{
     api::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext},
     api::acp::types::PersistedToolRequestEffect,
     api::acp::stream::support::AcpStreamDiagnostics,
     core::{
         acp_letta_events::{
-            acp_event_to_adapter_sse, map_native_letta_stream_event_to_acp_event_with_accumulator,
-            AcpGatewayEvent,
+            map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
         },
         runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
         runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
@@ -171,21 +167,6 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
         diagnostics.observe_unmapped_event(&value);
         Ok((Vec::new(), None, None))
     }
-}
-
-#[cfg(test)]
-pub(in crate::api::acp) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
-    use crate::{
-        api::acp::stream::support::parse_sse_event_body_to_json,
-    };
-
-    let Some(value) = parse_sse_event_body_to_json(frame).ok().flatten() else {
-        return Vec::new();
-    };
-    let mut accumulator = Default::default();
-    map_native_letta_stream_event_to_acp_event_with_accumulator(&value, &mut accumulator)
-        .map(|event| vec![acp_event_to_adapter_sse(event)])
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

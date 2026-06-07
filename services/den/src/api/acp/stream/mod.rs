@@ -15,6 +15,5 @@ pub(super) mod plan_entries;
 pub(super) mod runtime;
 pub(super) mod sse_stream;
 pub(super) mod support;
-pub(super) mod support_sse;
 pub(super) mod text;
 pub(super) mod text_utils;
