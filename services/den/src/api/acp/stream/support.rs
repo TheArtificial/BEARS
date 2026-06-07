@@ -14,9 +14,6 @@ use crate::{
     },
 };
 
-pub(in crate::api::acp) use super::support_sse::{
-    find_sse_frame_end, parse_sse_event_body_to_json, strip_trailing_sse_delimiter_owned,
-};
 
 pub(in crate::api::acp) fn classify_untranslated_provider_event(value: &serde_json::Value) -> String {
     value

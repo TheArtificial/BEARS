@@ -583,7 +583,13 @@ pub async fn start_acp_turn_with_retries(
 
 pub async fn start_acp_turn_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
-) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
+) -> Result<
+    (
+        crate::core::runtime_contracts::RuntimeByteStream,
+        RuntimeEventParser,
+    ),
+    CustomError,
+> {
     let runtime_conversations = LettaRuntimeConversationBackend::new(request.state.letta.as_ref());
     let conversation_id = materialize_acp_runtime_conversation_if_needed(
         &runtime_conversations,
@@ -591,21 +597,24 @@ pub async fn start_acp_turn_stream_with_retries(
     )
     .await?
     .conversation_id;
-    LettaRuntimeTurnBackend::new(
+    let backend = LettaRuntimeTurnBackend::new(
         request.state.letta.as_ref(),
         request.request_id,
         request.runtime_context_len,
-    )
-    .start_turn_stream(StartTurnRequest {
-        conversation: RuntimeConversationRef { id: conversation_id },
-        binding: request.binding.clone(),
-        human_message: request.prompt.to_string(),
-        runtime_context: None,
-        acp_session_id: Some(request.session_id.to_string()),
-        client_tools: request.client_tools,
-        stream_tokens: request.stream_tokens,
-    })
-    .await
+    );
+    let parser = backend.event_parser();
+    let stream = backend
+        .start_turn_stream(StartTurnRequest {
+            conversation: RuntimeConversationRef { id: conversation_id },
+            binding: request.binding.clone(),
+            human_message: request.prompt.to_string(),
+            runtime_context: None,
+            acp_session_id: Some(request.session_id.to_string()),
+            client_tools: request.client_tools,
+            stream_tokens: request.stream_tokens,
+        })
+        .await?;
+    Ok((stream, parser))
 }
 
 pub fn runtime_byte_stream_to_event_stream(

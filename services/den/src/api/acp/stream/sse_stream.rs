@@ -35,17 +35,15 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    support::{
-        find_sse_frame_end, parse_sse_event_body_to_json, strip_trailing_sse_delimiter_owned,
-        AcpStreamDiagnostics,
-    },
-    text::AcpTextChunker,
-};
+use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
 
 pub(in crate::api::acp) struct AcpRuntimeSseStream {
-    pub(in crate::api::acp) inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send>>,
-    pub(in crate::api::acp) buffer: Vec<u8>,
+    pub(in crate::api::acp) inner: Pin<
+        Box<
+            dyn Stream<Item = Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>>
+                + Send,
+        >,
+    >,
     pub(in crate::api::acp) pending: VecDeque<Bytes>,
     pub(in crate::api::acp) context: AcpStreamContext,
     pub(in crate::api::acp) assistant_text_buffer: String,
@@ -283,7 +281,9 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::api::acp) fn new(
-        inner: impl Stream<Item = Result<Bytes, CustomError>> + Send + 'static,
+        inner: impl Stream<Item = Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>>
+            + Send
+            + 'static,
         context: AcpStreamContext,
         initial_events: Vec<AcpGatewayEvent>,
         session_info_event_sent: bool,
@@ -295,7 +295,6 @@ impl AcpRuntimeSseStream {
         }
         Self {
             inner: Box::pin(inner),
-            buffer: Vec::new(),
             pending,
             context,
             assistant_text_buffer: String::new(),
@@ -797,35 +796,22 @@ impl Stream for AcpRuntimeSseStream {
         }
 
         match ready!(this.inner.as_mut().poll_next(cx)) {
-            Some(Ok(chunk)) => {
+            Some(Ok(event)) => {
                 this.diagnostics.upstream_frames += 1;
-                this.buffer.extend_from_slice(&chunk);
-                if let Some(end) = find_sse_frame_end(&this.buffer) {
-                    let frame: Vec<u8> = this.buffer.drain(..end).collect();
-                    let context = this.context.clone();
-                    let mut diagnostics = std::mem::take(&mut this.diagnostics);
-                    this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
-                        let body = strip_trailing_sse_delimiter_owned(frame);
-                        let result = match parse_sse_event_body_to_json(&body) {
-                            Ok(Some(value)) => map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-                                RuntimeStreamEvent::UntranslatedProviderEvent { value },
-                                context,
-                                &mut diagnostics,
-                            )
-                            .await,
-                            Ok(None) => Ok((Vec::new(), None, None)),
-                            Err(err) => Err(std::io::Error::other(err)),
-                        };
-                        (result, diagnostics)
-                    })));
-                    self.poll_next(cx)
-                } else {
-                    std::task::Poll::Pending
-                }
+                let context = this.context.clone();
+                let mut diagnostics = std::mem::take(&mut this.diagnostics);
+                this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
+                    let result = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                        event,
+                        context,
+                        &mut diagnostics,
+                    )
+                    .await;
+                    (result, diagnostics)
+                })));
+                self.poll_next(cx)
             }
-            None if !this.outstanding_tool_obligations().is_empty()
-                || this.persist_future.is_some() =>
-            {
+            None if !this.outstanding_tool_obligations().is_empty() || this.persist_future.is_some() => {
                 cx.waker().wake_by_ref();
                 std::task::Poll::Pending
             }
@@ -870,24 +856,6 @@ impl Stream for AcpRuntimeSseStream {
                 }
             }
             None => {
-                if !this.buffer.is_empty() {
-                    let message = format!(
-                        "ACP upstream Letta SSE stream ended with incomplete frame ({} bytes)",
-                        this.buffer.len()
-                    );
-                    this.buffer.clear();
-                    this.push_adapter_event(AcpGatewayEvent::Error {
-                        message: "BEARS failed while processing an ACP stream event.".to_string(),
-                        detail: Some(message),
-                        error_type: Some("acp_stream_frame_processing_failed".to_string()),
-                        request_id: Some(this.context.request_id.to_string()),
-                        context: Some(serde_json::json!({
-                            "component": "den.acp",
-                            "acp_session_id": this.context.acp_session_id,
-                        })),
-                    });
-                    return self.poll_next(cx);
-                }
                 if this.diagnostics.saw_requires_approval_stop
                     && !this.outstanding_tool_obligations().is_empty()
                 {
