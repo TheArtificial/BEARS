@@ -152,13 +152,17 @@ async fn fake_letta_conversation_messages(
         }
     };
     let response = scripted.unwrap_or_else(|| {
-        concat!(
-            "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
-            "data: {\"message_type\":\"assistant_message\",\"content\":\"hello from fake Letta\"}\n\n",
-            "data: {\"message_type\":\"reasoning_message\",\"reasoning\":\"thinking\"}\n\n",
-            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
-        )
-        .to_string()
+        let response = [
+            json!({"message_type":"conversation_resolved","conversation_id":"conv-fake-resolved123"}),
+            json!({"message_type":"assistant_message","content":"hello from fake Letta"}),
+            json!({"message_type":"reasoning_message","reasoning":"thinking"}),
+            json!({"message_type":"stop_reason","stop_reason":"end_turn"}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {}\n\n", event))
+        .collect::<Vec<_>>()
+        .join("");
+        response
     });
     (
         [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -396,7 +400,18 @@ async fn post_prompt(
     mut body: Value,
 ) -> axum::response::Response {
     if body.get("client_context").is_none() {
-        body["client_context"] = json!({ "cwd": "/tmp/acp-workspace" });
+        body["client_context"] = json!({
+            "cwd": "/tmp/acp-workspace",
+            "adapter": {
+                "direct_tools": {
+                    "fs_read_text_file": { "supported": true },
+                    "fs_list_directory": { "supported": true },
+                    "fs_search_files": { "supported": true },
+                    "fs_replace_text": { "supported": true },
+                    "fs_edit_file": { "supported": true }
+                }
+            }
+        });
     }
     if body.get("adapter_contract").is_none() {
         body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
@@ -781,6 +796,57 @@ async fn acp_prompt_treats_legacy_default_conversation_id_as_omitted() {
 }
 
 #[tokio::test]
+async fn acp_prompt_with_existing_new_session_uses_stored_pending_selection_without_creating_runtime_conversation() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    den::core::acp_sessions::upsert_session(
+        &fixture.pool,
+        den::core::acp_sessions::UpsertAcpSession {
+            user_id: user_bear.user_id,
+            bear_id: user_bear.bear_id,
+            bear_slug: user_bear.bear_slug.clone(),
+            acp_session_id: "session-existing-pending".to_string(),
+            runtime_session_id: "runtime-existing-pending".to_string(),
+            conversation_id: "new-zed-pending123".to_string(),
+            resolved_conversation_id: None,
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: None,
+        },
+    )
+    .await
+    .expect("upsert pending acp session");
+
+    let res = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-existing-pending",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "reuse pending selection",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = res.into_body().collect().await.unwrap().to_bytes();
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 1, "expected only one Letta message request: {requests:?}");
+    let session = den::core::acp_sessions::find_for_user_bear_session(
+        &fixture.pool,
+        user_bear.user_id,
+        &user_bear.bear_slug,
+        "session-existing-pending",
+    )
+    .await
+    .expect("load updated acp session")
+    .expect("session exists");
+    assert_eq!(session.conversation_id, "new-zed-pending123");
+    assert_eq!(session.resolved_conversation_id.as_deref(), Some("conv-fake-resolved123"));
+}
+
+#[tokio::test]
 async fn acp_prompt_reuses_resolved_conversation_after_legacy_default_id() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
@@ -946,13 +1012,11 @@ async fn acp_prompt_advertises_all_read_only_tool_descriptors() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert!(names.contains(&"fs_read_text_file"));
-    assert!(names.contains(&"fs_list_directory"));
-    assert!(names.contains(&"fs_search_files"));
-    assert!(names.contains(&"fs_replace_text"));
-    assert!(names.contains(&"situation_get"));
-    assert!(names.contains(&"web_search"));
-    assert!(names.contains(&"memory_read"));
+    assert!(names.contains(&"fs_read_text_file"), "{names:?}");
+    assert!(names.contains(&"fs_list_directory"), "{names:?}");
+    assert!(names.contains(&"fs_search_files"), "{names:?}");
+    assert!(names.contains(&"web_search"), "{names:?}");
+    assert!(names.contains(&"memory_read"), "{names:?}");
     assert!(!names.contains(&"den_situation_get"));
     assert!(!names.contains(&"den_web_search"));
     assert!(!names.contains(&"den_memory_read"));

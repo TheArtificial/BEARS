@@ -314,10 +314,15 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         acp_session_id: session_id.to_string(),
         runtime_session_id: "runtime-test".to_string(),
         conversation_id: canonical_conversation_id.clone(),
-        resolved_conversation_id: conversation_resolution
-            .resolved_conversation
+        resolved_conversation_id: existing_session
             .as_ref()
-            .map(|conversation| conversation.id.clone()),
+            .and_then(|session| session.resolved_conversation_id.clone())
+            .or_else(|| {
+                conversation_resolution
+                    .resolved_conversation
+                    .as_ref()
+                    .map(|conversation| conversation.id.clone())
+            }),
         client: client.clone(),
         cwd: Some(cwd.clone()),
         adapter_environment: None,
@@ -488,6 +493,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         prompt,
         &pair_runtime_binding,
         &conversation_resolution,
+        &synthetic_session_row,
         &resolved_policy,
         &current_activity_plan,
         merged_client_tool_descriptors,

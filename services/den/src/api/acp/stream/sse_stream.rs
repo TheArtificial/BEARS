@@ -798,6 +798,7 @@ impl Stream for AcpRuntimeSseStream {
 
         match ready!(this.inner.as_mut().poll_next(cx)) {
             Some(Ok(chunk)) => {
+                this.diagnostics.upstream_frames += 1;
                 this.buffer.extend_from_slice(&chunk);
                 if let Some(end) = find_sse_frame_end(&this.buffer) {
                     let frame: Vec<u8> = this.buffer.drain(..end).collect();

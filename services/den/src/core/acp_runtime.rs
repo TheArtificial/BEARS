@@ -66,6 +66,7 @@ pub struct AcpConversationResolution {
     pub session_selection: String,
     pub resolved_conversation: Option<RuntimeConversationRef>,
     pub upstream_target: String,
+    pub should_materialize_runtime_conversation: bool,
     pub selection_source: AcpConversationSelectionSource,
     pub history_target: Option<RuntimeConversationRef>,
     pub archive_target: Option<RuntimeConversationRef>,
@@ -91,7 +92,9 @@ impl AcpConversationResolution {
         } else {
             None
         };
-        let upstream_target = if session_selection.starts_with("new-") {
+        let should_materialize_runtime_conversation = session_selection.starts_with("new-")
+            && selection_source == AcpConversationSelectionSource::Explicit;
+        let upstream_target = if should_materialize_runtime_conversation {
             binding.binding_id.clone()
         } else {
             session_selection.clone()
@@ -112,6 +115,7 @@ impl AcpConversationResolution {
             session_selection,
             resolved_conversation,
             upstream_target,
+            should_materialize_runtime_conversation,
             selection_source,
             history_target,
             archive_target,
@@ -213,8 +217,7 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
         generated_pending_id,
     )?;
     let mut created = false;
-    if resolution.session_selection.starts_with("new-")
-        && request.requested_selection.as_deref().is_some()
+    if resolution.should_materialize_runtime_conversation
         && resolution.resolved_conversation.is_none()
     {
         let conversation = backend.create_conversation(&request.binding).await?;

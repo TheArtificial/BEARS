@@ -126,6 +126,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     prompt: &str,
     pair_runtime_binding: &RoleRuntimeBinding,
     conversation_resolution: &AcpConversationResolution,
+    synthetic_session: &crate::core::acp_sessions::AcpSessionRow,
     resolved_policy: &AcpResolvedSessionPolicy,
     current_activity_plan: &Option<crate::core::work_plans::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,
@@ -140,10 +141,15 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         AcpTurnLifecycleContext {
             bear_id: bear.id,
             acp_session_id: session_id.to_string(),
-            resolved_conversation_id: conversation_resolution
-                .resolved_conversation
-                .as_ref()
-                .map(|conversation| conversation.id.clone()),
+            resolved_conversation_id: synthetic_session
+                .resolved_conversation_id
+                .clone()
+                .or_else(|| {
+                    conversation_resolution
+                        .resolved_conversation
+                        .as_ref()
+                        .map(|conversation| conversation.id.clone())
+                }),
         },
         request_id,
     ) {
@@ -202,10 +208,15 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             conversation_selection: conversation_resolution
                 .session_selection
                 .clone(),
-            resolved_conversation_id: conversation_resolution
-                .resolved_conversation
-                .as_ref()
-                .map(|conversation| conversation.id.clone()),
+            resolved_conversation_id: synthetic_session
+                .resolved_conversation_id
+                .clone()
+                .or_else(|| {
+                    conversation_resolution
+                        .resolved_conversation
+                        .as_ref()
+                        .map(|conversation| conversation.id.clone())
+                }),
             upstream_target: conversation_resolution.upstream_target.clone(),
             workspace_roots: setup.workspace_roots.clone(),
             session_policy: Some(session_policy),
