@@ -1509,6 +1509,106 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn conversation_resolved_record_does_not_block_canonical_history_projection() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let session_id = format!("acp-session-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = format!("req-{}", Uuid::new_v4());
+        let context = crate::core::conversation_events::ConversationPersistenceContext {
+            pool: pool.clone(),
+            bear_id,
+            user_id: Some(user_id),
+            external_conversation_id: conversation_id.clone(),
+            source_session_id: Some(session_id.clone()),
+            request_id: Some(request_id.clone()),
+            persistence_scope_id: session_id.clone(),
+            skip_persistence: false,
+        };
+
+        crate::core::conversation_events::persist_canonical_conversation_record(
+            &context,
+            &crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
+                &conversation_id,
+                &crate::core::conversation_events::ConversationEventProvenance {
+                    source: "acp_runtime".to_string(),
+                    scope_id: context.persistence_scope_id.clone(),
+                },
+            ),
+        )
+        .await
+        .expect("persist conversation_resolved record");
+
+        let prompt_provenance = crate::core::conversation_events::ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: context.persistence_scope_id.clone(),
+        };
+        let mut prompt_json = prompt_provenance.as_content_json("user_prompt");
+        prompt_json["role"] = serde_json::json!("user");
+        prompt_json["acp_session_id"] = serde_json::json!(session_id.clone());
+        prompt_json["client"] = serde_json::json!("zed");
+        prompt_json["request_id"] = serde_json::json!(request_id.clone());
+        crate::core::conversation_events::persist_canonical_conversation_record(
+            &context,
+            &crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+                "hello after resolution",
+                prompt_json,
+                None,
+            ),
+        )
+        .await
+        .expect("persist user prompt");
+
+        crate::core::conversation_events::persist_canonical_conversation_record(
+            &context,
+            &crate::core::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+                "resolved response",
+                serde_json::json!({
+                    "source": "acp_runtime",
+                    "event": "assistant_output",
+                    "scope_id": context.persistence_scope_id,
+                    "request_id": request_id,
+                    "role": "assistant"
+                }),
+                None,
+            ),
+        )
+        .await
+        .expect("persist assistant output");
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let visible_count = crate::core::conversation_persistence::count_visible_messages(&pool, canonical.id)
+            .await
+            .expect("count visible messages");
+        assert_eq!(visible_count, 3, "conversation_resolved plus prompt/assistant should count as visible canonical records");
+
+        let rows = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical rows");
+        assert!(rows.iter().any(|row| row.message_type == "workflow_event" && row.content_text.contains("Conversation resolved")));
+        let (messages, has_more, next_before) = map_canonical_history_page(&rows, 20);
+        assert!(!has_more, "small canonical history page should not paginate");
+        assert!(next_before.is_some(), "history page should surface next_before anchor");
+        assert_eq!(messages.len(), 2, "workflow-only conversation_resolved event should not pollute visible transcript replay");
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "hello after resolution");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].text, "resolved response");
+    }
+
+    #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
