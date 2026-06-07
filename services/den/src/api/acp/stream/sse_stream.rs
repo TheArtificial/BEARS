@@ -606,6 +606,15 @@ impl Stream for AcpRuntimeSseStream {
                         this.push_adapter_event(AcpGatewayEvent::StatusText {
                             text: completion_text,
                         });
+                        tracing::info!(
+                            request_id = %this.context.request_id,
+                            acp_session_id = %this.context.acp_session_id,
+                            tool_call_id = tool_result.tool_call_id.as_deref().unwrap_or("<missing>"),
+                            controller_phase = ?this.turn_controller.phase(),
+                            controller_open_obligations = this.turn_controller.status_snapshot().open_obligations,
+                            outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
+                            "ACP queued tool result continuation"
+                        );
                         this.queued_tool_result_continuation = Some(tool_result);
                         return self.poll_next(cx);
                     }
@@ -861,27 +870,6 @@ impl Stream for AcpRuntimeSseStream {
                 {
                     this.turn_controller.on_requires_approval_stop();
                     Poll::Pending
-                } else if this.turn_controller.phase() == AcpTurnPhase::WaitingForObligations
-                    && this.turn_controller.status_snapshot().open_obligations == 0
-                    && this.outstanding_tool_obligations().is_empty()
-                    && !this.diagnostics.saw_tool_return_ack
-                    && !this.diagnostics.emitted_runtime_cleanup
-                    && this.queued_tool_result_continuation.is_none()
-                {
-                    let tool_result = Box::new(AcpToolResultRequest {
-                        turn_id: None,
-                        request_id: Some(this.context.request_id.to_string()),
-                        tool_call_id: Some("call_test".to_string()),
-                        tool_name: Some("fs_read_text_file".to_string()),
-                        approval_request_id: None,
-                        status: "ok".to_string(),
-                        content: Some(String::new()),
-                        structured_content: serde_json::json!({}),
-                        diagnostic: serde_json::json!({"phase":"synthetic-test-placeholder"}),
-                        ..Default::default()
-                    });
-                    this.queued_tool_result_continuation = Some(*tool_result);
-                    self.poll_next(cx)
                 } else if this.queued_tool_result_continuation.is_none()
                     && !this.outstanding_tool_obligations().is_empty()
                 {
@@ -893,6 +881,15 @@ impl Stream for AcpRuntimeSseStream {
                     );
                     Poll::Pending
                 } else if let Some(tool_result) = this.queued_tool_result_continuation.take() {
+                    tracing::info!(
+                        request_id = %this.context.request_id,
+                        acp_session_id = %this.context.acp_session_id,
+                        tool_call_id = tool_result.tool_call_id.as_deref().unwrap_or("<missing>"),
+                        controller_phase = ?this.turn_controller.phase(),
+                        controller_open_obligations = this.turn_controller.status_snapshot().open_obligations,
+                        outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
+                        "ACP starting runtime continuation for queued tool result"
+                    );
                     let prepared_continuation = match crate::core::acp_tool_turns::AcpToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
                         Ok(prepared) => prepared,
                         Err(crate::core::acp_tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {

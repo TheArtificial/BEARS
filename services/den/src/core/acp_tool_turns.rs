@@ -354,6 +354,9 @@ impl AcpToolTurnCoordinator {
             .lock()
             .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let now = Instant::now();
+        let acp_session_id = registration.acp_session_id.clone();
+        let tool_call_id = registration.tool_call_id.clone();
+        let tool_name = registration.tool_name.clone();
         turns.insert(
             key,
             AcpToolTurn {
@@ -370,6 +373,13 @@ impl AcpToolTurnCoordinator {
                 deadline_at: now + Duration::from_millis(registration.timeout_ms.max(1)),
                 result_tx: Some(registration.result_tx),
             },
+        );
+        tracing::info!(
+            acp_session_id = %acp_session_id,
+            tool_call_id = %tool_call_id,
+            tool_name = %tool_name,
+            active_turn_count = turns.len(),
+            "ACP registered pending tool turn"
         );
         Ok(())
     }
@@ -388,6 +398,13 @@ impl AcpToolTurnCoordinator {
             .lock()
             .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let Some(turn) = turns.get_mut(&key) else {
+            tracing::warn!(
+                acp_session_id = %session_id,
+                tool_call_id = %tool_call_id,
+                active_turn_count = turns.len(),
+                active_tool_keys = ?turns.keys().cloned().collect::<Vec<_>>(),
+                "ACP tool result delivery found no pending turn"
+            );
             drop(turns);
             if let Some(cached) = self.recently_settled(session_id, tool_call_id) {
                 if cached.user_id != user_id

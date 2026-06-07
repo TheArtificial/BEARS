@@ -155,7 +155,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             vec![event]
         };
         if !direct_projected_events.is_empty() {
-            events = direct_projected_events;
+            events.extend(direct_projected_events);
         }
         for run_id in observed_run_ids {
             if !diagnostics.run_ids.iter().any(|known| known == &run_id) {

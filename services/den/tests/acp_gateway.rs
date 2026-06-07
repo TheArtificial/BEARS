@@ -1048,16 +1048,16 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     let slug = user_bear.bear_slug.clone();
     let token = user_bear.raw_token.clone();
     let prompt_task = tokio::spawn(async move {
-        post_prompt(
+        let response = post_prompt(
             app_for_prompt,
             &slug,
             "session-read-e2e",
             Some(&token),
             json!({ "message": "read a file", "client": "zed" }),
         )
-        .await
+        .await;
+        response
     });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let result = post_tool_result(
         fixture.app.clone(),
         &user_bear.bear_slug,
