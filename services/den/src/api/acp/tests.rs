@@ -913,6 +913,478 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[tokio::test]
+    async fn acp_turn_outcome_side_effect_persists_failed_terminal_payload() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4();
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id,
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        let role_result = context.role_runtime.turn_result(
+            crate::core::role_runtime::TurnResultStatus::Failed,
+            crate::core::role_runtime::TurnResultReason::RuntimeCleanup,
+            request_id,
+            context.turn_scope.clone(),
+            false,
+            serde_json::json!({
+                "component": "den.acp",
+                "source": "test",
+                "event": "failed_terminal",
+            }),
+        );
+        super::stream::runtime::spawn_persist_acp_turn_outcome(&context, &role_result);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let turn_outcome = page
+            .into_iter()
+            .find(|message| message.message_type == "workflow_event")
+            .expect("failed turn_outcome persisted");
+        assert_eq!(turn_outcome.content_text, "Turn outcome: failed / runtime_cleanup");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(turn_outcome.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load failed turn outcome content_json");
+        assert_eq!(content_json["event"], serde_json::json!("turn_result"));
+        assert_eq!(content_json["status"], serde_json::json!("failed"));
+        assert_eq!(content_json["reason"], serde_json::json!("runtime_cleanup"));
+        assert_eq!(content_json["retryable"], serde_json::json!(false));
+        assert_eq!(content_json["diagnostics"]["event"], serde_json::json!("failed_terminal"));
+    }
+
+    #[tokio::test]
+    async fn acp_turn_outcome_side_effect_persists_cancelled_terminal_payload() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4();
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id,
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        let role_result = context.role_runtime.turn_result(
+            crate::core::role_runtime::TurnResultStatus::Cancelled,
+            crate::core::role_runtime::TurnResultReason::Cancelled,
+            request_id,
+            context.turn_scope.clone(),
+            false,
+            serde_json::json!({
+                "component": "den.acp",
+                "source": "test",
+                "event": "cancelled_terminal",
+            }),
+        );
+        super::stream::runtime::spawn_persist_acp_turn_outcome(&context, &role_result);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let turn_outcome = page
+            .into_iter()
+            .find(|message| {
+                message.message_type == "workflow_event"
+                    && message.content_text == "Turn outcome: cancelled / cancelled"
+            })
+            .expect("cancelled turn_outcome persisted");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(turn_outcome.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load cancelled turn outcome content_json");
+        assert_eq!(content_json["event"], serde_json::json!("turn_result"));
+        assert_eq!(content_json["status"], serde_json::json!("cancelled"));
+        assert_eq!(content_json["reason"], serde_json::json!("cancelled"));
+        assert_eq!(content_json["diagnostics"]["event"], serde_json::json!("cancelled_terminal"));
+    }
+
+    #[tokio::test]
+    async fn acp_turn_outcome_side_effect_persists_recovered_terminal_payload() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let acp_session_id = format!("sess-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4();
+
+        acp_sessions::upsert_session(
+            &pool,
+            acp_sessions::UpsertAcpSession {
+                user_id,
+                bear_id,
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: acp_session_id.clone(),
+                runtime_session_id: format!("runtime-{}", Uuid::new_v4()),
+                conversation_id: conversation_id.clone(),
+                resolved_conversation_id: Some(conversation_id.clone()),
+                client: "vscode".to_string(),
+                cwd: Some("/workspace".to_string()),
+                current_mode: Some("write".to_string()),
+            },
+        )
+        .await
+        .expect("upsert acp session");
+
+        let context = AcpStreamContext {
+            pool: pool.clone(),
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id,
+            user_profile: None,
+            bear_id,
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: acp_session_id.clone(),
+            client: "vscode".to_string(),
+            conversation_id: conversation_id.clone(),
+            conversation_selection: conversation_id.clone(),
+            resolved_conversation_id: Some(conversation_id.clone()),
+            upstream_target: conversation_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(serde_json::json!({"mode_label": "Write"})),
+            activity: None,
+            request_id,
+            pair_agent_id: "pair-agent".to_string(),
+            config: Arc::new(Config::test_stub()),
+            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
+            prompt_memory_diagnostic: serde_json::json!({}),
+        };
+
+        let role_result = context.role_runtime.turn_result(
+            crate::core::role_runtime::TurnResultStatus::Recovered,
+            crate::core::role_runtime::TurnResultReason::CompactedRetry,
+            request_id,
+            context.turn_scope.clone(),
+            true,
+            serde_json::json!({
+                "component": "den.acp",
+                "source": "test",
+                "event": "recovered_terminal",
+            }),
+        );
+        super::stream::runtime::spawn_persist_acp_turn_outcome(&context, &role_result);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&acp_session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let turn_outcome = page
+            .into_iter()
+            .find(|message| {
+                message.message_type == "workflow_event"
+                    && message.content_text == "Turn outcome: recovered / compacted_retry"
+            })
+            .expect("recovered turn_outcome persisted");
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(turn_outcome.sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load recovered turn outcome content_json");
+        assert_eq!(content_json["event"], serde_json::json!("turn_result"));
+        assert_eq!(content_json["status"], serde_json::json!("recovered"));
+        assert_eq!(content_json["reason"], serde_json::json!("compacted_retry"));
+        assert_eq!(content_json["retryable"], serde_json::json!(true));
+        assert_eq!(content_json["diagnostics"]["event"], serde_json::json!("recovered_terminal"));
+    }
+
+    #[tokio::test]
+    async fn canonical_visible_user_message_persistence_dedups_same_prompt_provenance() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let session_id = format!("acp-session-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+        let request_id = format!("req-{}", Uuid::new_v4());
+        let provenance = crate::core::conversation_events::ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: session_id.clone(),
+        };
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!(session_id.clone());
+        content_json["client"] = serde_json::json!("zed");
+        content_json["request_id"] = serde_json::json!(request_id.clone());
+        let record = crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            "dedup me",
+            content_json,
+            None,
+        );
+        let context = crate::core::conversation_events::ConversationPersistenceContext {
+            pool: pool.clone(),
+            bear_id,
+            user_id: Some(user_id),
+            external_conversation_id: conversation_id.clone(),
+            source_session_id: Some(session_id.clone()),
+            request_id: Some(request_id.clone()),
+            persistence_scope_id: session_id.clone(),
+            skip_persistence: false,
+        };
+
+        crate::core::conversation_events::persist_canonical_conversation_record(&context, &record)
+            .await
+            .expect("persist initial user prompt");
+        crate::core::conversation_events::persist_canonical_conversation_record(&context, &record)
+            .await
+            .expect("persist duplicate user prompt");
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let user_messages: Vec<_> = page
+            .into_iter()
+            .filter(|message| message.message_type == "visible_message" && message.role.as_deref() == Some("user"))
+            .collect();
+        assert_eq!(user_messages.len(), 1, "duplicate prompt provenance should dedup canonical persistence");
+
+        let content_json: serde_json::Value = sqlx::query_scalar(
+            r#"
+            SELECT content_json
+            FROM conversation_messages
+            WHERE conversation_id = $1 AND sequence_no = $2
+            "#,
+        )
+        .bind(canonical.id)
+        .bind(user_messages[0].sequence_no)
+        .fetch_one(&pool)
+        .await
+        .expect("load persisted user prompt content_json");
+        assert_eq!(content_json["source"], serde_json::json!("acp_prompt"));
+        assert_eq!(content_json["event"], serde_json::json!("user_prompt"));
+        assert_eq!(content_json["scope_id"], serde_json::json!(session_id));
+        assert_eq!(content_json["request_id"], serde_json::json!(request_id));
+        assert_eq!(content_json["client"], serde_json::json!("zed"));
+    }
+
+    #[tokio::test]
+    async fn canonical_visible_user_message_persistence_keeps_distinct_request_ids() {
+        let Some(pool) = prompt_memory_test_pool().await else {
+            return;
+        };
+        let bear_id = Uuid::new_v4();
+        let user_id = 1;
+        let session_id = format!("acp-session-{}", Uuid::new_v4());
+        let conversation_id = format!("conv-{}", Uuid::new_v4());
+
+        let build_record = |request_id: String| {
+            let provenance = crate::core::conversation_events::ConversationEventProvenance {
+                source: "acp_prompt".to_string(),
+                scope_id: session_id.clone(),
+            };
+            let mut content_json = provenance.as_content_json("user_prompt");
+            content_json["role"] = serde_json::json!("user");
+            content_json["acp_session_id"] = serde_json::json!(session_id.clone());
+            content_json["client"] = serde_json::json!("zed");
+            content_json["request_id"] = serde_json::json!(request_id);
+            crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+                "same text, new turn",
+                content_json,
+                None,
+            )
+        };
+
+        let context = crate::core::conversation_events::ConversationPersistenceContext {
+            pool: pool.clone(),
+            bear_id,
+            user_id: Some(user_id),
+            external_conversation_id: conversation_id.clone(),
+            source_session_id: Some(session_id.clone()),
+            request_id: None,
+            persistence_scope_id: session_id.clone(),
+            skip_persistence: false,
+        };
+
+        crate::core::conversation_events::persist_canonical_conversation_record(
+            &context,
+            &build_record(format!("req-{}", Uuid::new_v4())),
+        )
+        .await
+        .expect("persist first user prompt");
+        crate::core::conversation_events::persist_canonical_conversation_record(
+            &context,
+            &build_record(format!("req-{}", Uuid::new_v4())),
+        )
+        .await
+        .expect("persist second user prompt");
+
+        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+            &pool,
+            bear_id,
+            Some(user_id),
+            &conversation_id,
+            Some(&session_id),
+            None,
+        )
+        .await
+        .expect("ensure canonical conversation");
+        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+            .await
+            .expect("list canonical messages");
+        let user_messages: Vec<_> = page
+            .into_iter()
+            .filter(|message| message.message_type == "visible_message" && message.role.as_deref() == Some("user"))
+            .collect();
+        assert_eq!(user_messages.len(), 2, "distinct prompt request_ids should remain separate canonical messages");
+    }
+
+    #[tokio::test]
     async fn prompt_memory_runtime_selection_matrix_excludes_inactive_and_mismatched_blocks() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
