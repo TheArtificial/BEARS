@@ -1261,12 +1261,112 @@ async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
 }
 
 #[tokio::test]
+async fn acp_close_session_still_records_pair_reflection_from_canonical_history_without_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    let conversation_id = "conv-close-canonical";
+    den::core::conversation_persistence::ensure_conversation_for_external_id(
+        &fixture.pool,
+        user_bear.bear_id,
+        Some(user_bear.user_id),
+        conversation_id,
+        Some("session-close-canonical"),
+        Some("Close canonical"),
+    )
+    .await
+    .expect("ensure canonical conversation row");
+    let context = den::core::conversation_events::ConversationPersistenceContext {
+        pool: fixture.pool.clone(),
+        bear_id: user_bear.bear_id,
+        user_id: Some(user_bear.user_id),
+        external_conversation_id: conversation_id.to_string(),
+        source_session_id: Some("session-close-canonical".to_string()),
+        request_id: Some("req-close-canonical".to_string()),
+        persistence_scope_id: "session-close-canonical".to_string(),
+        skip_persistence: false,
+    };
+    den::core::conversation_events::persist_canonical_conversation_record(
+        &context,
+        &den::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            "close summary user",
+            json!({"source":"test","role":"user"}),
+            None,
+        ),
+    )
+    .await
+    .expect("persist canonical user message");
+    den::core::conversation_events::persist_canonical_conversation_record(
+        &context,
+        &den::core::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            "close summary assistant",
+            json!({"source":"test","role":"assistant"}),
+            None,
+        ),
+    )
+    .await
+    .expect("persist canonical assistant message");
+    den::core::acp_sessions::upsert_session(
+        &fixture.pool,
+        den::core::acp_sessions::UpsertAcpSession {
+            user_id: user_bear.user_id,
+            bear_id: user_bear.bear_id,
+            bear_slug: user_bear.bear_slug.clone(),
+            acp_session_id: "session-close-canonical".to_string(),
+            runtime_session_id: "runtime-close-canonical".to_string(),
+            conversation_id: conversation_id.to_string(),
+            resolved_conversation_id: Some(conversation_id.to_string()),
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: None,
+        },
+    )
+    .await
+    .expect("upsert acp session");
+
+    let disabled_config = {
+        let mut config = Config::load();
+        config.database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
+        config.run_api = true;
+        config.acp_gateway_enabled = true;
+        config.letta_base_url = String::new();
+        config.codepool_base_url = String::new();
+        config.api_server_url = "http://localhost:3001".to_string();
+        config.web_server_url = "http://localhost:3000".to_string();
+        Arc::new(config)
+    };
+    let disabled_store = PostgresStore::new(fixture.pool.clone());
+    let disabled_app = api::create_api_app(fixture.pool.clone(), disabled_store, disabled_config)
+        .await
+        .expect("build api router with Letta disabled");
+
+    let close = Request::builder()
+        .method("POST")
+        .uri(format!("/acp/bears/{}/sessions/{}/close", user_bear.bear_slug, "session-close-canonical"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {}", user_bear.raw_token))
+        .body(Body::from(json!({"adapter_contract":{"name":"bears.acp.adapter","version":1}}).to_string()))
+        .unwrap();
+    let close = disabled_app.oneshot(close).await.expect("ACP close response");
+    assert_eq!(close.status(), StatusCode::OK);
+    let _ = response_text(close).await;
+
+    let runs = den::core::pair_reflection::list_recent_for_bear(&fixture.pool, user_bear.bear_id, 5)
+        .await
+        .expect("list reflection runs");
+    let run = runs
+        .into_iter()
+        .find(|run| run.acp_session_id == "session-close-canonical")
+        .expect("reflection run for closed session");
+    assert_eq!(run.status, "skipped");
+    assert_eq!(run.conversation_id.as_deref(), Some(conversation_id), "{run:?}");
+}
+
+#[tokio::test]
 async fn acp_compact_session_returns_unavailable_when_letta_is_disabled() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
     fixture.letta_script.lock().await.push(
         concat!(
-            "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
             "data: {\"message_type\":\"assistant_message\",\"content\":\"first response\"}\n\n",
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
         )

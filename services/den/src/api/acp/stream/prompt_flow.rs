@@ -139,18 +139,31 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         ApiError::new(status, code, message)
     })?;
     if conversation_resolution.requires_belongs_to_bear_check {
-        verify_acp_conversation_access(
+        let canonical_accessible = crate::core::conversation_persistence::get_conversation_for_external_id(
             &state.sqlx_pool,
             bear.id,
-            state.letta.as_ref(),
-            &pair_runtime_binding,
             &conversation_resolution.session_selection,
         )
         .await
         .map_err(|err| {
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
-        })?;
+        })?
+        .is_some();
+        if !canonical_accessible {
+            verify_acp_conversation_access(
+                &state.sqlx_pool,
+                bear.id,
+                state.letta.as_ref(),
+                &pair_runtime_binding,
+                &conversation_resolution.session_selection,
+            )
+            .await
+            .map_err(|err| {
+                let (status, code, message) = acp_error_status_message(&err);
+                ApiError::new(status, code, message)
+            })?;
+        }
     }
     if ensure_conversation_result.created {
         tracing::info!(

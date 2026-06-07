@@ -216,6 +216,13 @@ The implementation is successful when:
 - Mixed-origin sessions remain explainable to operators.
 - Read-switch policy is explicit and reversible.
 
+### Progress notes
+
+- ACP `pair` conversation history now serves canonical Den-owned history without live Letta history fallback/backfill in the production read path.
+- ACP session compaction now degrades explicitly when Letta is unavailable instead of hard-failing a production endpoint.
+- Pair reflection close-out now prefers canonical persisted conversation rows when available before consulting Letta runtime message history, reducing another read-time Letta dependency on ACP session close.
+- Remaining notable ACP `pair` Phase 4 work is concentrated around prompt/runtime conversation selection and other startup/control surfaces that still require Letta-backed runtime bindings.
+
 ---
 
 ## Phase 5 — Shared runtime/persistence seam extraction from ACP `pair`

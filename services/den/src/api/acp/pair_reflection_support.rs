@@ -3,6 +3,7 @@ use crate::{
     core::{
         acp_sessions,
         bears::{db as bears_db, BearAgentRole},
+        conversation_persistence,
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
@@ -52,7 +53,42 @@ pub(crate) async fn run_pair_reflection_summary(
     } else {
         None
     };
-    let message_summaries = summarize_runtime_messages(messages_value.as_ref());
+    let canonical_summaries = if let Some(conversation_id) = conversation_id {
+        if let Some(conversation) = conversation_persistence::get_conversation_for_external_id(
+            &state.sqlx_pool,
+            session.bear_id,
+            conversation_id,
+        )
+        .await?
+        {
+            let rows = conversation_persistence::list_messages_page(
+                &state.sqlx_pool,
+                conversation.id,
+                None,
+                20,
+            )
+            .await?;
+            rows.into_iter()
+                .filter(|row| row.visibility == "visible")
+                .map(|row| {
+                    format!(
+                        "{}: {}",
+                        row.role.as_deref().unwrap_or(row.message_type.as_str()),
+                        row.content_text.trim()
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let message_summaries = if canonical_summaries.is_empty() {
+        summarize_runtime_messages(messages_value.as_ref())
+    } else {
+        canonical_summaries
+    };
     let run = pair_reflection::create_run(
         &state.sqlx_pool,
         CreatePairReflectionRun {
