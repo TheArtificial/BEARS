@@ -526,6 +526,23 @@ async fn get_acp_session_runtime(
         .expect("ACP session runtime response")
 }
 
+async fn get_conversation_history(
+    app: axum::Router,
+    slug: &str,
+    conversation_id: &str,
+    token: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder().method("GET").uri(format!(
+        "/acp/bears/{slug}/conversations/{conversation_id}/history"
+    ));
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .expect("ACP conversation history response")
+}
+
 fn letta_tool_request_sse_value(
     tool_name: &str,
     tool_call_id: &str,
@@ -599,6 +616,10 @@ async fn read_response_until(response: &mut axum::response::Response, needle: &s
         }
     }
     text
+}
+
+async fn drain_response(response: axum::response::Response) -> String {
+    response_text(response).await
 }
 
 #[tokio::test]
@@ -995,6 +1016,110 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
         requests[1]["messages"][0]["approvals"][0]["tool_return"],
         "# README\n"
     );
+}
+
+#[tokio::test]
+async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_read_text_file",
+                "call-read-history",
+                json!({ "path": "/tmp/acp-workspace/README.md", "line": 1, "limit": 10 })
+            ),
+            letta_stop_sse()
+        ),
+        concat!(
+            "data: {\"message_type\":\"assistant_message\",\"content\":\"read complete\"}\n\n",
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+        )
+        .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-read-history",
+            Some(&token),
+            json!({ "message": "read a file", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-read-history",
+        "call-read-history",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-read-history",
+            "tool_name": "fs_read_text_file",
+            "approval_request_id": "approval-call-read-history",
+            "status": "ok",
+            "content": "# README\n",
+            "structured_content": { "path": "/tmp/acp-workspace/README.md" },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("Local tool fs_read_text_file completed"), "{text}");
+    assert!(text.contains("read complete"), "{text}");
+
+    let session = acp_sessions::find_for_user_bear_session(
+        &fixture.pool,
+        user_bear.user_id,
+        &user_bear.bear_slug,
+        "session-read-history",
+    )
+    .await
+    .expect("load acp session")
+    .expect("acp session present");
+    let conversation_id = session
+        .resolved_conversation_id
+        .clone()
+        .expect("resolved conversation id");
+
+    let history = get_conversation_history(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        &conversation_id,
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(history.status(), StatusCode::OK);
+    let history_json: Value = serde_json::from_str(&response_text(history).await).unwrap();
+    let messages = history_json["messages"].as_array().expect("history messages array");
+
+    assert!(messages.iter().any(|message| {
+        message["kind"] == json!("user") && message["text"] == json!("read a file")
+    }), "history should include visible user prompt: {history_json}");
+    assert!(messages.iter().any(|message| {
+        message["kind"] == json!("tool_call")
+            && message["toolCallId"] == json!("call-read-history")
+            && message["title"].as_str().unwrap_or("").contains("fs_read_text_file")
+    }), "history should include canonical tool request: {history_json}");
+    assert!(messages.iter().any(|message| {
+        message["kind"] == json!("tool_call_update")
+            && message["toolCallId"] == json!("call-read-history")
+            && message["status"] == json!("completed")
+    }), "history should include canonical tool result/update: {history_json}");
+    assert!(messages.iter().any(|message| {
+        message["kind"] == json!("assistant") && message["text"] == json!("read complete")
+    }), "history should include final assistant output: {history_json}");
 }
 
 #[tokio::test]
