@@ -2,7 +2,7 @@
 
 Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MIGRATION_IMPLEMENTATION_PLAN.md). Update this document when slices land; keep the implementation plan stable.
 
-**Last updated:** 2026-06-08 (Phase 6 Curate execution substrate — initial slice)
+**Last updated:** 2026-06-08 (Phase 6 complete — review/watch Den-native substrate)
 
 ---
 
@@ -16,7 +16,7 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 | 3 — Idempotency and dedup | **Mostly complete** | Storage-backed dedup landed; automated integration test for uniqueness still desired |
 | 4 — Canonical read-switch | **Mostly complete** | Den-first history for eligible sessions; startup/control surfaces still Letta-backed |
 | 5 — Shared runtime/persistence extraction | **Mostly complete** | ACP runtime contract boundary landed; turn execution still Letta-backed at adapter |
-| 6 — `review` / `watch` follow-on | **Partial** | Den-native `memory_curate` triage + optional MemFS core promotion landed; model-assisted curate runtime still pending |
+| 6 — `review` / `watch` follow-on | **Complete** | Den-native `memory_curate` substrate, daily conversation registry, watch observations + curate queue handoff |
 | 7 — Backfill mechanics | **Planning baseline** | [`den-migration-backfill-and-rollback-plan.md`](./den-migration-backfill-and-rollback-plan.md) |
 | 8 — Rollout and rollback controls | **Not started** | |
 | 9 — `chat`/`work` harness prep | **Deferred** | Correctly sequenced after lower-risk roles |
@@ -27,7 +27,7 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 
 **Epic A2 — Complete ACP runtime contract boundary** is **complete** for the planned slice set.
 
-**Next epic:** Phase 6 follow-on — model-assisted curate runtime (daily review conversation + curate tools) and/or `watch` migration prep (see implementation plan).
+**Next epic:** Phase 7 — historical migration and backfill (see implementation plan). Optional follow-on: model-assisted curate turns and archive indexing (Memory Automation P2/P3).
 
 ### Epic A2 deliverables (landed)
 
@@ -133,22 +133,41 @@ Consumers: `memory_proposals`, `pair_reflection`, `reflection_conductor`, `den_t
 
 Constructors: proposal lifecycle + Curate run-state (`memory_curate_enqueued/started/completed/failed`)
 
-### Curate worker (Den-native execution substrate — initial slice)
+### Curate worker (Den-native execution substrate)
 
 - `list_queued_memory_curate_runs`, `claim_next_memory_curate_run`
+- `reflection_conversations` — daily `memory_curate:YYYY-MM-DD` registry + `conv-memory-curate-*` canonical conversation binding on claim
 - `memory_curate_executor` — rule-based triage by `suggested_action`, `sensitivity`, `requires_human`, and run `trigger`
-  - `pair_reflection` + `unspecified` + `normal` → `retained_local` (pair summaries stay role-local by default)
+  - `pair_reflection` + `unspecified` + `normal` → `retained_local`
+  - `watch_observation` + `unspecified` → `deferred` with briefing; `high`/`critical` salience → `needs_human_review` at proposal creation
   - `promote_to_core` / `summarize_into_core` with bounded content → MemFS `append_section` when configured; otherwise `deferred`
   - sensitive / `human_review` / `requires_human` → `needs_human_review`
   - specialized actions (`cabinet_update`, etc.) → `deferred`
-- `run_next_memory_curate_once` — claims run, executes triage, writes per-proposal `outcomes` + `status_counts` to `output_summary`
+- `run_next_memory_curate_once` — per-proposal `outcomes`, `status_counts`, `briefing` (deferred/human-review items), `bear_reflection_run_items` rows
 - `run_memory_curate_worker_loop` — launched from `den::run()` via `RUN_WORKERS` (receives `Config` for MemFS)
-- **Still pending:** curate-agent runtime turn (daily review conversation, tool loop, archive indexing)
+
+### Watch observation path (Den-owned)
+
+- `bear_observations` table — Den DB source of truth for inbound watch observations
+- `den.observation.write` — watch-only tool; idempotent by `observation_id`; enqueues `memory_curate` with `trigger = watch_observation`
+- Logical MemFS path recorded as `watch/observations/{id}.md` for curate context (physical MemFS write deferred)
+
+### Phase 6 parity criteria (met)
+
+| Surface | Den-owned today | Letta still involved |
+| --- | --- | --- |
+| `review` / memory_curate queue + triage | `bear_reflection_runs`, `memory_curate_executor`, projections | Interactive curate-agent turns if enabled later |
+| Daily curate conversation registry | `reflection_conversations` + canonical `conversations` row | Runtime materialization for agent chat |
+| Watch observations | `bear_observations`, `den.observation.write` | Watch role turn execution when event-driven runtime enabled |
+| Pair → curate handoff | Proposals + queued runs (unchanged) | Pair reflection optional Letta history read |
+
+**Deferred beyond Phase 6:** model-assisted curate tool loop, Letta archive indexing, subscription ingestion workers.
 
 ### Test coverage
 
 - 30+ canonical-focused tests in `core::conversation::events::tests`
 - DB-backed projection integration tests for proposal and Curate lifecycle
+- `reflection_conversations`, `observation_write`, `memory_curate_executor` unit/integration tests
 
 ---
 
