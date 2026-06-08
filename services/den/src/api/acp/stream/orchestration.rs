@@ -3,7 +3,13 @@ use axum::{
     http::{header, HeaderName, HeaderValue, StatusCode},
     response::Response,
 };
+use bytes::Bytes;
 use uuid::Uuid;
+
+/// How long to eagerly drive a freshly-started ACP turn before returning the response, so a
+/// tool obligation is registered up front. Bounds the wait when the turn parks on a tool
+/// result or slow upstream; the remainder of the turn is driven lazily by the response body.
+const ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS: u64 = 50;
 
 use crate::{
     api::{
@@ -241,13 +247,49 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         )
     })?;
 
+    // Eagerly drive the turn just far enough to register any tool obligation *before*
+    // returning the response, then hand the remainder to the normal lazy body. Adapter-local
+    // tool obligations must exist in the shared registry as soon as the prompt response is
+    // returned, so a `/tool-results` POST is accepted even if the client posts before it
+    // starts reading the stream (and so a reconnect can resume the turn). Driving here on the
+    // handler's own task — bounded, not a detached concurrent driver — avoids both the lazy
+    // registration gap and the connection/guard lifecycle problems of a spawned turn task.
+    let mut stream = Box::pin(stream);
+    let mut prefix: Vec<Result<Bytes, std::io::Error>> = Vec::new();
+    loop {
+        // Stop as soon as the obligation is registered: we only need eager progress up to
+        // that point, never past it into the result-wait.
+        if !state
+            .acp_tool_turns
+            .pending_for_session(session_id)
+            .is_empty()
+        {
+            break;
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS),
+            futures::StreamExt::next(&mut stream),
+        )
+        .await
+        {
+            // A frame was ready; buffer it and keep draining what is immediately available.
+            Ok(Some(item)) => prefix.push(item),
+            // Stream ended (e.g. a turn with no tool request); nothing left to defer.
+            Ok(None) => break,
+            // The stream is waiting on external input (a tool result) or slow upstream; stop
+            // eager draining and let the body drive the rest lazily.
+            Err(_) => break,
+        }
+    }
+    let body_stream = futures::StreamExt::chain(futures::stream::iter(prefix), stream);
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from_stream(stream))
+        .body(Body::from_stream(body_stream))
         .map_err(|e| {
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,

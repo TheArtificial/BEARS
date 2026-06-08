@@ -309,6 +309,30 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                     );
                 }
                 ToolExecutionRoute::AdapterLocal => {
+                    // Register the obligation in the shared tool-turn registry so that the
+                    // `/tool-results` handler can deliver the client's result on `result_tx`,
+                    // and so that `outstanding_tool_obligations()` (which reads `tool_turns`)
+                    // keeps the SSE stream parked until the obligation settles. Without this,
+                    // adapter-local results were rejected as `late_result_ignored` and the
+                    // stream raced to terminal before the result arrived. `result_rx` is
+                    // extracted by the caller into `waiting_adapter_tool_result`.
+                    let result_tx = result_tx.take().ok_or_else(|| {
+                        CustomError::System(
+                            "ACP adapter-local tool request missing result channel".to_string(),
+                        )
+                    })?;
+                    context.tool_turns.register(AcpToolTurnRegistration {
+                        user_id: context.user_id,
+                        bear_id: context.bear_id,
+                        bear_slug: context.bear_slug.clone(),
+                        acp_session_id: context.acp_session_id.clone(),
+                        request_id: context.request_id,
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        approval_request_id: approval_request_id.clone(),
+                        timeout_ms: acp_tool_timeout_ms_for_provider(tool_name),
+                        result_tx,
+                    })?;
                     tracing::info!(
                         request_id = %context.request_id,
                         acp_session_id = %context.acp_session_id,
@@ -317,7 +341,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                         tool_name = %tool_name,
                         approval_required = %approval_required,
                         approval_request_id = ?approval_request_id,
-                        "ACP adapter-local tool obligation observed"
+                        "ACP adapter-local tool obligation registered"
                     );
                 }
             }

@@ -440,8 +440,13 @@ fn native_letta_tool_request_event_with_args(
     let adapter_approval_required =
         acp_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
     let letta_approval_request_id = has_letta_approval_request.then(|| {
+        // Prefer an explicit `approval_request_id` (carried by the runtime-parser seed
+        // value) before the raw Letta `id` field. Reading only `id` regenerated a fresh
+        // UUID for the seed path, so the registered obligation's approval id no longer
+        // matched the one the client echoes back, rejecting the result with a 400.
         event
-            .get("id")
+            .get("approval_request_id")
+            .or_else(|| event.get("id"))
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_else(|| format!("approval-{}", Uuid::new_v4()))
@@ -1146,6 +1151,65 @@ mod tests {
                 assert!(approval_required);
                 assert!(approval_request_id.is_none());
                 assert!(approval_reason.is_some());
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn seed_path_approval_request_id_is_preserved_not_regenerated() {
+        // The runtime-parser seed value is flat (top-level `tool_call_id`/`tool_name`/`args`/
+        // `approval_request_id`, no raw `id`) and is mapped through the accumulator. The mapper
+        // must use `approval_request_id` verbatim; reading only `id` regenerated a fresh UUID,
+        // so the registered obligation's approval id no longer matched the one the client
+        // echoes back and the tool result was rejected with a 400.
+        let event = serde_json::json!({
+            "message_type": "approval_request_message",
+            "tool_call_id": "call-seed",
+            "tool_name": "fs_read_text_file",
+            "args": { "path": "/workspace/a.txt" },
+            "approval_request_id": "approval-call-seed",
+        });
+        let mut accumulator = LettaToolCallAccumulator::default();
+        let mapped =
+            map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
+                .expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                approval_required,
+                approval_request_id,
+                ..
+            } => {
+                assert!(approval_required);
+                assert_eq!(approval_request_id.as_deref(), Some("approval-call-seed"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_path_approval_request_id_falls_back_to_id() {
+        // Compatibility: the raw Letta SSE nests identity under `tool_call` and carries the
+        // approval id in top-level `id`.
+        let event = serde_json::json!({
+            "id": "approval-raw",
+            "message_type": "approval_request_message",
+            "tool_call": {
+                "name": "fs_read_text_file",
+                "tool_call_id": "call-raw",
+                "arguments": serde_json::json!({ "path": "/workspace/a.txt" }).to_string(),
+            },
+        });
+        let mut accumulator = LettaToolCallAccumulator::default();
+        let mapped =
+            map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
+                .expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                approval_request_id,
+                ..
+            } => {
+                assert_eq!(approval_request_id.as_deref(), Some("approval-raw"));
             }
             other => panic!("unexpected event: {other:?}"),
         }

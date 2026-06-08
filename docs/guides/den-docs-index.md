@@ -22,6 +22,15 @@ Index of agent- and contributor-oriented docs for **this project**.
 | MiniJinja vs Jinja2 | [`minijinja-template-limitations.md`](minijinja-template-limitations.md) |
 | Frontend (templates, CSS, JS) | [`frontend-development.md`](frontend-development.md); [`deep-chat-styling.md`](deep-chat-styling.md) |
 
+## ACP runtime
+
+| Topic | Document |
+|--------|-----------|
+| Concurrency model (prompt stream ↔ tool-result POST rendezvous) | [`acp-den-concurrency-model.md`](acp-den-concurrency-model.md) |
+| Runtime invariants | [`acp-runtime-invariants.md`](acp-runtime-invariants.md) |
+| Lessons learned | [`acp-lessons.md`](acp-lessons.md) |
+| Troubleshooting | [`acp-troubleshooting.md`](acp-troubleshooting.md) |
+
 ## Operations & deploy
 
 | Topic | Document |

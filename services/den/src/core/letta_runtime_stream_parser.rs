@@ -147,8 +147,18 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                // The Letta tool-call SSE nests identity and arguments under `tool_call`
+                // (e.g. `{ "id": "approval-…", "tool_call": { "name", "tool_call_id",
+                // "arguments" } }`). Check the nested locations before top-level fallbacks,
+                // mirroring the legacy native mapper. Missing this dropped `tool_call_id`,
+                // which broke `/tool-results` delivery (every post was `late_result_ignored`).
                 tool_call_id: event
-                    .get("tool_call_id")
+                    .pointer("/tool_call/tool_call_id")
+                    .or_else(|| inner.pointer("/tool_call/tool_call_id"))
+                    .or_else(|| event.pointer("/tool_call/id"))
+                    .or_else(|| inner.pointer("/tool_call/id"))
+                    .or_else(|| event.pointer("/tool_call/function/tool_call_id"))
+                    .or_else(|| event.get("tool_call_id"))
                     .or_else(|| inner.get("tool_call_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
@@ -170,15 +180,23 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
                 arguments: event
-                    .get("args")
+                    .pointer("/tool_call/arguments")
+                    .or_else(|| inner.pointer("/tool_call/arguments"))
+                    .or_else(|| event.pointer("/tool_call/input"))
+                    .or_else(|| event.pointer("/tool_call/args"))
+                    .or_else(|| event.pointer("/tool_call/function/arguments"))
+                    .or_else(|| event.get("args"))
+                    .or_else(|| inner.get("args"))
+                    .or_else(|| event.get("arguments"))
+                    .or_else(|| inner.get("arguments"))
                     .cloned()
-                    .or_else(|| inner.get("args").cloned())
-                    .or_else(|| event.get("arguments").cloned())
-                    .or_else(|| inner.get("arguments").cloned())
                     .unwrap_or_else(|| serde_json::json!({})),
                 approval_request_id: event
                     .get("approval_request_id")
                     .or_else(|| inner.get("approval_request_id"))
+                    .or_else(|| event.pointer("/tool_call/approval_request_id"))
+                    .or_else(|| event.get("id"))
+                    .or_else(|| inner.get("id"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
                 approval_required: message_type == "approval_request_message",

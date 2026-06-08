@@ -831,6 +831,66 @@ mod tests {
     }
 
     #[test]
+    fn registered_turn_is_visible_as_pending_for_session() {
+        // The SSE stream keeps itself parked on outstanding obligations by reading
+        // `pending_for_session`. Adapter-local tool requests must register here (they
+        // previously did not), or the stream races to terminal and the result is rejected
+        // as `late_result_ignored`.
+        let coordinator = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let (tx, _rx) = oneshot::channel();
+        coordinator
+            .register(AcpToolTurnRegistration {
+                user_id: 7,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "meta".to_string(),
+                acp_session_id: "session-1".to_string(),
+                request_id,
+                tool_call_id: "call-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: Some("approval-1".to_string()),
+                timeout_ms: 30_000,
+                result_tx: tx,
+            })
+            .unwrap();
+        let pending = coordinator.pending_for_session("session-1");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tool_call_id, "call-1");
+        assert_eq!(pending[0].request_id, request_id);
+    }
+
+    #[test]
+    fn approval_request_id_mismatch_is_rejected() {
+        // The registered obligation's approval id must match what the client echoes back.
+        // A regenerated/dropped approval id surfaced here as a 400 (ValidationError).
+        let coordinator = AcpToolTurnCoordinator::new();
+        let (tx, _rx) = oneshot::channel();
+        coordinator
+            .register(AcpToolTurnRegistration {
+                user_id: 7,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "meta".to_string(),
+                acp_session_id: "session-1".to_string(),
+                request_id: Uuid::new_v4(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: Some("approval-expected".to_string()),
+                timeout_ms: 30_000,
+                result_tx: tx,
+            })
+            .unwrap();
+        let mut body = result_body(Some("call-1"));
+        body.approval_request_id = Some("approval-WRONG".to_string());
+        let err = coordinator
+            .deliver_result(7, "meta", "session-1", "call-1", body)
+            .expect_err("mismatched approval id must be rejected");
+        assert!(
+            matches!(err, CustomError::ValidationError(_)),
+            "expected ValidationError, got {err:?}"
+        );
+    }
+
+    #[test]
     fn duplicate_after_removal_reports_recently_settled() {
         let coordinator = AcpToolTurnCoordinator::new();
         let (tx, _rx) = oneshot::channel();

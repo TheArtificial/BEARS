@@ -621,11 +621,18 @@ pub fn runtime_byte_stream_to_event_stream(
     mut parsed: crate::core::runtime_contracts::RuntimeByteStream,
     parser: RuntimeEventParser,
 ) -> crate::core::runtime_contracts::RuntimeEventStream {
+    use crate::core::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
     let mut buffer = Vec::new();
     let mut queued_events: std::collections::VecDeque<
         Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>,
     > = std::collections::VecDeque::new();
     let mut finished = false;
+    // Whether the stream already emitted an explicit terminal/pause semantic. If it did,
+    // we must NOT synthesize a `TurnCompleted` at byte-stream end: a `requires_approval`
+    // pause (`RunPaused`) leaves the turn awaiting a tool result + continuation, and a
+    // spurious `TurnCompleted` would drive premature terminal emission, preempting that
+    // continuation (the tool result then never gets a follow-up turn).
+    let mut saw_terminal_or_pause = false;
     let stream = futures::stream::poll_fn(move |cx| loop {
         if let Some(item) = queued_events.pop_front() {
             return std::task::Poll::Ready(Some(item));
@@ -642,6 +649,17 @@ pub fn runtime_byte_stream_to_event_stream(
                     match parse_sse_event_body_to_json(&frame_body) {
                         Ok(Some(value)) => {
                             if let Some(event) = (parser.parse_json_event)(&value) {
+                                if matches!(
+                                    &event,
+                                    RuntimeStreamEvent::Semantic(
+                                        RuntimeSemanticEvent::RunPaused { .. }
+                                            | RuntimeSemanticEvent::TurnCompleted { .. }
+                                            | RuntimeSemanticEvent::TurnFailed { .. }
+                                            | RuntimeSemanticEvent::TurnCancelled { .. }
+                                    )
+                                ) {
+                                    saw_terminal_or_pause = true;
+                                }
                                 queued_events.push_back(Ok(event));
                             } else {
                                 queued_events.push_back(Ok(
@@ -662,13 +680,15 @@ pub fn runtime_byte_stream_to_event_stream(
             std::task::Poll::Ready(None) => {
                 finished = true;
                 if buffer.is_empty() {
-                    queued_events.push_back(Ok(
-                        crate::core::runtime_contracts::RuntimeStreamEvent::Semantic(
-                            crate::core::runtime_contracts::RuntimeSemanticEvent::TurnCompleted {
-                                turn: None,
-                            },
-                        ),
-                    ));
+                    if !saw_terminal_or_pause {
+                        queued_events.push_back(Ok(
+                            crate::core::runtime_contracts::RuntimeStreamEvent::Semantic(
+                                crate::core::runtime_contracts::RuntimeSemanticEvent::TurnCompleted {
+                                    turn: None,
+                                },
+                            ),
+                        ));
+                    }
                 } else {
                     queued_events.push_back(Err(CustomError::System(format!(
                         "continuation SSE stream ended with incomplete frame ({} bytes)",
