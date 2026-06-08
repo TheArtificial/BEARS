@@ -1,14 +1,33 @@
 use crate::{
     config::Config,
     core::runtime::provider::{
-        acp_requires_runtime, AcpTurnRunner, CancelTurnRequest, ContinueTurnRequest,
-        ContinueTurnResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
-        RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
-        RuntimeConversationRef, RuntimeStartupCapabilities, RuntimeStreamContinuation,
+        acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
+        AcpTurnRunner, CancelTurnRequest, ContinueTurnRequest, ContinueTurnResult,
+        InteractionRunStore, RetrievalService, RoleProfileRegistry, RoleRunner,
+        RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
+        RuntimeErrorCategory, RuntimeStartupCapabilities, RuntimeStreamContinuation,
         RuntimeToolResultStatus, ToolActuatorRegistry,
     },
     errors::CustomError,
 };
+
+#[test]
+fn runtime_error_categories_are_stable_for_acp_policy() {
+    let approval = CustomError::System(
+        "Letta continue HTTP 409: waiting on an unresolved tool approval".to_string(),
+    );
+    assert_eq!(
+        classify_runtime_error(&approval),
+        RuntimeErrorCategory::ConflictPendingApproval
+    );
+    assert!(runtime_error_is_conflict_pending_approval(&approval));
+
+    let misconfigured = CustomError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
+    assert_eq!(
+        classify_runtime_error(&misconfigured),
+        RuntimeErrorCategory::Misconfigured
+    );
+}
 
 #[test]
 fn acp_requires_runtime_when_gateway_enabled() {

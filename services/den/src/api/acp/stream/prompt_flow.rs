@@ -20,8 +20,8 @@ use crate::{
     core::{
         acp_plan_mode,
         acp_runtime::{
-            canonical_acp_conversation_id_for_session, ensure_acp_session_conversation,
-            require_pair_runtime_binding, verify_acp_conversation_access,
+            canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
+            AcpConversationService,
         },
         acp_sessions::{self, UpsertAcpSession},
         conversation_events::{
@@ -121,40 +121,29 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         Err(err) => return Ok(Err(err)),
     };
     let generated_conversation_id = super::super::new_acp_conversation_id(&client);
-    let (conversation_resolution, ensure_conversation_result) = ensure_acp_session_conversation(
-        state.letta.as_ref(),
-        crate::core::runtime_contracts::EnsureConversationRequest {
-            bear_id: bear.id,
-            role: "pair".to_string(),
-            acp_session_id: session_id.to_string(),
-            requested_selection: body.conversation_id.clone(),
-            binding: pair_runtime_binding.clone(),
-        },
-        existing_session.as_ref(),
-        generated_conversation_id,
-    )
-    .await
-    .map_err(|err| {
-        let (status, code, message) = acp_error_status_message(&err);
-        ApiError::new(status, code, message)
-    })?;
-    if conversation_resolution.requires_belongs_to_bear_check {
-        let canonical_accessible = crate::core::conversation_persistence::get_conversation_for_external_id(
-            &state.sqlx_pool,
-            bear.id,
-            &conversation_resolution.session_selection,
+    let conversation_runtime =
+        AcpConversationService::new(&state.sqlx_pool, state.letta.as_ref());
+    let (conversation_resolution, ensure_conversation_result) = conversation_runtime
+        .ensure_prompt_conversation(
+            crate::core::runtime_contracts::EnsureConversationRequest {
+                bear_id: bear.id,
+                role: "pair".to_string(),
+                acp_session_id: session_id.to_string(),
+                requested_selection: body.conversation_id.clone(),
+                binding: pair_runtime_binding.clone(),
+            },
+            existing_session.as_ref(),
+            generated_conversation_id,
         )
         .await
         .map_err(|err| {
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
-        })?
-        .is_some();
-        if !canonical_accessible {
-            verify_acp_conversation_access(
-                &state.sqlx_pool,
+        })?;
+    if conversation_resolution.requires_belongs_to_bear_check {
+        conversation_runtime
+            .verify_conversation_access(
                 bear.id,
-                state.letta.as_ref(),
                 &pair_runtime_binding,
                 &conversation_resolution.session_selection,
             )
@@ -163,7 +152,6 @@ pub(in crate::api::acp) async fn run_prompt_flow(
                 let (status, code, message) = acp_error_status_message(&err);
                 ApiError::new(status, code, message)
             })?;
-        }
     }
     if ensure_conversation_result.created {
         tracing::info!(

@@ -5,6 +5,8 @@ pub use crate::core::runtime_contracts::{
     EnsureConversationResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
     RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeByteStream,
     RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream,
+    classify_runtime_error, runtime_error_is_conflict_pending_approval,
+    runtime_error_is_no_active_runs_cancel,
     RuntimeHealthCheck, RuntimeHistoryPage, RuntimeHistoryRecord, RuntimeSemanticEvent,
     RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeStreamEvent,
     RuntimeToolResultStatus, RuntimeTurnRef, StartTurnRequest, StartTurnResult,

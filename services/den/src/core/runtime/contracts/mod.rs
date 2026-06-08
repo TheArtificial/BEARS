@@ -385,3 +385,39 @@ pub trait ToolActuatorRegistry {}
 pub trait RetrievalService {
     async fn check_health(&self) -> Result<String, CustomError>;
 }
+
+/// Classify a runtime-facing error into a stable Den-owned category for ACP/runner policy.
+pub fn classify_runtime_error(err: &CustomError) -> RuntimeErrorCategory {
+    let message = err.to_string().to_ascii_lowercase();
+    if message.contains("waiting on an unresolved tool approval")
+        || message.contains("waiting for approval")
+        || message.contains("please approve or deny")
+        || message.contains("requires_approval")
+    {
+        RuntimeErrorCategory::ConflictPendingApproval
+    } else if message.contains("no active runs to cancel") {
+        RuntimeErrorCategory::Cancelled
+    } else if message.contains("not configured") || message.contains("letta is not configured") {
+        RuntimeErrorCategory::Misconfigured
+    } else if message.contains("not found for this bear") {
+        RuntimeErrorCategory::InvalidIdentity
+    } else if matches!(err, CustomError::Authorization(_)) {
+        RuntimeErrorCategory::PermissionDenied
+    } else if message.contains("timed out") || message.contains("timeout") {
+        RuntimeErrorCategory::Timeout
+    } else if message.contains("unavailable") {
+        RuntimeErrorCategory::Unavailable
+    } else {
+        RuntimeErrorCategory::Internal
+    }
+}
+
+pub fn runtime_error_is_conflict_pending_approval(err: &CustomError) -> bool {
+    classify_runtime_error(err) == RuntimeErrorCategory::ConflictPendingApproval
+}
+
+pub fn runtime_error_is_no_active_runs_cancel(err: &CustomError) -> bool {
+    err.to_string()
+        .to_ascii_lowercase()
+        .contains("no active runs to cancel")
+}

@@ -112,3 +112,46 @@ fn tool_call_with_top_level_fields_still_parses() {
         other => panic!("unexpected mapping: {other:?}"),
     }
 }
+
+#[test]
+fn end_turn_stop_reason_maps_to_semantic_turn_completed() {
+    let event = serde_json::json!({
+        "message_type": "stop_reason",
+        "stop_reason": "end_turn"
+    });
+    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    match mapped {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {}
+        other => panic!("unexpected mapping: {other:?}"),
+    }
+}
+
+#[test]
+fn unknown_stop_reason_maps_to_semantic_turn_failed() {
+    let event = serde_json::json!({
+        "message_type": "stop_reason",
+        "stop_reason": "max_steps_exceeded"
+    });
+    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    match mapped {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
+            assert!(message.contains("max_steps_exceeded"));
+        }
+        other => panic!("unexpected mapping: {other:?}"),
+    }
+}
+
+#[test]
+fn conversation_resolved_event_maps_to_semantic_conversation_ref() {
+    let event = serde_json::json!({
+        "message_type": "conversation_resolved",
+        "conversation_id": "conv-resolved-789"
+    });
+    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    match mapped {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
+            assert_eq!(conversation.id, "conv-resolved-789");
+        }
+        other => panic!("unexpected mapping: {other:?}"),
+    }
+}

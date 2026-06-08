@@ -94,8 +94,7 @@ pub struct DenRuntimeAcpTurnRunner<'a> {
 }
 
 pub fn looks_like_runtime_waiting_for_approval_error(err: &CustomError) -> bool {
-    let text = err.to_string();
-    text.contains("waiting on an unresolved tool approval") || text.contains("waiting for approval")
+    crate::core::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
 }
 
 pub struct LettaRuntimeCancellationBackend<'a> {
@@ -656,6 +655,7 @@ pub fn runtime_byte_stream_to_event_stream(
                                             | RuntimeSemanticEvent::TurnCompleted { .. }
                                             | RuntimeSemanticEvent::TurnFailed { .. }
                                             | RuntimeSemanticEvent::TurnCancelled { .. }
+                                            | RuntimeSemanticEvent::Error { .. }
                                     )
                                 ) {
                                     saw_terminal_or_pause = true;

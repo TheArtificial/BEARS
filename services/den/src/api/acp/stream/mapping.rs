@@ -122,7 +122,6 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             | RuntimeSemanticEvent::TurnCompleted { .. }
             | RuntimeSemanticEvent::TurnFailed { .. }
             | RuntimeSemanticEvent::TurnCancelled { .. }
-            | RuntimeSemanticEvent::Error { .. }
             | RuntimeSemanticEvent::RunProgress { .. },
         ) => {
             if let RuntimeStreamEvent::Semantic(semantic_event) = runtime_event_for_projection.clone() {
@@ -133,7 +132,8 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
         }
         RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested { .. }
-            | RuntimeSemanticEvent::RunPaused { .. },
+            | RuntimeSemanticEvent::RunPaused { .. }
+            | RuntimeSemanticEvent::Error { .. },
         )
         | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     };

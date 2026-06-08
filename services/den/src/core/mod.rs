@@ -1,6 +1,12 @@
 pub mod acp_letta_events;
 pub mod acp_plan_mode;
 pub mod acp_runtime;
+pub mod acp_runtime_test {
+    #[cfg(test)]
+    mod tests {
+        include!("acp_runtime_tests.rs");
+    }
+}
 pub mod acp_sessions;
 pub mod acp_tokens;
 pub mod acp_tool_turns;
@@ -36,6 +42,11 @@ pub mod conversation {
         #[cfg(test)]
         mod non_acp_integration_tests {
             include!("conversation_persistence_non_acp_integration_tests.rs");
+        }
+
+        #[cfg(test)]
+        mod idempotency_integration_tests {
+            include!("conversation_idempotency_integration_tests.rs");
         }
     }
 }

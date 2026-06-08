@@ -6,11 +6,11 @@ The goal is to replace Letta as the active execution/control substrate with a De
 
 ## Current focus (2026-06-08)
 
-**Active epic:** [Epic A2 — Complete the ACP runtime contract boundary](#epic-a2--complete-the-acp-runtime-contract-boundary)
+**Active epic:** Phase 6 follow-on — Curate execution substrate and `review`/`watch` migration prep.
 
-**Not active:** Further persistence micro-extractions; full Curate execution substrate; backfill/rollout controls; `chat`/`work` harness work.
+**Recently completed:** [Epic A2 — Complete the ACP runtime contract boundary](#epic-a2--complete-the-acp-runtime-contract-boundary) (see [status doc](./LETTA_MIGRATION_STATUS.md)).
 
-**Release gate for this epic:** ACP runtime contract milestones 1–3 complete (structured streaming, conversation lifecycle, cancellation normalization) + validation gate green (contract tests, smoke-stack replay/idempotency, automated idempotency integration test).
+**Not active:** Further persistence micro-extractions; backfill/rollout controls; `chat`/`work` harness work.
 
 **Detailed progress:** [LETTA_MIGRATION_STATUS.md](./LETTA_MIGRATION_STATUS.md)
 
@@ -327,7 +327,7 @@ Epic status and landed files: [LETTA_MIGRATION_STATUS.md](./LETTA_MIGRATION_STAT
 
 ### Epic A2 — Complete the ACP runtime contract boundary
 
-**Status:** active. Milestones from [acp-runtime-contract.md](../architecture/acp-runtime-contract.md).
+**Status:** complete for the planned slice set. Milestones from [acp-runtime-contract.md](../architecture/acp-runtime-contract.md).
 
 **Goal:** complete the runtime contract so Letta is only an execution adapter, not the implicit lifecycle owner.
 

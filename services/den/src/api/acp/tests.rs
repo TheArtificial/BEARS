@@ -16,7 +16,19 @@ use crate::core::prompt_memory_blocks::{
 };
 
     use bytes::Bytes;
+    use futures::Stream;
     use reqwest::StatusCode;
+
+    fn acp_test_runtime_event_stream(
+        bytes: impl Stream<Item = Result<Bytes, CustomError>> + Send + 'static,
+    ) -> crate::core::runtime_contracts::RuntimeEventStream {
+        runtime_byte_stream_to_event_stream(
+            Box::pin(bytes),
+            RuntimeEventParser {
+                parse_json_event: runtime_stream_event_from_letta_json,
+            },
+        )
+    }
     use crate::{
         config::Config,
         errors::CustomError,
@@ -30,14 +42,11 @@ use crate::core::prompt_memory_blocks::{
                 render_prompt_memory_runtime_selection,
             },
             stream::{
-                mapping::{
-                    map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
-                },
+                mapping::summarize_event_for_log,
                 runtime::{
                     spawn_canonical_gateway_record_persistence,
                 },
                 sse_stream::{runtime_terminal_events, AcpRuntimeSseStream},
-                support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
                 text::AcpTextChunker,
             },
             tool_results::acp_tool_result_response_from_delivery,
@@ -48,6 +57,12 @@ use crate::core::prompt_memory_blocks::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
             },
+            acp_turn_runner::runtime_byte_stream_to_event_stream,
+            letta_runtime_stream_parser::{
+                find_sse_frame_end, parse_sse_event_body_to_json,
+                runtime_stream_event_from_letta_json,
+            },
+            runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
             acp_sessions,
             acp_tool_turns::{
                 AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
@@ -866,7 +881,13 @@ use crate::core::prompt_memory_blocks::{
         };
 
         let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
-        let mut stream = AcpRuntimeSseStream::new(inner, context, Vec::new(), false, crate::core::role_runtime::RoleTurnGuard { guard: active_turn_guard });
+        let mut stream = AcpRuntimeSseStream::new(
+            acp_test_runtime_event_stream(inner),
+            context,
+            Vec::new(),
+            false,
+            crate::core::role_runtime::RoleTurnGuard { guard: active_turn_guard },
+        );
         stream.waiting_adapter_tool_result = Some((
             tool_call_id.clone(),
             "functions.fs.read_text_file".to_string(),
@@ -3517,7 +3538,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -3705,7 +3726,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -3865,7 +3886,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -4007,7 +4028,7 @@ use crate::core::prompt_memory_blocks::{
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
         )))]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -4095,7 +4116,7 @@ use crate::core::prompt_memory_blocks::{
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
         ))]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -4237,7 +4258,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -4376,7 +4397,7 @@ use crate::core::prompt_memory_blocks::{
             "\"arguments\":\"{}\"}}\n\n"
         )))]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -4457,7 +4478,7 @@ use crate::core::prompt_memory_blocks::{
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             vec![AcpGatewayEvent::SessionInfoUpdate {
                 title: Some("Renamed in same turn".to_string()),
@@ -4623,7 +4644,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -5030,7 +5051,7 @@ use crate::core::prompt_memory_blocks::{
         let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -5167,7 +5188,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -5293,7 +5314,7 @@ use crate::core::prompt_memory_blocks::{
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
         ))]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -5425,7 +5446,7 @@ use crate::core::prompt_memory_blocks::{
             )),
         ]);
         let mut stream = AcpRuntimeSseStream::new(
-            upstream,
+            acp_test_runtime_event_stream(upstream),
             context,
             Vec::new(),
             false,
@@ -5885,25 +5906,35 @@ use crate::core::prompt_memory_blocks::{
         }
     }
 
-    #[test]
-    fn sse_parser_joins_multiple_data_lines_into_one_json_value() {
+    #[tokio::test]
+    async fn sse_parser_joins_multiple_data_lines_into_one_json_value() {
         let body = br#"data: {"message_type":"assistant_message","content":
 data: "hello"}"#;
         let v = parse_sse_event_body_to_json(body).unwrap().unwrap();
         assert_eq!(v["message_type"], "assistant_message");
         assert_eq!(v["content"], "hello");
-        let out = map_letta_stream_frame_to_acp_adapter_events(
-            b"data: {\"message_type\":\"assistant_message\",\"content\":\ndata: \"hello\"}\n\n",
-        );
-        assert_eq!(out.len(), 1);
+        let frames = b"data: {\"message_type\":\"assistant_message\",\"content\":\ndata: \"hello\"}\n\n";
+        let source = futures::stream::iter(vec![Ok(Bytes::from_static(frames))]);
+        let mut stream = acp_test_runtime_event_stream(source);
+        let first = futures::StreamExt::next(&mut stream)
+            .await
+            .expect("event")
+            .expect("ok");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. })
+        ));
     }
 
-    #[test]
-    fn sse_parser_rejects_invalid_json_with_parse_path_empty() {
+    #[tokio::test]
+    async fn sse_parser_rejects_invalid_json_with_parse_path_empty() {
         let body = br#"data: not-json"#;
         assert!(parse_sse_event_body_to_json(body).is_err());
-        let out = map_letta_stream_frame_to_acp_adapter_events(b"data: not-json\n\n");
-        assert!(out.is_empty());
+        let frames = b"data: not-json\n\n";
+        let source = futures::stream::iter(vec![Ok(Bytes::from_static(frames))]);
+        let mut stream = acp_test_runtime_event_stream(source);
+        let first = futures::StreamExt::next(&mut stream).await.expect("event");
+        assert!(first.is_err(), "invalid provider JSON should surface as stream error");
     }
 
     #[test]
@@ -5953,13 +5984,14 @@ data: "hello"}"#;
                 .unwrap();
         assert_eq!(resolution.session_selection, "new-acp-zed-abc123");
         assert_eq!(resolution.resolved_conversation, None);
-        assert_eq!(resolution.upstream_target, binding.binding_id);
+        assert_eq!(resolution.upstream_target, "new-acp-zed-abc123");
         assert_eq!(resolution.history_target, None);
         assert_eq!(resolution.archive_target, None);
         assert_eq!(
             resolution.selection_source,
             AcpConversationSelectionSource::Generated
         );
+        assert!(!resolution.should_materialize_runtime_conversation);
     }
 
     #[test]

@@ -479,6 +479,69 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend.load_history(binding, conversation).await
 }
 
+/// Den-owned ACP conversation lifecycle entrypoint. Keeps session/bootstrap policy out of
+/// prompt handlers while routing backend-specific work through `RuntimeConversationBackend`.
+pub struct AcpConversationService<'a> {
+    pool: &'a PgPool,
+    backend: LettaRuntimeConversationBackend<'a>,
+}
+
+impl<'a> AcpConversationService<'a> {
+    pub fn new(pool: &'a PgPool, letta: &'a LettaClient) -> Self {
+        Self {
+            pool,
+            backend: LettaRuntimeConversationBackend::new(letta),
+        }
+    }
+
+    pub async fn ensure_prompt_conversation(
+        &self,
+        request: EnsureConversationRequest,
+        existing_session: Option<&acp_sessions::AcpSessionRow>,
+        generated_pending_id: String,
+    ) -> Result<(AcpConversationResolution, EnsureConversationResult), CustomError> {
+        ensure_acp_session_conversation_with_backend(
+            &self.backend,
+            request,
+            existing_session,
+            generated_pending_id,
+        )
+        .await
+    }
+
+    pub async fn verify_conversation_access(
+        &self,
+        bear_id: uuid::Uuid,
+        binding: &RoleRuntimeBinding,
+        conversation_id: &str,
+    ) -> Result<(), CustomError> {
+        if conversation_id == "default" || conversation_id.starts_with("new-") {
+            return Ok(());
+        }
+        if !conversation_id.starts_with("conv-") {
+            return Err(CustomError::ValidationError(format!(
+                "invalid conversation_id: {conversation_id}"
+            )));
+        }
+        if conversation_persistence::get_conversation_for_external_id(
+            self.pool,
+            bear_id,
+            conversation_id,
+        )
+        .await?
+        .is_some()
+        {
+            return Ok(());
+        }
+        verify_acp_conversation_belongs_to_binding_with_backend(
+            &self.backend,
+            binding,
+            conversation_id,
+        )
+        .await
+    }
+}
+
 pub struct LettaAcpConversationRuntime<'a> {
     pub letta: &'a LettaClient,
 }
@@ -498,25 +561,14 @@ impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
         &self,
         request: EnsureConversationRequest,
     ) -> Result<EnsureConversationResult, CustomError> {
-        let requested_selection = request.requested_selection.clone();
-        let (resolution, result) = ensure_acp_session_conversation(
+        let (_resolution, result) = ensure_acp_session_conversation(
             self.letta,
             request,
             None,
-            "new-acp-runtime-placeholder".to_string(),
+            "new-acp-contract-default".to_string(),
         )
         .await?;
-        let _ = resolution;
-        if requested_selection.is_none() {
-            Ok(EnsureConversationResult {
-                conversation: RuntimeConversationRef {
-                    id: "default".to_string(),
-                },
-                created: false,
-            })
-        } else {
-            Ok(result)
-        }
+        Ok(result)
     }
 
     async fn load_history(

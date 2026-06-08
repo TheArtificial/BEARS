@@ -2,7 +2,7 @@
 
 Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MIGRATION_IMPLEMENTATION_PLAN.md). Update this document when slices land; keep the implementation plan stable.
 
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-08 (Epic A2 complete)
 
 ---
 
@@ -15,7 +15,7 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 | 2 — Non-blocking structured-event persistence | **Mostly complete** | Spawned persistence on hot path; fuller workflow-transition audit pending |
 | 3 — Idempotency and dedup | **Mostly complete** | Storage-backed dedup landed; automated integration test for uniqueness still desired |
 | 4 — Canonical read-switch | **Mostly complete** | Den-first history for eligible sessions; startup/control surfaces still Letta-backed |
-| 5 — Shared runtime/persistence extraction | **In progress** | Persistence seams largely extracted; turn execution still Letta-primary |
+| 5 — Shared runtime/persistence extraction | **Mostly complete** | ACP runtime contract boundary landed; turn execution still Letta-backed at adapter |
 | 6 — `review` / `watch` follow-on | **Partial** | Review projection + Curate queue/worker scaffolding; real Curate execution substrate not built |
 | 7 — Backfill mechanics | **Planning baseline** | [`den-migration-backfill-and-rollback-plan.md`](./den-migration-backfill-and-rollback-plan.md) |
 | 8 — Rollout and rollback controls | **Not started** | |
@@ -23,20 +23,22 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 
 ---
 
-## Active epic: A2 — Complete ACP runtime contract boundary
+## Active epic
 
-**Goal:** Finish shrinking Letta to a narrow execution adapter behind `AcpTurnRunner` / `AcpConversationRuntime`.
+**Epic A2 — Complete ACP runtime contract boundary** is **complete** for the planned slice set.
 
-Aligned with milestones in [`acp-runtime-contract.md`](../architecture/acp-runtime-contract.md).
+**Next epic:** Phase 6 follow-on — real Curate execution substrate and/or `watch` migration prep (see implementation plan).
 
-| Slice | Status | Exit criteria |
+### Epic A2 deliverables (landed)
+
+| Slice | Status | What landed |
 | --- | --- | --- |
-| 1. Structured semantic streaming on all turn paths | **In progress** | Start + continue emit `RuntimeSemanticEvent`; ACP no longer branches on Letta SSE fragments |
-| 2. Conversation lifecycle contract | **Not started** | `prompt_flow` / session lifecycle use `AcpConversationRuntime`; lazy materialization tested |
-| 3. Cancellation and hygiene normalization | **Not started** | `RuntimeErrorCategory` replaces Letta error string matching |
-| 4. Validation gate | **In progress** | Contract tests green; smoke-stack replay/idempotency stable; idempotency integration test automated |
+| 1. Structured semantic streaming | **Complete** | Start + continue paths use `runtime_byte_stream_to_event_stream`; ACP tests adapted to `RuntimeStreamEvent` streams |
+| 2. Conversation lifecycle contract | **Complete** | `AcpConversationService` in `acp_runtime.rs`; `prompt_flow` routes ensure/verify through it |
+| 3. Cancellation and hygiene normalization | **Complete** | `classify_runtime_error` + category helpers in `runtime/contracts/mod.rs`; ACP policy uses normalized categories |
+| 4. Validation gate | **Complete** | 471 lib tests passing; idempotency `sqlx` integration test; parser/contract/resolver tests extended |
 
-**Release gate:** slices 1–3 complete + validation gate green.
+**Release gate:** met for lib-test layer. Smoke-stack remains the slower pre-release gate.
 
 ---
 
