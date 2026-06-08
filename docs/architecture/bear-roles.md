@@ -12,6 +12,8 @@ This is the durable conceptual source for the five Bear roles: what they are, wh
 
 For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-profiles-and-role-axes.md`](interactive-profiles-and-role-axes.md).
 
+For how **work surfaces** relate to **conversations** (including “start a conversation with this repository”), see [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
+
 It is not the implementation spec for provisioning, prompt hashes, tool ids, runtime lifecycle, or database reconciliation. Those details live in the Den spec. It is also not the decision record explaining why the architecture was chosen. That rationale lives in ADRs.
 
 | Document | Audience | Purpose |

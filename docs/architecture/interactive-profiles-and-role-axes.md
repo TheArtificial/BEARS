@@ -63,6 +63,8 @@ Trust follows armature; resources sit above both.
 3. Retire harness/runtime-family language (`letta_code_harness`, five provisioned “agents”).
 4. Prefer **capability profile** in code comments and operator docs; keep **role** as the stable enum name for schemas.
 
+When `AGENT_RUNTIME=native`, `chat` and `pair` are capability profiles over one Den loop; work-surface **binding** is conversation-scoped. See [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
+
 ## Naming
 
 The implementation enum and Postgres registry use **`chat`** (formerly `talk`) for the conversational human-present profile, aligned with product language in [`bear-roles.md`](bear-roles.md).

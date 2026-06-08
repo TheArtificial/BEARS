@@ -20,6 +20,7 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [deep chat styling](deep-chat-styling.md)
 - [memfs sidecar runbook](memfs-sidecar-runbook.md)
 - [memfs and memory ui](memfs-and-memory-ui.md)
+- [work surfaces and conversations](work-surfaces-and-conversations.md)
 - [letta bear ui exposure](letta-bear-ui-exposure.md)
 - [letta migration plan](letta-migration-plan.md)
 - [rename from starter](rename-from-starter.md)
