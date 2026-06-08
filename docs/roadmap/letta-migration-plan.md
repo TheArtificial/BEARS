@@ -25,6 +25,7 @@ Other terminology used in this plan:
 ## How to use this document
 
 - Use the **parity matrix** to understand what Letta responsibilities must be replaced.
+- Use the [Letta Dependency Matrix](../architecture/letta-dependency-matrix.md) for the codebase inventory of Letta touchpoints, criticality, and suggested replacement owners.
 - Use the **repo coverage review** to see which parts already have design support and which still need docs.
 - Use the **step-by-step implementation plan** for build order.
 - Use [Letta Migration Implementation Plan](./LETTA_MIGRATION_IMPLEMENTATION_PLAN.md) for phased tasks and acceptance criteria, and [Letta Migration Status](./LETTA_MIGRATION_STATUS.md) for current progress.
