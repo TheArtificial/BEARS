@@ -63,8 +63,10 @@ pub mod letta_runtime_stream_parser_test {
 pub mod memory_manager_head;
 #[cfg(test)]
 mod memory_manager_head_append_markdown_tests;
+pub mod bear_observations;
 pub mod memory_curate_executor;
 pub mod memory_proposals;
+pub mod reflection_conversations;
 pub mod pair_reflection;
 pub mod pair_turn;
 pub mod prompt_memory_block_store;

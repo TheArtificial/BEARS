@@ -14,6 +14,10 @@ use crate::{
             ProjectionProvenance, ProjectionSource,
         },
         memory_curate_executor::{self, MemoryCurateRunOutput},
+        reflection_conversations::{
+            bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
+            touch_memory_curate_conversation,
+        },
     },
     errors::CustomError,
 };
@@ -277,7 +281,22 @@ pub async fn claim_next_memory_curate_run(
     let Some(row) = row else {
         return Ok(None);
     };
-    let run = row_from_sql(row);
+    let mut run = row_from_sql(row);
+    if let Some(conversation_date) = run.conversation_date {
+        let reflection_conversation = ensure_memory_curate_conversation(
+            pool,
+            run.bear_id,
+            run.role_agent_id.as_deref(),
+            conversation_date,
+        )
+        .await?;
+        if let Some(conversation_id) = reflection_conversation.conversation_id.as_deref() {
+            bind_memory_curate_run_conversation(pool, run.bear_id, run.id, conversation_id)
+                .await?;
+            run.conversation_id = Some(conversation_id.to_string());
+        }
+        let _ = touch_memory_curate_conversation(pool, run.bear_id, conversation_date).await;
+    }
     project_memory_curate_started(pool, &run, proposal_ids_from_summary(&run.input_summary));
     Ok(Some(run))
 }
@@ -380,6 +399,7 @@ pub async fn run_next_memory_curate_once(
     let output = match execute_memory_curate_run(
         pool,
         config,
+        run.id,
         run.bear_id,
         run.trigger.as_str(),
         &proposal_ids,
@@ -407,18 +427,49 @@ pub async fn run_next_memory_curate_once(
 async fn execute_memory_curate_run(
     pool: &PgPool,
     config: &Config,
+    reflection_run_id: Uuid,
     bear_id: Uuid,
     trigger: &str,
     proposal_ids: &[Uuid],
 ) -> Result<MemoryCurateRunOutput, CustomError> {
-    memory_curate_executor::execute_memory_curate_proposals(
+    let output = memory_curate_executor::execute_memory_curate_proposals(
         pool,
         config,
         bear_id,
         Some(trigger),
         proposal_ids,
     )
-    .await
+    .await?;
+    for outcome in &output.outcomes {
+        record_memory_curate_run_item(
+            pool,
+            reflection_run_id,
+            outcome.proposal_id,
+            &outcome.status,
+        )
+        .await?;
+    }
+    Ok(output)
+}
+
+async fn record_memory_curate_run_item(
+    pool: &PgPool,
+    run_id: Uuid,
+    proposal_id: Uuid,
+    status: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        INSERT INTO bear_reflection_run_items (run_id, item_kind, item_id, status)
+        VALUES ($1, 'memory_proposal', $2, $3)
+        "#,
+    )
+    .bind(run_id)
+    .bind(proposal_id.to_string())
+    .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::Value {
@@ -427,6 +478,7 @@ fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::V
         "resolution_status": output.resolution_status,
         "status_counts": output.status_counts,
         "outcomes": output.outcomes,
+        "briefing": output.briefing,
     })
 }
 
