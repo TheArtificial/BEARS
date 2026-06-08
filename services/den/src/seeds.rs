@@ -13,7 +13,8 @@ use crate::{
         acp_tokens,
         bears::{
             db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
-            provision::provision_missing_bear_roles, runtime_plan::default_runtime_plan,
+            provision::{self, provision_missing_bear_roles},
+            runtime_plan::default_runtime_plan,
         },
         bifrost::BifrostClient,
         letta::LettaClient,
@@ -91,10 +92,11 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
         .await
         .context("verify smoke user email")?;
 
-    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG)
+    let config = Config::load();
+    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG, &config)
         .await
         .context("ensure smoke bear")?;
-    ensure_smoke_bear_model(pool, bear_id)
+    ensure_smoke_bear_model(pool, bear_id, &config)
         .await
         .context("ensure smoke bear model")?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan())
@@ -106,7 +108,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     ensure_smoke_acp_token(pool, user_id, bear_id)
         .await
         .context("ensure smoke ACP token")?;
-    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id).await {
+    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id, &config).await {
         tracing::warn!(error = %err, "smoke seed could not provision role runtimes; continuing with database fixtures only");
     }
 
@@ -133,10 +135,29 @@ async fn ensure_user(pool: &PgPool, username: &str, password: &str) -> Result<i3
         .map_err(Into::into)
 }
 
-async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
+fn smoke_default_model(config: &Config) -> &str {
+    if config.uses_native_agent_runtime() {
+        let trimmed = config.default_llm_model.trim();
+        if trimmed.is_empty() {
+            "gpt-4o-mini"
+        } else {
+            trimmed
+        }
+    } else {
+        "letta/letta-free"
+    }
+}
+
+async fn ensure_bear(pool: &PgPool, slug: &str, config: &Config) -> Result<uuid::Uuid> {
     if let Some(id) = bear_id_by_slug(pool, slug).await? {
         return Ok(id);
     }
+
+    let letta_agent_type = if config.uses_native_agent_runtime() {
+        None
+    } else {
+        Some("letta_v1_agent")
+    };
 
     bears_db::create_bear(
         pool,
@@ -147,7 +168,7 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
             system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
             default_model: None,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: Some("letta_v1_agent"),
+            letta_agent_type,
             letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
@@ -156,27 +177,56 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
     .map_err(Into::into)
 }
 
-async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE bears
-        SET default_model = COALESCE(NULLIF(default_model, ''), 'letta/letta-free')
-        WHERE id = $1
-        "#,
-    )
-    .bind(bear_id)
-    .execute(pool)
-    .await?;
+async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid, config: &Config) -> Result<()> {
+    let model = smoke_default_model(config);
+    if config.uses_native_agent_runtime() {
+        sqlx::query(
+            r#"
+            UPDATE bears
+            SET default_model = $2
+            WHERE id = $1
+              AND (
+                default_model IS NULL
+                OR btrim(default_model) = ''
+                OR default_model LIKE 'letta/%'
+              )
+            "#,
+        )
+        .bind(bear_id)
+        .bind(model)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"
+            UPDATE bears
+            SET default_model = COALESCE(NULLIF(default_model, ''), $2)
+            WHERE id = $1
+            "#,
+        )
+        .bind(bear_id)
+        .bind(model)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
-async fn ensure_smoke_role_runtimes(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
-    let config = Config::load();
-    let letta = LettaClient::new(&config);
+async fn ensure_smoke_role_runtimes(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    config: &Config,
+) -> Result<()> {
+    let letta = LettaClient::new(config);
+    let bifrost = BifrostClient::new(config);
+    if config.uses_native_agent_runtime() {
+        return provision::provision_bear_if_configured(pool, config, &letta, &bifrost, bear_id)
+            .await
+            .context("provision smoke bear native runtimes");
+    }
     if !letta.is_enabled() {
         return Ok(());
     }
-    let bifrost = BifrostClient::new(&config);
     provision_missing_bear_roles(pool, &letta, &bifrost, bear_id)
         .await
         .context("provision missing smoke bear role runtimes")?;
