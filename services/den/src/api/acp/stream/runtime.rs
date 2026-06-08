@@ -632,6 +632,7 @@ pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
             match invoke_den_tool(
                 &context.pool,
                 context.config.as_ref(),
+                &context.memory_stores,
                 DEN_BEAR_ENVIRONMENT,
                 args,
                 tool_context,
@@ -749,6 +750,7 @@ pub(in crate::api::acp) async fn invoke_acp_den_tool(
     match invoke_den_tool(
         &context.pool,
         context.config.as_ref(),
+        &context.memory_stores,
         canonical_name,
         args,
         tool_context,

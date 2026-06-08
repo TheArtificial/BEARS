@@ -11,8 +11,12 @@ use crate::{
             memory_proposal_resolved_projection, memory_review_requested_projection,
             project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
+        memory::{
+            create_proposal, get_proposal, list_proposals, promote_core_content, resolve_proposal,
+            MemoryStoreManager,
+        },
         memory_manager_head::MemfsCoreUpdateRequest,
-        memory_proposals::{self, CreateMemoryProposal},
+        memory_proposals::{CreateMemoryProposal, ProposalResolutionParams},
         tools::{
             memfs::memfs_http_client,
             memory_write::source_acp_session_id,
@@ -89,6 +93,7 @@ pub(crate) struct MemoryRequestReviewArguments {
 pub(crate) async fn apply_core_update(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -99,9 +104,81 @@ pub(crate) async fn apply_core_update(
         ));
     }
     let args: MemoryApplyCoreUpdateArguments = serde_json::from_value(arguments)?;
-    let proposal = memory_proposals::get_for_bear(pool, context.bear_id, args.proposal_id)
+    let proposal = get_proposal(pool, config, stores, context.bear_id, args.proposal_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
+    if config.uses_native_agent_runtime() {
+        let content = args.body.unwrap_or_else(|| {
+            format!(
+                "Applied from proposal `{}` via native SQLite promotion.",
+                proposal.id
+            )
+        });
+        let kind = args
+            .target_path
+            .split('/')
+            .next_back()
+            .unwrap_or("note")
+            .trim_end_matches(".md");
+        let (memory_id, promotion_id) = promote_core_content(
+            stores,
+            context.bear_id,
+            &proposal.id.to_string(),
+            kind,
+            &content,
+            role.as_str(),
+        )
+        .await?;
+        let resolved = resolve_proposal(
+            pool,
+            config,
+            stores,
+            ProposalResolutionParams {
+                bear_id: context.bear_id,
+                proposal_id: proposal.id,
+                reviewer_role: role,
+                reviewer_agent_id: Some(context.role_agent_id.as_str()),
+                status: "approved",
+                review_notes: args.review_notes.as_deref(),
+                decision_summary: Some("Applied reviewed memory proposal to core (SQLite)."),
+                result_path: Some(args.target_path.as_str()),
+                result_commit: None,
+                project_to_conversation: false,
+            },
+        )
+        .await?;
+        project_to_conversation(
+            pool,
+            context.bear_id,
+            Some(context.user_id),
+            clean_optional(&context.conversation_id).as_deref(),
+            memory_proposal_resolved_projection(
+                ProjectionProvenance {
+                    source: ProjectionSource::DenTools,
+                    scope_id: source_acp_session_id(context)
+                        .or_else(|| clean_optional(&context.session_id))
+                        .unwrap_or_else(|| format!("bear:{}:role:{}", context.bear_id, role.as_str())),
+                },
+                resolved.id,
+                resolved.source_role.clone(),
+                resolved.suggested_action.clone(),
+                resolved.title.clone(),
+                resolved.status.clone(),
+                resolved.reviewer_role.clone(),
+                resolved.result_path.clone(),
+                resolved.result_commit.clone(),
+            ),
+        );
+        return Ok(json!({
+            "bear_id": context.bear_id,
+            "proposal": resolved,
+            "core_update": {
+                "path": args.target_path,
+                "memory_id": memory_id,
+                "promotion_id": promotion_id,
+            },
+        }));
+    }
     let http = memfs_http_client("MemFS core update client build failed")?;
     let body = args.body.map(|body| {
         format!(
@@ -134,9 +211,11 @@ pub(crate) async fn apply_core_update(
             "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
         ));
     };
-    let resolved = memory_proposals::resolve_for_bear(
+    let resolved = resolve_proposal(
         pool,
-        memory_proposals::ProposalResolutionParams {
+        config,
+        stores,
+        ProposalResolutionParams {
             bear_id: context.bear_id,
             proposal_id: proposal.id,
             reviewer_role: role,
@@ -181,6 +260,8 @@ pub(crate) async fn apply_core_update(
 
 pub(crate) async fn list_memory_proposals(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -193,13 +274,15 @@ pub(crate) async fn list_memory_proposals(
     let args: MemoryListProposalsArguments = serde_json::from_value(arguments)?;
     let status = args.status.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let proposals =
-        memory_proposals::list_for_bear(pool, context.bear_id, status, args.limit.unwrap_or(50))
+        list_proposals(pool, config, stores, context.bear_id, status, args.limit.unwrap_or(50))
             .await?;
     Ok(json!({ "bear_id": context.bear_id, "proposals": proposals }))
 }
 
 pub(crate) async fn read_memory_proposal(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -210,7 +293,7 @@ pub(crate) async fn read_memory_proposal(
         ));
     }
     let args: MemoryReadProposalArguments = serde_json::from_value(arguments)?;
-    let proposal = memory_proposals::get_for_bear(pool, context.bear_id, args.proposal_id)
+    let proposal = get_proposal(pool, config, stores, context.bear_id, args.proposal_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
     Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
@@ -218,6 +301,8 @@ pub(crate) async fn read_memory_proposal(
 
 pub(crate) async fn resolve_memory_proposal(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -238,9 +323,11 @@ pub(crate) async fn resolve_memory_proposal(
                 .to_string(),
         ));
     }
-    let proposal = memory_proposals::resolve_for_bear(
+    let proposal = resolve_proposal(
         pool,
-        memory_proposals::ProposalResolutionParams {
+        config,
+        stores,
+        ProposalResolutionParams {
             bear_id: context.bear_id,
             proposal_id: args.proposal_id,
             reviewer_role: role,
@@ -281,6 +368,8 @@ pub(crate) async fn resolve_memory_proposal(
 
 pub(crate) async fn request_memory_review(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -331,8 +420,10 @@ pub(crate) async fn request_memory_review(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("normal");
-    let proposal = memory_proposals::create(
+    let proposal = create_proposal(
         pool,
+        config,
+        stores,
         CreateMemoryProposal {
             bear_id: context.bear_id,
             source_role: role,

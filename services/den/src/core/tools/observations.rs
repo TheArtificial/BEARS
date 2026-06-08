@@ -9,6 +9,10 @@ use crate::{
     core::{
         bear_observations::{self, BearObservationRow},
         bears::BearAgentRole,
+        memory::{
+            create_observation, create_proposal, mark_observation_review_queued_for_bear,
+            MemoryStoreManager,
+        },
         memory_proposals::{self, CreateMemoryProposal},
         reflection_conductor::{self, ProposalEnqueueParams},
         tools::{
@@ -66,7 +70,8 @@ fn observation_requires_human(salience: &str) -> bool {
 
 pub(crate) async fn write_observation(
     pool: &PgPool,
-    _config: &Config,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -102,8 +107,10 @@ pub(crate) async fn write_observation(
         })
     });
 
-    let observation = bear_observations::create(
+    let observation = create_observation(
         pool,
+        config,
+        stores,
         bear_observations::CreateBearObservation {
             bear_id: context.bear_id,
             observation_id: &observation_id,
@@ -117,11 +124,28 @@ pub(crate) async fn write_observation(
 
     let proposal = enqueue_observation_review(
         pool,
+        config,
+        stores,
         context,
         &observation,
         salience,
     )
     .await?;
+
+    if config.uses_native_agent_runtime() {
+        mark_observation_review_queued_for_bear(
+            config,
+            stores,
+            context.bear_id,
+            &observation.observation_id,
+            proposal.id,
+        )
+        .await?;
+        let mut observation = observation;
+        observation.status = "review_queued".to_string();
+        observation.proposal_id = Some(proposal.id);
+        return Ok(observation_write_payload(&observation, false));
+    }
 
     let observation = bear_observations::mark_review_queued(
         pool,
@@ -136,14 +160,18 @@ pub(crate) async fn write_observation(
 
 async fn enqueue_observation_review(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     observation: &BearObservationRow,
     salience: &str,
 ) -> Result<memory_proposals::MemoryProposalRow, CustomError> {
     let requires_human = observation_requires_human(salience);
     let conversation_id = clean_optional(&context.conversation_id);
-    let proposal = memory_proposals::create(
+    let proposal = create_proposal(
         pool,
+        config,
+        stores,
         CreateMemoryProposal {
             bear_id: context.bear_id,
             source_role: BearAgentRole::Watch,

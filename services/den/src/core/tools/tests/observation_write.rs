@@ -6,6 +6,7 @@ use crate::{
     config::Config,
     core::{
         bears::{db, db::grant_membership, db::BearParams, BearAgentRole},
+        memory::MemoryStoreManager,
         tools::{
             arguments::DenToolChannelContext,
             constants::DEN_OBSERVATION_WRITE,
@@ -91,9 +92,13 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         channel: DenToolChannelContext::default(),
     };
 
+    let config = Config::test_stub();
+    let stores = MemoryStoreManager::new(&config);
+
     let payload = invoke_den_tool(
         &pool,
-        &Config::test_stub(),
+        &config,
+        &stores,
         DEN_OBSERVATION_WRITE,
         json!({
             "observation_id": "deploy-failure-001",
@@ -145,7 +150,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     };
     let replay = invoke_den_tool(
         &pool,
-        &Config::test_stub(),
+        &config,
+        &stores,
         DEN_OBSERVATION_WRITE,
         json!({
             "observation_id": "deploy-failure-001",

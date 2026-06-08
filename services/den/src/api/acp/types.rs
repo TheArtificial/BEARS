@@ -12,6 +12,7 @@ use crate::{
         acp_letta_events::AcpGatewayEvent,
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
         acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
+        memory::MemoryStoreManager,
         role_runtime::{RoleRuntime, RoleTurnScope},
     },
     errors::CustomError,
@@ -83,6 +84,7 @@ pub(in crate::api::acp) struct AcpStreamContext {
     pub(in crate::api::acp) role_runtime: RoleRuntime,
     pub(in crate::api::acp) turn_scope: RoleTurnScope,
     pub(in crate::api::acp) prompt_memory_diagnostic: serde_json::Value,
+    pub(in crate::api::acp) memory_stores: MemoryStoreManager,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

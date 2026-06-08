@@ -23,7 +23,11 @@ use tracing::info_span;
 use crate::{
     auth_backend::Backend,
     config::Config,
-    core::{bifrost::BifrostClient, letta::LettaClient},
+    core::{
+        bifrost::BifrostClient,
+        letta::LettaClient,
+        memory::MemoryStoreManager,
+    },
 };
 
 use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
@@ -50,6 +54,8 @@ pub struct ApiState {
     /// Process-local active ACP stream cancellation signals.
     pub(crate) acp_turn_cancellations:
         crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry,
+    /// Per-Bear SQLite memory stores (native runtime cognition).
+    pub memory_stores: MemoryStoreManager,
 }
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -113,6 +119,7 @@ pub async fn create_api_app(
         acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
         acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(
         ),
+        memory_stores: MemoryStoreManager::new(config.as_ref()),
     };
 
     // Create OAuth state (separate from main API state for OAuth endpoints)

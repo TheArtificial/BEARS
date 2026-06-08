@@ -264,9 +264,11 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     .await;
 
     let config = Config::load();
+    let stores = den::core::memory::MemoryStoreManager::new(&config);
     let update_result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         DEN_WORK_PLAN_UPDATE,
         json!({
             "title": "Pair implementation plan",
@@ -290,6 +292,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     let list_result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         DEN_WORK_PLAN_LIST,
         json!({}),
         den_context(bear_id, user_id, "agent-pair-den-tool-plan"),

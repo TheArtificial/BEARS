@@ -825,9 +825,11 @@ async fn maybe_handle_direct_set_conversation_title(
             protocol: Some("den_chat".to_string()),
         },
     };
+    let stores = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
     let value = run_den_tool(
         state.sqlx_pool(),
         state.config.as_ref(),
+        &stores,
         DEN_CONVERSATION_SET_TITLE,
         serde_json::json!({ "title": title }),
         context,

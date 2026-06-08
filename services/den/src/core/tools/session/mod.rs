@@ -8,6 +8,7 @@ use crate::{
     core::{
         acp_sessions,
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
+        memory::MemoryStoreManager,
         tools::descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role},
         user,
     },
@@ -171,6 +172,7 @@ pub struct DenToolInvocationContext {
 pub async fn invoke_den_tool(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     tool_name: &str,
     arguments: Value,
     context: DenToolInvocationContext,
@@ -214,11 +216,21 @@ pub async fn invoke_den_tool(
         DEN_PROMPT_MEMORY_UPSERT => prompt_memory_upsert(pool, &context, role, arguments).await,
         DEN_PROMPT_MEMORY_LIST => prompt_memory_list(pool, &context, role, arguments).await,
         DEN_PROMPT_MEMORY_PATCH => prompt_memory_patch(pool, &context, role, arguments).await,
-        DEN_MEMORY_REQUEST_REVIEW => request_memory_review(pool, &context, role, arguments).await,
-        DEN_MEMORY_LIST_PROPOSALS => list_memory_proposals(pool, &context, role, arguments).await,
-        DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
-        DEN_MEMORY_RESOLVE_PROPOSAL => resolve_memory_proposal(pool, &context, role, arguments).await,
-        DEN_MEMORY_APPLY_CORE_UPDATE => apply_core_update(pool, config, &context, role, arguments).await,
+        DEN_MEMORY_REQUEST_REVIEW => {
+            request_memory_review(pool, config, stores, &context, role, arguments).await
+        }
+        DEN_MEMORY_LIST_PROPOSALS => {
+            list_memory_proposals(pool, config, stores, &context, role, arguments).await
+        }
+        DEN_MEMORY_READ_PROPOSAL => {
+            read_memory_proposal(pool, config, stores, &context, role, arguments).await
+        }
+        DEN_MEMORY_RESOLVE_PROPOSAL => {
+            resolve_memory_proposal(pool, config, stores, &context, role, arguments).await
+        }
+        DEN_MEMORY_APPLY_CORE_UPDATE => {
+            apply_core_update(pool, config, stores, &context, role, arguments).await
+        }
         DEN_WORK_PLAN_LIST => {
             list_work_plans(
                 pool,
@@ -260,7 +272,7 @@ pub async fn invoke_den_tool(
         }
         DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
         DEN_OBSERVATION_WRITE => {
-            write_observation(pool, config, &context, role, arguments).await
+            write_observation(pool, config, stores, &context, role, arguments).await
         }
         DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL

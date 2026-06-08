@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use uuid::Uuid;
+
 use crate::core::{
     agent_loop::StrategyProfile,
     llm::{ChatMessage, LlmToolDefinition},
@@ -11,6 +13,8 @@ use crate::core::{
 #[derive(Debug, Clone)]
 pub struct AgentLoopSession {
     pub session_key: String,
+    pub bear_id: Uuid,
+    pub conversation_id: String,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
     pub model: String,

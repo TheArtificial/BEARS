@@ -47,6 +47,7 @@ pub struct AcpTurnStartRequest<'a> {
     pub upstream_target: &'a str,
     pub prompt: &'a str,
     pub client_tools: Option<serde_json::Value>,
+    pub runtime_context: Option<&'a str>,
     pub runtime_context_len: usize,
     pub stream_tokens: bool,
 }
@@ -890,6 +891,7 @@ mod tests {
             acp_tool_turns: AcpToolTurnCoordinator::new(),
             acp_turn_cancellations:
                 crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
 

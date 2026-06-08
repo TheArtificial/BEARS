@@ -239,9 +239,11 @@ fn memory_write_entry_semantics_allows_plain_semantic_memory() {
 async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memory() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
+    let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         "den.memory.write_entry",
         json!({
             "kind": "note",
@@ -307,9 +309,11 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
+    let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         "den.memory.write_entry",
         json!({
             "kind": "note",
@@ -367,9 +371,11 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
+    let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         "den.memory.write_entry",
         json!({
             "kind": "summary",

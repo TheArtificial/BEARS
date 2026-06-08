@@ -745,6 +745,7 @@ impl Stream for AcpRuntimeSseStream {
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                                     acp_tool_turns: this.context.tool_turns.clone(),
                                     acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                                    memory_stores: this.context.memory_stores.clone(),
                                 };
                                 this.persist_future =
                                     Some(AcpPendingFuture::Cleanup(Box::pin(async move {
@@ -935,6 +936,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        memory_stores: this.context.memory_stores.clone(),
                     };
                     let binding = RoleRuntimeBinding {
                         binding_id: this.context.pair_agent_id.clone(),
@@ -992,6 +994,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(
@@ -1027,6 +1030,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(

@@ -7,17 +7,18 @@ use crate::{
     core::{
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
-            agent_loop_session_key, assemble_agent_messages, run_agent_step_stream,
-            AgentLoopSession, AgentLoopSessionStore, StrategyProfile,
+            agent_loop_session_key, assemble_native_turn_messages, run_agent_step_stream,
+            AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext, SessionTrackingStream,
+            StrategyProfile,
         },
         bears::BearAgentRole,
-        llm::{ChatMessage, LlmClient, LlmToolDefinition},
+        llm::{ChatMessage, LlmClient},
+        native_runtime::tools::merge_den_and_client_tools,
         runtime_contracts::{
             ContinueTurnRequest, RuntimeContinuation, RuntimeConversationBackend,
             RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
             RuntimeStreamContinuation, RoleRuntimeBinding, StartTurnRequest,
         },
-        tools::descriptor::builtin_den_tool_descriptors_for_role,
     },
     errors::CustomError,
 };
@@ -38,10 +39,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         &self,
         binding: &RoleRuntimeBinding,
     ) -> Result<RuntimeConversationRef, CustomError> {
-        let id = format!(
-            "den-conv-{}",
-            Uuid::new_v4().simple()
-        );
+        let id = format!("den-conv-{}", Uuid::new_v4().simple());
         let _ = binding;
         Ok(RuntimeConversationRef { id })
     }
@@ -71,43 +69,57 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
     }
 }
 
-fn role_tools_to_llm(role: BearAgentRole) -> Vec<LlmToolDefinition> {
-    builtin_den_tool_descriptors_for_role(role)
-        .into_iter()
-        .map(|d| LlmToolDefinition {
-            name: d.provider_name.to_string(),
-            description: Some(d.description.to_string()),
-            parameters: d.input_schema.clone(),
-        })
-        .collect()
+fn wrap_session_stream(
+    stream: RuntimeEventStream,
+    session: &AgentLoopSession,
+    state: &ApiState,
+    bear_id: Uuid,
+    conversation_id: &str,
+    acp_session_id: &str,
+) -> RuntimeEventStream {
+    Box::pin(SessionTrackingStream::new(
+        stream,
+        session,
+        SESSION_STORE.clone(),
+        state.sqlx_pool.clone(),
+        bear_id,
+        conversation_id.to_string(),
+        acp_session_id.to_string(),
+    ))
 }
 
 async fn build_session(
     state: &ApiState,
     bear_id: Uuid,
+    role: BearAgentRole,
     conversation_id: &str,
     acp_session_id: &str,
     human_message: Option<&str>,
     runtime_context: Option<&str>,
+    client_tools: Option<&serde_json::Value>,
     stream_tokens: bool,
     max_steps: u32,
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, CustomError> {
     let llm = LlmClient::new(state.config.as_ref());
-    let messages = assemble_agent_messages(
-        &state.sqlx_pool,
+    let messages = assemble_native_turn_messages(AssembleTurnContext {
+        pool: &state.sqlx_pool,
         bear_id,
+        role,
         conversation_id,
-        runtime_context,
+        turn_runtime_context: runtime_context,
         human_message,
-        &tool_messages,
-    )
+        tool_messages: &tool_messages,
+    })
     .await?;
+    let tools = merge_den_and_client_tools(role, client_tools)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
     let session = AgentLoopSession {
         session_key: session_key.clone(),
+        bear_id,
+        conversation_id: conversation_id.to_string(),
         messages,
-        tools: role_tools_to_llm(BearAgentRole::Pair),
+        tools,
         model: llm.default_model().to_string(),
         step: 0,
         max_steps,
@@ -127,34 +139,43 @@ pub async fn start_native_acp_turn_event_stream(
         ));
     }
     let runtime_conversations = NativeRuntimeConversationBackend::new();
-    let materialized = materialize_acp_runtime_conversation_if_needed(
-        &runtime_conversations,
-        &request,
-    )
-    .await?;
+    let materialized =
+        materialize_acp_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
     let acp_session_id = request.session_id;
+    let role = BearAgentRole::Pair;
+    let max_steps = 8;
     let session = build_session(
         request.state,
         request.bear_id,
+        role,
         &conversation_id,
         acp_session_id,
         Some(request.prompt),
-        None,
+        request.runtime_context,
+        request.client_tools.as_ref(),
         request.stream_tokens,
-        8,
+        max_steps,
         Vec::new(),
     )
     .await?;
     let llm = LlmClient::new(request.state.config.as_ref());
     let stream = run_agent_step_stream(&llm, &session).await?;
+    let stream = wrap_session_stream(
+        stream,
+        &session,
+        request.state,
+        request.bear_id,
+        &conversation_id,
+        acp_session_id,
+    );
     let _ = StartTurnRequest {
         conversation: RuntimeConversationRef {
             id: conversation_id,
         },
         binding: request.binding.clone(),
         human_message: request.prompt.to_string(),
-        runtime_context: None,
+        runtime_context: request.runtime_context.map(str::to_string),
         acp_session_id: Some(acp_session_id.to_string()),
         client_tools: request.client_tools.clone(),
         stream_tokens: request.stream_tokens,
@@ -181,6 +202,7 @@ pub async fn continue_native_acp_turn_event_stream(
                 content: Some(content.clone()),
                 tool_call_id: Some(tool_call_id.clone()),
                 name: None,
+                tool_calls: None,
             });
             let _ = status;
         }
@@ -203,19 +225,32 @@ pub async fn continue_native_acp_turn_event_stream(
                 content: Some(content),
                 tool_call_id: tool_call_id.clone(),
                 name: None,
+                tool_calls: None,
             });
             let _ = approval_request_id;
         }
     }
     SESSION_STORE.update(&session_key, |session| {
         session.messages.extend(tool_messages.clone());
-        session.step += 1;
     });
     let session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| CustomError::System("native agent loop session not found".to_string()))?;
+    if session.step >= session.max_steps {
+        return Err(CustomError::System(
+            "native agent loop reached max steps".to_string(),
+        ));
+    }
     let llm = LlmClient::new(request.state.config.as_ref());
     let stream = run_agent_step_stream(&llm, &session).await?;
+    let stream = wrap_session_stream(
+        stream,
+        &session,
+        request.state,
+        session.bear_id,
+        &conversation_id,
+        acp_session_id,
+    );
     let _ = ContinueTurnRequest {
         conversation: request.conversation,
         turn: None,

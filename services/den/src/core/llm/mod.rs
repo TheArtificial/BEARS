@@ -5,7 +5,10 @@
 mod client;
 mod stream;
 
-pub use client::{ChatCompletionRequest, ChatMessage, LlmClient, LlmToolDefinition};
+pub use client::{
+    ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, LlmClient,
+    LlmToolDefinition,
+};
 pub use stream::{
     openai_sse_chunk_to_runtime_events, openai_sse_event_body_to_runtime_events,
     OpenAiStreamAccumulator, OpenAiStreamParseResult,

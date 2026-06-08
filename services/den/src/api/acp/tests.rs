@@ -88,13 +88,15 @@ use crate::core::prompt_memory_blocks::{
     };
 
     fn prompt_memory_test_state(pool: sqlx::PgPool) -> ApiState {
+        let config = Arc::new(Config::test_stub());
         ApiState {
             sqlx_pool: pool,
-            config: Arc::new(Config::test_stub()),
-            letta: Arc::new(crate::core::letta::LettaClient::new(&Config::test_stub())),
-            bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(&Config::test_stub())),
+            config: config.clone(),
+            letta: Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
+            bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
             acp_tool_turns: AcpToolTurnCoordinator::new(),
             acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
 
@@ -437,6 +439,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let mut event = AcpGatewayEvent::ConversationResolved {
@@ -565,6 +568,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -680,6 +684,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -878,6 +883,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(tool_turns.clone()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
@@ -984,6 +990,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1090,6 +1097,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1197,6 +1205,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -2798,13 +2807,15 @@ use crate::core::prompt_memory_blocks::{
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();
+        let config = std::sync::Arc::new(crate::config::Config::test_stub());
         let state = crate::api::service::ApiState {
             sqlx_pool: pool,
-            config: std::sync::Arc::new(crate::config::Config::test_stub()),
-            letta: std::sync::Arc::new(crate::core::letta::LettaClient::new(&crate::config::Config::test_stub())),
-            bifrost: std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(&crate::config::Config::test_stub())),
+            config: config.clone(),
+            letta: std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
+            bifrost: std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
             acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
             acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
             &state,
@@ -3039,6 +3050,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3338,6 +3350,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3393,6 +3406,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope: turn_scope.clone(),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3526,6 +3540,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3714,6 +3729,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3874,6 +3890,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4022,6 +4039,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
@@ -4111,6 +4129,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
@@ -4246,6 +4265,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4390,6 +4410,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
@@ -4475,6 +4496,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
@@ -4632,6 +4654,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4767,6 +4790,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let runtime_event = RuntimeStreamEvent::Semantic(
             crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
@@ -5041,6 +5065,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
@@ -5176,6 +5201,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5309,6 +5335,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -5434,6 +5461,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5697,6 +5725,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let provenance = super::stream::runtime::acp_session_provenance(&context);
@@ -5735,6 +5764,7 @@ use crate::core::prompt_memory_blocks::{
                 Some("conv-helper".to_string()),
             ),
             prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         });
         let record = crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
             "conv-validated",

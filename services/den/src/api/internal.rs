@@ -66,6 +66,7 @@ async fn invoke_den_tool(
     match run_den_tool(
         &state.sqlx_pool,
         state.config.as_ref(),
+        &state.memory_stores,
         &tool_name,
         payload.arguments,
         payload.context,

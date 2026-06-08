@@ -13,6 +13,9 @@ use crate::{
             memory_curate_failed_projection, memory_curate_started_projection, project_to_conversation,
             ProjectionProvenance, ProjectionSource,
         },
+        memory::{
+            record_reflection_outcome_complete, record_reflection_outcome_start, MemoryStoreManager,
+        },
         memory_curate_executor::{self, MemoryCurateRunOutput},
         reflection_conversations::{
             bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
@@ -389,16 +392,31 @@ pub async fn mark_memory_curate_failed(
 pub async fn run_next_memory_curate_once(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, CustomError> {
     let Some(run) = claim_next_memory_curate_run(pool, bear_id).await? else {
         return Ok(None);
     };
 
+    if config.uses_native_agent_runtime() {
+        let input_summary = run.input_summary.to_string();
+        let _ = record_reflection_outcome_start(
+            stores,
+            bear_id,
+            &run.id.to_string(),
+            &run.lane,
+            &run.trigger,
+            Some(input_summary.as_str()),
+        )
+        .await;
+    }
+
     let proposal_ids = proposal_ids_from_summary(&run.input_summary);
     let output = match execute_memory_curate_run(
         pool,
         config,
+        stores,
         run.id,
         run.bear_id,
         run.trigger.as_str(),
@@ -408,11 +426,41 @@ pub async fn run_next_memory_curate_once(
     {
         Ok(output) => output,
         Err(error) => {
+            if config.uses_native_agent_runtime() {
+                let _ = record_reflection_outcome_complete(
+                    stores,
+                    bear_id,
+                    &run.id.to_string(),
+                    "failed",
+                    Some(error.to_string().as_str()),
+                    &proposal_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>(),
+                )
+                .await;
+            }
             let failed_run =
                 mark_memory_curate_failed(pool, run.bear_id, run.id, &error.to_string()).await?;
             return Ok(Some(failed_run));
         }
     };
+
+    if config.uses_native_agent_runtime() {
+        let summary = memory_curate_output_summary(&output).to_string();
+        let _ = record_reflection_outcome_complete(
+            stores,
+            bear_id,
+            &run.id.to_string(),
+            "completed",
+            Some(summary.as_str()),
+            &proposal_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    }
 
     let completed_run = mark_memory_curate_completed(
         pool,
@@ -427,6 +475,7 @@ pub async fn run_next_memory_curate_once(
 async fn execute_memory_curate_run(
     pool: &PgPool,
     config: &Config,
+    _stores: &MemoryStoreManager,
     reflection_run_id: Uuid,
     bear_id: Uuid,
     trigger: &str,
@@ -497,11 +546,14 @@ pub async fn run_memory_curate_worker_loop(
         }
 
         let bear_ids = list_bears_with_queued_memory_curate_runs(&pool).await?;
+        let stores = MemoryStoreManager::new(config.as_ref());
         for bear_id in bear_ids {
             if worker_token.is_cancelled() {
                 break;
             }
-            if let Some(run) = run_next_memory_curate_once(&pool, config.as_ref(), bear_id).await? {
+            if let Some(run) =
+                run_next_memory_curate_once(&pool, config.as_ref(), &stores, bear_id).await?
+            {
                 tracing::info!(
                     bear_id = %bear_id,
                     reflection_run_id = %run.id,
@@ -565,7 +617,7 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        core::{bears::BearAgentRole, memory_proposals},
+        core::{bears::BearAgentRole, memory::MemoryStoreManager, memory_proposals},
     };
     use sqlx::postgres::PgPoolOptions;
 
@@ -769,7 +821,8 @@ mod tests {
         .expect("enqueue run");
 
         let config = Config::load();
-        let completed_run = run_next_memory_curate_once(&pool, &config, bear_id)
+        let stores = MemoryStoreManager::new(&config);
+        let completed_run = run_next_memory_curate_once(&pool, &config, &stores, bear_id)
             .await
             .expect("run queued memory_curate")
             .expect("queued run processed");
