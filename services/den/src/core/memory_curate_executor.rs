@@ -28,11 +28,23 @@ pub struct CurateProposalOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurateBriefingItem {
+    pub proposal_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub suggested_action: String,
+    pub source_role: String,
+    pub status: String,
+    pub triage: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryCurateRunOutput {
     pub resolved_proposal_ids: Vec<String>,
     pub outcomes: Vec<CurateProposalOutcome>,
     pub resolution_status: String,
     pub status_counts: serde_json::Value,
+    pub briefing: Vec<CurateBriefingItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +164,11 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
                     review_notes: "Pair reflection summary is durable in pair-local memory; shared promotion is not automatic.",
                     decision_summary: "Autonomous curate retained the pair reflection summary as role-local memory.",
                 }
+            } else if trigger == Some("watch_observation") {
+                CurateTriage::Defer {
+                    review_notes: "Watch observation recorded; curate review decides promotion or dismissal.",
+                    decision_summary: "Deferred watch observation for curate review.",
+                }
             } else {
                 CurateTriage::Defer {
                     review_notes: "Ambiguous proposal needs curate-agent review.",
@@ -245,13 +262,46 @@ pub async fn execute_memory_curate_proposals(
         }
     }
     let resolution_status = aggregate_resolution_status(&outcomes);
+    let briefing = build_curate_briefing(pool, bear_id, &outcomes).await?;
 
     Ok(MemoryCurateRunOutput {
         resolved_proposal_ids,
         outcomes,
         resolution_status,
         status_counts: serde_json::Value::Object(status_counts),
+        briefing,
     })
+}
+
+async fn build_curate_briefing(
+    pool: &PgPool,
+    bear_id: Uuid,
+    outcomes: &[CurateProposalOutcome],
+) -> Result<Vec<CurateBriefingItem>, CustomError> {
+    let mut briefing = Vec::new();
+    for outcome in outcomes {
+        if !matches!(
+            outcome.status.as_str(),
+            "deferred" | "needs_human_review"
+        ) {
+            continue;
+        }
+        let Some(proposal) =
+            memory_proposals::get_for_bear(pool, bear_id, outcome.proposal_id).await?
+        else {
+            continue;
+        };
+        briefing.push(CurateBriefingItem {
+            proposal_id: proposal.id,
+            title: proposal.title,
+            summary: proposal.summary,
+            suggested_action: proposal.suggested_action,
+            source_role: proposal.source_role,
+            status: outcome.status.clone(),
+            triage: outcome.triage.clone(),
+        });
+    }
+    Ok(briefing)
 }
 
 async fn resolve_curate_proposal(
@@ -475,6 +525,13 @@ mod tests {
     fn cabinet_update_is_deferred() {
         let proposal = sample_proposal("cabinet_update", "normal", false);
         let triage = decide_curate_triage(&proposal, None);
+        assert_eq!(triage.resolution_status(), "deferred");
+    }
+
+    #[test]
+    fn watch_observation_unspecified_is_deferred() {
+        let proposal = sample_proposal("unspecified", "normal", false);
+        let triage = decide_curate_triage(&proposal, Some("watch_observation"));
         assert_eq!(triage.resolution_status(), "deferred");
     }
 

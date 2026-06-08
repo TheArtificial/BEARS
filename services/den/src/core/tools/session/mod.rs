@@ -42,6 +42,7 @@ use crate::core::tools::{
         request_memory_review, resolve_memory_proposal,
     },
     memory_write::write_memory_entry,
+    observations::write_observation,
     plan_mode::{
         cancel_plan_mode, enter_plan_mode, exit_plan_mode, plan_mode_status,
         record_plan_approval,
@@ -258,6 +259,9 @@ pub async fn invoke_den_tool(
             cancel_plan_mode(pool, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await
         }
         DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
+        DEN_OBSERVATION_WRITE => {
+            write_observation(pool, config, &context, role, arguments).await
+        }
         DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
         | DEN_SKILL_REJECT_PROPOSAL
@@ -266,7 +270,6 @@ pub async fn invoke_den_tool(
         | DEN_TASK_APPROVE_INTENT
         | DEN_TASK_REJECT_INTENT
         | DEN_CORE_WRITE_RESULT_SUMMARY
-        | DEN_OBSERVATION_WRITE
         | DEN_RUN_WRITE_RESULT => Err(CustomError::System(format!(
             "Den tool `{tool_name}` is registered and role-authorized but not implemented in this session module"
         ))),
