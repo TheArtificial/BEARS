@@ -203,7 +203,7 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
 
     let config = crate::config::Config::test_stub();
     let letta = crate::core::letta::LettaClient::new(&config);
-    let service = AcpConversationService::new(&pool, &letta);
+    let service = AcpConversationService::new(&pool, &config, &letta);
     service
         .verify_conversation_access(
             bear_id,

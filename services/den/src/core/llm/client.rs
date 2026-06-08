@@ -7,6 +7,19 @@ use serde_json::{json, Value};
 
 use crate::{config::Config, errors::CustomError};
 
+/// Bifrost expects `provider/model`; bare OpenAI-style ids get an `openai/` prefix.
+pub fn normalize_llm_model_handle(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return "openai/gpt-4o-mini".to_string();
+    }
+    if trimmed.contains('/') {
+        trimmed.to_string()
+    } else {
+        format!("openai/{trimmed}")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatToolCall {
     pub id: String,
@@ -109,7 +122,7 @@ impl LlmClient {
             http,
             base_url: config.llm_api_url.trim_end_matches('/').to_string(),
             api_key: config.llm_api_key.clone(),
-            default_model: config.default_llm_model.clone(),
+            default_model: normalize_llm_model_handle(&config.default_llm_model),
         }
     }
 
@@ -121,11 +134,12 @@ impl LlmClient {
         &self.default_model
     }
 
-    pub fn resolve_model<'a>(&'a self, requested: Option<&'a str>) -> &'a str {
-        requested
+    pub fn resolve_model(&self, requested: Option<&str>) -> String {
+        let raw = requested
             .map(str::trim)
             .filter(|m| !m.is_empty())
-            .unwrap_or(&self.default_model)
+            .unwrap_or(&self.default_model);
+        normalize_llm_model_handle(raw)
     }
 
     pub async fn chat_completions_stream(

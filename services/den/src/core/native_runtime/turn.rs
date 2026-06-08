@@ -7,7 +7,7 @@ use crate::{
     core::{
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
-            agent_loop_session_key, assemble_native_turn_messages, run_agent_step_stream,
+            agent_loop_session_key, assemble_native_turn_messages_for_bear, run_agent_step_stream,
             AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext, SessionTrackingStream,
             StrategyProfile,
         },
@@ -102,25 +102,32 @@ async fn build_session(
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, CustomError> {
     let llm = LlmClient::new(state.config.as_ref());
-    let messages = assemble_native_turn_messages(AssembleTurnContext {
-        pool: &state.sqlx_pool,
-        bear_id,
-        role,
-        conversation_id,
-        turn_runtime_context: runtime_context,
-        human_message,
-        tool_messages: &tool_messages,
-    })
+    let bear = crate::core::bears::db::get_bear(&state.sqlx_pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let messages = assemble_native_turn_messages_for_bear(
+        AssembleTurnContext {
+            pool: &state.sqlx_pool,
+            bear_id,
+            role,
+            conversation_id,
+            turn_runtime_context: runtime_context,
+            human_message,
+            tool_messages: &tool_messages,
+        },
+        &bear,
+    )
     .await?;
     let tools = merge_den_and_client_tools(role, client_tools)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
+    let model = llm.resolve_model(bear.default_model.as_deref());
     let session = AgentLoopSession {
         session_key: session_key.clone(),
         bear_id,
         conversation_id: conversation_id.to_string(),
         messages,
         tools,
-        model: llm.default_model().to_string(),
+        model,
         step: 0,
         max_steps,
         strategy: StrategyProfile::plain_react(),

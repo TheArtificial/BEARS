@@ -13,7 +13,9 @@ mod tool_policy;
 pub use approvals::{
     create_native_approval, decide_native_approval, NativeApprovalDecision, NativeApprovalRow,
 };
-pub use assembler::{assemble_native_turn_messages, AssembleTurnContext};
+pub use assembler::{
+    assemble_native_turn_messages, assemble_native_turn_messages_for_bear, AssembleTurnContext,
+};
 pub use context::assemble_agent_messages;
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
 pub use session_stream::SessionTrackingStream;

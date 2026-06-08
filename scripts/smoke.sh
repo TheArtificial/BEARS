@@ -4,17 +4,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=/workspace/scripts/load-env.sh
+. "${ROOT}/scripts/load-env.sh"
+
 echo "Running smoke tests..."
 
 RUNNER_SERVICE="bears-memfs-manager"
 RUNNER_DIR="/tmp/bears-smoke"
 
+export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
+export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
+export LETTA_API_KEY="${LETTA_API_KEY:-${LETTA_SERVER_PASS:-dev-placeholder}}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
+export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
+
 compose_with_env() {
     env -i PATH="$PATH" HOME="$HOME" DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" \
-        JWT_SECRET="${JWT_SECRET:-dev-placeholder}" \
-        LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}" \
-        LETTA_API_KEY="${LETTA_API_KEY:-${LETTA_SERVER_PASS:-dev-placeholder}}" \
-        OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}" \
+        JWT_SECRET="${JWT_SECRET}" \
+        LETTA_SERVER_PASS="${LETTA_SERVER_PASS}" \
+        LETTA_API_KEY="${LETTA_API_KEY}" \
+        OPENAI_API_KEY="${OPENAI_API_KEY}" \
+        AGENT_RUNTIME="${AGENT_RUNTIME}" \
         WEB_SERVER_URL="${WEB_SERVER_URL:-http://localhost:3000}" \
         SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-false}" \
         DATABASE_URL="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}" \
@@ -37,4 +47,4 @@ if compose_with_env exec -T bears-den sh -lc 'case "${RUN_API:-false}" in true|1
     API_URL="http://bears-den:3001"
 fi
 
-compose_with_env exec -T "$RUNNER_SERVICE" sh -lc "python -m pip install --quiet pytest requests && cd '$RUNNER_DIR' && BEARS_DEN_URL=http://bears-den:3000 BEARS_API_URL='$API_URL' BEARS_CODEPOOL_URL=http://bears-codepool:3030 BEARS_MEMFS_MANAGER_URL=http://bears-memfs-manager:8285 BEARS_LETTA_URL=http://bears-letta:8283 LETTA_SERVER_PASS='${LETTA_SERVER_PASS:-dev-placeholder}' python -m pytest tests/smoke/ -v"
+compose_with_env exec -T "$RUNNER_SERVICE" sh -lc "python -m pip install --quiet pytest requests && cd '$RUNNER_DIR' && BEARS_DEN_URL=http://bears-den:3000 BEARS_API_URL='$API_URL' BEARS_CODEPOOL_URL=http://bears-codepool:3030 BEARS_MEMFS_MANAGER_URL=http://bears-memfs-manager:8285 BEARS_LETTA_URL=http://bears-letta:8283 AGENT_RUNTIME='${AGENT_RUNTIME}' LETTA_SERVER_PASS='${LETTA_SERVER_PASS}' python -m pytest tests/smoke/ -v"

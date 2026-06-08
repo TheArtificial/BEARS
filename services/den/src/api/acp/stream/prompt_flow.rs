@@ -128,8 +128,11 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         Err(err) => return Ok(Err(err)),
     };
     let generated_conversation_id = super::super::new_acp_conversation_id(&client);
-    let conversation_runtime =
-        AcpConversationService::new(&state.sqlx_pool, state.letta.as_ref());
+    let conversation_runtime = AcpConversationService::new(
+        &state.sqlx_pool,
+        state.config.as_ref(),
+        state.letta.as_ref(),
+    );
     let (conversation_resolution, ensure_conversation_result) = conversation_runtime
         .ensure_prompt_conversation(
             crate::core::runtime_contracts::EnsureConversationRequest {

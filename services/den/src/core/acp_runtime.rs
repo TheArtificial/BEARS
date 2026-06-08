@@ -7,6 +7,7 @@ use crate::{
         bears::{db as bears_db, model::BearAgentRole, Bear},
         conversation_persistence,
         letta::{load_agent_conversations, LettaClient},
+        native_runtime::NativeRuntimeConversationBackend,
         runtime_contracts::{
             AcpConversationRuntime, EnsureConversationRequest, EnsureConversationResult,
             RoleProfileRegistry, RoleRuntimeBinding, RuntimeConversationBackend,
@@ -121,7 +122,8 @@ impl AcpConversationResolution {
             .cloned();
         let requires_belongs_to_bear_check = selection_source
             == AcpConversationSelectionSource::Explicit
-            && session_selection.starts_with("conv-");
+            && (session_selection.starts_with("conv-")
+                || is_native_runtime_conversation_id(&session_selection));
 
         Self {
             session_selection,
@@ -142,12 +144,18 @@ pub fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
         && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
 }
 
+pub fn is_native_runtime_conversation_id(conversation_id: &str) -> bool {
+    conversation_id.starts_with("den-conv-")
+}
+
 pub fn is_acp_history_target(conversation_id: &str) -> bool {
-    conversation_id == "default" || conversation_id.starts_with("conv-")
+    conversation_id == "default"
+        || conversation_id.starts_with("conv-")
+        || is_native_runtime_conversation_id(conversation_id)
 }
 
 pub fn is_acp_archive_target(conversation_id: &str) -> bool {
-    conversation_id.starts_with("conv-")
+    conversation_id.starts_with("conv-") || is_native_runtime_conversation_id(conversation_id)
 }
 
 pub fn normalized_durable_acp_conversation_id(raw: Option<&str>) -> Option<String> {
@@ -197,7 +205,11 @@ pub fn resolve_acp_prompt_conversation(
     } else if let Some(id) = existing_session
         .map(|s| s.conversation_id.trim())
         .filter(|s| !s.is_empty())
-        .filter(|s| s.starts_with("conv-") || is_valid_pending_acp_conversation_id(s))
+        .filter(|s| {
+            s.starts_with("conv-")
+                || is_native_runtime_conversation_id(s)
+                || is_valid_pending_acp_conversation_id(s)
+        })
         .map(str::to_string)
     {
         (id, AcpConversationSelectionSource::Stored)
@@ -277,12 +289,21 @@ pub fn canonical_acp_conversation_id_for_session(
     existing_session
         .map(|session| session.conversation_id.trim())
         .filter(|id| !id.is_empty())
-        .filter(|id| *id == "default" || id.starts_with("conv-") || id.starts_with("new-"))
+        .filter(|id| {
+            *id == "default"
+                || id.starts_with("conv-")
+                || is_native_runtime_conversation_id(id)
+                || id.starts_with("new-")
+        })
         .map(str::to_string)
         .or_else(|| {
             let id = conversation_resolution.session_selection.trim();
-            (!id.is_empty() && (id == "default" || id.starts_with("conv-") || id.starts_with("new-")))
-                .then(|| id.to_string())
+            (!id.is_empty()
+                && (id == "default"
+                    || id.starts_with("conv-")
+                    || is_native_runtime_conversation_id(id)
+                    || id.starts_with("new-")))
+            .then(|| id.to_string())
         })
         .unwrap_or_else(|| conversation_resolution.session_selection.clone())
 }
@@ -295,7 +316,8 @@ pub async fn verify_acp_conversation_belongs_to_binding_with_backend<B: RuntimeC
     if conversation_id == "default" || conversation_id.starts_with("new-") {
         return Ok(());
     }
-    if !conversation_id.starts_with("conv-") {
+    if !conversation_id.starts_with("conv-") && !is_native_runtime_conversation_id(conversation_id)
+    {
         return Err(CustomError::ValidationError(format!(
             "invalid conversation_id: {conversation_id}"
         )));
@@ -331,7 +353,8 @@ pub async fn verify_acp_conversation_access(
     if conversation_id == "default" || conversation_id.starts_with("new-") {
         return Ok(());
     }
-    if !conversation_id.starts_with("conv-") {
+    if !conversation_id.starts_with("conv-") && !is_native_runtime_conversation_id(conversation_id)
+    {
         return Err(CustomError::ValidationError(format!(
             "invalid conversation_id: {conversation_id}"
         )));
@@ -491,19 +514,69 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend.load_history(binding, conversation).await
 }
 
+pub enum AcpRuntimeConversationBackend<'a> {
+    Letta(LettaRuntimeConversationBackend<'a>),
+    Native(NativeRuntimeConversationBackend),
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeConversationBackend for AcpRuntimeConversationBackend<'_> {
+    async fn create_conversation(
+        &self,
+        binding: &RoleRuntimeBinding,
+    ) -> Result<RuntimeConversationRef, CustomError> {
+        match self {
+            Self::Letta(backend) => backend.create_conversation(binding).await,
+            Self::Native(backend) => backend.create_conversation(binding).await,
+        }
+    }
+
+    async fn verify_conversation_belongs_to_binding(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation_id: &str,
+    ) -> Result<(), CustomError> {
+        match self {
+            Self::Letta(backend) => {
+                backend
+                    .verify_conversation_belongs_to_binding(binding, conversation_id)
+                    .await
+            }
+            Self::Native(backend) => {
+                backend
+                    .verify_conversation_belongs_to_binding(binding, conversation_id)
+                    .await
+            }
+        }
+    }
+
+    async fn load_history(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation: &RuntimeConversationRef,
+    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
+        match self {
+            Self::Letta(backend) => backend.load_history(binding, conversation).await,
+            Self::Native(backend) => backend.load_history(binding, conversation).await,
+        }
+    }
+}
+
 /// Den-owned ACP conversation lifecycle entrypoint. Keeps session/bootstrap policy out of
 /// prompt handlers while routing backend-specific work through `RuntimeConversationBackend`.
 pub struct AcpConversationService<'a> {
     pool: &'a PgPool,
-    backend: LettaRuntimeConversationBackend<'a>,
+    backend: AcpRuntimeConversationBackend<'a>,
 }
 
 impl<'a> AcpConversationService<'a> {
-    pub fn new(pool: &'a PgPool, letta: &'a LettaClient) -> Self {
-        Self {
-            pool,
-            backend: LettaRuntimeConversationBackend::new(letta),
-        }
+    pub fn new(pool: &'a PgPool, config: &Config, letta: &'a LettaClient) -> Self {
+        let backend = if config.uses_native_agent_runtime() {
+            AcpRuntimeConversationBackend::Native(NativeRuntimeConversationBackend::new())
+        } else {
+            AcpRuntimeConversationBackend::Letta(LettaRuntimeConversationBackend::new(letta))
+        };
+        Self { pool, backend }
     }
 
     pub async fn ensure_prompt_conversation(
@@ -530,10 +603,15 @@ impl<'a> AcpConversationService<'a> {
         if conversation_id == "default" || conversation_id.starts_with("new-") {
             return Ok(());
         }
-        if !conversation_id.starts_with("conv-") {
+        if !conversation_id.starts_with("conv-")
+            && !is_native_runtime_conversation_id(conversation_id)
+        {
             return Err(CustomError::ValidationError(format!(
                 "invalid conversation_id: {conversation_id}"
             )));
+        }
+        if is_native_runtime_conversation_id(conversation_id) {
+            return Ok(());
         }
         if conversation_persistence::get_conversation_for_external_id(
             self.pool,

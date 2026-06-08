@@ -60,6 +60,9 @@ ensure_devcontainer_network() {
 
 ensure_devcontainer_network
 
+# shellcheck source=/workspace/scripts/load-env.sh
+. "${ROOT}/scripts/load-env.sh"
+
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
@@ -72,6 +75,7 @@ export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
 export DEN_PULL_POLICY="${DEN_PULL_POLICY:-never}"
 export CODEPOOL_IMAGE="${CODEPOOL_IMAGE:-bears-codepool-dev:latest}"
 export CODEPOOL_PULL_POLICY="${CODEPOOL_PULL_POLICY:-never}"
+export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 
 wait_postgres_service() {
   service="$1"

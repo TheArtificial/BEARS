@@ -451,7 +451,7 @@ impl Config {
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .unwrap_or_default();
         let default_llm_model =
-            std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
+            std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "openai/gpt-4.1".to_string());
         let agent_runtime_mode = AgentRuntimeMode::parse(
             &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "letta".to_string()),
         );

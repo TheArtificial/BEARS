@@ -535,7 +535,9 @@ pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversati
     runtime_conversations: &B,
     request: &AcpTurnStartRequest<'_>,
 ) -> Result<AcpRuntimeMaterializationResult, CustomError> {
-    if request.upstream_target.starts_with("conv-") {
+    if request.upstream_target.starts_with("conv-")
+        || crate::core::acp_runtime::is_native_runtime_conversation_id(request.upstream_target)
+    {
         return Ok(AcpRuntimeMaterializationResult {
             conversation_id: request.upstream_target.to_string(),
             created: false,

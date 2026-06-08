@@ -207,3 +207,18 @@ PY
 }
 
 install_bears_acp_adapter
+
+if [ -x /workspace/scripts/ensure-dev-env.sh ]; then
+  /workspace/scripts/ensure-dev-env.sh
+fi
+
+if [ -f /workspace/scripts/load-env.sh ]; then
+  cat >/etc/profile.d/bears-workspace-env.sh <<'EOF'
+# Load /workspace/.env for interactive shells in the devcontainer.
+if [ -f /workspace/scripts/load-env.sh ]; then
+  # shellcheck source=/workspace/scripts/load-env.sh
+  . /workspace/scripts/load-env.sh
+fi
+EOF
+  chmod 0644 /etc/profile.d/bears-workspace-env.sh
+fi
