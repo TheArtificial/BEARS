@@ -28,6 +28,7 @@ x-preflight-build: &preflight-build
     dockerfile: services/preflight/Dockerfile
 
 x-preflight-environment: &preflight-environment
+    AGENT_RUNTIME: ${AGENT_RUNTIME:-native}
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
     LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
@@ -48,8 +49,6 @@ x-preflight-depends: &preflight-depends
     bears-preflight-config:
         condition: service_completed_successfully
     bears-preflight-den-db:
-        condition: service_completed_successfully
-    bears-preflight-letta-pg:
         condition: service_completed_successfully
 
 services:
@@ -79,6 +78,8 @@ services:
         environment: *preflight-environment
 
     bears-preflight-letta-pg:
+        profiles:
+            - letta
         build: *preflight-build
         restart: "no"
         depends_on:
@@ -202,8 +203,11 @@ services:
             start_period: 15s
 
     bears-letta:
+        profiles:
+            - letta
         # Wrap upstream Letta so the container includes `git`. Letta's MemFS /
         # Context Repository path shells out to git for `/v1/git/...` operations.
+        # Default stack omits Letta (`AGENT_RUNTIME=native`). Enable with: COMPOSE_PROFILES=letta
         build:
             context: ./services/letta
             dockerfile: Dockerfile
@@ -254,6 +258,7 @@ services:
         depends_on:
             bears-letta:
                 condition: service_healthy
+                required: false
         environment:
             PORT: ${POOL_PORT:-3030}
             LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
@@ -315,9 +320,11 @@ services:
         depends_on:
             bears-letta:
                 condition: service_healthy
+                required: false
             bears-codepool:
                 condition: service_healthy
         environment:
+            AGENT_RUNTIME: ${AGENT_RUNTIME:-native}
             # Set `DATABASE_URL` in Coolify / `.env` for Den's Postgres.
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}

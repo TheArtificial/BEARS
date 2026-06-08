@@ -33,6 +33,10 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
+def uses_native_agent_runtime() -> bool:
+    return os.environ.get("AGENT_RUNTIME", "native").strip().lower() == "native"
+
+
 def require_non_empty(name: str) -> str:
     raw = os.environ.get(name)
     value = "" if raw is None else str(raw).strip()
@@ -251,7 +255,10 @@ def validate_config_shape() -> None:
     info("JWT_SECRET and LETTA_SERVER_PASS are set")
 
     validate_database_url(reachable=False)
-    validate_letta_pg_uri(reachable=False)
+    if uses_native_agent_runtime():
+        info("AGENT_RUNTIME=native — skipping LETTA_PG_URI checks")
+    else:
+        validate_letta_pg_uri(reachable=False)
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
@@ -307,11 +314,17 @@ def main() -> None:
     elif mode == "den-db":
         validate_database_url(reachable=True)
     elif mode == "letta-pg":
-        validate_letta_pg_uri(reachable=True)
+        if uses_native_agent_runtime():
+            info("AGENT_RUNTIME=native — skipping letta-pg preflight")
+        else:
+            validate_letta_pg_uri(reachable=True)
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        validate_letta_pg_uri(reachable=True)
+        if uses_native_agent_runtime():
+            info("AGENT_RUNTIME=native — skipping letta-pg preflight")
+        else:
+            validate_letta_pg_uri(reachable=True)
         info("all preflight checks passed")
     else:
         fail(
