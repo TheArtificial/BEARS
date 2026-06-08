@@ -75,6 +75,8 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
 | `PORT` | Web listen port inside the container (default **3000**). |
 | `API_PORT` | API listen port when `RUN_API=true` (default **3001**). |
+| `AGENT_RUNTIME` | `native` (in-process loop + per-Bear SQLite) or `letta` (legacy). Root compose defaults to **`native`**. |
+| `BEAR_SQLITE_DATA_DIR` | **Required for native runtime persistence.** Absolute path inside the container where Den stores per-Bear SQLite files (default **`/var/lib/den/bear-sqlite`**). Mount a **persistent volume** at this path so Bear memory survives image upgrades and container recreation. Den does **not** run backups for this store — use volume snapshots or the optional `bears-den-sqlite-data-backup` sidecar in root [`docker-compose.yaml`](../../docker-compose.yaml) (`volume-backup` profile). |
 
 Strongly recommended for production:
 
@@ -122,15 +124,23 @@ Use **readiness** on `/health/ready` if you want Coolify to wait for database co
 
 Suggested intervals match your other BEARS services (for example 30s interval, generous start period on cold Rust startup).
 
-### 8. Restart policy
+### 8. Persistent storage (native runtime)
+
+When `AGENT_RUNTIME=native`, Den keeps **bear-canonical memory** (role-local notes, proposals, promotions, governance) in one SQLite file per Bear under `BEAR_SQLITE_DATA_DIR`. This is **separate from** `DATABASE_URL` (Den Postgres control-plane).
+
+- **Docker Compose (repo root):** `bears-den` mounts the named volume `bears-den-sqlite-data` at `/var/lib/den/bear-sqlite` and sets `BEAR_SQLITE_DATA_DIR` accordingly.
+- **Coolify Docker Image resource:** add a **persistent storage** volume mounted at `/var/lib/den/bear-sqlite` and set `BEAR_SQLITE_DATA_DIR=/var/lib/den/bear-sqlite`. The image entrypoint (`docker-entrypoint.sh`) creates the directory and assigns ownership to the `appuser` runtime user before starting `/bin/server`.
+- **Backups:** Den has no built-in SQLite backup job. Enable operator backups (volume snapshots, or `bears-den-sqlite-data-backup` with `COMPOSE_PROFILES=volume-backup` and `SCALEWAY_*` credentials). SQLite uses WAL mode — prefer quiesced copies or full-volume archives over copying a single `.sqlite` file while Den is writing.
+
+### 9. Restart policy
 
 Set restart policy to **unless stopped** (or your platform equivalent) so Den recovers after host reboots.
 
-### 9. Deploy
+### 10. Deploy
 
 Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures and **Application logs** for runtime config errors (missing `DATABASE_URL`, unreachable Letta, etc.).
 
-### 10. Networking with Letta and Bifrost
+### 11. Networking with Letta and Bifrost
 
 - If Den and Letta are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
 - Set `LETTA_BASE_URL` to Letta’s **internal** URL (scheme + host + port, no path suffix).

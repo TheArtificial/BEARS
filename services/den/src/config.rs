@@ -199,7 +199,7 @@ pub struct Config {
     pub default_llm_model: String,
     /// Agent turn backend selection (`AGENT_RUNTIME=native|letta`, default `letta`).
     pub agent_runtime_mode: AgentRuntimeMode,
-    /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `./data/bear-sqlite`).
+    /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `/var/lib/den/bear-sqlite`).
     pub bear_sqlite_data_dir: String,
 
     /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
@@ -456,7 +456,7 @@ impl Config {
             &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "letta".to_string()),
         );
         let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
-            .unwrap_or_else(|_| "./data/bear-sqlite".to_string());
+            .unwrap_or_else(|_| "/var/lib/den/bear-sqlite".to_string());
 
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
@@ -640,7 +640,7 @@ impl Config {
             llm_api_key: String::new(),
             default_llm_model: "gpt-4.1".into(),
             agent_runtime_mode: AgentRuntimeMode::Letta,
-            bear_sqlite_data_dir: "./data/bear-sqlite".into(),
+            bear_sqlite_data_dir: "/var/lib/den/bear-sqlite".into(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),

@@ -8,7 +8,9 @@
 #   profile `bundled`), bears-bifrost, bears-redis, bears-memfs-manager, bears-letta, bears-codepool, bears-den
 #
 # PostgreSQL: set **`DATABASE_URL`** for `bears-den` (managed DB — preferred in Coolify) and
-# **`LETTA_PG_URI`** for Letta's pgvector database. Optional bundled Postgres services use
+# **`LETTA_PG_URI`** for Letta's pgvector database.
+# Native runtime: per-Bear SQLite lives on volume **`bears-den-sqlite-data`** (`BEAR_SQLITE_DATA_DIR`).
+# Optional bundled Postgres services use
 # **fixed** credentials in this file (no `POSTGRES_*` env interpolation) so orchestrators do not invent fields.
 # Enable bundled databases with profile `bundled`:
 #   COMPOSE_PROFILES=bundled
@@ -287,7 +289,7 @@ services:
             retries: 3
             start_period: 40s
 
-    # Optional: `docker compose --profile volume-backup up -d` — archive Letta server memfs (`/root/.letta`) to S3-compatible storage (e.g. Scaleway).
+    # Optional: `docker compose --profile volume-backup up -d` — archive persistent volumes to S3-compatible storage (e.g. Scaleway).
     # Set SCALEWAY_BACKUP_* (or generic AWS_* below) in Coolify / `.env`.
     bears-letta-data-backup:
         profiles:
@@ -308,6 +310,26 @@ services:
         volumes:
             - bears-letta-data:/backup:ro
 
+    # Optional: `docker compose --profile volume-backup up -d` — archive per-Bear SQLite (`BEAR_SQLITE_DATA_DIR`) when AGENT_RUNTIME=native.
+    bears-den-sqlite-data-backup:
+        profiles:
+            - volume-backup
+        image: offen/docker-volume-backup:v2
+        restart: unless-stopped
+        environment:
+            BACKUP_CRON_EXPRESSION: ${DEN_SQLITE_VOLUME_BACKUP_CRON:-0 5 * * *}
+            BACKUP_FILENAME: "bears-den-sqlite-data-%Y-%m-%dT%H-%M-%S.{{ .Extension }}"
+            TZ: UTC
+            AWS_S3_BUCKET_NAME: ${SCALEWAY_BACKUP_BUCKET:-}
+            AWS_S3_PATH: ${SCALEWAY_BACKUP_PREFIX:-bears-stack/volumes/bears-den-sqlite-data}
+            AWS_ACCESS_KEY_ID: ${SCALEWAY_ACCESS_KEY:-}
+            AWS_SECRET_ACCESS_KEY: ${SCALEWAY_SECRET_KEY:-}
+            AWS_ENDPOINT: ${SCALEWAY_S3_ENDPOINT:-s3.fr-par.scw.cloud}
+            AWS_ENDPOINT_PROTO: https
+            AWS_DEFAULT_REGION: ${SCALEWAY_REGION:-fr-par}
+        volumes:
+            - bears-den-sqlite-data:/backup:ro
+
     bears-den:
         # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
         # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
@@ -325,6 +347,8 @@ services:
                 condition: service_healthy
         environment:
             AGENT_RUNTIME: ${AGENT_RUNTIME:-native}
+            # Per-Bear canonical memory (native runtime). Mount `bears-den-sqlite-data` below.
+            BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             # Set `DATABASE_URL` in Coolify / `.env` for Den's Postgres.
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
@@ -375,6 +399,8 @@ services:
             GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
             GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
+        volumes:
+            - bears-den-sqlite-data:/var/lib/den/bear-sqlite
         expose:
             - "3000"
             - "3001"
@@ -385,3 +411,5 @@ volumes:
     bears-letta-postgres-data:
     bears-letta-data:
     bears-codepool-letta-home:
+    # Per-Bear SQLite files for Den native runtime (`BEAR_SQLITE_DATA_DIR`).
+    bears-den-sqlite-data:

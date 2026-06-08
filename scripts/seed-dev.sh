@@ -25,6 +25,7 @@ export LETTA_BASE_URL="${LETTA_BASE_URL:-http://bears-letta:8283}"
 export BIFROST_BASE_URL="${BIFROST_BASE_URL:-http://bears-bifrost:8080}"
 export LETTA_MEMFS_SERVICE_URL="${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
+export BEAR_SQLITE_DATA_DIR="${BEAR_SQLITE_DATA_DIR:-${ROOT}/services/den/data/bear-sqlite}"
 database_url="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
 export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgres:5432/letta}"
 

@@ -147,10 +147,23 @@ End-to-end check: create or open a bear in Den, go to its chat page, and send a 
 
 ## Optional Backups
 
-The root compose file includes `bears-letta-data-backup` behind the `volume-backup` profile for backing up the Letta data volume to S3-compatible storage. Enable it only after the base stack is healthy.
+The root compose file includes optional volume-backup sidecars behind the `volume-backup` profile:
 
-Set `COMPOSE_PROFILES=volume-backup` and provide the `SCALEWAY_*` backup variables if you use that profile.
+| Service | Volume | When needed |
+| ------- | ------ | ----------- |
+| `bears-letta-data-backup` | `bears-letta-data` | Legacy Letta stack (`AGENT_RUNTIME=letta`) |
+| `bears-den-sqlite-data-backup` | `bears-den-sqlite-data` | Native runtime (`AGENT_RUNTIME=native`) — per-Bear SQLite memory |
+
+Enable only after the base stack is healthy:
+
+```bash
+COMPOSE_PROFILES=volume-backup docker compose --profile volume-backup up -d
+```
+
+Provide the `SCALEWAY_*` backup variables (and optional `DEN_SQLITE_VOLUME_BACKUP_CRON` / `LETTA_VOLUME_BACKUP_CRON`) in `.env`. Den does not run SQLite backups in-process; these sidecars archive the mounted volume for operator restore.
+
+**Native persistence:** `bears-den` mounts `bears-den-sqlite-data` at `BEAR_SQLITE_DATA_DIR` (default `/var/lib/den/bear-sqlite`). Rebuilds and image upgrades keep Bear memory when this volume is attached.
 
 ---
 
-Last updated: 2026-04-26
+Last updated: 2026-06-08

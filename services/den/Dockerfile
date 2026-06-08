@@ -66,7 +66,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,s
 FROM alpine:3.18 AS final
 
 ARG UID=10001
-RUN adduser \
+RUN apk add --no-cache su-exec \
+    && adduser \
     --disabled-password \
     --gecos "" \
     --home "/nonexistent" \
@@ -75,18 +76,20 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-
-USER appuser
-
 COPY --from=build /bin/server /bin/
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Runtime env (set in Coolify / compose — not baked into the image):
 # When RUN_WEB=true (default for production web):
 #   CODEPOOL_BASE_URL — optional in image; production builds default to http://bears-codepool:3030 when unset.
 #     (Letta Code SDK harness; bear chat streaming does not use the Letta server HTTP API directly).
 #   CODEPOOL_INTERNAL_TOKEN — optional; must match the Codepool container if set.
+#   BEAR_SQLITE_DATA_DIR — per-Bear SQLite store for native runtime (default /var/lib/den/bear-sqlite).
+#     Mount a persistent volume at this path in production; entrypoint chowns it for appuser.
 # See ../../services/codepool/COOLIFY_DEPLOY.md and services/den/COOLIFY_DEPLOY.md.
 
 EXPOSE 3000
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["/bin/server"]
