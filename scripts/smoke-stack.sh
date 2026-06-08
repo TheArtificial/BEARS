@@ -14,7 +14,6 @@ export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgr
 export LETTA_BASE_URL="${LETTA_BASE_URL:-http://bears-letta:8283}"
 export BIFROST_BASE_URL="${BIFROST_BASE_URL:-http://bears-bifrost:8080}"
 export LETTA_MEMFS_SERVICE_URL="${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}"
-export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
@@ -34,7 +33,6 @@ export COMPOSE_ENV_FILES=(
   "LETTA_BASE_URL=${LETTA_BASE_URL}"
   "BIFROST_BASE_URL=${BIFROST_BASE_URL}"
   "LETTA_MEMFS_SERVICE_URL=${LETTA_MEMFS_SERVICE_URL}"
-  "AGENT_RUNTIME=${AGENT_RUNTIME}"
   "BIFROST_IMAGE=${BIFROST_IMAGE}"
   "DEN_IMAGE=${DEN_IMAGE}"
   "DEN_PULL_POLICY=${DEN_PULL_POLICY}"
@@ -124,31 +122,17 @@ echo "Building local Codepool image (${CODEPOOL_IMAGE})..."
 docker build -t "${CODEPOOL_IMAGE}" "${ROOT}/services/codepool"
 
 echo "Starting bundled Postgres services..."
-if [ "${AGENT_RUNTIME}" = "native" ]; then
-  compose_with_env up -d bears-postgres
-  wait_postgres_service bears-postgres bears den
-else
-  compose_with_env up -d bears-postgres bears-letta-postgres
-  wait_postgres_service bears-postgres bears den
-  wait_postgres_service bears-letta-postgres bears letta
-fi
+compose_with_env up -d bears-postgres bears-letta-postgres
+wait_postgres_service bears-postgres bears den
+wait_postgres_service bears-letta-postgres bears letta
 
-echo "Starting source-aware BEARS stack (AGENT_RUNTIME=${AGENT_RUNTIME})..."
-if [ "${AGENT_RUNTIME}" = "native" ]; then
-  compose_with_env up -d --force-recreate bears-bifrost bears-redis bears-memfs-manager bears-den bears-codepool
-  wait_compose_service_ready bears-bifrost
-  wait_compose_service_ready bears-redis
-  wait_compose_service_ready bears-memfs-manager
-  wait_compose_service_ready bears-codepool
-  wait_compose_service_ready bears-den
-else
-  compose_with_env up -d --force-recreate bears-memfs-manager bears-den bears-codepool
-  wait_compose_service_ready bears-memfs-manager
-  wait_compose_service_ready bears-bifrost
-  wait_compose_service_ready bears-letta
-  wait_compose_service_ready bears-codepool
-  wait_compose_service_ready bears-den
-fi
+echo "Starting source-aware BEARS stack..."
+compose_with_env up -d --force-recreate bears-memfs-manager bears-den bears-codepool
+wait_compose_service_ready bears-memfs-manager
+wait_compose_service_ready bears-bifrost
+wait_compose_service_ready bears-letta
+wait_compose_service_ready bears-codepool
+wait_compose_service_ready bears-den
 
 apply_smoke_seed_until_pair_ready
 
