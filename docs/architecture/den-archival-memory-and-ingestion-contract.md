@@ -1,5 +1,7 @@
 # Den Archival Memory and Ingestion Contract
 
+> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), not Letta Archives. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This document defines the implementation-facing contract for Den-owned archival/recall memory and source ingestion during the Letta migration.
 
 ## Purpose

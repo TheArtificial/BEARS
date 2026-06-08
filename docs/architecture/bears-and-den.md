@@ -1,5 +1,7 @@
 # Bears and Den
 
+> **Direction changed (2026-06).** Letta is no longer a transitional implementation layer beneath Bear roles. Treat "Letta agents underneath a role" and Letta-backed provisioning/drift as historical; roles are Den-native runtime profiles. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 A **Bear** is the durable assistant identity users interact with. **Den** is the control plane that makes Bears real: it provisions them, routes traffic to them, governs access, schedules work, and keeps their underlying role runtimes reconciled.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on the Bear/Den relationship rather than re-explaining the full role model.

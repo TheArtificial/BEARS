@@ -1,5 +1,7 @@
 # Memory tools implementation plan
 
+> **Direction changed (2026-06).** All roles now use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the "Letta Code-native MemFS tools for harness-backed roles" / API-direct split is removed. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 

@@ -1,5 +1,7 @@
 # Task System Implementation Plan
 
+> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md) / [Docket plan](DOCKET_IMPLEMENTATION_PLAN.md)); the MemFS task artifacts and Letta Code activity layer here are superseded. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 > **Partially superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md).** That ADR evolves `bear_work_plans` + JSONB `items` into a relational jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events) and is the canonical spec for the work-management schema. **Phases 1–4 below are superseded** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by job/task creation and the `den.job.*` / `den.task.*` tools). **Phases 5–6 remain valid** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034. The `den.work_plan.*` tool names and `bear_work_plan_events` are retired in favor of the ADR-0034 surface.
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).

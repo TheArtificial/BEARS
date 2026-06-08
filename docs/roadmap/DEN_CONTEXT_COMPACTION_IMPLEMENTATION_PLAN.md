@@ -1,5 +1,7 @@
 # Implementation Plan: Den Context Compaction
 
+> **Note (2026-06).** Den-owned compaction aligns with the Den-native runtime. References to the (now missing) `letta-migration-plan.md` should be read against [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This plan implements the context-compaction direction described in [ADR-0032: Den Context Compaction Architecture](../decisions/adr-0032-den-context-compaction-architecture.md), supports the Letta migration plan in [letta-migration-plan.md](./letta-migration-plan.md), and should be read alongside the Den-owned canonical persistence target in [den-conversation-persistence-and-archive-model.md](../architecture/den-conversation-persistence-and-archive-model.md).
 
 The goal is to replace Letta-era long-context handling with a Den-owned compaction system that preserves continuation quality, keeps transcript ownership explicit, and separates derived compaction artifacts from durable memory.

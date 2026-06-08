@@ -1,5 +1,7 @@
 # Role Environment Prompt-Construction Spec
 
+> **Direction changed (2026-06).** There are no "direct Letta/API role harnesses" — all roles use one Den prompt compiler + capability profile on the native loop. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Objective
 Refactor BEARS role-environment construction from prose-first concatenation into schema-first prompt assembly with explicit layer separation, compact operational summaries, structured policies, initiative configuration, context accounting, memory policy, and environment feedback support.

@@ -1,5 +1,7 @@
 # Bear Den Tasks Schema
 
+> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS file formats (intent -> task -> result) here are superseded for human work and survive, if at all, only for legacy unattended pipelines. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 > **Scope:** This document specifies the MemFS file formats for the unattended, `review`-gated task pipeline (intent → approved task → result). Human-initiated, goal-directed work uses the relational **jobs and tasks** model in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface and does not depend on these file formats.
 
 This document specifies the file formats and lifecycle for the task-management subsystem described in the `multi-role-runtime-architecture` ADR (section 5, "Task request flow") and operationalized by `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` (phases 4–8).

@@ -1,5 +1,7 @@
 # Multi-User Architecture: Den (Axum) + Self-Hosted Letta
 
+> **Superseded (2026-06).** This document describes the removed Letta / Letta Code / Codepool / git-MemFS stack and predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](den-native-runtime.md) and its [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
 > Note: this document describes the current Letta-backed architecture. The migration target is a **Den-native runtime** with Letta confined to temporary compatibility boundaries and eventually removed, not a permanent multi-provider runtime abstraction.
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386

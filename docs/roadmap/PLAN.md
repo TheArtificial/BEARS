@@ -1,5 +1,7 @@
 # BEARS roadmap
 
+> **Direction changed (2026-06) — read this first.** BEARS is migrating to a single **Den-native, in-process agent runtime**. Letta, Letta Code/Codepool, and the git MemFS memory sidecar are being **removed**; all roles run one Den loop against Bifrost directly. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs are **Docket**-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). The canonical architecture is [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) and the canonical migration plan is [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md). **Most of the status, components, and phases below predate this change** — they describe the Letta-backed stack (Den -> Letta Code -> Letta, "no Den memory store", `letta_agent_id`, MemFS task pipeline) and are historical. Individual plans carry their own banners pointing to the new target.
+
 High-level implementation roadmap for BEARS. This file is the planning hub: it should describe current status, highlight the active path forward, and link to canonical architecture docs and detailed plans rather than duplicate every contract.
 
 ## Planning hub status
@@ -120,6 +122,8 @@ These remain useful as background, but should not drive new implementation witho
 
 **Architecture sources of truth:**
 
+- [Den-Native Runtime](../architecture/den-native-runtime.md) — **canonical target architecture** (post-Letta); supersedes the Letta-era views below.
+- [Den Native Runtime plan](DEN_NATIVE_RUNTIME_PLAN.md) — **canonical migration plan**.
 - [Architecture notes](../architecture/ARCHITECTURE_NOTES.md) — single-page stack view.
 - [Den architecture](../architecture/DEN_ARCHITECTURE.md) — control plane, harness, Den meta tools, skills, MCP.
 - [`bear_channel` and ACP](../architecture/BEAR_CHANNEL_AND_ACP.md) — canonical Den -> Codepool runtime boundary and planned ACP mapping.

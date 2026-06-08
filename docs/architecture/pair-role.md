@@ -1,5 +1,7 @@
 # Pair role
 
+> **Direction changed (2026-06).** The "API-direct, not Letta Code-backed" framing is obsolete: the harness-backed vs API-direct split is deleted and all roles run the same in-process Den loop, differing only by capability profile. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 The `pair` role is the Bear's live collaborative operating mode for working with a human inside ACP-speaking tools such as IDEs, design tools, product surfaces, and future productivity clients.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses specifically on the `pair` role.

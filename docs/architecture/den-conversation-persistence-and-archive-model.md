@@ -1,5 +1,7 @@
 # Den Conversation Persistence and Archive Model
 
+> **Note (2026-06).** Den-owned (Postgres) transcript persistence is the target; any Letta history reads are one-time migration backfill only. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 ## Status
 
 Draft proposal for post-Letta ACP runtime persistence. This document defines a Den-owned canonical data model for live conversations, message history, compaction artifacts, and archive/read-model behavior so current runtime compaction work lands inside a stable persistence shape.

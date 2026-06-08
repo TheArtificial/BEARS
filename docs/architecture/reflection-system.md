@@ -1,5 +1,7 @@
 # Reflection System
 
+> **Direction changed (2026-06).** Reflection outcomes are stored in per-Bear SQLite (the reflection scheduler/queue stays in Den Postgres); Letta Archives and the git MemFS Manager are removed. Canonical target: [Den-Native Runtime](den-native-runtime.md#the-reflection-run-split) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Reflection is Bear Den's auditable background review and learning system. It lets a Bear periodically or eventfully review recent activity, review memory, maintain derived indexes, inspect behavior, and propose bounded improvements.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on Reflection as a system rather than re-defining the roles themselves.

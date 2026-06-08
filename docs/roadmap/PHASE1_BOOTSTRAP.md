@@ -1,5 +1,7 @@
 # Phase 1 implementation plan (Den) — Trestle bootstrap
 
+> **Superseded (2026-06).** The Phase 1 stack here (web chat via Den -> Letta Code -> Letta, "no Den memory store", Letta provisioning) predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
 **Trestle** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
 
 Put the Rust project at repo-root **`services/den/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.

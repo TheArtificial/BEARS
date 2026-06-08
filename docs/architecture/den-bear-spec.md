@@ -1,5 +1,7 @@
 # Bear Den Multi-Role Runtime Bear Spec
 
+> **Direction changed (2026-06).** Parts of this spec predate the Den-native runtime migration. Treat the Letta agent/harness matrix, `bears.letta_agent_id`, MemFS memory, and the harness-backed vs API-direct split as historical; the canonical target is [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)) with Den-native compiled role profiles.
+
 This is the phase-0 implementation spec for [`../../../docs/architecture/adr/multi-role-runtime-architecture.md`](../../../docs/architecture/adr/multi-role-runtime-architecture.md) and [`../../../docs/planning/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](../../../docs/planning/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md). It freezes the canonical Den-owned configuration before provisioning code creates the role runtimes for a Bear.
 
 ## Scope

@@ -1,5 +1,7 @@
 # Phase 1 (Den) — locked decisions
 
+> **Superseded (2026-06).** Several locked decisions here (Letta-native conversations, "no Den memory store", `letta_agent_id`, skills via Letta Code + Letta `reflection` subagents) are reversed by the Den-native runtime migration. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md) (see also [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)/[ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Read this as historical.
+
 **Status:** Active
 **Last updated:** 2026-04-24
 **Context:** Product choices for BEARS Phase 1, aligned with [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) §17. Decision 4 revised 2026-04-16: no template table; duplicate bear instead. Decision 8 revised 2026-04-24: memory dashboard shows Letta-native memory without aggregate scoring; bear detail shows full state. Decision 10 added 2026-04-18: **routines** (Idea 5). Decision 11 added 2026-04-19: **artifacts + Garage**. Decision 6 revised 2026-04-19: **no Open WebUI** — Den Deep Chat only.

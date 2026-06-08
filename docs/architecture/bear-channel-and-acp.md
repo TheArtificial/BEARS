@@ -1,5 +1,7 @@
 # `bear_channel` and Agent Client Protocol (ACP)
 
+> **Superseded (2026-06).** The `bear_channel`/Codepool runtime and the Letta-conversation substrate described here are removed in the Den-native runtime migration; all roles run one in-process Den loop. Canonical target: [Den-Native Runtime](den-native-runtime.md) and its [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
 ## Summary
 
 Bear Den uses Den as the trusted gateway and Codepool as a private Letta Code runtime/warm-pool manager.

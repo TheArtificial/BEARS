@@ -1,5 +1,7 @@
 # ACP Lifecycle Reset Plan
 
+> **Direction changed (2026-06).** Turn lifecycle is Den-native; Letta is not the source of truth for replay, obligations, continuation, or cancellation. Treat Letta-state bridging here as historical. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 

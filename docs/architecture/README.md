@@ -2,8 +2,11 @@
 
 Conceptual models, stable contracts, and architecture overviews for Bear Den.
 
+> **Current direction (2026-06):** Bear Den is migrating to a single Den-native, in-process agent runtime — Letta, Letta Code/Codepool, and the git MemFS memory sidecar are being removed; Bear memory/cognition is canonical in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), and tasks/jobs are Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). **Read [den-native-runtime.md](den-native-runtime.md) first** — it is the architecture source of truth and supersedes Letta-era framing in the docs below. Migration plan: [DEN_NATIVE_RUNTIME_PLAN.md](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md).
+
 ## Suggested reading order
 
+- [den-native-runtime (target architecture)](den-native-runtime.md)
 - [overview](overview.md)
 - [bear roles](bear-roles.md)
 - [bears and den](bears-and-den.md)
@@ -24,6 +27,7 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 - [planning](planning.md)
 
 ### Runtime and systems
+- [den-native-runtime (target architecture, canonical)](den-native-runtime.md)
 - [overview](overview.md)
 - [workflow state overview](workflow-state-overview.md)
 - [den architecture](den-architecture.md)
@@ -44,5 +48,6 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 - [task schema](task-schema.md)
 
 ### Migration and terminology
+- [den-native-runtime (target architecture)](den-native-runtime.md) — canonical post-Letta architecture
 - [role vocabulary](role-vocabulary.md)
-- [letta dependency matrix](letta-dependency-matrix.md)
+- [letta dependency matrix](letta-dependency-matrix.md) — historical migration inventory

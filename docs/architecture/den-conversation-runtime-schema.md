@@ -1,5 +1,7 @@
 # Den-Owned Conversation and Runtime Schema
 
+> **Direction changed (2026-06).** Den-owned transcript/runtime state is the right direction, but the `letta_api`/`letta_code`/`codepool_native` runtime families and "canonical memory in MemFS/git" are superseded — there is one native runtime and per-Bear SQLite memory ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 ## Purpose
 
 This document proposes the Phase 1 schema for moving Bear Den conversation and runtime state out of Letta and into Den-owned persistence.

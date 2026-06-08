@@ -1,5 +1,7 @@
 # Docket Implementation Plan
 
+> **Note (2026-06).** Docket (ADR-0034) is part of the current direction and stays canonical for tasks/jobs in Den Postgres. Where this doc says Bear memory/runtime is "still Letta-backed", that is superseded: memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and the runtime is the Den-native loop. See [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Docket is the Den control-plane subsystem for work management: the system of record for all tasks and the orchestrator for jobs. Its canonical model is specified in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md). This document plans how that model is realized in the Den Rust source tree and how the bear/Den/Docket separation is enforced in code.
 
 For the storage boundary rationale (memory is bear-canonical SQLite; tasks/jobs are Docket-canonical Postgres), see ADR-0034 and the scope amendment in [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md).

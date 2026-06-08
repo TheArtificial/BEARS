@@ -1,5 +1,7 @@
 # Tasks and Autonomy
 
+> **Direction changed (2026-06).** Human-initiated work is Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS task pipeline (`chat/tasks` -> `core/tasks` -> `work/results`) is superseded for that path. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 > **Scope:** This document describes the unattended, `review`-gated autonomy pipeline (intent → approved task → result). Human-initiated, goal-directed work is modeled separately as **jobs and tasks** in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface.
 
 Tasks are how a Bear turns a user's request or an external observation into reviewed background work. Autonomy flows through intent, review, policy, execution, and result promotion.

@@ -1,5 +1,7 @@
 # Reflection Run Taxonomy
 
+> **Direction changed (2026-06).** Lanes that assume Letta Archives, the MemFS view, or Letta/Codepool connectivity are superseded; reflection outcomes land in per-Bear SQLite. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Reflection runs are bounded background executions that help Bears learn, maintain memory, review work, and surface changes without blocking user turns.
 
 ## Summary

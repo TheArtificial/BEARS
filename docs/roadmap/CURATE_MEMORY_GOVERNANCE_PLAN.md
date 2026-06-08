@@ -1,5 +1,7 @@
 # Review memory governance plan
 
+> **Direction changed (2026-06).** The governance lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions` — not MemFS `core/`/role branches or Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 

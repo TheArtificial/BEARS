@@ -1,5 +1,7 @@
 # ACP Runtime Contract
 
+> **Direction changed (2026-06).** This contract remains the stable seam, but its only implementation is now the Den-native loop — Letta is removed rather than retained behind a provider switch. Treat Letta-backed adapter phases and runtime-provider selection as historical. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 ## Purpose
 
 This document defines the Phase 0 contract for Den's ACP runtime boundary.

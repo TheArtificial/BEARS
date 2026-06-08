@@ -1,5 +1,7 @@
 # Role Environment Prompt-Construction Implementation Plan
 
+> **Direction changed (2026-06).** "Direct Letta/API role harness" rollout framing is obsolete — one Den native loop, role profiles only. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Objective
 Implement the shared role-environment prompt-construction architecture described in [`ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`](ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md), moving from prose-first prompt assembly toward schema-first, ontology-aware, role-general environment construction across `chat`, `pair`, `review`, `work`, and `watch`.

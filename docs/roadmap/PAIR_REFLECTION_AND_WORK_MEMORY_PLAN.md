@@ -1,5 +1,7 @@
 # Pair Reflection and Work Memory Sharing Plan
 
+> **Direction changed (2026-06).** The pair->curate->work boundary stands, but pair runs the Den-native loop (not "API-direct vs Letta Code"), and memory lives in per-Bear SQLite (`pair/` scope) rather than MemFS/Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused architecture/design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 

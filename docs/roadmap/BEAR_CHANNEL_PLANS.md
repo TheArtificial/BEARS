@@ -1,5 +1,7 @@
 # `bear_channel` Phase 7+ Plans
 
+> **Superseded (2026-06).** `bear_channel`/Codepool is removed in the Den-native runtime; web chat and all roles use the in-process Den loop. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)). Read this as historical.
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This document captures planned work after the initial `bear_channel` migration. These items are intentionally **not implemented** in the phase that introduced `bear_channel` for Den web chat.
 

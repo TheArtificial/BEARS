@@ -1,5 +1,7 @@
 # Letta Dependency Matrix
 
+> **Historical inventory (2026-06).** This is the migration source inventory; the target it feeds is defined in [Den-Native Runtime](den-native-runtime.md) and the [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). The "suggested future owner" columns are realized there. Claims that MemFS/git is canonical for live Bear memory are superseded by [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) (per-Bear SQLite).
+
 ## Purpose
 
 This document inventories the current repository's dependency on Letta so Bear Den can plan an orderly migration away from the deprecated Letta API server.

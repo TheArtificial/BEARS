@@ -1,5 +1,7 @@
 # Capabilities and Skills
 
+> **Direction changed (2026-06).** Canonical skill state is no longer the Bear MemFS `skills/` namespace; git retains human-authored skills/prompts only, and Bear cognition is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Capabilities describe what a Bear is allowed to do. Tools are the concrete actions available to agents. Skills are reusable procedures or knowledge packages that help a Bear use its tools and memory well.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on capability, tool, and skill concepts.

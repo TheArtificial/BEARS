@@ -1,5 +1,7 @@
 # Pair Tool Discovery and Scope Policy
 
+> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` runtime is the Den-native loop with Den/Postgres transcript. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 

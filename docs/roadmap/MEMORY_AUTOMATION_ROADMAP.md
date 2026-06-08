@@ -1,5 +1,7 @@
 # Memory Automation Roadmap
 
+> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. The reflection/proposal/curate flow stands but persists to SQLite. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 

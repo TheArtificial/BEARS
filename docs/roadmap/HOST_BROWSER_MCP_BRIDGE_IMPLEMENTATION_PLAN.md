@@ -1,5 +1,7 @@
 # Host Browser MCP Bridge Implementation Plan
 
+> **Direction changed (2026-06).** Browser tools are Den-loop tool descriptors, not Letta-materialized tools; "Letta sees..." framing is historical. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 **Status:** Draft  
 **Date:** 2026-05-18  

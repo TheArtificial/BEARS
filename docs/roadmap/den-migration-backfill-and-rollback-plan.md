@@ -1,5 +1,7 @@
 # Den Migration Backfill and Rollback Plan
 
+> **Note (2026-06).** This backfill supports the Den-native runtime migration and must also cover MemFS/Letta memory -> per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), not only conversation history. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This document defines the planning baseline for migration/backfill/rollback mechanics in the Letta extraction.
 
 ## Purpose

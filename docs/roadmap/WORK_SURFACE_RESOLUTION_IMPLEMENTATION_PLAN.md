@@ -1,5 +1,7 @@
 # Work-Surface Resolution Implementation Plan
 
+> **Direction changed (2026-06).** Work-surface resolution uses per-Bear SQLite memory + Docket context, not MemFS orientation tools or Codepool examples. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 

@@ -1,5 +1,7 @@
 # Architecture notes
 
+> **Superseded (2026-06).** The stack diagram below (Den -> Letta Code -> Letta -> Bifrost, Letta-native memory) predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](den-native-runtime.md) and its [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
 Single-page view of the Bear Den stack on Coolify. **Roadmap and contracts:** [PLAN.md](../planning/PLAN.md). **Den + multi-user web:** [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
 
 ## Target architecture

@@ -1,5 +1,7 @@
 # Den model registry and Bifrost configuration plan
 
+> **Direction changed (2026-06).** Bifrost-as-inference-substrate stands, but Den now calls Bifrost directly — Letta is not in the inference path or a runtime consumer. Treat "Letta = persistence/agent runtime" references as historical. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 

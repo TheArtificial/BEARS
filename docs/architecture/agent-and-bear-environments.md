@@ -1,5 +1,7 @@
 # Agent and Bear Environments
 
+> **Direction changed (2026-06).** Environment projection is Den-native: there is no Codepool, Letta, or git MemFS sidecar in the target. Treat those references as historical. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This document defines shared language for the environments Bear Den creates around Bears, roles, channels, work surfaces, and the runtime projections that let a Bear operate safely in different situations.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on environment vocabulary and runtime projections.

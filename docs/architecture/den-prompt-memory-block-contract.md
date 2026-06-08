@@ -1,5 +1,7 @@
 # Den Prompt Memory Block Contract
 
+> **Note (2026-06).** This is Den-native prompt memory (the Letta-style equivalent is removed). Backing memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This document defines the implementation-facing contract for Den-owned editable in-context memory blocks.
 
 It exists to replace Letta-style editable prompt memory with a Den-native model that is explicit, auditable, and clearly separated from transcript history, archival retrieval, and broader Bear memory.

@@ -1,5 +1,7 @@
 # Bear charter and Cabinet Missions
 
+> **Direction changed (2026-06).** `core/` shared memory is canonical in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the derived Letta Archive is removed. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 A Bear's **charter** is its durable purpose: why this Bear exists and what responsibility boundary its memory, tools, routines, and agents serve.
 
 A Cabinet **Mission** is different. It is a shared work and knowledge container that can involve multiple Bears and contain multiple projects.

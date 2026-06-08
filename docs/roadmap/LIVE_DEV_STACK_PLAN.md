@@ -1,5 +1,7 @@
 # Live dev stack plan
 
+> **Direction changed (2026-06).** The target stack drops Codepool and Letta services; live dev should build Den + Bifrost (+ MemFS only transitionally). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Summary
 

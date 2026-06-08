@@ -1,5 +1,7 @@
 # Planning in Bear Den
 
+> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS plan/task-intent/approved-task files and Letta Code planning layers are superseded for human work. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Planning in Bear Den means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they usually attach to a **work surface**: the durable work context the Bear is acting on, such as a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
 
 For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on planning behavior and planning artifacts rather than re-explaining the full role system.

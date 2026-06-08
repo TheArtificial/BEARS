@@ -1,5 +1,7 @@
 # Role Vocabulary Note
 
+> **Note (2026-06).** In the Den-native runtime there are no "Letta-backed" or "Codepool-backed harness" runtimes — all roles run one in-process Den loop differing by capability profile. Use that vocabulary. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 ## Purpose
 
 This note proposes a terminology shift for Bear Den as the system migrates away from Letta.
