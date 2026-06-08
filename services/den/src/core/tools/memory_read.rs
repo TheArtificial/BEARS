@@ -6,6 +6,7 @@ use crate::{
     config::Config,
     core::{
         bears::BearAgentRole,
+        memory::{tools as sqlite_memory, MemoryStoreManager},
         prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
         prompt_memory_blocks::{PromptMemoryBlock, PromptMemoryBlockState},
         tools::{
@@ -88,6 +89,21 @@ pub(crate) async fn memory_status(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        let store = stores.store_for_bear(context.bear_id).await?;
+        let mut response = sqlite_memory::sqlite_memory_status(&store, role.as_str()).await?;
+        let prompt_memory_blocks =
+            list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert(
+                "prompt_memory_diagnostic".to_string(),
+                prompt_memory_diagnostic_summary_for_bear_role(&prompt_memory_blocks),
+            );
+            obj.insert("bear_id".to_string(), json!(context.bear_id));
+        }
+        return Ok(response);
+    }
     let http = memfs_http_client("MemFS memory status client build failed")?;
     let response = fetch_role_memory_status(
         &http,
@@ -136,6 +152,11 @@ pub(crate) async fn memory_browse(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        let store = stores.store_for_bear(context.bear_id).await?;
+        return sqlite_memory::sqlite_memory_browse(&store, role.as_str()).await;
+    }
     let http = memfs_http_client("MemFS memory browse client build failed")?;
     let response = fetch_role_memory_tree(
         &http,
@@ -170,6 +191,11 @@ pub(crate) async fn memory_read(
         return Err(CustomError::ValidationError(
             "path must not be empty".to_string(),
         ));
+    }
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        let store = stores.store_for_bear(context.bear_id).await?;
+        return sqlite_memory::sqlite_memory_read(&store, path).await;
     }
     let http = memfs_http_client("MemFS memory read client build failed")?;
     let response = fetch_role_memory_file(
@@ -206,6 +232,12 @@ pub(crate) async fn memory_search(
         return Err(CustomError::ValidationError(
             "query must not be empty".to_string(),
         ));
+    }
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        let store = stores.store_for_bear(context.bear_id).await?;
+        let limit = args.limit.map(|n| n.clamp(1, 50) as i64).unwrap_or(10);
+        return sqlite_memory::sqlite_memory_search(&store, role.as_str(), query, limit).await;
     }
     let http = memfs_http_client("MemFS memory search client build failed")?;
     let response = search_role_memory(

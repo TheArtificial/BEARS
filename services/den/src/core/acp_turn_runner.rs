@@ -474,6 +474,12 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
     }
 
     async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError> {
+        if self.state.config.uses_native_agent_runtime() {
+            return Ok(StartTurnResult {
+                turn: None,
+                stream: RuntimeStreamContinuation::Deferred,
+            });
+        }
         LettaRuntimeTurnBackend::new(
             self.state.letta.as_ref(),
             self.request_id,
@@ -487,6 +493,12 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
         &self,
         request: ContinueTurnRequest,
     ) -> Result<ContinueTurnResult, CustomError> {
+        if self.state.config.uses_native_agent_runtime() {
+            return Ok(ContinueTurnResult {
+                turn: request.turn,
+                stream: RuntimeStreamContinuation::Deferred,
+            });
+        }
         LettaRuntimeTurnBackend::new(
             self.state.letta.as_ref(),
             self.request_id,
@@ -500,6 +512,13 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
         &self,
         request: CancelTurnRequest,
     ) -> Result<CancelTurnResult, CustomError> {
+        if self.state.config.uses_native_agent_runtime() {
+            let _ = request;
+            return Ok(CancelTurnResult {
+                skipped: false,
+                detail: "native turn cancelled in-process".to_string(),
+            });
+        }
         LettaRuntimeCancellationBackend::new(self.state.letta.as_ref())
             .cancel_turn(request)
             .await
@@ -578,6 +597,16 @@ pub async fn start_acp_turn_with_retries(
         stream_tokens: request.stream_tokens,
     })
     .await
+}
+
+pub async fn start_acp_turn_event_stream_with_retries(
+    request: AcpTurnStartRequest<'_>,
+) -> Result<crate::core::runtime_contracts::RuntimeEventStream, CustomError> {
+    if request.state.config.uses_native_agent_runtime() {
+        return crate::core::native_runtime::start_native_acp_turn_event_stream(request).await;
+    }
+    let (bytes, parser) = start_acp_turn_stream_with_retries(request).await?;
+    Ok(runtime_byte_stream_to_event_stream(bytes, parser))
 }
 
 pub async fn start_acp_turn_stream_with_retries(
@@ -711,6 +740,9 @@ pub async fn continue_acp_turn_with_runtime(
     ),
     CustomError,
 > {
+    if request.state.config.uses_native_agent_runtime() {
+        return crate::core::native_runtime::continue_native_acp_turn_event_stream(request).await;
+    }
     let status = match request.continuation {
         RuntimeContinuation::ToolResult { .. } | RuntimeContinuation::ApprovalDecision { .. } => {
             request.continuation
@@ -749,6 +781,20 @@ pub async fn acp_cleanup_stale_runtime_state(
         request_id,
     } = params;
     let tool_turn_cleanup = tool_turns.cleanup_request_tool_turns(&acp_session_id, request_id);
+    if state.config.uses_native_agent_runtime() {
+        return serde_json::json!({
+            "ok": true,
+            "reason": reason,
+            "run_ids": run_ids,
+            "cancel_result": "native:in-process cleanup (no external run ids)",
+            "tool_turn_cleanup": {
+                "pending_removed": tool_turn_cleanup.pending_removed,
+                "settled_removed": tool_turn_cleanup.settled_removed,
+            },
+            "bear_id": bear_id,
+            "pair_agent_id": pair_agent_id,
+        });
+    }
     let backend = LettaRuntimeCancellationBackend::new(state.letta.as_ref());
     match backend
         .cleanup_stale_runtime(RuntimeCleanupRequest {

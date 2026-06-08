@@ -1,0 +1,191 @@
+use serde_json::Value;
+use sqlx::SqlitePool;
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+use crate::errors::CustomError;
+
+use super::logical_path::{LogicalMemoryPath, MemoryScopeType};
+
+#[derive(Debug, Clone)]
+pub struct MemoryRecordRow {
+    pub memory_id: String,
+    pub sequence_no: i64,
+    pub scope_type: MemoryScopeType,
+    pub scope_role: Option<String>,
+    pub kind: String,
+    pub content_text: String,
+    pub logical_path: Option<String>,
+    pub work_surface_ref: Option<String>,
+    pub metadata_json: Value,
+    pub created_at: String,
+}
+
+pub struct BearMemoryStore {
+    bear_id: Uuid,
+    pool: SqlitePool,
+}
+
+impl BearMemoryStore {
+    pub fn new(bear_id: Uuid, pool: SqlitePool) -> Self {
+        Self { bear_id, pool }
+    }
+
+    pub fn bear_id(&self) -> Uuid {
+        self.bear_id
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub async fn next_sequence(&self) -> Result<i64, CustomError> {
+        sqlx::query("UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| CustomError::System(format!("bear sequence bump failed: {e}")))?;
+        let row = sqlx::query_scalar::<_, i64>(
+            "SELECT next_sequence - 1 FROM bear_sequence WHERE id = 1",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| CustomError::System(format!("bear sequence alloc failed: {e}")))?;
+        Ok(row)
+    }
+
+    pub async fn append_record(
+        &self,
+        logical: &LogicalMemoryPath,
+        kind: &str,
+        author_role: &str,
+        author_agent_id: Option<&str>,
+        content_text: &str,
+        metadata_json: &Value,
+        visibility: &str,
+    ) -> Result<MemoryRecordRow, CustomError> {
+        let memory_id = Uuid::new_v4().to_string();
+        let sequence_no = self.next_sequence().await?;
+        let created_at = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        let logical_path = logical.to_logical_path();
+        sqlx::query(
+            r#"
+            INSERT INTO memory_records (
+                memory_id, bear_id, sequence_no, scope_type, scope_role, kind, entity_ref,
+                author_role, author_agent_id, created_at, content_text, metadata_json,
+                visibility, logical_path, work_surface_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&memory_id)
+        .bind(self.bear_id.to_string())
+        .bind(sequence_no)
+        .bind(logical.scope_type.as_str())
+        .bind(&logical.scope_role)
+        .bind(kind)
+        .bind(&logical.entity_ref)
+        .bind(author_role)
+        .bind(author_agent_id)
+        .bind(&created_at)
+        .bind(content_text)
+        .bind(metadata_json.to_string())
+        .bind(visibility)
+        .bind(&logical_path)
+        .bind(&logical.work_surface_ref)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| CustomError::System(format!("append memory_record failed: {e}")))?;
+        Ok(MemoryRecordRow {
+            memory_id,
+            sequence_no,
+            scope_type: logical.scope_type,
+            scope_role: logical.scope_role.clone(),
+            kind: kind.to_string(),
+            content_text: content_text.to_string(),
+            logical_path: Some(logical_path),
+            work_surface_ref: logical.work_surface_ref.clone(),
+            metadata_json: metadata_json.clone(),
+            created_at,
+        })
+    }
+}
+
+pub async fn append_memory_record(
+    store: &BearMemoryStore,
+    logical: &LogicalMemoryPath,
+    kind: &str,
+    author_role: &str,
+    author_agent_id: Option<&str>,
+    content_text: &str,
+    metadata_json: &Value,
+) -> Result<MemoryRecordRow, CustomError> {
+    store
+        .append_record(
+            logical,
+            kind,
+            author_role,
+            author_agent_id,
+            content_text,
+            metadata_json,
+            "normal",
+        )
+        .await
+}
+
+pub async fn list_records_for_logical_path(
+    store: &BearMemoryStore,
+    logical_path: &str,
+    limit: i64,
+) -> Result<Vec<MemoryRecordRow>, CustomError> {
+    let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
+        r#"
+        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+               logical_path, work_surface_ref, metadata_json, created_at
+        FROM memory_records
+        WHERE bear_id = ? AND logical_path = ?
+        ORDER BY sequence_no DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(store.bear_id.to_string())
+    .bind(logical_path)
+    .bind(limit)
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("list memory_records failed: {e}")))?;
+    Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
+}
+
+#[derive(sqlx::FromRow)]
+struct MemoryRecordSqlRow {
+    memory_id: String,
+    sequence_no: i64,
+    scope_type: String,
+    scope_role: Option<String>,
+    kind: String,
+    content_text: String,
+    logical_path: Option<String>,
+    work_surface_ref: Option<String>,
+    metadata_json: String,
+    created_at: String,
+}
+
+impl MemoryRecordSqlRow {
+    fn into_row(self) -> MemoryRecordRow {
+        MemoryRecordRow {
+            memory_id: self.memory_id,
+            sequence_no: self.sequence_no,
+            scope_type: MemoryScopeType::parse(&self.scope_type)
+                .unwrap_or(MemoryScopeType::RoleLocal),
+            scope_role: self.scope_role,
+            kind: self.kind,
+            content_text: self.content_text,
+            logical_path: self.logical_path,
+            work_surface_ref: self.work_surface_ref,
+            metadata_json: serde_json::from_str(&self.metadata_json)
+                .unwrap_or_else(|_| Value::Object(Default::default())),
+            created_at: self.created_at,
+        }
+    }
+}

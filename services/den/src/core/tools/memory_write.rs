@@ -6,6 +6,7 @@ use crate::{
     config::Config,
     core::{
         bears::BearAgentRole,
+        memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::MemfsWriteRoleMemoryEntryRequest,
         user,
         tools::{
@@ -117,6 +118,22 @@ pub(crate) async fn write_memory_entry(
         .as_ref()
         .map(|user| user.username.clone())
         .or_else(|| context.username.clone());
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        return sqlite_memory::sqlite_write_role_entry(
+            &stores,
+            config,
+            context.bear_id,
+            role.as_str(),
+            &kind,
+            &title,
+            &body,
+            &tags,
+            source,
+            authenticated_username,
+        )
+        .await;
+    }
     let request = MemfsWriteRoleMemoryEntryRequest {
         kind,
         title,

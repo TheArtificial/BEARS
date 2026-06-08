@@ -61,7 +61,7 @@ axum-login = "0.17.0"
 # tower-sessions-postgres-store = "0.1.1"
 # tower-sessions-moka-store = "0.15.0"
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid"] }
 futures = "0.3"
 minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
 # minijinja-autoreload = "2.5.0"  # Only needed in development

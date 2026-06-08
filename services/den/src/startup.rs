@@ -99,9 +99,22 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if acp_requires_runtime(config) && config.letta_base_url.trim().is_empty() {
+    if acp_requires_runtime(config)
+        && config.letta_base_url.trim().is_empty()
+        && !config.uses_native_agent_runtime()
+    {
         return Err(StartupError::Message(
-            "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
+            "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=letta. \
+             Set AGENT_RUNTIME=native to use the Den in-process agent loop with LLM_API_URL."
+                .into(),
+        ));
+    }
+    if acp_requires_runtime(config)
+        && config.uses_native_agent_runtime()
+        && config.llm_api_url.trim().is_empty()
+    {
+        return Err(StartupError::Message(
+            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=native."
                 .into(),
         ));
     }
@@ -138,7 +151,18 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
     }
 
     let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
+    if config.uses_native_agent_runtime() && !config.llm_api_url.trim().is_empty() {
+        tracing::info!(
+            url = %config.llm_api_url,
+            compatibility_backend = "native",
+            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
+            "Native agent runtime configured (LLM inference substrate)"
+        );
+    }
     if runtime_capabilities.runtime_required_for_acp || !config.letta_base_url.trim().is_empty() {
+        if config.uses_native_agent_runtime() {
+            tracing::info!("Skipping Letta health check (AGENT_RUNTIME=native)");
+        } else {
         tracing::info!(
             url = %config.letta_base_url,
             compatibility_backend = "letta",
@@ -155,11 +179,14 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
                 compatibility_backend = RuntimeHealthCheck::compatibility_backend_name(&health),
                 "Runtime compatibility backend health check passed"
             );
-        } else if runtime_capabilities.runtime_required_for_acp {
+        } else if runtime_capabilities.runtime_required_for_acp
+            && !config.uses_native_agent_runtime()
+        {
             return Err(StartupError::Message(
-                "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
+                "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=letta."
                     .into(),
             ));
+        }
         }
     }
 

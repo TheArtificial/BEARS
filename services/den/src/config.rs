@@ -19,6 +19,33 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 pub const DEFAULT_LETTA_BASE_URL: &str = "http://bears-letta:8283";
 /// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bears-codepool`.
 pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bears-codepool:3030";
+/// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
+pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
+
+/// Which agent turn backend Den uses for role runtimes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentRuntimeMode {
+    /// Letta HTTP process (transitional default).
+    Letta,
+    /// Den-native in-process agent loop ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
+    Native,
+}
+
+impl AgentRuntimeMode {
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "native" | "den" | "den-native" => Self::Native,
+            _ => Self::Letta,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Letta => "letta",
+            Self::Native => "native",
+        }
+    }
+}
 
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
@@ -163,6 +190,18 @@ pub struct Config {
     /// Empty = derive from `bifrost_base_url` where possible or skip Bifrost metadata.
     pub bifrost_metadata_url: String,
 
+    /// OpenAI-compatible inference API (no trailing slash), e.g. `http://bears-bifrost:8080/v1`.
+    /// Used by the Den-native agent loop. Defaults from `LLM_API_URL`, then `BIFROST_BASE_URL/v1`.
+    pub llm_api_url: String,
+    /// Optional bearer token for `llm_api_url` (`LLM_API_KEY` or `OPENAI_API_KEY`).
+    pub llm_api_key: String,
+    /// Default model handle for native runtime turns (`DEFAULT_LLM_MODEL`).
+    pub default_llm_model: String,
+    /// Agent turn backend selection (`AGENT_RUNTIME=native|letta`, default `letta`).
+    pub agent_runtime_mode: AgentRuntimeMode,
+    /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `./data/bear-sqlite`).
+    pub bear_sqlite_data_dir: String,
+
     /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
     /// S3 bucket for chat media and generated images.
@@ -216,6 +255,10 @@ impl Config {
     }
 
     /// Distinct browser `Origin` values for CORS (scheme + host + port, no path).
+    pub fn uses_native_agent_runtime(&self) -> bool {
+        self.agent_runtime_mode == AgentRuntimeMode::Native
+    }
+
     pub fn cors_allowed_origins(&self) -> Vec<String> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -393,6 +436,28 @@ impl Config {
             .trim()
             .to_string();
 
+        let llm_api_url = std::env::var("LLM_API_URL")
+            .ok()
+            .map(|v| v.trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                if bifrost_base_url.is_empty() {
+                    String::new()
+                } else {
+                    format!("{bifrost_base_url}/v1")
+                }
+            });
+        let llm_api_key = std::env::var("LLM_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .unwrap_or_default();
+        let default_llm_model =
+            std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
+        let agent_runtime_mode = AgentRuntimeMode::parse(
+            &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "letta".to_string()),
+        );
+        let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
+            .unwrap_or_else(|_| "./data/bear-sqlite".to_string());
+
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
             .trim_end_matches('/')
@@ -495,6 +560,11 @@ impl Config {
             letta_pg_uri,
             bifrost_base_url,
             bifrost_metadata_url,
+            llm_api_url,
+            llm_api_key,
+            default_llm_model,
+            agent_runtime_mode,
+            bear_sqlite_data_dir,
             s3_endpoint,
             s3_bucket,
             s3_region,
@@ -566,6 +636,11 @@ impl Config {
             letta_pg_uri: String::new(),
             bifrost_base_url: String::new(),
             bifrost_metadata_url: String::new(),
+            llm_api_url: String::new(),
+            llm_api_key: String::new(),
+            default_llm_model: "gpt-4.1".into(),
+            agent_runtime_mode: AgentRuntimeMode::Letta,
+            bear_sqlite_data_dir: "./data/bear-sqlite".into(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),

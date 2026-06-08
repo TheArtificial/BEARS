@@ -87,7 +87,14 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         })?;
 
     let pair_runtime_binding =
-        match require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await {
+        match require_pair_runtime_binding(
+            &state.sqlx_pool,
+            state.config.as_ref(),
+            state.letta.as_ref(),
+            &bear,
+        )
+        .await
+        {
             Ok(binding) => binding,
             Err(err) => return Ok(Err(err)),
         };

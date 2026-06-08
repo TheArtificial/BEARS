@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 
 use crate::{
+    config::Config,
     core::{
         acp_sessions,
         bears::{db as bears_db, model::BearAgentRole, Bear},
@@ -23,9 +24,20 @@ pub fn acp_missing_pair_binding_message(bear_slug: &str) -> String {
 
 pub async fn require_pair_runtime_binding(
     pool: &PgPool,
+    config: &Config,
     letta: &LettaClient,
     bear: &Bear,
 ) -> Result<RoleRuntimeBinding, CustomError> {
+    if config.uses_native_agent_runtime() {
+        let binding_id = bears_db::role_runtime_binding_id(pool, bear.id, BearAgentRole::Pair)
+            .await?
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("den-native:{}:pair", bear.id));
+        return Ok(RoleRuntimeBinding {
+            binding_id,
+            compatibility_backend: Some("runtime:native".to_string()),
+        });
+    }
     if !letta.is_enabled() {
         return Err(CustomError::System(
             "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
