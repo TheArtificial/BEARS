@@ -27,6 +27,7 @@ Other terminology used in this plan:
 - Use the **parity matrix** to understand what Letta responsibilities must be replaced.
 - Use the **repo coverage review** to see which parts already have design support and which still need docs.
 - Use the **step-by-step implementation plan** for build order.
+- Use [Letta Migration Implementation Plan](./LETTA_MIGRATION_IMPLEMENTATION_PLAN.md) for phased tasks and acceptance criteria, and [Letta Migration Status](./LETTA_MIGRATION_STATUS.md) for current progress.
 - Use the **phased migration plan** for rollout grouping and exit gates.
 
 ## Executive summary
