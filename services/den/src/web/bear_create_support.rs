@@ -518,7 +518,7 @@ pub fn composed_system_prompt_for_profile_json(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    crate::core::bears::compose_role_context(&bear, BearAgentRole::Talk, None)
+    crate::core::bears::compose_role_context(&bear, BearAgentRole::Chat, None)
         .map(|context| context.composed_prompt)
 }
 

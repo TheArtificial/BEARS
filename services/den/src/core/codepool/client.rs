@@ -362,11 +362,11 @@ impl CodePoolClient {
             request_id,
         } = runtime;
 
-        let agent_role = BearAgentRole::Talk;
+        let agent_role = BearAgentRole::Chat;
         let agent_id = role_agent_id.trim();
         if agent_id.is_empty() {
             return Err(CustomError::System(
-                "This bear is not provisioned in Letta yet (missing talk role agent).".to_string(),
+                "This bear is not provisioned in Letta yet (missing chat role agent).".to_string(),
             ));
         }
 

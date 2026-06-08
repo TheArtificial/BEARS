@@ -721,7 +721,7 @@ async fn web_chat_workboard_prompt_context(
     let plans = work_plans::list_visible_work_plans(
         pool,
         bear_id,
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         user_id,
         WorkPlanListFilter {
             statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
@@ -772,7 +772,7 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
 
 struct ConversationTitleRequest<'a> {
     bear: &'a crate::core::bears::Bear,
-    talk_agent_id: &'a str,
+    chat_agent_id: &'a str,
     user_id: i32,
     username: Option<&'a str>,
     membership_role: Option<&'a str>,
@@ -788,7 +788,7 @@ async fn maybe_handle_direct_set_conversation_title(
 ) -> Result<Option<Response>, CustomError> {
     let ConversationTitleRequest {
         bear,
-        talk_agent_id,
+        chat_agent_id,
         user_id,
         username,
         membership_role,
@@ -803,8 +803,8 @@ async fn maybe_handle_direct_set_conversation_title(
     let context = DenToolInvocationContext {
         bear_id: bear.id,
         bear_slug: bear.slug.clone(),
-        role_agent_id: talk_agent_id.to_string(),
-        agent_role: Some(BearAgentRole::Talk),
+        role_agent_id: chat_agent_id.to_string(),
+        agent_role: Some(BearAgentRole::Chat),
         user_id,
         username: username.map(str::to_string),
         membership_role: membership_role.map(str::to_string),
@@ -893,13 +893,13 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let talk_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
+    let chat_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Chat)
         .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
             CustomError::System(
-                "This bear is not provisioned in Letta yet (missing talk role agent).".to_string(),
+                "This bear is not provisioned in Letta yet (missing chat role agent).".to_string(),
             )
         })?;
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
@@ -922,7 +922,7 @@ async fn chat_send_inner(
         &state,
         ConversationTitleRequest {
             bear: &bear,
-            talk_agent_id: &talk_agent_id,
+            chat_agent_id: &chat_agent_id,
             user_id,
             username: Some(username.as_str()),
             membership_role: membership_role.as_deref(),
@@ -977,7 +977,7 @@ async fn chat_send_inner(
                 session_id: &session_id,
                 conversation_id: &conv_id,
                 bear: &bear,
-                talk_agent_id: &talk_agent_id,
+                chat_agent_id: &chat_agent_id,
                 user_id,
                 username: Some(username.as_str()),
                 membership_role: membership_role.as_deref(),

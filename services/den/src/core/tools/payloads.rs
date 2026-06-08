@@ -280,7 +280,7 @@ pub(crate) fn session_info_payload(
         "memory_surface": format!("{}/", role.as_str()),
         "space": match role {
             BearAgentRole::Pair => "Collaboration Space",
-            BearAgentRole::Talk => "Conversation Space",
+            BearAgentRole::Chat => "Conversation Space",
             BearAgentRole::Curate => "Curation Space",
             BearAgentRole::Work => "Execution Space",
             BearAgentRole::Watch => "Observation Space",

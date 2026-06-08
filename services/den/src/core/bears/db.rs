@@ -423,7 +423,7 @@ pub async fn list_bear_agents(pool: &PgPool, bear_id: Uuid) -> Result<Vec<BearAg
         FROM bear_agents
         WHERE bear_id = $1
         ORDER BY CASE role
-            WHEN 'talk' THEN 1
+            WHEN 'chat' THEN 1
             WHEN 'pair' THEN 2
             WHEN 'curate' THEN 3
             WHEN 'work' THEN 4
@@ -723,7 +723,7 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
-/// One row per `user_bear` for Letta Code harness YAML. The talk role is authoritative.
+/// One row per `user_bear` for Letta Code harness YAML. The chat role is authoritative.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LettaCodeHarnessRow {
     pub username: String,
@@ -742,7 +742,7 @@ pub async fn list_letta_code_harness_rows(
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         INNER JOIN bears b ON b.id = ub.bear_id
-        LEFT JOIN bear_agents ba ON ba.bear_id = b.id AND ba.role = 'talk'
+        LEFT JOIN bear_agents ba ON ba.bear_id = b.id AND ba.role = 'chat'
         ORDER BY u.username, b.slug
         "#,
     )

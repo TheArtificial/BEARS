@@ -18,7 +18,8 @@ Do not intentionally remember secrets or credentials."#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoleContracts {
-    pub talk: String,
+    #[serde(alias = "talk")]
+    pub chat: String,
     pub pair: String,
     pub curate: String,
     pub work: String,
@@ -28,7 +29,7 @@ pub struct RoleContracts {
 impl RoleContracts {
     pub fn get(&self, role: BearAgentRole) -> &str {
         match role {
-            BearAgentRole::Talk => &self.talk,
+            BearAgentRole::Chat => &self.chat,
             BearAgentRole::Pair => &self.pair,
             BearAgentRole::Curate => &self.curate,
             BearAgentRole::Work => &self.work,
@@ -146,7 +147,7 @@ pub fn render_managed_role_prompt(
     let mut composed = String::new();
     push_section(&mut composed, "Den baseline", &den_baseline_text);
     let instructions_heading = match role {
-        BearAgentRole::Talk => "Space instructions: Conversation Space".to_string(),
+        BearAgentRole::Chat => "Space instructions: Conversation Space".to_string(),
         BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),
         BearAgentRole::Curate => "Space instructions: Curation Space".to_string(),
         BearAgentRole::Work => "Space instructions: Execution Space".to_string(),
@@ -206,8 +207,8 @@ pub fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> Result<String, Cu
 
 pub fn default_role_contracts_for_bear(name: &str) -> RoleContracts {
     RoleContracts {
-        talk: format!(
-            "You are the Bear's talk role: the conversational front door for {name}. Hold synchronous conversations in chat-like surfaces, answer directly when appropriate, and capture task intents when the user asks for external or autonomous work. Do not perform arbitrary outbound autonomous work or promote shared memory unilaterally."
+        chat: format!(
+            "You are the Bear's chat role: the conversational front door for {name}. Hold synchronous conversations in chat-like surfaces, answer directly when appropriate, and capture task intents when the user asks for external or autonomous work. Do not perform arbitrary outbound autonomous work or promote shared memory unilaterally."
         ),
         pair: format!(
             "You are {name}, the user's Bear, operating in Collaboration Space. Collaboration Space is the Bear's working environment for helping a human inside their current tool and active work context. Identify as the Bear, not as an internal role, sub-agent, or implementation component. When a concrete workspace, document set, design surface, plan, log, or other artifact is available, prefer advancing the task through direct inspection and client-mediated tool use rather than stopping at abstract explanation. Bias toward the first useful concrete action that is low-risk and feasible in the current client context: inspect the relevant artifact, trace the behavior, compare expected and actual state, draft the change, gather evidence, or otherwise move the work forward with minimal conversational delay. Treat code, documents, designs, logs, configs, plans, and other workspace materials as first-class work artifacts and primary evidence sources. In practice: inspect an existing codebase before diagnosing or editing it; when creating something new from scratch, create the first useful structure rather than staying abstract; when organizing a large collection of notes, sample the notes before designing a taxonomy; when adding a blog post to a site, inspect existing posts and publishing conventions before creating the new one. When the user asks to make, create, draft, update, or track a plan or task list, prefer planning-state tools when the current runtime makes them available rather than satisfying the request with only conversational bullets. If planning-state tools are unavailable, explain that limitation and provide a provisional conversational plan if helpful. Do not write active plans or ephemeral progress to durable memory unless the user explicitly asks to save them as durable memory. Use client-mediated tools with user approval where appropriate, keep changes reviewable, and report what changed. Do not perform autonomous outbound work outside the client-mediated permission model."
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn legacy_bear_uses_system_prompt() {
         let bear = test_bear(None);
-        let composed = compose_role_context(&bear, BearAgentRole::Talk, None).unwrap();
+        let composed = compose_role_context(&bear, BearAgentRole::Chat, None).unwrap();
         assert!(composed.is_legacy);
         assert_eq!(composed.composed_prompt, "legacy prompt");
     }

@@ -178,11 +178,11 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
         "#,
     )
     .bind(bear_id)
-    .bind(BearAgentRole::Talk.as_str())
-    .bind("agent-talk-web")
+    .bind(BearAgentRole::Chat.as_str())
+    .bind("agent-chat-web")
     .execute(pool)
     .await
-    .expect("insert talk role agent");
+    .expect("insert chat role agent");
 
     bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
@@ -211,7 +211,7 @@ async fn create_visible_work_plan(pool: &sqlx::PgPool, user_bear: &TestUserBear)
             expected_version: None,
             update: WorkPlanUpdate {
                 title: "Pair context plan".to_string(),
-                summary: "Visible to talk".to_string(),
+                summary: "Visible to chat".to_string(),
                 visibility: WorkPlanVisibility::BearVisible,
                 status: WorkPlanStatus::Active,
                 items: vec![WorkPlanItem {
@@ -261,7 +261,7 @@ async fn login_cookie(app: axum::Router, user: &TestUserBear) -> String {
 }
 
 #[tokio::test]
-async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
+async fn web_chat_send_uses_chat_role_agent_id_for_codepool() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool).await;
     create_visible_work_plan(&fixture.pool, &user_bear).await;
@@ -299,9 +299,9 @@ async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
         .await
         .clone()
         .expect("Codepool request captured");
-    assert_eq!(captured["bear"]["role_agent_id"], "agent-talk-web");
+    assert_eq!(captured["bear"]["role_agent_id"], "agent-chat-web");
     assert!(captured["bear"].get("letta_agent_id").is_none());
-    assert_eq!(captured["bear"]["agent_role"], "talk");
+    assert_eq!(captured["bear"]["agent_role"], "chat");
     assert_eq!(captured["bear"]["runtime_family"], "letta_code_harness");
     let server_tools = captured["capabilities"]["server_tools"]
         .as_array()

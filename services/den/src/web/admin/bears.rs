@@ -542,14 +542,14 @@ async fn bear_detail_response(
     let web_fetches = bear_web_fetches(state.sqlx_pool(), id).await?;
     let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), id).await?;
 
-    let talk_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
+    let chat_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Chat)
         .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
         if letta_configured {
-            if let Some(agent_id) = talk_agent_id.as_deref() {
+            if let Some(agent_id) = chat_agent_id.as_deref() {
                 match state.letta.fetch_agent(agent_id).await {
                     Ok(v) => (Some(AgentSummary::from_letta_agent_state(&v)), None),
                     Err(e) => (None, Some(e.to_string())),
@@ -591,7 +591,7 @@ async fn bear_detail_response(
             member_count,
             letta_api_base,
             letta_configured,
-            talk_agent_id,
+            chat_agent_id,
             agent_health_rows,
             web_sources,
             web_approvals,

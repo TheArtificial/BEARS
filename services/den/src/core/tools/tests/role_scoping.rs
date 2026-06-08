@@ -4,11 +4,11 @@ use super::core_helpers::names_for_role;
 
 #[test]
 fn privileged_descriptors_are_role_scoped() {
-    let talk = names_for_role(BearAgentRole::Talk);
-    assert!(talk.contains(DEN_TASK_WRITE_INTENT));
-    assert!(talk.contains(DEN_SKILL_PROPOSE));
-    assert!(!talk.contains(DEN_OBSERVATION_WRITE));
-    assert!(!talk.contains(DEN_RUN_WRITE_RESULT));
+    let chat = names_for_role(BearAgentRole::Chat);
+    assert!(chat.contains(DEN_TASK_WRITE_INTENT));
+    assert!(chat.contains(DEN_SKILL_PROPOSE));
+    assert!(!chat.contains(DEN_OBSERVATION_WRITE));
+    assert!(!chat.contains(DEN_RUN_WRITE_RESULT));
 
     let pair = names_for_role(BearAgentRole::Pair);
     assert!(pair.contains(DEN_TASK_WRITE_INTENT));

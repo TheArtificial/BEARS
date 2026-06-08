@@ -50,7 +50,7 @@ fn default_provisioning_version() -> i32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BearAgentRole {
-    Talk,
+    Chat,
     Pair,
     Curate,
     Work,
@@ -59,7 +59,7 @@ pub enum BearAgentRole {
 
 impl BearAgentRole {
     pub const ALL: [Self; 5] = [
-        Self::Talk,
+        Self::Chat,
         Self::Pair,
         Self::Curate,
         Self::Work,
@@ -68,7 +68,7 @@ impl BearAgentRole {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Talk => "talk",
+            Self::Chat => "chat",
             Self::Pair => "pair",
             Self::Curate => "curate",
             Self::Work => "work",
@@ -77,7 +77,7 @@ impl BearAgentRole {
     }
 
     pub fn is_harness_backed(self) -> bool {
-        matches!(self, Self::Talk | Self::Work)
+        matches!(self, Self::Chat | Self::Work)
     }
 
     pub fn runtime_family(self) -> &'static str {
@@ -109,7 +109,7 @@ impl FromStr for BearAgentRole {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
-            "talk" => Ok(Self::Talk),
+            "chat" | "talk" => Ok(Self::Chat),
             "pair" => Ok(Self::Pair),
             "curate" => Ok(Self::Curate),
             "work" => Ok(Self::Work),
@@ -185,12 +185,12 @@ mod tests {
 
     #[test]
     fn role_runtime_family_matches_harness_design() {
-        assert!(BearAgentRole::Talk.is_harness_backed());
+        assert!(BearAgentRole::Chat.is_harness_backed());
         assert!(BearAgentRole::Work.is_harness_backed());
         assert!(!BearAgentRole::Pair.is_harness_backed());
         assert!(!BearAgentRole::Curate.is_harness_backed());
         assert!(!BearAgentRole::Watch.is_harness_backed());
-        assert_eq!(BearAgentRole::Talk.runtime_family(), "letta_code_harness");
+        assert_eq!(BearAgentRole::Chat.runtime_family(), "letta_code_harness");
         assert_eq!(BearAgentRole::Work.runtime_family(), "letta_code_harness");
         assert_eq!(BearAgentRole::Pair.runtime_family(), "letta_api_direct");
     }

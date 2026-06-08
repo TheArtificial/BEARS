@@ -78,9 +78,9 @@ fn work_surface_scaffold_requests_use_work_role_local_path_when_role_is_work() {
 }
 
 #[test]
-fn work_surface_scaffold_requests_skip_role_local_file_for_talk() {
+fn work_surface_scaffold_requests_skip_role_local_file_for_chat() {
     let requests = work_surface_scaffold_requests(
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         "meta",
         "Meta",
         "Meta overview.",
@@ -90,5 +90,5 @@ fn work_surface_scaffold_requests_skip_role_local_file_for_talk() {
     assert_eq!(requests.len(), 5);
     assert!(requests
         .iter()
-        .all(|request| !request.target_path.starts_with("talk/work_surfaces/")));
+        .all(|request| !request.target_path.starts_with("chat/work_surfaces/")));
 }

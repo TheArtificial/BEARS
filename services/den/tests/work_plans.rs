@@ -188,16 +188,16 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     assert_eq!(pair_plans[0].id, created.id);
     assert!(pair_plans[0].current_item.is_some());
 
-    let talk_plans = work_plans::list_visible_work_plans(
+    let chat_plans = work_plans::list_visible_work_plans(
         &pool,
         bear_id,
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         user_id,
         WorkPlanListFilter::default(),
     )
     .await
-    .expect("list talk-visible plans");
-    assert!(talk_plans.is_empty());
+    .expect("list chat-visible plans");
+    assert!(chat_plans.is_empty());
 
     let updated = work_plans::create_or_update_work_plan(
         &pool,
@@ -218,17 +218,17 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     .expect("update work plan");
     assert_eq!(updated.version, 2);
 
-    let talk_plans = work_plans::list_visible_work_plans(
+    let chat_plans = work_plans::list_visible_work_plans(
         &pool,
         bear_id,
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         user_id,
         WorkPlanListFilter::default(),
     )
     .await
-    .expect("list talk-visible plans after visibility update");
-    assert_eq!(talk_plans.len(), 1);
-    assert_eq!(talk_plans[0].title, "Visible pair plan");
+    .expect("list chat-visible plans after visibility update");
+    assert_eq!(chat_plans.len(), 1);
+    assert_eq!(chat_plans[0].title, "Visible pair plan");
 
     let event_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*)::bigint FROM bear_work_plan_events WHERE plan_id = $1")

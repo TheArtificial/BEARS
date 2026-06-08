@@ -41,9 +41,9 @@ block subnav %}
             <p class="caption">Readiness</p>
             <ul class="den-status-list">
                 <li>
-                    Chat: {% if talk_agent_id %}<span class="success"
+                    Chat: {% if chat_agent_id %}<span class="success"
                         >ready</span
-                    >{% else %}<span class="form-errors">needs talk role</span
+                    >{% else %}<span class="form-errors">needs chat role</span
                     >{% endif %}
                 </li>
                 <li>
@@ -99,9 +99,9 @@ block subnav %}
             Active conversations and recent collaboration surfaces for this
             Bear.
         </p>
-        {% if not letta_configured or not talk_agent_id %}
+        {% if not letta_configured or not chat_agent_id %}
         <p class="form-hint">
-            Provision the talk role agent to list conversations.
+            Provision the chat role agent to list conversations.
         </p>
         {% else %}
         <ul class="den-bear-conv-list">
@@ -446,7 +446,7 @@ block subnav %}
             <summary>Letta sync and diagnostics</summary>
             {% if letta_agent_fetch_error %}
             <p class="form-errors">
-                Could not load talk role from Letta: {{ letta_agent_fetch_error
+                Could not load chat role from Letta: {{ letta_agent_fetch_error
                 | e }}
             </p>
             {% endif %} {% if letta_drift and letta_drift.drift_any %}

@@ -291,7 +291,7 @@ struct AcpToolDetailRow {
 
 fn role_memory_label(role: BearAgentRole) -> &'static str {
     match role {
-        BearAgentRole::Talk => "Conversation memory",
+        BearAgentRole::Chat => "Conversation memory",
         BearAgentRole::Pair => "Pairing memory",
         BearAgentRole::Curate => "Review memory",
         BearAgentRole::Work => "Work memory",
@@ -301,7 +301,7 @@ fn role_memory_label(role: BearAgentRole) -> &'static str {
 
 fn role_memory_description(role: BearAgentRole) -> &'static str {
     match role {
-        BearAgentRole::Talk => "Notes and local memory from chat-like conversations.",
+        BearAgentRole::Chat => "Notes and local memory from chat-like conversations.",
         BearAgentRole::Pair => "Coding collaboration notes, logs, decisions, and summaries.",
         BearAgentRole::Curate => "Review, reflection, and memory integration work.",
         BearAgentRole::Work => "Task execution logs, decisions, and summaries.",
@@ -311,7 +311,7 @@ fn role_memory_description(role: BearAgentRole) -> &'static str {
 
 fn role_plain_name(role: BearAgentRole) -> &'static str {
     match role {
-        BearAgentRole::Talk => "Conversational front door",
+        BearAgentRole::Chat => "Conversational front door",
         BearAgentRole::Pair => "Collaborative tool/IDE partner",
         BearAgentRole::Curate => "Memory and integration reviewer",
         BearAgentRole::Work => "Approved outbound executor",
@@ -321,7 +321,7 @@ fn role_plain_name(role: BearAgentRole) -> &'static str {
 
 fn role_surfaces(role: BearAgentRole) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Talk => vec!["Web chat", "Future chat surfaces"],
+        BearAgentRole::Chat => vec!["Web chat", "Future chat surfaces"],
         BearAgentRole::Pair => vec!["ACP clients", "IDEs", "Future design/productivity tools"],
         BearAgentRole::Curate => vec!["Internal review and integration"],
         BearAgentRole::Work => vec!["Den task dispatch", "Schedules", "Approved background jobs"],
@@ -337,7 +337,7 @@ fn role_surfaces(role: BearAgentRole) -> Vec<&'static str> {
 
 fn role_capabilities(role: BearAgentRole) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Talk => vec![
+        BearAgentRole::Chat => vec![
             "Synchronous conversation",
             "Task intent capture",
             "Channel-safe tools",
@@ -488,9 +488,9 @@ fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
 
 fn role_memory_rules(role: BearAgentRole) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Talk => vec![
+        BearAgentRole::Chat => vec![
             "Reads core/",
-            "Reads and writes talk/",
+            "Reads and writes chat/",
             "Does not directly promote to core/",
         ],
         BearAgentRole::Pair => vec![
@@ -508,7 +508,7 @@ fn role_memory_rules(role: BearAgentRole) -> Vec<&'static str> {
             "Reads core/",
             "Reads task definition/run context",
             "Reads and writes work/",
-            "Does not read raw talk/, pair/, or watch/ directly",
+            "Does not read raw chat/, pair/, or watch/ directly",
         ],
         BearAgentRole::Watch => vec![
             "Reads core/",
@@ -1150,7 +1150,7 @@ async fn build_role_detail_view(
 
     let mut actions = Vec::new();
     match role {
-        BearAgentRole::Talk => {
+        BearAgentRole::Chat => {
             actions.push(RoleActionLink {
                 label: "Open chat",
                 href: format!("/bear/{}", bear.slug),
@@ -1235,11 +1235,11 @@ async fn bear_role_rows(
     Ok(rows)
 }
 
-async fn talk_agent_id_for_bear(
+async fn chat_agent_id_for_bear(
     pool: &sqlx::PgPool,
     bear: &Bear,
 ) -> Result<Option<String>, CustomError> {
-    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Talk)
+    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Chat)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
@@ -1524,7 +1524,7 @@ async fn render_bear_details_page(
     let letta_configured = state.web_letta_data.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
-    let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;
     let mut role_details = Vec::new();
@@ -1533,7 +1533,7 @@ async fn render_bear_details_page(
     }
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
-        if let Some(agent_id) = talk_agent_id.as_deref() {
+        if let Some(agent_id) = chat_agent_id.as_deref() {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => {
                     let summary = AgentSummary::from_letta_agent_state(&v);
@@ -1573,7 +1573,7 @@ async fn render_bear_details_page(
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
         let mut rows = Vec::new();
         let mut archived_count = 0usize;
-        if let Some(agent_id) = talk_agent_id.as_deref() {
+        if let Some(agent_id) = chat_agent_id.as_deref() {
             let snap = state
                 .web_letta_data
                 .list_agent_conversations(agent_id)
@@ -1644,9 +1644,9 @@ async fn render_bear_details_page(
                 .or_else(|| Some(id.to_string()))
         })
     });
-    let talk_composed_prompt = crate::core::bears::compose_role_context(
+    let chat_composed_prompt = crate::core::bears::compose_role_context(
         &bear,
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         Some("Runtime/conversation context is injected when this role handles a specific chat."),
     )?
     .composed_prompt;
@@ -1685,7 +1685,7 @@ async fn render_bear_details_page(
         mem_health,
         mem_health_error,
     ) = if !memfs_url.is_empty() && letta_configured {
-        if let Some(agent_id) = talk_agent_id.as_deref() {
+        if let Some(agent_id) = chat_agent_id.as_deref() {
             let mem_health_result =
                 fetch_memory_manager_repository_status(state.letta.http(), memfs_url, agent_id)
                     .await;
@@ -1731,14 +1731,14 @@ async fn render_bear_details_page(
             members,
             letta_configured,
             letta_api_base,
-            talk_agent_id,
+            chat_agent_id,
             role_rows,
             role_details,
             context_profile_enabled => bear.context_profile.is_some(),
             user_steering,
             bear_context,
             template_label,
-            talk_composed_prompt,
+            chat_composed_prompt,
             pair_composed_prompt,
             letta_agent_summary,
             letta_agent_fetch_error,
@@ -1832,7 +1832,7 @@ async fn bear_resync_letta_post(
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    let Some(agent_id) = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await? else {
+    let Some(agent_id) = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await? else {
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     };
 
@@ -2387,14 +2387,14 @@ async fn bear_conversations_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = state.web_letta_data.is_enabled();
 
-    let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let (rows, list_error) = if letta_configured {
         let archived_ids =
             archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
         let mut rows = Vec::new();
-        if let Some(agent_id) = talk_agent_id.as_deref() {
+        if let Some(agent_id) = chat_agent_id.as_deref() {
             let snap = state
                 .web_letta_data
                 .list_agent_conversations(agent_id)
@@ -2438,8 +2438,8 @@ async fn bear_conversations_get(
             );
         }
         rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
-        let list_error = if talk_agent_id.is_none() && pair_agent_id.is_none() {
-            Some("No talk or pair role Letta agent is linked to this bear.".to_string())
+        let list_error = if chat_agent_id.is_none() && pair_agent_id.is_none() {
+            Some("No chat or pair role Letta agent is linked to this bear.".to_string())
         } else {
             None
         };

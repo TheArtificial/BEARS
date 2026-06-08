@@ -19,7 +19,7 @@ pub struct BearTemplate {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoleEmphasis {
-    pub talk: &'static str,
+    pub chat: &'static str,
     pub pair: &'static str,
     pub curate: &'static str,
     pub work: &'static str,
@@ -40,7 +40,7 @@ pub const SOFTWARE_PRODUCT_BUILDER: BearTemplate = BearTemplate {
         "Help me prioritize what to build next.",
     ],
     role_emphasis: RoleEmphasis {
-        talk: "Clarify product goals, explain technical tradeoffs, and help reason through architecture, scope, and priorities.",
+        chat: "Clarify product goals, explain technical tradeoffs, and help reason through architecture, scope, and priorities.",
         pair: "In Collaboration Space, work hands-on through the user's active artifacts: inspect code before diagnosing it, make progress through direct edits and reviewable changes, and keep implementation grounded in the current workspace.",
         curate: "Organize product decisions, technical notes, backlog items, bugs, and reusable implementation context.",
         work: "Draft specs, tickets, test plans, code changes, migration plans, release notes, and debugging checklists.",
@@ -62,7 +62,7 @@ pub const PERSONAL_ASSISTANT: BearTemplate = BearTemplate {
         "Help me make a decision between these options.",
     ],
     role_emphasis: RoleEmphasis {
-        talk: "Think through plans, decisions, messages, schedules, priorities, and everyday tradeoffs.",
+        chat: "Think through plans, decisions, messages, schedules, priorities, and everyday tradeoffs.",
         pair: "In Collaboration Space, work directly inside the user's current materials: create the first useful structure when starting from scratch, inspect drafts and notes before reorganizing them, and help complete concrete personal work with minimal delay.",
         curate: "Keep useful summaries of preferences, routines, recurring tasks, important contacts, and ongoing commitments.",
         work: "Draft emails, checklists, plans, agendas, reminders, summaries, and decision notes.",
@@ -84,7 +84,7 @@ pub const RESEARCH_WRITING_PARTNER: BearTemplate = BearTemplate {
         "Help me compare these sources or arguments.",
     ],
     role_emphasis: RoleEmphasis {
-        talk: "Discuss ideas, arguments, evidence, structure, counterpoints, and interpretation with careful reasoning.",
+        chat: "Discuss ideas, arguments, evidence, structure, counterpoints, and interpretation with careful reasoning.",
         pair: "In Collaboration Space, work through the actual draft, notes, and sources: sample materials before imposing structure, inspect existing publishing or document conventions, and help turn research artifacts into concrete writing progress.",
         curate: "Organize sources, excerpts, claims, citations, outlines, open questions, and reusable research context.",
         work: "Draft outlines, summaries, literature notes, argument maps, revision plans, abstracts, and polished prose.",
@@ -112,7 +112,7 @@ impl BearTemplate {
     pub fn role_contracts_for_bear(&self, bear_name: &str) -> RoleContracts {
         let base = default_role_contracts_for_bear(bear_name);
         RoleContracts {
-            talk: append_emphasis(base.talk, self.role_emphasis.talk),
+            chat: append_emphasis(base.chat, self.role_emphasis.chat),
             pair: append_emphasis(base.pair, self.role_emphasis.pair),
             curate: append_emphasis(base.curate, self.role_emphasis.curate),
             work: append_emphasis(base.work, self.role_emphasis.work),

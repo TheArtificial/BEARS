@@ -103,23 +103,23 @@ fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
 }
 
 #[test]
-fn work_surface_anchor_paths_skip_role_local_paths_for_talk() {
-    let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Talk, "builder-bear");
+fn work_surface_anchor_paths_skip_role_local_paths_for_chat() {
+    let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Chat, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert!(role_local.is_empty());
 }
 
 #[test]
-fn build_work_surface_orientation_payload_for_talk_is_reference_only() {
-    let context = context_for(BearAgentRole::Talk);
-    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Talk);
+fn build_work_surface_orientation_payload_for_chat_is_reference_only() {
+    let context = context_for(BearAgentRole::Chat);
+    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Chat);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
         "core/work_surfaces/builder-bear/overview.md".to_string(),
-        "talk/work_surfaces/builder-bear/current-understanding.md".to_string(),
+        "chat/work_surfaces/builder-bear/current-understanding.md".to_string(),
     ];
     let payload = build_work_surface_orientation_payload(
-        BearAgentRole::Talk,
+        BearAgentRole::Chat,
         &hint_payload,
         &files,
         Some("builder-bear".to_string()),

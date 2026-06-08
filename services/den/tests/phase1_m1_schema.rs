@@ -229,7 +229,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
     .fetch_one(&pool)
     .await
     .expect("bear_agents role check");
-    assert!(role_check.contains("talk"));
+    assert!(role_check.contains("chat"));
     assert!(role_check.contains("watch"));
 }
 

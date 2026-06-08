@@ -162,7 +162,7 @@ pub fn content_hash(content: &str) -> String {
 
 pub fn managed_space_block_key(role: BearAgentRole) -> &'static str {
     match role {
-        BearAgentRole::Talk => "space_instruction.talk",
+        BearAgentRole::Chat => "space_instruction.chat",
         BearAgentRole::Pair => "space_instruction.pair",
         BearAgentRole::Curate => "space_instruction.curate",
         BearAgentRole::Work => "space_instruction.work",
@@ -181,11 +181,11 @@ pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
             change_summary: "Seed current Den baseline prompt text.",
         },
         SeedSystemBlock {
-            key: "space_instruction.talk",
+            key: "space_instruction.chat",
             kind: SystemBlockKind::PromptText,
             scope: SystemBlockScope::Space,
-            content: defaults.talk,
-            change_summary: "Seed current talk space instruction text.",
+            content: defaults.chat,
+            change_summary: "Seed current chat space instruction text.",
         },
         SeedSystemBlock {
             key: "space_instruction.pair",
@@ -630,8 +630,8 @@ mod tests {
     #[test]
     fn managed_space_block_key_matches_roles() {
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Talk),
-            "space_instruction.talk"
+            managed_space_block_key(BearAgentRole::Chat),
+            "space_instruction.chat"
         );
         assert_eq!(
             managed_space_block_key(BearAgentRole::Pair),
@@ -659,7 +659,7 @@ mod tests {
             keys,
             vec![
                 "den_baseline",
-                "space_instruction.talk",
+                "space_instruction.chat",
                 "space_instruction.pair",
                 "space_instruction.curate",
                 "space_instruction.work",

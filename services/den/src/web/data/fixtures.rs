@@ -284,7 +284,7 @@ impl WebChatTransportDataSource for FixtureWebChatTransportDataSource {
         _session_id: &str,
         _conversation_id: &str,
         _bear: &crate::core::bears::Bear,
-        _talk_agent_id: &str,
+        _chat_agent_id: &str,
         _user_id: i32,
         _username: Option<&str>,
         _membership_role: Option<&str>,

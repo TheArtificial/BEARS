@@ -13,7 +13,7 @@ use crate::{
 pub enum RoleRuntimeRole {
     Pair,
     Work,
-    Talk,
+    Chat,
     Curate,
     Watch,
 }
@@ -23,7 +23,7 @@ impl RoleRuntimeRole {
         match self {
             Self::Pair => "pair",
             Self::Work => "work",
-            Self::Talk => "talk",
+            Self::Chat => "chat",
             Self::Curate => "curate",
             Self::Watch => "watch",
         }

@@ -392,7 +392,7 @@ pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<Str
     // no broad operator-selected harness tools. Den/ACP tools are exposed through their own
     // controlled paths rather than by attaching every legacy Letta tool to every role.
     match role {
-        BearAgentRole::Talk | BearAgentRole::Work => bear.letta_tool_ids.0.clone(),
+        BearAgentRole::Chat | BearAgentRole::Work => bear.letta_tool_ids.0.clone(),
         BearAgentRole::Pair | BearAgentRole::Curate | BearAgentRole::Watch => Vec::new(),
     }
 }
@@ -526,8 +526,8 @@ mod tests {
     fn role_agent_name_keeps_unicode_letters_and_normalizes_apostrophes() {
         let bear = test_bear("Zoë’s 建築_Bear");
         assert_eq!(
-            role_agent_name(&bear, BearAgentRole::Talk),
-            "Zoë's 建築_Bear - talk"
+            role_agent_name(&bear, BearAgentRole::Chat),
+            "Zoë's 建築_Bear - chat"
         );
     }
 

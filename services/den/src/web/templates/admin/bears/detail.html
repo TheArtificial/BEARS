@@ -155,7 +155,7 @@
 {% if not letta_configured %}
 <p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>
 {% endif %}
-<p class="form-hint">Role rows come from <code>bear_agents</code>. Web chat uses <strong>talk</strong>; ACP uses <strong>pair</strong>.</p>
+<p class="form-hint">Role rows come from <code>bear_agents</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="margin: 0 0 1rem 0;">
   <button type="submit">Provision missing role agents</button>
@@ -221,18 +221,18 @@
   </tbody>
 </table>
 
-<h3>Talk agent detail</h3>
-{% if talk_agent_id %}
-<p><strong>Talk agent id:</strong> <code>{{ talk_agent_id }}</code></p>
+<h3>Chat agent detail</h3>
+{% if chat_agent_id %}
+<p><strong>Chat agent id:</strong> <code>{{ chat_agent_id }}</code></p>
 {% if letta_api_base %}
-<p class="form-hint">End-user chat (via Den/Codepool) targets the <strong>talk</strong> role agent.</p>
+<p class="form-hint">End-user chat (via Den/Codepool) targets the <strong>chat</strong> role agent.</p>
 {% endif %}
 
 {% if letta_agent_fetch_error %}
-<p class="form-errors"><strong>Could not load talk agent from Letta:</strong> {{ letta_agent_fetch_error }}</p>
+<p class="form-errors"><strong>Could not load chat agent from Letta:</strong> {{ letta_agent_fetch_error }}</p>
 <p class="form-hint">The id may be stale if the agent was deleted in Letta, or Letta may be unreachable.</p>
 {% elif letta_agent_summary %}
-<p><em>Fields below are from Letta</em> <code>GET /v1/agents/{{ talk_agent_id }}</code> (shape may vary by server version).</p>
+<p><em>Fields below are from Letta</em> <code>GET /v1/agents/{{ chat_agent_id }}</code> (shape may vary by server version).</p>
 <dl>
   <dt>Letta id</dt>
   <dd><code>{{ letta_agent_summary.id }}</code></dd>
@@ -274,12 +274,12 @@
   {% endif %}
 </dl>
 {% if bear.default_model and letta_agent_summary.model and bear.default_model != letta_agent_summary.model %}
-<p class="form-errors">Den <strong>default model</strong> (<code>{{ bear.default_model }}</code>) differs from the <strong>model</strong> on the talk Letta agent (<code>{{ letta_agent_summary.model }}</code>). Align them if you expect matching behavior.</p>
+<p class="form-errors">Den <strong>default model</strong> (<code>{{ bear.default_model }}</code>) differs from the <strong>model</strong> on the chat Letta agent (<code>{{ letta_agent_summary.model }}</code>). Align them if you expect matching behavior.</p>
 {% endif %}
 {% endif %}
 
 {% else %}
-<p><em>No talk Letta agent id stored for this bear.</em></p>
+<p><em>No chat Letta agent id stored for this bear.</em></p>
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="margin-top: 0.5rem;">
   <button type="submit">Retry Letta provisioning</button>

@@ -42,8 +42,8 @@ fn infer_work_surface_hint_marks_work_as_active_mode() {
 }
 
 #[test]
-fn infer_work_surface_hint_marks_talk_as_reference_only_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearAgentRole::Talk), BearAgentRole::Talk);
+fn infer_work_surface_hint_marks_chat_as_reference_only_mode() {
+    let payload = infer_work_surface_hint(&context_for(BearAgentRole::Chat), BearAgentRole::Chat);
     assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
     assert!(payload["work_surface"]["note"]
         .as_str()

@@ -718,12 +718,12 @@ pub fn validate_work_plan_items(items: &[WorkPlanItem]) -> Result<(), WorkPlanVa
 pub fn role_can_update_work_plan(role: BearAgentRole) -> bool {
     matches!(
         role,
-        BearAgentRole::Talk | BearAgentRole::Pair | BearAgentRole::Work
+        BearAgentRole::Chat | BearAgentRole::Pair | BearAgentRole::Work
     )
 }
 
 pub fn role_can_request_work_handoff(role: BearAgentRole) -> bool {
-    matches!(role, BearAgentRole::Talk | BearAgentRole::Pair)
+    matches!(role, BearAgentRole::Chat | BearAgentRole::Pair)
 }
 
 pub fn role_can_read_work_plan(
@@ -799,13 +799,13 @@ mod tests {
             false
         ));
         assert!(!role_can_read_work_plan(
-            BearAgentRole::Talk,
+            BearAgentRole::Chat,
             BearAgentRole::Pair,
             WorkPlanVisibility::PrivateToRole,
             false
         ));
         assert!(role_can_read_work_plan(
-            BearAgentRole::Talk,
+            BearAgentRole::Chat,
             BearAgentRole::Pair,
             WorkPlanVisibility::BearVisible,
             false
@@ -826,7 +826,7 @@ mod tests {
 
     #[test]
     fn only_channel_roles_request_handoff() {
-        assert!(role_can_request_work_handoff(BearAgentRole::Talk));
+        assert!(role_can_request_work_handoff(BearAgentRole::Chat));
         assert!(role_can_request_work_handoff(BearAgentRole::Pair));
         assert!(!role_can_request_work_handoff(BearAgentRole::Work));
         assert!(!role_can_request_work_handoff(BearAgentRole::Curate));

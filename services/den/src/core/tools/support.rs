@@ -204,8 +204,8 @@ pub(crate) fn validate_optional_object(field: &str, value: &Option<Value>) -> Re
 pub(crate) fn memory_read_scopes(role: BearAgentRole) -> Vec<&'static str> {
     match role {
         BearAgentRole::Pair => vec!["pair/", "core/"],
-        BearAgentRole::Talk => vec!["talk/", "core/"],
-        BearAgentRole::Curate => vec!["talk/", "pair/", "curate/", "work/", "watch/", "core/"],
+        BearAgentRole::Chat => vec!["chat/", "core/"],
+        BearAgentRole::Curate => vec!["chat/", "pair/", "curate/", "work/", "watch/", "core/"],
         BearAgentRole::Work => vec!["work/", "core/"],
         BearAgentRole::Watch => vec!["watch/", "core/"],
     }
