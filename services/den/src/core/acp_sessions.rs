@@ -64,7 +64,7 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
             conversation_id = EXCLUDED.conversation_id,
             resolved_conversation_id = EXCLUDED.resolved_conversation_id,
             client = EXCLUDED.client,
-            cwd = EXCLUDED.cwd,
+            cwd = COALESCE(EXCLUDED.cwd, acp_sessions.cwd),
             current_mode = COALESCE(acp_sessions.current_mode, EXCLUDED.current_mode),
             updated_at = NOW()
         "#,

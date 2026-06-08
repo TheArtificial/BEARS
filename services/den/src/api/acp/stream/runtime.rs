@@ -288,14 +288,17 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
                     let canonical_name = acp_den_provider_to_canonical_tool_name(&effect_tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
                     let tool_request_id = request_id.clone();
+                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
+                        effect_den_server_result_rx = result_rx.take();
+                    }
                     if canonical_name == DEN_WEB_FETCH {
                         route_web_fetch_tool_request(context, event, false).await?;
                     } else {
                         route_direct_den_tool_request(context, event, canonical_name).await?;
                     }
-                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
-                        if let Some(result_rx) = result_rx.take() {
-                            effect_den_server_result_rx = Some(result_rx);
+                    if effect_den_server_result_rx.is_none() {
+                        if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
+                            effect_den_server_result_rx = result_rx.take();
                         }
                     }
                     tracing::info!(

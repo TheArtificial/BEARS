@@ -62,6 +62,7 @@ fn semantic_tool_call_projects_to_tool_request_gateway_event() {
             approval_request_id: Some("approval-1".to_string()),
             approval_required: true,
             approval_reason: Some("Need file access".to_string()),
+            run_id: None,
         },
     );
 

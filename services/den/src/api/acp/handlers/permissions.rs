@@ -203,6 +203,11 @@ pub(super) async fn permission_result_inner(
     if matches!(decision, "allow_once" | "allow_url" | "allow_host")
         && web_policy::is_local_web_url(&pending.normalized_url)
     {
+        let local_tool_name = if web_policy::is_local_web_url(&pending.normalized_url) {
+            "local_web_fetch".to_string()
+        } else {
+            pending.provider_name.clone()
+        };
         pending
             .context
             .tool_turns
@@ -213,7 +218,7 @@ pub(super) async fn permission_result_inner(
                 acp_session_id: pending.context.acp_session_id.clone(),
                 request_id: pending.context.request_id,
                 tool_call_id: pending.tool_call_id.clone(),
-                tool_name: pending.provider_name.clone(),
+                tool_name: local_tool_name,
                 approval_request_id: pending.approval_request_id.clone(),
                 timeout_ms: acp_tool_policy_json_for_provider(&pending.provider_name)
                     .get("tool_timeout_ms")

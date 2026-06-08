@@ -205,6 +205,17 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     .or_else(|| inner.get("approval_reason"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                run_id: ["run_id", "message/run_id", "data/run_id", "run/id", "message/run/id", "data/run/id"]
+                    .into_iter()
+                    .find_map(|pointer| {
+                        event
+                            .pointer(&format!("/{pointer}"))
+                            .or_else(|| inner.pointer(&format!("/{pointer}")))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|run_id| !run_id.is_empty())
+                            .map(str::to_string)
+                    }),
             }),
         ),
         _ => crate::core::acp_letta_events::native_letta_conversation_resolved_event(event).map(

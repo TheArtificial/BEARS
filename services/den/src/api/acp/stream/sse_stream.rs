@@ -204,6 +204,7 @@ impl AcpRuntimeSseStream {
                 controller_terminal_reason = ?controller_terminal.reason,
                 "emitting ACP turn_complete authorized by turn controller"
             );
+            self.persist_assistant_output_if_present();
         }
         if let AcpGatewayEvent::AssistantTextDelta { text } = &event {
             self.assistant_text_buffer.push_str(text);
@@ -369,6 +370,7 @@ impl Drop for AcpRuntimeSseStream {
         if let Some(waiting) = self.waiting_adapter_tool_result.take() {
             self.parked_adapter_result_rx = Some(waiting);
         }
+        self.persist_assistant_output_if_present();
         self.cleanup_active_tool_turns();
     }
 }

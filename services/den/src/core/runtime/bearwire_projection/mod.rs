@@ -37,6 +37,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             approval_request_id,
             approval_required,
             approval_reason,
+            run_id: _,
         } => vec![AcpGatewayEvent::ToolRequest {
             request_id: approval_request_id
                 .clone()

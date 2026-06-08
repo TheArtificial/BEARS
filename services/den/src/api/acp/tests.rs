@@ -4757,6 +4757,7 @@ use crate::core::prompt_memory_blocks::{
                 approval_request_id: Some("approval-cont-1".to_string()),
                 approval_required: true,
                 approval_reason: Some("workspace read".to_string()),
+                run_id: None,
             },
         );
         let mut diagnostics = AcpStreamDiagnostics::default();

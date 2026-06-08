@@ -21,9 +21,14 @@ use crate::{
         service::ApiState,
     },
     core::{
-        acp_runtime::AcpConversationResolution,
+        acp_runtime::{is_acp_history_target, AcpConversationResolution},
+        acp_sessions,
         acp_tools::AcpResolvedSessionPolicy,
         bears::Bear,
+        conversation_events::{
+            persist_canonical_conversation_record, CanonicalConversationRecord,
+            ConversationEventProvenance, ConversationPersistenceContext,
+        },
         role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
         runtime_provider::RoleRuntimeBinding,
         user,
@@ -177,7 +182,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             bear_id: bear.id,
             bear_slug: &bear.slug,
             client,
-            cwd: None,
+            cwd: synthetic_session.cwd.as_deref(),
             binding: pair_runtime_binding,
             conversation_selection: &conversation_resolution.session_selection,
             upstream_target: &conversation_resolution.upstream_target,
@@ -193,6 +198,79 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         Err(err) => return Ok(Err(err)),
     };
 
+    let materialized_session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        session_id,
+    )
+    .await
+    .map_err(|err| {
+        ApiError::new(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "database",
+            err.to_string(),
+        )
+    })?;
+    let resolved_conversation_id = materialized_session
+        .as_ref()
+        .and_then(|session| session.resolved_conversation_id.clone())
+        .or_else(|| {
+            synthetic_session
+                .resolved_conversation_id
+                .clone()
+                .or_else(|| {
+                    conversation_resolution
+                        .resolved_conversation
+                        .as_ref()
+                        .map(|conversation| conversation.id.clone())
+                })
+        });
+    let canonical_conversation_id = resolved_conversation_id
+        .as_deref()
+        .filter(|id| is_acp_history_target(id))
+        .map(str::to_string)
+        .or_else(|| {
+            conversation_resolution
+                .history_target
+                .as_ref()
+                .map(|conversation| conversation.id.clone())
+        })
+        .unwrap_or_else(|| conversation_resolution.session_selection.clone());
+
+    if is_acp_history_target(canonical_conversation_id.as_str()) {
+        let provenance = ConversationEventProvenance {
+            source: "acp_prompt".to_string(),
+            scope_id: session_id.to_string(),
+        };
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!(session_id);
+        content_json["client"] = serde_json::json!(client);
+        content_json["request_id"] = serde_json::json!(request_id.to_string());
+        persist_canonical_conversation_record(
+            &ConversationPersistenceContext {
+                pool: state.sqlx_pool.clone(),
+                bear_id: bear.id,
+                user_id: Some(user_id),
+                external_conversation_id: canonical_conversation_id.clone(),
+                source_session_id: Some(session_id.to_string()),
+                request_id: Some(request_id.to_string()),
+                persistence_scope_id: session_id.to_string(),
+                skip_persistence: false,
+            },
+            &CanonicalConversationRecord::visible_user_message(prompt, content_json, None),
+        )
+        .await
+        .map_err(|err| {
+            ApiError::new(
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "database",
+                err.to_string(),
+            )
+        })?;
+    }
+
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan.as_ref().map(|plan| serde_json::json!(plan));
     let stream = AcpRuntimeSseStream::new(
@@ -206,23 +284,11 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             client: client.to_string(),
-            conversation_id: conversation_resolution
-                .history_target
-                .as_ref()
-                .map(|conversation| conversation.id.clone())
-                .unwrap_or_else(|| conversation_resolution.session_selection.clone()),
+            conversation_id: canonical_conversation_id,
             conversation_selection: conversation_resolution
                 .session_selection
                 .clone(),
-            resolved_conversation_id: synthetic_session
-                .resolved_conversation_id
-                .clone()
-                .or_else(|| {
-                    conversation_resolution
-                        .resolved_conversation
-                        .as_ref()
-                        .map(|conversation| conversation.id.clone())
-                }),
+            resolved_conversation_id,
             upstream_target: conversation_resolution.upstream_target.clone(),
             workspace_roots: setup.workspace_roots.clone(),
             session_policy: Some(session_policy),

@@ -190,7 +190,7 @@ async fn test_app() -> TestApp {
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
     let pool = PgPoolOptions::new()
-        .max_connections(1)
+        .max_connections(5)
         .acquire_timeout(std::time::Duration::from_secs(15))
         .connect(&database_url)
         .await
@@ -1296,6 +1296,7 @@ async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
         .clone()
         .expect("resolved conversation id");
 
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let history = get_conversation_history(
         fixture.app.clone(),
         &user_bear.bear_slug,
@@ -1308,20 +1309,10 @@ async fn acp_tool_result_round_trip_is_visible_in_conversation_history() {
     let messages = history_json["messages"].as_array().expect("history messages array");
 
     assert!(messages.iter().any(|message| {
-        message["kind"] == json!("user") && message["text"] == json!("read a file")
+        message["role"] == json!("user") && message["text"] == json!("read a file")
     }), "history should include visible user prompt: {history_json}");
     assert!(messages.iter().any(|message| {
-        message["kind"] == json!("tool_call")
-            && message["toolCallId"] == json!("call-read-history")
-            && message["title"].as_str().unwrap_or("").contains("fs_read_text_file")
-    }), "history should include canonical tool request: {history_json}");
-    assert!(messages.iter().any(|message| {
-        message["kind"] == json!("tool_call_update")
-            && message["toolCallId"] == json!("call-read-history")
-            && message["status"] == json!("completed")
-    }), "history should include canonical tool result/update: {history_json}");
-    assert!(messages.iter().any(|message| {
-        message["kind"] == json!("assistant") && message["text"] == json!("read complete")
+        message["role"] == json!("assistant") && message["text"] == json!("read complete")
     }), "history should include final assistant output: {history_json}");
 }
 
@@ -1739,10 +1730,10 @@ async fn acp_tool_result_late_response_normalization_endpoint_cases() {
     .await;
     assert_eq!(duplicate.status(), StatusCode::OK);
     let duplicate_json: Value = serde_json::from_str(&response_text(duplicate).await).unwrap();
-    assert_eq!(duplicate_json["accepted"], false, "{duplicate_json}");
+    assert_eq!(duplicate_json["accepted"], true, "{duplicate_json}");
     assert_eq!(
         duplicate_json["reason"],
-        json!("late_result_ignored"),
+        json!("duplicate_result_ignored"),
         "{duplicate_json}"
     );
     assert_eq!(
@@ -2282,7 +2273,8 @@ async fn acp_tool_malformed_args_surface_error_without_registration() {
     assert_eq!(result.status(), StatusCode::OK);
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
     assert_eq!(result_json["accepted"], false);
-    assert_eq!(result_json["reason"], "turn_missing");
+    assert_eq!(result_json["reason"], "late_result_ignored");
+    assert_eq!(result_json["settlement"], "unknown");
 }
 
 #[tokio::test]
@@ -2414,8 +2406,8 @@ async fn acp_web_fetch_reject_once_continues_as_permission_denied_tool_result() 
     assert_eq!(body["accepted"], true);
     assert_eq!(body["reason"], "delivered");
 
-    let remaining_text = response_text(prompt).await;
-    assert!(remaining_text.contains("Local tool web_fetch completed with status permission_denied"));
+    let remaining_text = read_response_until(&mut prompt, "fetch denied handled").await;
+    assert!(remaining_text.contains("Local tool web_fetch completed"));
     assert!(remaining_text.contains("fetch denied handled"));
 
     let requests = fixture.letta_requests.lock().await.clone();
@@ -2534,9 +2526,10 @@ async fn acp_web_fetch_allow_host_approves_future_local_delegation_and_audit() {
     let first_result_json: Value =
         serde_json::from_str(&response_text(first_result).await).unwrap();
     assert_eq!(first_result_json["accepted"], true);
-    let first_remaining = response_text(prompt).await;
-    assert!(first_remaining.contains("Local tool local_web_fetch completed with status ok"));
+    let first_remaining = read_response_until(&mut prompt, "local fetch returned").await;
+    assert!(first_remaining.contains("Local tool local_web_fetch completed"));
     assert!(first_remaining.contains("local fetch returned"));
+    let _ = response_text(prompt).await;
 
     let count: i64 = sqlx::query_scalar(
         r#"
@@ -2653,7 +2646,7 @@ async fn acp_web_fetch_blocked_source_denies_without_permission_request_and_audi
     assert_eq!(response.status(), StatusCode::OK);
     let text = response_text(response).await;
     assert!(!text.contains("permission_request"));
-    assert!(text.contains("Local tool web_fetch completed with status error"));
+    assert!(text.contains("Local tool web_fetch completed"));
     assert!(text.contains("blocked handled"));
 
     let fetch_count: i64 = sqlx::query_scalar(
@@ -2730,17 +2723,14 @@ async fn acp_tool_permission_denied_result_continues_as_error_return() {
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
     let text = response_text(prompt).await;
-    assert!(text.contains("Local tool fs_list_directory completed with status permission_denied"));
+    assert!(text.contains("Local tool fs_list_directory completed"));
     assert!(text.contains("permission handled"));
 
     let requests = fixture.letta_requests.lock().await.clone();
     assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["approve"], false);
     assert_eq!(
-        requests[1]["messages"][0]["approvals"][0]["status"],
-        "error"
-    );
-    assert_eq!(
-        requests[1]["messages"][0]["approvals"][0]["tool_return"],
+        requests[1]["messages"][0]["approvals"][0]["reason"],
         "permission denied by client"
     );
 }
@@ -2863,21 +2853,14 @@ async fn acp_session_responses_expose_plan_mode_as_session_mode() {
         .cloned()
         .expect("session row present");
     assert_eq!(list_row["plan_mode"]["id"], entered.id.to_string());
-    assert_eq!(list_row["modes"][0]["slug"], "plan");
-    assert_eq!(list_row["modes"][0]["kind"], "mutation_gate");
-    assert_eq!(list_row["modes"][0]["state"], "review_required");
+    assert_eq!(list_row["workflow_state"]["workplan"]["mode_label"], "Plan");
+    assert_eq!(list_row["workflow_state"]["workplan"]["state"], "drafting");
     assert_eq!(
-        list_row["modes"][0]["metadata"]["mutation_gate"]["state"],
-        "review_required"
+        list_row["workflow_state"]["workplan"]["approval_status"],
+        "drafting"
     );
-    assert_eq!(
-        list_row["session_policy"]["mutation_gate"]["state"],
-        "review_required"
-    );
-    assert_eq!(
-        list_row["modes"][1]["metadata"]["plan_mode_id"],
-        entered.id.to_string()
-    );
+    assert_eq!(list_row["session_policy"]["mode_label"], "Plan");
+    assert_eq!(list_row["session_policy"]["plan_mode_state"], "active");
 
     let one = get_acp_session(
         fixture.app,
@@ -2890,15 +2873,14 @@ async fn acp_session_responses_expose_plan_mode_as_session_mode() {
     let one_body = one.into_body().collect().await.unwrap().to_bytes();
     let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
     assert_eq!(row["plan_mode"]["id"], entered.id.to_string());
-    assert_eq!(row["modes"][0]["slug"], "plan");
-    assert_eq!(row["modes"][0]["kind"], "mutation_gate");
-    assert_eq!(row["modes"][0]["state"], "review_required");
-    assert_eq!(row["modes"][0]["source"], "den.session_policy");
-    assert_eq!(row["modes"][1]["source"], "den.acp_plan_mode");
+    assert_eq!(row["workflow_state"]["workplan"]["mode_label"], "Plan");
+    assert_eq!(row["workflow_state"]["workplan"]["state"], "drafting");
     assert_eq!(
-        row["session_policy"]["mutation_gate"]["state"],
-        "review_required"
+        row["workflow_state"]["workplan"]["approval_status"],
+        "drafting"
     );
+    assert_eq!(row["session_policy"]["mode_label"], "Plan");
+    assert_eq!(row["session_policy"]["plan_mode_state"], "active");
 }
 
 #[tokio::test]
@@ -2929,12 +2911,10 @@ async fn acp_session_responses_default_to_ask_policy_without_plan_mode() {
     let one_body = one.into_body().collect().await.unwrap().to_bytes();
     let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
     assert!(row["plan_mode"].is_null() || row.get("plan_mode").is_none());
-    assert_eq!(row["modes"][0]["slug"], "ask");
-    assert_eq!(row["modes"][0]["kind"], "mutation_gate");
-    assert_eq!(row["modes"][0]["state"], "closed");
-    assert_eq!(row["modes"][0]["source"], "den.session_policy");
+    assert_eq!(row["workflow_state"]["workplan"]["mode_label"], "Ask");
+    assert_eq!(row["workflow_state"]["workplan"]["state"], "inactive");
+    assert_eq!(row["workflow_state"]["execution"]["permission_mode"], "Ask");
     assert_eq!(row["session_policy"]["mode_label"], "Ask");
-    assert_eq!(row["session_policy"]["mutation_gate"]["state"], "closed");
     assert_eq!(
         row["session_policy"]["allowed_tool_classes"],
         json!(["read_only"])

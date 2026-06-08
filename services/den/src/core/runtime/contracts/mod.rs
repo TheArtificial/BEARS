@@ -199,6 +199,7 @@ pub enum RuntimeSemanticEvent {
         approval_request_id: Option<String>,
         approval_required: bool,
         approval_reason: Option<String>,
+        run_id: Option<String>,
     },
     Error {
         message: String,

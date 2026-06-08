@@ -34,16 +34,23 @@ pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
             approval_request_id,
             approval_required,
             approval_reason,
-        }) => Ok(serde_json::json!({
-            "message_type": if approval_required { "approval_request_message" } else { "tool_call_message" },
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "tool_title": title,
-            "tool_kind": kind,
-            "args": arguments,
-            "approval_request_id": approval_request_id,
-            "approval_reason": approval_reason,
-        })),
+            run_id,
+        }) => {
+            let mut value = serde_json::json!({
+                "message_type": if approval_required { "approval_request_message" } else { "tool_call_message" },
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "tool_title": title,
+                "tool_kind": kind,
+                "args": arguments,
+                "approval_request_id": approval_request_id,
+                "approval_reason": approval_reason,
+            });
+            if let Some(run_id) = run_id.filter(|id| !id.trim().is_empty()) {
+                value["run_id"] = serde_json::json!(run_id);
+            }
+            Ok(value)
+        }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { reason, .. }) => {
             let stop_reason = if reason == "awaiting_approval" {
                 "requires_approval".to_string()

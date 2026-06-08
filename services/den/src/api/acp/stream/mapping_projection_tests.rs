@@ -44,6 +44,7 @@ fn semantic_tool_call_requested_projects_to_tool_call_seed_value() {
             approval_request_id: None,
             approval_required: false,
             approval_reason: None,
+            run_id: Some("run-1".to_string()),
         },
     ))
     .expect("projection should succeed");
@@ -51,6 +52,7 @@ fn semantic_tool_call_requested_projects_to_tool_call_seed_value() {
     assert_eq!(value.get("message_type").and_then(|v| v.as_str()), Some("tool_call_message"));
     assert_eq!(value.get("tool_call_id").and_then(|v| v.as_str()), Some("call-1"));
     assert_eq!(value.get("tool_name").and_then(|v| v.as_str()), Some("fs_read_text_file"));
+    assert_eq!(value.get("run_id").and_then(|v| v.as_str()), Some("run-1"));
 }
 
 #[test]
