@@ -27,7 +27,8 @@ use crate::{
 };
 
 use crate::web::bear_create_support::{
-    bear_edit_page_context, bear_new_form_context, ensure_stored_model_in_options_for_handle,
+    admin_bear_new_form_context, bear_edit_page_context, ensure_stored_model_in_options_for_handle,
+    model_catalog_select_context, validate_default_model_for_catalog,
     validate_default_model_for_letta, NewBearForm,
 };
 
@@ -682,7 +683,7 @@ async fn new_view(
     Query(_query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, CustomError> {
     let form = NewBearForm::default();
-    let page = bear_new_form_context(&state, &form).await;
+    let page = admin_bear_new_form_context(&state, &form).await;
     web::render_template(
         &state,
         "admin/bears/new.html",
@@ -754,14 +755,15 @@ pub async fn new_action(
     auth_session: AuthSession,
     Form(form): Form<NewBearForm>,
 ) -> Result<Response, CustomError> {
-    let letta_fetch = if state.letta.is_enabled() {
-        Some(state.letta.list_llm_models().await.map(|opts| {
+    let catalog_fetch = {
+        let (configured, options, _) = model_catalog_select_context(&state).await;
+        if !configured {
+            None
+        } else {
             let model_trim = form.default_model.trim();
             let h = (!model_trim.is_empty()).then_some(model_trim);
-            ensure_stored_model_in_options_for_handle(h, opts)
-        }))
-    } else {
-        None
+            Some(Ok(ensure_stored_model_in_options_for_handle(h, options)))
+        }
     };
 
     let mut validation_errors = ValidationErrors::new();
@@ -769,24 +771,14 @@ pub async fn new_action(
         validation_errors = e;
     }
 
-    let letta_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let letta_agent_type_db: Option<String> = {
-        let t = form.letta_agent_type.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t.to_string())
-        }
-    };
-
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+    validate_default_model_for_catalog(&catalog_fetch, default_model_trim, &mut validation_errors);
+    if default_model_trim.is_empty() && catalog_fetch.is_none() {
+        validation_errors.add(
+            "default_model",
+            ValidationError::new("Default model is required."),
+        );
+    }
 
     let default_model_opt = if default_model_trim.is_empty() {
         None
@@ -811,8 +803,8 @@ pub async fn new_action(
                 system_prompt: form.system_prompt.trim(),
                 default_model: default_model_opt,
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: Json(letta_tool_ids.clone()),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: None,
             },
         )
@@ -820,59 +812,31 @@ pub async fn new_action(
 
         if let Err(e) = provision::provision_bear_if_configured(
             state.sqlx_pool(),
+            state.config.as_ref(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
             id,
         )
         .await
         {
-            if state.letta.is_enabled() {
-                tracing::warn!(%id, "Letta provision failed: {e}");
-                let page = bear_new_form_context(&state, &form).await;
-                return web::render_template(
-                    &state,
-                    "admin/bears/new.html",
-                    auth_session,
-                    context! {
-                        form => form,
-                        provision_error => e.to_string(),
-                        ..page
-                    },
-                )
-                .await;
-            }
-        }
-
-        if state.letta.is_enabled() {
-            let sync_summary = sync::sync_all_bear_roles_to_letta(
-                state.sqlx_pool(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
+            tracing::warn!(%id, "Bear provision failed: {e}");
+            let page = admin_bear_new_form_context(&state, &form).await;
+            return web::render_template(
+                &state,
+                "admin/bears/new.html",
+                auth_session,
+                context! {
+                    form => form,
+                    provision_error => e.to_string(),
+                    ..page
+                },
             )
-            .await?;
-            if let Some(message) = sync_summary.diagnostic_message() {
-                tracing::warn!(%id, message = %message, "Letta role sync after create had failures");
-                let page = bear_new_form_context(&state, &form).await;
-                return web::render_template(
-                    &state,
-                    "admin/bears/new.html",
-                    auth_session,
-                    context! {
-                        form => form,
-                        letta_sync_error => format!(
-                            "Bear was saved and provisioned in Den, but one or more role agents rejected syncing fields: {message}"
-                        ),
-                        ..page
-                    },
-                )
-                .await;
-            }
+            .await;
         }
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
-        let page = bear_new_form_context(&state, &form).await;
+        let page = admin_bear_new_form_context(&state, &form).await;
         web::render_template(
             &state,
             "admin/bears/new.html",
@@ -1206,6 +1170,7 @@ async fn retry_letta_action(
     } else {
         match provision::provision_bear_if_configured(
             state.sqlx_pool(),
+            state.config.as_ref(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
             id,

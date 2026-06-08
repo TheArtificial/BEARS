@@ -363,6 +363,64 @@ impl From<&Bear> for NewBearForm {
     }
 }
 
+/// Operator admin new-bear form: Bifrost model catalog only (no Letta agent type or tools).
+pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
+    let (model_catalog_configured, model_options, models_fetch_error) =
+        model_catalog_select_context(state).await;
+    let model_trim = form.default_model.trim();
+    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
+    let model_options = if model_catalog_configured {
+        ensure_stored_model_in_options_for_handle(model_handle, model_options)
+    } else {
+        model_options
+    };
+
+    context! {
+        model_catalog_configured,
+        model_options,
+        models_fetch_error,
+        native_runtime => state.config.uses_native_agent_runtime(),
+    }
+}
+
+/// Bifrost-first model list for bear create flows that do not depend on Letta.
+pub async fn model_catalog_select_context(
+    state: &AppState,
+) -> (bool, Vec<LettaModelOption>, Option<String>) {
+    if state.bifrost.is_enabled() {
+        match state.bifrost.list_models().await {
+            Ok(models) if models.is_empty() => (
+                true,
+                Vec::new(),
+                Some("Bifrost returned no enabled BEARS models.".into()),
+            ),
+            Ok(models) => (
+                true,
+                models
+                    .into_iter()
+                    .map(|m| m.to_letta_model_option())
+                    .collect(),
+                None,
+            ),
+            Err(e) => (
+                true,
+                Vec::new(),
+                Some(format!("Could not load models from Bifrost metadata: {e}.")),
+            ),
+        }
+    } else {
+        (false, Vec::new(), None)
+    }
+}
+
+pub fn validate_default_model_for_catalog(
+    catalog_fetch: &Option<Result<Vec<LettaModelOption>, CustomError>>,
+    default_model_trim: &str,
+    validation_errors: &mut ValidationErrors,
+) {
+    validate_default_model_for_letta(catalog_fetch, default_model_trim, validation_errors);
+}
+
 /// Letta model + tool lists for the new-bear template, merging stored handles like the edit page.
 pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =

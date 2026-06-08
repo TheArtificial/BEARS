@@ -7,8 +7,12 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::{
-    bifrost::BifrostClient, letta::LettaClient, memory_manager_head::register_memfs_role_view,
+use crate::{
+    config::Config,
+    core::{
+        bifrost::BifrostClient, letta::LettaClient, memory::MemoryStoreManager,
+        memory_manager_head::register_memfs_role_view,
+    },
 };
 
 use super::context_composition::render_role_prompt;
@@ -58,13 +62,18 @@ pub async fn register_role_view_if_configured(
     Ok(())
 }
 
-/// When Letta is configured, create role-specific Letta-backed runtime bindings. No-op if Letta is disabled.
+/// Provision role runtime bindings for a new bear (native SQLite + Den loop, or Letta-backed).
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
+    config: &Config,
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
+    if config.uses_native_agent_runtime() {
+        return provision_bear_native(pool, config, bear_id).await;
+    }
+
     if !letta.is_enabled() {
         return Ok(());
     }
@@ -79,6 +88,43 @@ pub async fn provision_bear_if_configured(
     if bear.context_profile.is_some() {
         compile_and_store_managed_config_for_bear(pool, &bear).await?;
     }
+    Ok(())
+}
+
+async fn provision_bear_native(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    let bear = bears_db::get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    bears_db::ensure_bear_agent_rows(pool, bear_id).await?;
+    bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
+
+    let memory_stores = MemoryStoreManager::new(config);
+    memory_stores.store_for_bear(bear_id).await?;
+
+    if bear.context_profile.is_some() {
+        compile_and_store_managed_config_for_bear(pool, &bear).await?;
+    }
+
+    for role in BearAgentRole::ALL {
+        let binding_id = format!("den-native:{bear_id}:{}", role.as_str());
+        let config_hash = role_config_hash(pool, &bear, role).await?;
+        bears_db::mark_bear_agent_ready(
+            pool,
+            bear_id,
+            role,
+            &binding_id,
+            bear.provisioning_version,
+            &config_hash,
+        )
+        .await?;
+    }
+
+    tracing::info!(%bear_id, "Den-native role runtimes provisioned for bear");
     Ok(())
 }
 

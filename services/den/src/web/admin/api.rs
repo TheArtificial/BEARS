@@ -111,13 +111,14 @@ async fn create_bear(
 
     if let Err(e) = provision::provision_bear_if_configured(
         state.sqlx_pool(),
+        state.config.as_ref(),
         state.letta.as_ref(),
         state.bifrost.as_ref(),
         id,
     )
     .await
     {
-        tracing::warn!(%id, "Letta provision failed after admin API create: {e}");
+        tracing::warn!(%id, "Bear provision failed after admin API create: {e}");
     }
 
     Ok((axum::http::StatusCode::CREATED, Json(IdResponse { id })))
