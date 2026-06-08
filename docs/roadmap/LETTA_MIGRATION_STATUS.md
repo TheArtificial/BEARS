@@ -2,7 +2,7 @@
 
 Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MIGRATION_IMPLEMENTATION_PLAN.md). Update this document when slices land; keep the implementation plan stable.
 
-**Last updated:** 2026-06-08 (Epic A2 complete)
+**Last updated:** 2026-06-08 (Phase 6 Curate execution substrate — initial slice)
 
 ---
 
@@ -16,7 +16,7 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 | 3 — Idempotency and dedup | **Mostly complete** | Storage-backed dedup landed; automated integration test for uniqueness still desired |
 | 4 — Canonical read-switch | **Mostly complete** | Den-first history for eligible sessions; startup/control surfaces still Letta-backed |
 | 5 — Shared runtime/persistence extraction | **Mostly complete** | ACP runtime contract boundary landed; turn execution still Letta-backed at adapter |
-| 6 — `review` / `watch` follow-on | **Partial** | Review projection + Curate queue/worker scaffolding; real Curate execution substrate not built |
+| 6 — `review` / `watch` follow-on | **Partial** | Den-native `memory_curate` triage + optional MemFS core promotion landed; model-assisted curate runtime still pending |
 | 7 — Backfill mechanics | **Planning baseline** | [`den-migration-backfill-and-rollback-plan.md`](./den-migration-backfill-and-rollback-plan.md) |
 | 8 — Rollout and rollback controls | **Not started** | |
 | 9 — `chat`/`work` harness prep | **Deferred** | Correctly sequenced after lower-risk roles |
@@ -27,7 +27,7 @@ Living progress tracker for the [Letta Migration Implementation Plan](./LETTA_MI
 
 **Epic A2 — Complete ACP runtime contract boundary** is **complete** for the planned slice set.
 
-**Next epic:** Phase 6 follow-on — real Curate execution substrate and/or `watch` migration prep (see implementation plan).
+**Next epic:** Phase 6 follow-on — model-assisted curate runtime (daily review conversation + curate tools) and/or `watch` migration prep (see implementation plan).
 
 ### Epic A2 deliverables (landed)
 
@@ -133,12 +133,17 @@ Consumers: `memory_proposals`, `pair_reflection`, `reflection_conductor`, `den_t
 
 Constructors: proposal lifecycle + Curate run-state (`memory_curate_enqueued/started/completed/failed`)
 
-### Curate worker (scaffolding — not full execution)
+### Curate worker (Den-native execution substrate — initial slice)
 
 - `list_queued_memory_curate_runs`, `claim_next_memory_curate_run`
-- `run_next_memory_curate_once` — claims run, resolves pending proposals to `needs_human_review`, marks complete/failed
-- `run_memory_curate_worker_loop` — launched from `den::run()` via `RUN_WORKERS`
-- **Honest status:** queue + projection + stub resolution exist; real Curate review execution substrate not built
+- `memory_curate_executor` — rule-based triage by `suggested_action`, `sensitivity`, `requires_human`, and run `trigger`
+  - `pair_reflection` + `unspecified` + `normal` → `retained_local` (pair summaries stay role-local by default)
+  - `promote_to_core` / `summarize_into_core` with bounded content → MemFS `append_section` when configured; otherwise `deferred`
+  - sensitive / `human_review` / `requires_human` → `needs_human_review`
+  - specialized actions (`cabinet_update`, etc.) → `deferred`
+- `run_next_memory_curate_once` — claims run, executes triage, writes per-proposal `outcomes` + `status_counts` to `output_summary`
+- `run_memory_curate_worker_loop` — launched from `den::run()` via `RUN_WORKERS` (receives `Config` for MemFS)
+- **Still pending:** curate-agent runtime turn (daily review conversation, tool loop, archive indexing)
 
 ### Test coverage
 

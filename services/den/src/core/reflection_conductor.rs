@@ -3,15 +3,17 @@ use sqlx::{PgPool, Row};
 use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
+use std::sync::Arc;
+
 use crate::{
+    config::Config,
     core::{
-        bears::BearAgentRole,
         conversation_events::{
             memory_curate_completed_projection, memory_curate_enqueued_projection,
             memory_curate_failed_projection, memory_curate_started_projection, project_to_conversation,
             ProjectionProvenance, ProjectionSource,
         },
-        memory_proposals::{self, ProposalResolutionParams},
+        memory_curate_executor::{self, MemoryCurateRunOutput},
     },
     errors::CustomError,
 };
@@ -367,6 +369,7 @@ pub async fn mark_memory_curate_failed(
 
 pub async fn run_next_memory_curate_once(
     pool: &PgPool,
+    config: &Config,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, CustomError> {
     let Some(run) = claim_next_memory_curate_run(pool, bear_id).await? else {
@@ -374,26 +377,62 @@ pub async fn run_next_memory_curate_once(
     };
 
     let proposal_ids = proposal_ids_from_summary(&run.input_summary);
-    if let Err(error) = resolve_memory_curate_proposals(pool, run.bear_id, &proposal_ids).await {
-        let failed_run = mark_memory_curate_failed(pool, run.bear_id, run.id, &error.to_string()).await?;
-        return Ok(Some(failed_run));
-    }
+    let output = match execute_memory_curate_run(
+        pool,
+        config,
+        run.bear_id,
+        run.trigger.as_str(),
+        &proposal_ids,
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            let failed_run =
+                mark_memory_curate_failed(pool, run.bear_id, run.id, &error.to_string()).await?;
+            return Ok(Some(failed_run));
+        }
+    };
 
     let completed_run = mark_memory_curate_completed(
         pool,
         run.bear_id,
         run.id,
-        serde_json::json!({
-            "resolved_proposal_ids": proposal_ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
-            "resolution_status": "needs_human_review",
-        }),
+        memory_curate_output_summary(&output),
     )
     .await?;
     Ok(Some(completed_run))
 }
 
+async fn execute_memory_curate_run(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+    trigger: &str,
+    proposal_ids: &[Uuid],
+) -> Result<MemoryCurateRunOutput, CustomError> {
+    memory_curate_executor::execute_memory_curate_proposals(
+        pool,
+        config,
+        bear_id,
+        Some(trigger),
+        proposal_ids,
+    )
+    .await
+}
+
+fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::Value {
+    serde_json::json!({
+        "resolved_proposal_ids": output.resolved_proposal_ids,
+        "resolution_status": output.resolution_status,
+        "status_counts": output.status_counts,
+        "outcomes": output.outcomes,
+    })
+}
+
 pub async fn run_memory_curate_worker_loop(
     pool: PgPool,
+    config: Arc<Config>,
     worker_token: tokio_util::sync::CancellationToken,
     poll_interval: std::time::Duration,
 ) -> Result<(), CustomError> {
@@ -410,7 +449,7 @@ pub async fn run_memory_curate_worker_loop(
             if worker_token.is_cancelled() {
                 break;
             }
-            if let Some(run) = run_next_memory_curate_once(&pool, bear_id).await? {
+            if let Some(run) = run_next_memory_curate_once(&pool, config.as_ref(), bear_id).await? {
                 tracing::info!(
                     bear_id = %bear_id,
                     reflection_run_id = %run.id,
@@ -436,38 +475,6 @@ async fn list_bears_with_queued_memory_curate_runs(pool: &PgPool) -> Result<Vec<
     .fetch_all(pool)
     .await?;
     Ok(rows)
-}
-
-async fn resolve_memory_curate_proposals(
-    pool: &PgPool,
-    bear_id: Uuid,
-    proposal_ids: &[Uuid],
-) -> Result<(), CustomError> {
-    for proposal_id in proposal_ids {
-        let Some(proposal) = memory_proposals::get_for_bear(pool, bear_id, *proposal_id).await? else {
-            continue;
-        };
-        if proposal.status != "pending" {
-            continue;
-        }
-        memory_proposals::resolve_for_bear(
-            pool,
-            ProposalResolutionParams {
-                bear_id,
-                proposal_id: *proposal_id,
-                reviewer_role: BearAgentRole::Curate,
-                reviewer_agent_id: Some("memory_curate_runner"),
-                status: "needs_human_review",
-                review_notes: Some("Queued memory_curate runner escalated this proposal for curate/human review."),
-                decision_summary: Some("Minimal memory_curate runner reviewed the queued proposal and marked it for human follow-up."),
-                result_path: None,
-                result_commit: None,
-                project_to_conversation: true,
-            },
-        )
-        .await?;
-    }
-    Ok(())
 }
 
 fn proposal_ids_from_summary(summary: &serde_json::Value) -> Vec<Uuid> {
@@ -504,6 +511,10 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionRunRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        config::Config,
+        core::{bears::BearAgentRole, memory_proposals},
+    };
     use sqlx::postgres::PgPoolOptions;
 
     async fn test_pool() -> Option<PgPool> {
@@ -609,7 +620,7 @@ mod tests {
                 conversation_id: Some("conv-memory-curate-worker-test"),
                 conversation_key: Some("memory_curate:test-worker"),
                 conversation_date: None,
-                trigger: "test",
+                trigger: "pair_reflection",
                 proposal_ids: vec![proposal.id],
             },
         )
@@ -619,8 +630,15 @@ mod tests {
         let token = tokio_util::sync::CancellationToken::new();
         let worker_pool = pool.clone();
         let worker_token = token.clone();
+        let config = Arc::new(Config::load());
         let handle = tokio::spawn(async move {
-            run_memory_curate_worker_loop(worker_pool, worker_token, std::time::Duration::from_millis(25)).await
+            run_memory_curate_worker_loop(
+                worker_pool,
+                config,
+                worker_token,
+                std::time::Duration::from_millis(25),
+            )
+            .await
         });
 
         let mut saw_completed = false;
@@ -650,11 +668,11 @@ mod tests {
             .await
             .expect("reload proposal")
             .expect("proposal exists");
-        assert_eq!(updated_proposal.status, "needs_human_review");
+        assert_eq!(updated_proposal.status, "retained_local");
     }
 
     #[tokio::test]
-    async fn memory_curate_runner_completes_run_and_marks_pending_proposals_for_human_review() {
+    async fn memory_curate_runner_completes_run_and_retains_pair_reflection_proposals_locally() {
         let Some(pool) = test_pool().await else {
             return;
         };
@@ -691,14 +709,15 @@ mod tests {
                 conversation_id: Some("conv-memory-curate-test"),
                 conversation_key: Some("memory_curate:test-runner"),
                 conversation_date: None,
-                trigger: "test",
+                trigger: "pair_reflection",
                 proposal_ids: vec![proposal.id],
             },
         )
         .await
         .expect("enqueue run");
 
-        let completed_run = run_next_memory_curate_once(&pool, bear_id)
+        let config = Config::load();
+        let completed_run = run_next_memory_curate_once(&pool, &config, bear_id)
             .await
             .expect("run queued memory_curate")
             .expect("queued run processed");
@@ -708,7 +727,7 @@ mod tests {
         assert!(completed_run.completed_at.is_some());
         assert_eq!(
             completed_run.output_summary["resolution_status"],
-            serde_json::json!("needs_human_review")
+            serde_json::json!("retained_local")
         );
         assert_eq!(
             completed_run.output_summary["resolved_proposal_ids"],
@@ -719,11 +738,11 @@ mod tests {
             .await
             .expect("reload proposal")
             .expect("proposal exists");
-        assert_eq!(updated_proposal.status, "needs_human_review");
+        assert_eq!(updated_proposal.status, "retained_local");
         assert_eq!(updated_proposal.reviewer_role.as_deref(), Some("curate"));
         assert_eq!(
             updated_proposal.reviewer_agent_id.as_deref(),
-            Some("memory_curate_runner")
+            Some(memory_curate_executor::MEMORY_CURATE_RUNNER_AGENT_ID)
         );
 
         let queued = list_queued_memory_curate_runs(&pool, bear_id, 10)

@@ -8,7 +8,7 @@ The goal is to replace Letta as the active execution/control substrate with a De
 
 **Active epic:** Phase 6 follow-on — Curate execution substrate and `review`/`watch` migration prep.
 
-**Recently completed:** [Epic A2 — Complete the ACP runtime contract boundary](#epic-a2--complete-the-acp-runtime-contract-boundary) (see [status doc](./LETTA_MIGRATION_STATUS.md)).
+**Recently completed:** [Epic A2 — Complete the ACP runtime contract boundary](#epic-a2--complete-the-acp-runtime-contract-boundary); Phase 6 initial Curate execution substrate (`memory_curate_executor`) — see [status doc](./LETTA_MIGRATION_STATUS.md).
 
 **Not active:** Further persistence micro-extractions; backfill/rollout controls; `chat`/`work` harness work.
 

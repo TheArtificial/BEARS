@@ -240,10 +240,12 @@ pub async fn run() -> Result<(), StartupError> {
     if let Some(token) = worker_token_opt.clone() {
         let t = token.clone();
         let worker_pool = sqlx_pool.clone();
+        let worker_config = config.clone();
         task_set.spawn(async move {
             tracing::info!("Workers: memory_curate runner loop enabled");
             crate::core::reflection_conductor::run_memory_curate_worker_loop(
                 worker_pool,
+                worker_config,
                 t,
                 std::time::Duration::from_secs(5),
             )
