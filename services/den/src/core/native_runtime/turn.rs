@@ -8,8 +8,8 @@ use crate::{
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_messages_for_bear, run_agent_step_stream,
-            AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext, SessionTrackingStream,
-            StrategyProfile,
+            record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
+            SessionTrackingStream, StrategyProfile,
         },
         bears::BearAgentRole,
         llm::{ChatMessage, LlmClient},
@@ -74,8 +74,10 @@ fn wrap_session_stream(
     session: &AgentLoopSession,
     state: &ApiState,
     bear_id: Uuid,
+    user_id: Option<i32>,
     conversation_id: &str,
     acp_session_id: &str,
+    request_id: Option<String>,
 ) -> RuntimeEventStream {
     Box::pin(SessionTrackingStream::new(
         stream,
@@ -83,8 +85,10 @@ fn wrap_session_stream(
         SESSION_STORE.clone(),
         state.sqlx_pool.clone(),
         bear_id,
+        user_id,
         conversation_id.to_string(),
         acp_session_id.to_string(),
+        request_id,
     ))
 }
 
@@ -96,6 +100,11 @@ async fn build_session(
     acp_session_id: &str,
     human_message: Option<&str>,
     runtime_context: Option<&str>,
+    session_id: Option<&str>,
+    workspace_roots: Option<&[String]>,
+    user_id: Option<i32>,
+    client_context: Option<&serde_json::Value>,
+    include_prompt_memory: bool,
     client_tools: Option<&serde_json::Value>,
     stream_tokens: bool,
     max_steps: u32,
@@ -114,6 +123,11 @@ async fn build_session(
             turn_runtime_context: runtime_context,
             human_message,
             tool_messages: &tool_messages,
+            session_id,
+            workspace_roots,
+            user_id,
+            client_context,
+            include_prompt_memory,
         },
         &bear,
     )
@@ -152,6 +166,10 @@ pub async fn start_native_acp_turn_event_stream(
     let acp_session_id = request.session_id;
     let role = BearAgentRole::Pair;
     let max_steps = 8;
+    let workspace_roots = request
+        .cwd
+        .map(|cwd| vec![cwd.to_string()]);
+    let include_prompt_memory = request.runtime_context.is_none();
     let session = build_session(
         request.state,
         request.bear_id,
@@ -160,6 +178,11 @@ pub async fn start_native_acp_turn_event_stream(
         acp_session_id,
         Some(request.prompt),
         request.runtime_context,
+        Some(acp_session_id),
+        workspace_roots.as_deref(),
+        Some(request.user_id),
+        None,
+        include_prompt_memory,
         request.client_tools.as_ref(),
         request.stream_tokens,
         max_steps,
@@ -173,8 +196,10 @@ pub async fn start_native_acp_turn_event_stream(
         &session,
         request.state,
         request.bear_id,
+        Some(request.user_id),
         &conversation_id,
         acp_session_id,
+        Some(request.request_id.to_string()),
     );
     let _ = StartTurnRequest {
         conversation: RuntimeConversationRef {
@@ -219,11 +244,21 @@ pub async fn continue_native_acp_turn_event_stream(
             decision,
             reason,
         } => {
-            let content = reason.clone().unwrap_or_else(|| match decision {
-                crate::core::runtime_contracts::RuntimeApprovalDecision::Approve => {
+            let approve = matches!(
+                decision,
+                crate::core::runtime_contracts::RuntimeApprovalDecision::Approve
+            );
+            record_approval_decision(
+                &request.state.sqlx_pool,
+                approval_request_id,
+                approve,
+                reason.as_deref(),
+            )
+            .await?;
+            let content = reason.clone().unwrap_or_else(|| {
+                if approve {
                     "approved".to_string()
-                }
-                crate::core::runtime_contracts::RuntimeApprovalDecision::Deny => {
+                } else {
                     "denied".to_string()
                 }
             });
@@ -234,7 +269,6 @@ pub async fn continue_native_acp_turn_event_stream(
                 name: None,
                 tool_calls: None,
             });
-            let _ = approval_request_id;
         }
     }
     SESSION_STORE.update(&session_key, |session| {
@@ -255,8 +289,10 @@ pub async fn continue_native_acp_turn_event_stream(
         &session,
         request.state,
         session.bear_id,
+        None,
         &conversation_id,
         acp_session_id,
+        Some(request.request_id.to_string()),
     );
     let _ = ContinueTurnRequest {
         conversation: request.conversation,

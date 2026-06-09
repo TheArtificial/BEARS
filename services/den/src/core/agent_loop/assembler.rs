@@ -9,7 +9,12 @@ use crate::{
     errors::CustomError,
 };
 
-use super::context::load_transcript_messages;
+use super::{
+    context::load_transcript_messages,
+    runtime_context::{
+        assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -20,6 +25,22 @@ pub struct AssembleTurnContext<'a> {
     pub turn_runtime_context: Option<&'a str>,
     pub human_message: Option<&'a str>,
     pub tool_messages: &'a [ChatMessage],
+    pub session_id: Option<&'a str>,
+    pub workspace_roots: Option<&'a [String]>,
+    pub user_id: Option<i32>,
+    pub client_context: Option<&'a serde_json::Value>,
+    pub include_prompt_memory: bool,
+}
+
+impl<'a> AssembleTurnContext<'a> {
+    pub fn should_load_den_owned_runtime_context(&self) -> bool {
+        self.include_prompt_memory
+            && self.session_id.is_some()
+            && !self
+                .turn_runtime_context
+                .map(runtime_context_already_includes_den_owned_blocks)
+                .unwrap_or(false)
+    }
 }
 
 pub async fn assemble_native_turn_messages(
@@ -44,6 +65,26 @@ pub async fn assemble_native_turn_messages_for_bear(
     {
         system_text.push_str("\n\n");
         system_text.push_str(runtime);
+    } else if ctx.should_load_den_owned_runtime_context() {
+        let session_id = ctx.session_id.expect("session_id checked above");
+        let roots = ctx
+            .workspace_roots
+            .map(|items| items.to_vec())
+            .unwrap_or_default();
+        let client_context = ctx.client_context.cloned().unwrap_or_default();
+        let supplement = assemble_den_owned_runtime_supplement(
+            ctx.pool,
+            ctx.bear_id,
+            ctx.role.as_str(),
+            session_id,
+            &roots,
+            &client_context,
+        )
+        .await?;
+        if !supplement.trim().is_empty() {
+            system_text.push_str("\n\n");
+            system_text.push_str(&supplement);
+        }
     }
     let mut messages = vec![ChatMessage {
         role: "system".to_string(),

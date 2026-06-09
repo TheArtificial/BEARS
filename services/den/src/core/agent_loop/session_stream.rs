@@ -18,6 +18,7 @@ use crate::{
 };
 
 use super::session_store::AgentLoopSession;
+use super::transcript::spawn_persist_native_agent_step;
 
 type ApprovalPauseFuture =
     Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
@@ -30,8 +31,10 @@ pub struct SessionTrackingStream {
     tool_calls: HashMap<String, (String, String)>,
     pool: sqlx::PgPool,
     bear_id: uuid::Uuid,
+    user_id: Option<i32>,
     conversation_id: String,
     acp_session_id: String,
+    request_id: Option<String>,
     finished: bool,
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
@@ -44,8 +47,10 @@ impl SessionTrackingStream {
         store: AgentLoopSessionStore,
         pool: sqlx::PgPool,
         bear_id: uuid::Uuid,
+        user_id: Option<i32>,
         conversation_id: String,
         acp_session_id: String,
+        request_id: Option<String>,
     ) -> Self {
         Self {
             inner,
@@ -55,8 +60,10 @@ impl SessionTrackingStream {
             tool_calls: HashMap::new(),
             pool,
             bear_id,
+            user_id,
             conversation_id,
             acp_session_id,
+            request_id,
             finished: false,
             pending_approval: None,
             pending_tool_event: None,
@@ -64,9 +71,6 @@ impl SessionTrackingStream {
     }
 
     fn persist_assistant_tool_step(&self) {
-        if self.tool_calls.is_empty() {
-            return;
-        }
         let calls: Vec<ChatToolCall> = self
             .tool_calls
             .iter()
@@ -79,6 +83,19 @@ impl SessionTrackingStream {
                 },
             })
             .collect();
+        spawn_persist_native_agent_step(
+            self.pool.clone(),
+            self.bear_id,
+            self.user_id,
+            self.conversation_id.clone(),
+            self.acp_session_id.clone(),
+            self.request_id.clone(),
+            self.assistant_text.clone(),
+            &calls,
+        );
+        if self.tool_calls.is_empty() {
+            return;
+        }
         let content = if self.assistant_text.is_empty() {
             None
         } else {
@@ -188,7 +205,7 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::TurnCompleted { .. },
             )))) => {
-                if !self.tool_calls.is_empty() {
+                if !self.tool_calls.is_empty() || !self.assistant_text.trim().is_empty() {
                     self.persist_assistant_tool_step();
                 }
                 self.finished = true;

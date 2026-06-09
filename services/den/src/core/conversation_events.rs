@@ -4,9 +4,16 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::conversation_persistence::{
-    append_message, ensure_conversation_for_external_id, list_messages_page,
+use super::{
+    acp_runtime::is_acp_history_target,
+    conversation_persistence::{
+        append_message, ensure_conversation_for_external_id, list_messages_page,
+    },
 };
+
+pub fn canonical_persistence_enabled_for_conversation(external_conversation_id: &str) -> bool {
+    is_acp_history_target(external_conversation_id)
+}
 
 #[derive(Debug, Clone)]
 pub struct ConversationPersistenceContext {
@@ -445,9 +452,7 @@ pub async fn persist_canonical_conversation_record(
     if context.skip_persistence {
         return Ok(());
     }
-    if context.external_conversation_id != "default"
-        && !context.external_conversation_id.starts_with("conv-")
-    {
+    if !canonical_persistence_enabled_for_conversation(&context.external_conversation_id) {
         return Ok(());
     }
     let canonical = ensure_conversation_for_external_id(
@@ -1177,5 +1182,24 @@ pub fn spawn_persist_assistant_summary_message(
             provider_message_id,
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_persistence_enabled_for_den_conv_ids() {
+        assert!(canonical_persistence_enabled_for_conversation("default"));
+        assert!(canonical_persistence_enabled_for_conversation(
+            "conv-abc123"
+        ));
+        assert!(canonical_persistence_enabled_for_conversation(
+            "den-conv-abc123"
+        ));
+        assert!(!canonical_persistence_enabled_for_conversation(
+            "letta-only-id"
+        ));
+    }
 }
 
