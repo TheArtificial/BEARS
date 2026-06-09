@@ -15,10 +15,6 @@ const DEFAULT_APP_SLUG: &str = "bears";
 const DEFAULT_PROD_WEB_ORIGIN: &str = "https://bears.artificial.design";
 const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
-/// Letta HTTP API when `LETTA_BASE_URL` is unset — matches Docker Compose service `bears-letta` (repository root `docker-compose.yaml`).
-pub const DEFAULT_LETTA_BASE_URL: &str = "http://bears-letta:8283";
-/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bears-codepool`.
-pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bears-codepool:3030";
 /// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
 pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 
@@ -58,35 +54,17 @@ pub fn session_cookie_secure_from_env(default: bool) -> bool {
 }
 
 fn letta_base_url_from_env() -> String {
-    let raw = std::env::var("LETTA_BASE_URL").unwrap_or_default();
-    let trimmed = raw.trim_end_matches('/').to_string();
-    if !trimmed.is_empty() {
-        return trimmed;
-    }
-    #[cfg(feature = "production")]
-    {
-        DEFAULT_LETTA_BASE_URL.to_string()
-    }
-    #[cfg(not(feature = "production"))]
-    {
-        String::new()
-    }
+    std::env::var("LETTA_BASE_URL")
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn codepool_base_url_from_env() -> String {
-    let raw = std::env::var("CODEPOOL_BASE_URL").unwrap_or_default();
-    let trimmed = raw.trim_end_matches('/').to_string();
-    if !trimmed.is_empty() {
-        return trimmed;
-    }
-    #[cfg(feature = "production")]
-    {
-        DEFAULT_CODEPOOL_BASE_URL.to_string()
-    }
-    #[cfg(not(feature = "production"))]
-    {
-        String::new()
-    }
+    std::env::var("CODEPOOL_BASE_URL")
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// Explicit fixture profiles for feature-gated web UI smoke testing.
@@ -197,7 +175,7 @@ pub struct Config {
     pub llm_api_key: String,
     /// Default model handle for native runtime turns (`DEFAULT_LLM_MODEL`).
     pub default_llm_model: String,
-    /// Agent turn backend selection (`AGENT_RUNTIME=native|letta`, default `letta`).
+    /// Agent turn backend selection (`AGENT_RUNTIME=native|letta`, default `native`).
     pub agent_runtime_mode: AgentRuntimeMode,
     /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `/var/lib/den/bear-sqlite`).
     pub bear_sqlite_data_dir: String,
@@ -453,7 +431,7 @@ impl Config {
         let default_llm_model =
             std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "openai/gpt-4.1".to_string());
         let agent_runtime_mode = AgentRuntimeMode::parse(
-            &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "letta".to_string()),
+            &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "native".to_string()),
         );
         let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
             .unwrap_or_else(|_| "/var/lib/den/bear-sqlite".to_string());

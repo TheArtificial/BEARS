@@ -81,13 +81,12 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Runtime env (set in Coolify / compose — not baked into the image):
-# When RUN_WEB=true (default for production web):
-#   CODEPOOL_BASE_URL — optional in image; production builds default to http://bears-codepool:3030 when unset.
-#     (Letta Code SDK harness; bear chat streaming does not use the Letta server HTTP API directly).
-#   CODEPOOL_INTERNAL_TOKEN — optional; must match the Codepool container if set.
+#   AGENT_RUNTIME — native (default) or letta (legacy external runtime).
 #   BEAR_SQLITE_DATA_DIR — per-Bear SQLite store for native runtime (default /var/lib/den/bear-sqlite).
 #     Mount a persistent volume at this path in production; entrypoint chowns it for appuser.
-# See ../../services/codepool/COOLIFY_DEPLOY.md and services/den/COOLIFY_DEPLOY.md.
+#   LLM_API_URL — Bifrost OpenAI-compatible gateway (required for native runtime).
+# Legacy letta runtime only: LETTA_BASE_URL, CODEPOOL_BASE_URL, LETTA_MEMFS_SERVICE_URL, LETTA_PG_URI.
+# See services/den/COOLIFY_DEPLOY.md.
 
 EXPOSE 3000
 

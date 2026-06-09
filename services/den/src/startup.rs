@@ -120,13 +120,13 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
     }
     if config.run_web
         && config.codepool_base_url.trim().is_empty()
+        && !config.uses_native_agent_runtime()
         && !allow_standalone_web_from_env()
     {
         return Err(StartupError::Message(
-            "CODEPOOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through \
-             Codepool (Letta Code SDK), not directly to the Letta HTTP API. Set \
-             DEN_ALLOW_STANDALONE_WEB=true only for local UI/dev runs without the rest of the stack. \
-             Example internal URL: http://bears-codepool:3030 — see services/codepool/COOLIFY_DEPLOY.md."
+            "CODEPOOL_BASE_URL must be set when RUN_WEB=true and AGENT_RUNTIME=letta. \
+             Set AGENT_RUNTIME=native for the Den in-process runtime, or \
+             DEN_ALLOW_STANDALONE_WEB=true for local UI-only runs."
                 .into(),
         ));
     }
@@ -138,7 +138,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 /// Checks **Codepool** (`GET /health`) when [`Config::codepool_base_url`] is non-empty,
 /// and **Letta** (`GET /v1/health`) when [`Config::letta_base_url`] is non-empty (same auth as runtime).
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    if !config.codepool_base_url.trim().is_empty() {
+    if !config.uses_native_agent_runtime() && !config.codepool_base_url.trim().is_empty() {
         tracing::info!(
             url = %config.codepool_base_url,
             "Checking Codepool connectivity"
@@ -148,6 +148,8 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
             .await
             .map_err(|e| StartupError::Message(e.to_string()))?;
         tracing::info!("Codepool health check passed");
+    } else if config.uses_native_agent_runtime() {
+        tracing::info!("Skipping Codepool health check (AGENT_RUNTIME=native)");
     }
 
     let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
@@ -251,16 +253,27 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_codepool_when_run_web() {
+    fn validate_requires_codepool_when_run_web_and_letta_runtime() {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
+        web_on.agent_runtime_mode = crate::config::AgentRuntimeMode::Letta;
         web_on.codepool_base_url = String::new();
         assert!(
             validate_runtime_config(&web_on).is_err(),
-            "RUN_WEB=true requires CODEPOOL_BASE_URL"
+            "RUN_WEB=true with letta runtime requires CODEPOOL_BASE_URL"
         );
         web_on.codepool_base_url = "http://localhost:3030".into();
         validate_runtime_config(&web_on).expect("RUN_WEB with Codepool should pass");
+    }
+
+    #[test]
+    fn validate_allows_missing_codepool_when_native_runtime() {
+        let mut web_on = Config::test_stub();
+        web_on.run_web = true;
+        web_on.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
+        web_on.codepool_base_url = String::new();
+        web_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
+        validate_runtime_config(&web_on).expect("native runtime does not require Codepool");
     }
 
     #[test]

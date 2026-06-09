@@ -2,15 +2,15 @@
 
 ## Stack
 
-Three application services run via `docker-compose.yaml`:
+Three application services run via `docker-compose.yaml` (native runtime):
 
-- `bears-memfs-manager` is the Python service on port `8285`.
+- `bears-bifrost` is the LLM gateway on port `8080`.
 - `bears-den` is the Rust service on port `3000`.
-- `bears-codepool` is the TypeScript service on port `3030`.
+- Optional `bears-postgres` (profile `bundled`) for local Den Postgres.
 
 The workspace container has access to the Docker socket and can manage the stack.
 
-Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`. The root devcontainer startup script attaches the workspace container to `bears-stack_default` and exports dev defaults for `DATABASE_URL` and `LETTA_PG_URI`, so Den tests can resolve `bears-postgres` and `bears-letta-postgres` from inside the devcontainer.
+Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`. The root devcontainer startup script attaches the workspace container to `bears-stack_default` and exports dev defaults for `DATABASE_URL` and `LLM_API_URL`, so Den tests can resolve `bears-postgres` and `bears-bifrost` from inside the devcontainer.
 
 ## Scripts
 

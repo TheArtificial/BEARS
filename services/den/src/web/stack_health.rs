@@ -67,14 +67,24 @@ pub struct StackHealthTemplateRow {
     pub detail: String,
 }
 
+fn skipped_check(id: &'static str, label: &'static str, detail: impl Into<String>) -> HealthCheck {
+    HealthCheck {
+        id,
+        label,
+        state: CheckState::Skipped,
+        detail: detail.into(),
+    }
+}
+
 pub async fn gather(state: &AppState) -> StackHealthReport {
     let cfg = state.config.as_ref();
+    let native_runtime = cfg.uses_native_agent_runtime();
 
     let mut checks: Vec<HealthCheck> = Vec::new();
 
     checks.push(jwt_check(cfg));
     checks.push(den_database_url_shape(cfg));
-    if !cfg.letta_pg_uri.is_empty() {
+    if !native_runtime && !cfg.letta_pg_uri.is_empty() {
         checks.push(letta_pg_uri_shape(&cfg.letta_pg_uri));
     }
     if let Some(c) = llm_api_url_shape() {
@@ -83,21 +93,45 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(openai_key_warn());
     checks.push(web_server_url_shape(cfg));
 
-    let (den_pg, letta_pg, codepool_h, letta_h, bifrost_h, memfs_views_h) = tokio::join!(
-        check_den_postgres(state.sqlx_pool()),
-        check_letta_postgres(&cfg.letta_pg_uri),
-        check_codepool(state),
-        check_letta_api(state),
-        check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url),
-        check_memfs_sidecar_views(&cfg.letta_memfs_service_url),
-    );
+    let den_pg = check_den_postgres(state.sqlx_pool()).await;
+    let bifrost_h =
+        check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url).await;
 
     checks.push(den_pg);
-    checks.push(letta_pg);
-    checks.push(codepool_h);
-    checks.push(letta_h);
+    if native_runtime {
+        checks.push(skipped_check(
+            "letta_postgres",
+            "Letta PostgreSQL",
+            "AGENT_RUNTIME=native — LETTA_PG_URI not probed",
+        ));
+        checks.push(skipped_check(
+            "codepool",
+            "Codepool",
+            "AGENT_RUNTIME=native — Codepool not used",
+        ));
+        checks.push(skipped_check(
+            "letta_api",
+            "Letta API",
+            "AGENT_RUNTIME=native — Letta API not used",
+        ));
+        checks.push(skipped_check(
+            "memfs_views",
+            "MemFS role views",
+            "AGENT_RUNTIME=native — MemFS sidecar not used",
+        ));
+    } else {
+        let (letta_pg, codepool_h, letta_h, memfs_views_h) = tokio::join!(
+            check_letta_postgres(&cfg.letta_pg_uri),
+            check_codepool(state),
+            check_letta_api(state),
+            check_memfs_sidecar_views(&cfg.letta_memfs_service_url),
+        );
+        checks.push(letta_pg);
+        checks.push(codepool_h);
+        checks.push(letta_h);
+        checks.push(memfs_views_h);
+    }
     checks.push(bifrost_h);
-    checks.push(memfs_views_h);
 
     StackHealthReport::from_checks(checks)
 }

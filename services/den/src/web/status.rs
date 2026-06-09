@@ -164,27 +164,25 @@ fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
             });
         }
         None => {
-            let err = payload
-                .codepool_error
-                .clone()
-                .unwrap_or_else(|| "CODEPOOL_BASE_URL not set".to_string());
-            out.push(DeployRow {
-                component: "Codepool".to_string(),
-                git_sha: err,
-                semver: "—".to_string(),
-                built_at: "—".to_string(),
-                ghcr_tags: payload
-                    .ghcr_codepool
-                    .as_ref()
-                    .map(|g| g.tags.join(", "))
-                    .unwrap_or_else(|| "—".to_string()),
-                ghcr_updated: payload
-                    .ghcr_codepool
-                    .as_ref()
-                    .map(|g| g.updated_at.clone())
-                    .unwrap_or_else(|| "—".to_string()),
-                in_sync: "—".to_string(),
-            });
+            if let Some(err) = &payload.codepool_error {
+                out.push(DeployRow {
+                    component: "Codepool".to_string(),
+                    git_sha: err.clone(),
+                    semver: "—".to_string(),
+                    built_at: "—".to_string(),
+                    ghcr_tags: payload
+                        .ghcr_codepool
+                        .as_ref()
+                        .map(|g| g.tags.join(", "))
+                        .unwrap_or_else(|| "—".to_string()),
+                    ghcr_updated: payload
+                        .ghcr_codepool
+                        .as_ref()
+                        .map(|g| g.updated_at.clone())
+                        .unwrap_or_else(|| "—".to_string()),
+                    in_sync: "—".to_string(),
+                });
+            }
         }
     }
     out
@@ -228,8 +226,11 @@ pub async fn json_endpoint(State(state): State<AppState>) -> impl IntoResponse {
 async fn gather_status(state: &AppState) -> StatusPayload {
     let health = stack_health::gather(state).await;
     let den_version = build_info::snapshot();
+    let native_runtime = state.config.uses_native_agent_runtime();
 
-    let (codepool_version, codepool_error) = if state.codepool.is_enabled() {
+    let (codepool_version, codepool_error) = if native_runtime {
+        (None, None)
+    } else if state.codepool.is_enabled() {
         match state.codepool.fetch_version_json().await {
             Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
                 Ok(v) => (Some(v), None),
@@ -265,7 +266,11 @@ async fn gather_status(state: &AppState) -> StatusPayload {
                 let owner = cfg.ghcr_packages_owner.trim();
                 let kind = cfg.ghcr_packages_owner_kind.as_str();
                 let (d, err_d) = fetch_ghcr_package(&client, token, kind, owner, "den").await;
-                let (c, err_c) = fetch_ghcr_package(&client, token, kind, owner, "codepool").await;
+                let (c, err_c) = if native_runtime {
+                    (None, None)
+                } else {
+                    fetch_ghcr_package(&client, token, kind, owner, "codepool").await
+                };
                 let mut notes = Vec::new();
                 if let Some(e) = err_d {
                     notes.push(format!("den GHCR: {e}"));
