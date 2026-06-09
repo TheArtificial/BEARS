@@ -106,6 +106,19 @@ pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
     }
 }
 
+/// Native semantic events are projected twice today: seed JSON → Letta-compat mapper and
+/// Bearwire direct projection. Extending both for the same discriminant duplicates streamed
+/// assistant tokens (`I'mI'm your your…`).
+fn seed_mapped_event_covered_by_direct_projection(
+    seed_mapped: &AcpGatewayEvent,
+    direct: &[AcpGatewayEvent],
+) -> bool {
+    let seed_kind = std::mem::discriminant(seed_mapped);
+    direct
+        .iter()
+        .any(|direct_event| std::mem::discriminant(direct_event) == seed_kind)
+}
+
 pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
     runtime_event: RuntimeStreamEvent,
     context: AcpStreamContext,
@@ -177,7 +190,9 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
         } else {
             vec![event]
         };
-        if !direct_projected_events.is_empty() {
+        if !direct_projected_events.is_empty()
+            && !seed_mapped_event_covered_by_direct_projection(&events[0], &direct_projected_events)
+        {
             events.extend(direct_projected_events);
         }
         for run_id in observed_run_ids {
@@ -186,6 +201,8 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             }
         }
         Ok((events, tool_request_effect, adapter_result_rx))
+    } else if !direct_projected_events.is_empty() {
+        Ok((direct_projected_events, None, None))
     } else {
         diagnostics.observe_unmapped_event(&value);
         Ok((Vec::new(), None, None))
