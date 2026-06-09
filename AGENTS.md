@@ -70,6 +70,25 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
 - `curate` owns cross-role memory governance and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
 
+## Worktree safety (mandatory)
+
+Mass file deletions have recurred when agent sessions repair a broken tree incorrectly.
+
+**Never do this when files are missing on disk:**
+- `git checkout <commit> -- <some/paths>` — partial restore leaves ~150+ tracked files deleted
+- `git checkout HEAD -- <a/few/paths>` — same problem
+- `git add -A` / `git commit` while `git status` shows many ` D` entries
+- Bulk "remove deprecated Letta/native files" commits without an explicit user file list
+
+**Always do this instead:**
+- If `git status` shows more than a handful of ` D` (deleted) entries: run **`git checkout -- .`** or **`git restore .`** first — full restore only
+- Stage only the files you intentionally changed; never `git add -A` after a mass-deletion glitch
+- Run `./scripts/guard-worktree.sh` at session start if unsure
+
+Repo guards (keep enabled):
+- `.cursor/hooks.json` — blocks partial `git checkout` when deletions are already present; auto-restores on session start
+- `scripts/git-hooks/pre-commit` — rejects commits deleting more than 10 files (install: `./scripts/install-git-hooks.sh`)
+
 ## Notes
 
 - Do not run `docker compose down`; restart individual services instead.

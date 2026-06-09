@@ -212,6 +212,10 @@ if [ -x /workspace/scripts/ensure-dev-env.sh ]; then
   /workspace/scripts/ensure-dev-env.sh
 fi
 
+if [ -x /workspace/scripts/install-git-hooks.sh ]; then
+  /workspace/scripts/install-git-hooks.sh
+fi
+
 if [ -f /workspace/scripts/load-env.sh ]; then
   cat >/etc/profile.d/bears-workspace-env.sh <<'EOF'
 # Load /workspace/.env for interactive shells in the devcontainer.

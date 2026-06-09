@@ -3,6 +3,13 @@ set -u -o pipefail
 
 ROOT="/workspace"
 LOG_DIR="${ROOT}/.devcontainer/logs"
+
+if [ -x "${ROOT}/scripts/guard-worktree.sh" ]; then
+  "${ROOT}/scripts/guard-worktree.sh" "${ROOT}" || true
+fi
+if [ -x "${ROOT}/scripts/install-git-hooks.sh" ]; then
+  "${ROOT}/scripts/install-git-hooks.sh" || true
+fi
 LOG_FILE="${LOG_DIR}/startup.log"
 STATUS_FILE="${LOG_DIR}/startup.status"
 

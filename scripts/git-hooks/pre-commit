@@ -1,0 +1,26 @@
+#!/bin/bash
+# Block accidental mass-deletion commits from agent sessions.
+set -euo pipefail
+
+MAX_DELETES="${MAX_COMMIT_DELETES:-10}"
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  exit 0
+fi
+
+staged_deletes="$(
+  git diff --cached --name-status 2>/dev/null | awk '/^D/ { c++ } END { print c + 0 }'
+)"
+
+if [ "${staged_deletes}" -le "${MAX_DELETES}" ]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+pre-commit: refusing commit with ${staged_deletes} staged file deletions (limit ${MAX_DELETES}).
+
+This usually means an agent tried to "remove deprecated" files in bulk.
+Review with: git diff --cached --name-status | awk '/^D/'
+To override once: MAX_COMMIT_DELETES=${staged_deletes} git commit ...
+EOF
+exit 1
