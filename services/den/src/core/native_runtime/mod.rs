@@ -1,6 +1,8 @@
 //! Den-native in-process turn runtime ([ADR-0035](../../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
 
 mod openai_stream;
+#[cfg(test)]
+mod openai_stream_tests;
 mod profile;
 mod tools;
 mod turn;

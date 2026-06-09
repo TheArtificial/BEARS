@@ -11,7 +11,7 @@ pub use client::{
 };
 pub use stream::{
     openai_sse_chunk_to_runtime_events, openai_sse_event_body_to_runtime_events,
-    OpenAiStreamAccumulator, OpenAiStreamParseResult,
+    openai_sse_frame_to_runtime_events, OpenAiStreamAccumulator, OpenAiStreamParseResult,
 };
 
 #[cfg(test)]

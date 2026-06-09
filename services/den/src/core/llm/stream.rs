@@ -1,8 +1,7 @@
 use serde_json::Value;
 
-use crate::core::{
-    letta_runtime_stream_parser::parse_sse_event_body_to_json,
-    runtime_contracts::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent},
+use crate::core::runtime_contracts::{
+    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 
 /// Accumulates OpenAI streaming tool-call argument fragments keyed by tool-call index.
@@ -202,12 +201,42 @@ pub fn openai_sse_chunk_to_runtime_events(chunk_body: &[u8]) -> Result<Vec<Runti
 pub fn openai_sse_event_body_to_runtime_events(
     body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, crate::errors::CustomError> {
-    let Some(json) = parse_sse_event_body_to_json(body)? else {
-        return Ok(Vec::new());
-    };
     let mut accumulator = OpenAiStreamAccumulator::default();
-    let parsed = accumulator.ingest_sse_data_line(&json);
-    Ok(parsed.events)
+    openai_sse_frame_to_runtime_events(&mut accumulator, body)
+}
+
+/// Parse one SSE frame into runtime events, preserving tool-call state across frames.
+pub fn openai_sse_frame_to_runtime_events(
+    accumulator: &mut OpenAiStreamAccumulator,
+    body: &[u8],
+) -> Result<Vec<RuntimeStreamEvent>, crate::errors::CustomError> {
+    let text = std::str::from_utf8(body).map_err(|_| {
+        crate::errors::CustomError::System("invalid UTF-8 in LLM SSE frame".to_string())
+    })?;
+    let mut events = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = rest.strip_prefix(' ').unwrap_or(rest).trim();
+        if data.is_empty() {
+            continue;
+        }
+        if data == "[DONE]" {
+            events.extend(accumulator.flush_end_of_stream());
+            continue;
+        }
+        let json = serde_json::from_str::<Value>(data).map_err(|e| {
+            crate::errors::CustomError::System(format!("invalid LLM SSE JSON: {e}"))
+        })?;
+        let parsed = accumulator.ingest_sse_data_line(&json);
+        events.extend(parsed.events);
+    }
+    Ok(events)
 }
 
 fn tool_call_index_key(value: &Value) -> String {
