@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         conversation_events::{
             memory_proposal_resolved_projection, memory_review_requested_projection,
             project_to_conversation, ProjectionProvenance, ProjectionSource,
@@ -95,10 +95,10 @@ pub(crate) async fn apply_core_update(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Curate {
+    if role != BearProfile::Curate {
         return Err(CustomError::Authorization(
             "den.memory.apply_core_update is available only to curate".to_string(),
         ));
@@ -137,7 +137,7 @@ pub(crate) async fn apply_core_update(
                 bear_id: context.bear_id,
                 proposal_id: proposal.id,
                 reviewer_role: role,
-                reviewer_agent_id: Some(context.role_agent_id.as_str()),
+                reviewer_agent_id: Some(context.binding_id.as_str()),
                 status: "approved",
                 review_notes: args.review_notes.as_deref(),
                 decision_summary: Some("Applied reviewed memory proposal to core (SQLite)."),
@@ -219,7 +219,7 @@ pub(crate) async fn apply_core_update(
             bear_id: context.bear_id,
             proposal_id: proposal.id,
             reviewer_role: role,
-            reviewer_agent_id: Some(context.role_agent_id.as_str()),
+            reviewer_agent_id: Some(context.binding_id.as_str()),
             status: "approved",
             review_notes: args.review_notes.as_deref(),
             decision_summary: Some("Applied reviewed memory proposal to core."),
@@ -263,10 +263,10 @@ pub(crate) async fn list_memory_proposals(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Curate {
+    if role != BearProfile::Curate {
         return Err(CustomError::Authorization(
             "den.memory.list_proposals is available only to curate".to_string(),
         ));
@@ -284,10 +284,10 @@ pub(crate) async fn read_memory_proposal(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Curate {
+    if role != BearProfile::Curate {
         return Err(CustomError::Authorization(
             "den.memory.read_proposal is available only to curate".to_string(),
         ));
@@ -304,10 +304,10 @@ pub(crate) async fn resolve_memory_proposal(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Curate {
+    if role != BearProfile::Curate {
         return Err(CustomError::Authorization(
             "den.memory.resolve_proposal is available only to curate".to_string(),
         ));
@@ -331,7 +331,7 @@ pub(crate) async fn resolve_memory_proposal(
             bear_id: context.bear_id,
             proposal_id: args.proposal_id,
             reviewer_role: role,
-            reviewer_agent_id: Some(context.role_agent_id.as_str()),
+            reviewer_agent_id: Some(context.binding_id.as_str()),
             status,
             review_notes: args.review_notes.as_deref(),
             decision_summary: args.decision_summary.as_deref(),
@@ -371,10 +371,10 @@ pub(crate) async fn request_memory_review(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if !matches!(role, BearAgentRole::Pair) {
+    if !matches!(role, BearProfile::Pair) {
         return Err(CustomError::Authorization(
             "den.memory.request_review is currently available only to pair".to_string(),
         ));
@@ -427,7 +427,7 @@ pub(crate) async fn request_memory_review(
         CreateMemoryProposal {
             bear_id: context.bear_id,
             source_role: role,
-            source_agent_id: clean_optional(&context.role_agent_id),
+            source_agent_id: clean_optional(&context.binding_id),
             source_paths,
             source_refs: serde_json::json!({
                 "conversation_id": clean_optional(&context.conversation_id),

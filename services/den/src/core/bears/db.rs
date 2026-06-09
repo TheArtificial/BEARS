@@ -6,7 +6,8 @@ use uuid::Uuid;
 use crate::errors::CustomError;
 
 use super::model::{
-    Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+    Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
+    BearWithMembership,
 };
 
 pub struct BearParams<'a> {
@@ -111,12 +112,12 @@ pub async fn update_bear(
     Ok(())
 }
 
-/// Creates a logical Bear row. Legacy Letta compatibility ids currently live in `bear_agents`.
+/// Creates a logical Bear row. Profile runtime bindings live in `bear_profile_bindings`.
 pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, CustomError> {
     create_bear_with_context_profile(pool, params).await
 }
 
-/// Creates a logical Bear row with optional role-aware context composition profile.
+/// Creates a logical Bear row with optional profile-aware context composition profile.
 pub async fn create_bear_with_context_profile(
     pool: &PgPool,
     params: BearParams<'_>,
@@ -384,12 +385,12 @@ pub async fn user_may_use_bear(
     Ok(n.0 > 0)
 }
 
-/// Non-empty `letta_agent_id` values already assigned to some bear or bear role (for orphan-agent UI).
+/// Non-empty legacy `letta_agent_id` values assigned to profile bindings (orphan-agent UI).
 pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, CustomError> {
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT letta_agent_id
-        FROM bear_agents
+        FROM bear_profile_bindings
         WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
         "#,
     )
@@ -398,31 +399,39 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-pub async fn ensure_bear_agent_rows(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
-    for role in BearAgentRole::ALL {
+pub async fn ensure_bear_profile_binding_rows(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    for profile in BearProfile::ALL {
         sqlx::query(
             r#"
-            INSERT INTO bear_agents (bear_id, role)
-            VALUES ($1, $2)
-            ON CONFLICT (bear_id, role) DO NOTHING
+            INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (bear_id, profile) DO NOTHING
             "#,
         )
         .bind(bear_id)
-        .bind(role.as_str())
+        .bind(profile.as_str())
+        .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
         .execute(pool)
         .await?;
     }
     Ok(())
 }
 
-pub async fn list_bear_agents(pool: &PgPool, bear_id: Uuid) -> Result<Vec<BearAgent>, CustomError> {
-    sqlx::query_as::<_, BearAgent>(
+pub async fn list_bear_profile_bindings(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearProfileBinding>, CustomError> {
+    sqlx::query_as::<_, BearProfileBinding>(
         r#"
-        SELECT bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
-               last_synced_at, last_provisioning_error, config_hash, created_at, updated_at
-        FROM bear_agents
+        SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+               last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
+               created_at, updated_at
+        FROM bear_profile_bindings
         WHERE bear_id = $1
-        ORDER BY CASE role
+        ORDER BY CASE profile
             WHEN 'chat' THEN 1
             WHEN 'pair' THEN 2
             WHEN 'curate' THEN 3
@@ -438,94 +447,109 @@ pub async fn list_bear_agents(pool: &PgPool, bear_id: Uuid) -> Result<Vec<BearAg
     .map_err(Into::into)
 }
 
-pub async fn get_bear_agent(
+pub async fn get_bear_profile_binding(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
-) -> Result<Option<BearAgent>, CustomError> {
-    sqlx::query_as::<_, BearAgent>(
+    profile: BearProfile,
+) -> Result<Option<BearProfileBinding>, CustomError> {
+    sqlx::query_as::<_, BearProfileBinding>(
         r#"
-        SELECT bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
-               last_synced_at, last_provisioning_error, config_hash, created_at, updated_at
-        FROM bear_agents
-        WHERE bear_id = $1 AND role = $2
+        SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+               last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
+               created_at, updated_at
+        FROM bear_profile_bindings
+        WHERE bear_id = $1 AND profile = $2
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
 }
 
-/// Returns the currently recorded Letta runtime binding for a Bear role.
-pub async fn role_runtime_binding_id(
+/// Returns the canonical Den-owned runtime binding id for a Bear profile.
+pub async fn profile_binding_id(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
 ) -> Result<Option<String>, CustomError> {
-    role_agent_id(pool, bear_id, role).await
+    let row: Option<(String,)> = sqlx::query_as(
+        r#"
+        SELECT binding_id
+        FROM bear_profile_bindings
+        WHERE bear_id = $1 AND profile = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(profile.as_str())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
 }
 
-/// Backward-compatible alias while call sites migrate to runtime/binding terminology.
-pub async fn role_agent_id(
+/// Legacy Letta agent id for a profile binding, when provisioned via Letta.
+pub async fn profile_letta_agent_id(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
 ) -> Result<Option<String>, CustomError> {
     let row: Option<(Option<String>,)> = sqlx::query_as(
         r#"
         SELECT letta_agent_id
-        FROM bear_agents
-        WHERE bear_id = $1 AND role = $2
+        FROM bear_profile_bindings
+        WHERE bear_id = $1 AND profile = $2
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|r| r.0))
 }
 
-pub async fn mark_bear_agent_provisioning(
+pub async fn mark_bear_profile_binding_provisioning(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, provisioning_status, updated_at)
-        VALUES ($1, $2, 'provisioning', NOW())
-        ON CONFLICT (bear_id, role)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, updated_at)
+        VALUES ($1, $2, $3, 'provisioning', NOW())
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET provisioning_status = 'provisioning',
                       last_provisioning_error = NULL,
                       updated_at = NOW()
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
+    .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
     .execute(pool)
     .await?;
     Ok(())
 }
 
-pub async fn mark_bear_agent_ready(
+pub async fn mark_bear_profile_binding_ready(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
-    agent_id: &str,
+    profile: BearProfile,
+    binding_id: &str,
+    letta_agent_id: Option<&str>,
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (
-            bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
-            last_synced_at, last_provisioning_error, config_hash, updated_at
+        INSERT INTO bear_profile_bindings (
+            bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+            last_provisioned_version, last_synced_at, last_provisioning_error, config_hash, updated_at
         )
-        VALUES ($1, $2, $3, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())
-        ON CONFLICT (bear_id, role)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+        VALUES ($1, $2, $3, $4, 'ready', $5, NOW(), NULL, $6::jsonb, NOW())
+        ON CONFLICT (bear_id, profile)
+        DO UPDATE SET binding_id = EXCLUDED.binding_id,
+                      letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_provisioned_version = EXCLUDED.last_provisioned_version,
                       last_synced_at = NOW(),
@@ -535,8 +559,9 @@ pub async fn mark_bear_agent_ready(
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
-    .bind(agent_id)
+    .bind(profile.as_str())
+    .bind(binding_id)
+    .bind(letta_agent_id)
     .bind(version)
     .bind(config_hash)
     .execute(pool)
@@ -544,27 +569,27 @@ pub async fn mark_bear_agent_ready(
     Ok(())
 }
 
-pub async fn mark_bear_agent_synced(
+pub async fn mark_bear_profile_binding_synced(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
-        UPDATE bear_agents
+        UPDATE bear_profile_bindings
         SET provisioning_status = 'ready',
             last_provisioned_version = $3,
             last_synced_at = NOW(),
             last_provisioning_error = NULL,
             config_hash = $4::jsonb,
             updated_at = NOW()
-        WHERE bear_id = $1 AND role = $2
+        WHERE bear_id = $1 AND profile = $2
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
     .bind(version)
     .bind(config_hash)
     .execute(pool)
@@ -572,47 +597,50 @@ pub async fn mark_bear_agent_synced(
     Ok(())
 }
 
-pub async fn mark_bear_agent_drifted(
+pub async fn mark_bear_profile_binding_drifted(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
     message: &str,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
-        UPDATE bear_agents
+        UPDATE bear_profile_bindings
         SET provisioning_status = 'drifted',
             last_provisioning_error = $3,
             updated_at = NOW()
-        WHERE bear_id = $1 AND role = $2
+        WHERE bear_id = $1 AND profile = $2
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
     .bind(message)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-pub async fn mark_bear_agent_failed(
+pub async fn mark_bear_profile_binding_failed(
     pool: &PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    profile: BearProfile,
     message: &str,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, provisioning_status, last_provisioning_error, updated_at)
-        VALUES ($1, $2, 'failed', $3, NOW())
-        ON CONFLICT (bear_id, role)
+        INSERT INTO bear_profile_bindings (
+            bear_id, profile, binding_id, provisioning_status, last_provisioning_error, updated_at
+        )
+        VALUES ($1, $2, $3, 'failed', $4, NOW())
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET provisioning_status = 'failed',
                       last_provisioning_error = EXCLUDED.last_provisioning_error,
                       updated_at = NOW()
         "#,
     )
     .bind(bear_id)
-    .bind(role.as_str())
+    .bind(profile.as_str())
+    .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
     .bind(message)
     .execute(pool)
     .await?;
@@ -625,7 +653,7 @@ pub async fn list_bear_skills(
 ) -> Result<Vec<BearSkillManifestEntry>, CustomError> {
     sqlx::query_as::<_, BearSkillManifestEntry>(
         r#"
-        SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_roles,
+        SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_profiles,
                installed_at, last_verified_at, created_at, updated_at
         FROM bear_skills_manifest
         WHERE bear_id = $1
@@ -723,7 +751,7 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
-/// One row per `user_bear` for Letta Code harness YAML. The chat role is authoritative.
+/// One row per `user_bear` for Letta Code harness YAML. The chat profile is authoritative.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LettaCodeHarnessRow {
     pub username: String,
@@ -742,7 +770,7 @@ pub async fn list_letta_code_harness_rows(
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         INNER JOIN bears b ON b.id = ub.bear_id
-        LEFT JOIN bear_agents ba ON ba.bear_id = b.id AND ba.role = 'chat'
+        LEFT JOIN bear_profile_bindings ba ON ba.bear_id = b.id AND ba.profile = 'chat'
         ORDER BY u.username, b.slug
         "#,
     )

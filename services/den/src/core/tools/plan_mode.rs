@@ -8,7 +8,7 @@ use crate::{
     core::{
         acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
         acp_sessions,
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::MemfsWriteRoleMemoryEntryRequest,
         tools::{
@@ -219,7 +219,7 @@ pub(crate) async fn exit_plan_mode(
             config,
             context.bear_id,
             &logical_path,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &title,
             &markdown,
             json!({
@@ -258,8 +258,8 @@ pub(crate) async fn exit_plan_mode(
             acp_session_id: Some(acp_session_id.clone()),
             conversation_selection: context.conversation_selection.clone(),
             runtime_target: context.runtime_target.clone(),
-            role_agent_id: Some(context.role_agent_id.clone()),
-            agent_role: Some(BearAgentRole::Pair.as_str().to_string()),
+            binding_id: Some(context.binding_id.clone()),
+            profile: Some(BearProfile::Pair.as_str().to_string()),
             request_id: context.request_id.clone(),
         };
         let http = memfs_http_client("MemFS plan artifact client build failed")?;
@@ -267,7 +267,7 @@ pub(crate) async fn exit_plan_mode(
             &http,
             &config.letta_memfs_service_url,
             context.bear_id,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &memory_request,
         )
         .await?;

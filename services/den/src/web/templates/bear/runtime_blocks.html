@@ -17,7 +17,7 @@
     <p class="form-hint">Letta is not configured.</p>
     {% endif %} {% for row in runtime_block_rows %}
     <section class="box full-width">
-        <h3>{{ row.role | e }} — {{ row.label | e }}</h3>
+        <h3>{{ row.profile | e }} — {{ row.label | e }}</h3>
         <p>
             {% if row.letta_agent_id %}<code>{{ row.letta_agent_id | e }}</code
             >{% else %}<em>No Letta agent linked.</em>{% endif %} · Runtime

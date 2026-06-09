@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use crate::{
     config::Config,
     core::{
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         tools::{
             memory_read::memory_status_value,
             memory_write::source_acp_session_id,
@@ -20,7 +20,7 @@ use crate::{
 async fn memory_status_for_environment(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     pool: &PgPool,
 ) -> Value {
     if config.uses_native_agent_runtime() {
@@ -114,7 +114,7 @@ pub(crate) async fn bear_environment(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<Value, CustomError> {
     let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
         Ok(count) => count,
@@ -160,7 +160,7 @@ pub(crate) async fn session_info(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<Value, CustomError> {
     let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
         Ok(count) => count,

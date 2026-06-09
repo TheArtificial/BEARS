@@ -31,6 +31,7 @@ pub use managed_blocks::{
     SystemBlockKind, SystemBlockRow, SystemBlockScope, SystemBlockVersionRow,
 };
 pub use model::{
-    Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+    Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
+    BearWithMembership,
 };
 pub use runtime_plan::{default_runtime_plan, effective_runtime_plan};

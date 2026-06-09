@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::core::{
-    bears::BearAgentRole,
+    bears::BearProfile,
     tools::{
         constants::{
             DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_MEMORY_READ_PROVIDER,
@@ -20,8 +20,8 @@ fn pair_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -42,8 +42,8 @@ fn pair_context() -> DenToolInvocationContext {
 
 #[test]
 fn infer_work_surface_hint_surfaces_trusted_candidates() {
-    let payload = infer_work_surface_hint(&pair_context(), BearAgentRole::Pair);
-    assert_eq!(payload["workplace"]["role"], json!("pair"));
+    let payload = infer_work_surface_hint(&pair_context(), BearProfile::Pair);
+    assert_eq!(payload["workplace"]["profile"], json!("pair"));
     assert_eq!(payload["workplace"]["memory_surface"], json!("pair/"));
     assert_eq!(payload["work_surface"]["status"], json!("candidate"));
     let candidates = payload["work_surface"]["reference_candidates"]
@@ -67,7 +67,7 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
     context.conversation_selection = None;
     context.workspace_roots.clear();
 
-    let payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
+    let payload = infer_work_surface_hint(&context, BearProfile::Pair);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["work_surface"]["reference_candidates"], json!([]));
 }
@@ -79,7 +79,7 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
     let memory_status = json!({ "available": true });
     let payload = session_info_payload(
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         None,
         member_count,
         memory_status,
@@ -89,7 +89,7 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
         payload["role_contract_context"]["contract_label"],
         json!("Builder Bear")
     );
-    assert_eq!(payload["role_contract_context"]["role"], json!("pair"));
+    assert_eq!(payload["role_contract_context"]["profile"], json!("pair"));
     assert_eq!(
         payload["runtime_context"]["active_bear_slug"],
         json!("test")
@@ -107,7 +107,7 @@ fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
     let context = pair_context();
     let payload = session_info_payload(
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         None,
         2,
         json!({ "available": true }),
@@ -158,7 +158,7 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
     }));
     let payload = session_info_payload(
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         None,
         2,
         json!({ "available": true }),
@@ -180,7 +180,7 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
 
 #[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair);
+    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair);
     let session_info = descriptors
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_SITUATION_GET_PROVIDER)
@@ -199,7 +199,7 @@ fn pair_session_info_descriptor_is_canonical_orientation_tool() {
 
 #[test]
 fn pair_memory_and_plan_descriptors_point_to_session_info_for_scope() {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair);
+    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair);
     for provider_name in [
         DEN_CONVERSATION_SET_TITLE_PROVIDER,
         DEN_MEMORY_WRITE_ENTRY_PROVIDER,

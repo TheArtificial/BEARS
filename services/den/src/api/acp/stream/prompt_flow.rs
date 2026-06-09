@@ -30,7 +30,7 @@ use crate::{
         },
         acp_tokens,
         acp_tools::acp_client_tool_descriptors_for_client_context,
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -359,7 +359,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
     let current_activity_plan = work_plans::get_visible_work_plan(
         &state.sqlx_pool,
         bear.id,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         user_id,
         WorkPlanLookup {
             plan_id: None,

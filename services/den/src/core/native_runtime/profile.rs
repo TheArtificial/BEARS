@@ -2,12 +2,12 @@
 
 use crate::core::{
     agent_loop::StrategyProfile,
-    bears::BearAgentRole,
+    bears::BearProfile,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeCapabilityProfile {
-    pub role: BearAgentRole,
+    pub role: BearProfile,
     pub max_steps: u32,
     /// When false, the turn relies on explicit runtime_context instead of prompt-memory blocks.
     pub include_prompt_memory: bool,
@@ -15,27 +15,27 @@ pub struct NativeCapabilityProfile {
 }
 
 impl NativeCapabilityProfile {
-    pub fn for_role(role: BearAgentRole) -> Self {
+    pub fn for_role(role: BearProfile) -> Self {
         match role {
-            BearAgentRole::Pair => Self {
+            BearProfile::Pair => Self {
                 role,
                 max_steps: 8,
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
             },
-            BearAgentRole::Curate => Self {
+            BearProfile::Curate => Self {
                 role,
                 max_steps: 6,
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
             },
-            BearAgentRole::Watch => Self {
+            BearProfile::Watch => Self {
                 role,
                 max_steps: 4,
                 include_prompt_memory: false,
                 strategy: StrategyProfile::plain_react(),
             },
-            BearAgentRole::Chat | BearAgentRole::Work => Self {
+            BearProfile::Chat | BearProfile::Work => Self {
                 role,
                 max_steps: 8,
                 include_prompt_memory: true,
@@ -45,10 +45,10 @@ impl NativeCapabilityProfile {
     }
 }
 
-pub fn is_native_api_direct_role(role: BearAgentRole) -> bool {
+pub fn is_native_api_direct_role(role: BearProfile) -> bool {
     matches!(
         role,
-        BearAgentRole::Pair | BearAgentRole::Curate | BearAgentRole::Watch
+        BearProfile::Pair | BearProfile::Curate | BearProfile::Watch
     )
 }
 
@@ -59,9 +59,9 @@ mod tests {
     #[test]
     fn api_direct_roles_have_profiles() {
         for role in [
-            BearAgentRole::Pair,
-            BearAgentRole::Curate,
-            BearAgentRole::Watch,
+            BearProfile::Pair,
+            BearProfile::Curate,
+            BearProfile::Watch,
         ] {
             assert!(is_native_api_direct_role(role));
             assert!(NativeCapabilityProfile::for_role(role).max_steps > 0);
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn harness_roles_are_not_api_direct() {
-        assert!(!is_native_api_direct_role(BearAgentRole::Chat));
-        assert!(!is_native_api_direct_role(BearAgentRole::Work));
+        assert!(!is_native_api_direct_role(BearProfile::Chat));
+        assert!(!is_native_api_direct_role(BearProfile::Work));
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     core::{
         acp_plan_mode,
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::fetch_memfs_role_plan_artifacts,
         tools::{
@@ -29,7 +29,7 @@ pub(crate) struct WorkPlanListArguments {
     #[serde(default, rename = "status")]
     pub(crate) statuses: Option<Vec<WorkPlanStatus>>,
     #[serde(default)]
-    pub(crate) owner_role: Option<BearAgentRole>,
+    pub(crate) owner_role: Option<BearProfile>,
     #[serde(default)]
     pub(crate) include_archived: bool,
     #[serde(default)]
@@ -76,7 +76,7 @@ pub(crate) async fn list_work_plans(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
     plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
@@ -109,7 +109,7 @@ pub(crate) async fn list_work_plans(
             match stores.store_for_bear(context.bear_id).await {
                 Ok(store) => sqlite_memory::sqlite_list_plan_artifacts(
                     &store,
-                    BearAgentRole::Pair.as_str(),
+                    BearProfile::Pair.as_str(),
                     50,
                 )
                 .await
@@ -122,7 +122,7 @@ pub(crate) async fn list_work_plans(
                 &http,
                 &config.letta_memfs_service_url,
                 context.bear_id,
-                BearAgentRole::Pair.as_str(),
+                BearProfile::Pair.as_str(),
             )
             .await
             {
@@ -182,7 +182,7 @@ pub(crate) async fn list_work_plans(
 pub(crate) async fn get_work_plan_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
 ) -> Result<Value, CustomError> {
@@ -210,7 +210,7 @@ pub(crate) async fn get_work_plan_status(
 pub(crate) async fn update_work_plan(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
 ) -> Result<Value, CustomError> {
@@ -220,7 +220,7 @@ pub(crate) async fn update_work_plan(
         WorkPlanUpsert {
             bear_id: context.bear_id,
             owner_role: role,
-            owner_agent_id: clean_optional(&context.role_agent_id),
+            owner_agent_id: clean_optional(&context.binding_id),
             created_by_user_id: Some(context.user_id),
             source_conversation_id: clean_optional(&context.conversation_id),
             source_acp_session_id: source_acp_session_id(context),

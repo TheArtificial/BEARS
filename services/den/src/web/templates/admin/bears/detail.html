@@ -96,7 +96,7 @@
   <tbody>
   {% for agent in agent_health_rows %}
     <tr>
-      <td><strong>{{ agent.role | e }}</strong></td>
+      <td><strong>{{ agent.profile | e }}</strong></td>
       <td><code>{{ agent.branch | e }}</code></td>
       <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td>
@@ -111,7 +111,7 @@
   </tbody>
 </table>
 {% else %}
-<p class="form-hint">Role rows from <code>bear_agents</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
+<p class="form-hint">Role rows from <code>bear_profile_bindings</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="margin: 0 0 1rem 0;">
   <button type="submit">Provision missing role agents</button>
@@ -124,7 +124,7 @@
   <tbody>
   {% for agent in agent_health_rows %}
     <tr>
-      <td><strong>{{ agent.role | e }}</strong></td>
+      <td><strong>{{ agent.profile | e }}</strong></td>
       <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td><code>{{ agent.provisioning_status | e }}</code></td>
       <td>

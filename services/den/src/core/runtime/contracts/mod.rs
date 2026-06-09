@@ -276,7 +276,7 @@ pub trait RoleProfileRegistry {
     async fn resolve_compatibility_binding(
         &self,
         bear_id: uuid::Uuid,
-        role: &str,
+        profile: &str,
     ) -> Result<Option<RoleRuntimeBinding>, CustomError>;
 }
 

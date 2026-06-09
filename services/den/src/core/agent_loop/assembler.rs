@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        bears::{context_composition::compose_role_context, db as bears_db, model::BearAgentRole, Bear},
+        bears::{context_composition::compose_role_context, db as bears_db, model::BearProfile, Bear},
         llm::ChatMessage,
     },
     errors::CustomError,
@@ -20,7 +20,7 @@ use super::{
 pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
     pub bear_id: Uuid,
-    pub role: BearAgentRole,
+    pub role: BearProfile,
     pub conversation_id: &'a str,
     pub turn_runtime_context: Option<&'a str>,
     pub human_message: Option<&'a str>,

@@ -13,7 +13,7 @@ const WORK_ROLES: &[&str] = &["work"];
 
 use crate::core::{
     acp_tools::AcpToolDisplayDescriptor,
-    bears::BearAgentRole,
+    bears::BearProfile,
     tool_descriptor_guidance::{
         render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
         ToolScopeKind, ToolSideEffectKind,
@@ -158,7 +158,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(DEN_MEMORY_RESOLVE_PROPOSAL, "Resolve memory proposal", "Resolve a memory review proposal without applying shared-memory writes.", "bear.memory", &["memory.proposal.resolve"], CURATE_ROLES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false})),
         descriptor(DEN_MEMORY_APPLY_CORE_UPDATE, "Apply core memory update", "Apply a reviewed update to allowed core memory paths with provenance.", "bear.memory", &["memory.core.write"], CURATE_ROLES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"target_path":{"type":"string"},"mode":{"enum":["append_section","create_file","replace_text"]},"title":{"type":"string"},"body":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","target_path","mode"],"additionalProperties":false})),
         descriptor(DEN_SKILL_PROPOSE, "Propose skill", "Capture a durable skill proposal for curate review without installing it directly.", "bear.skills", &["skill.proposal.write"], ALL_ROLES, json!({"type":"object","properties":{"skill_name":{"type":"string"},"skill_version":{"type":"string"},"rationale":{"type":"string"},"proposed_content":{"type":"string"},"desired_roles":{"type":"array","items":{"enum":ALL_ROLES}},"provenance":{"type":"object"}},"required":["skill_name","rationale","proposed_content"],"additionalProperties":false})),
-        descriptor(DEN_SKILL_APPROVE_PROPOSAL, "Approve skill proposal", "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.", "bear.skills", &["skill.proposal.approve"], CURATE_ROLES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_roles":{"type":"array","items":{"enum":ALL_ROLES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_roles"],"additionalProperties":false})),
+        descriptor(DEN_SKILL_APPROVE_PROPOSAL, "Approve skill proposal", "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.", "bear.skills", &["skill.proposal.approve"], CURATE_ROLES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_ROLES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false})),
         descriptor(DEN_SKILL_REJECT_PROPOSAL, "Reject skill proposal", "Reject a pending skill proposal with reviewer metadata and a rejection reason.", "bear.skills", &["skill.proposal.reject"], CURATE_ROLES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false})),
         descriptor(DEN_WORK_PLAN_LIST, "List plans", "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available. Call session_info first if current thread/session/work-surface scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_ROLES, json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_role":{"enum":ALL_ROLES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false})),
         descriptor(DEN_WORK_PLAN_GET_STATUS, "Get work plan status", "Return current status for one visible Den activity plan or this session's active plan. Use to orient before continuing, updating, or handing off plan work; call session_info first if session scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_ROLES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"source_acp_session_id":{"type":"string"},"source_conversation_id":{"type":"string"}},"additionalProperties":false})),
@@ -178,7 +178,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
     ]
 }
 
-pub fn builtin_den_tool_descriptors_for_role(role: BearAgentRole) -> Vec<DenToolDescriptor> {
+pub fn builtin_den_tool_descriptors_for_role(role: BearProfile) -> Vec<DenToolDescriptor> {
     builtin_den_tool_descriptors()
         .into_iter()
         .filter(|descriptor| descriptor.allows_role(role))
@@ -833,7 +833,7 @@ fn memory_write_entry_schema() -> Value {
 }
 
 impl DenToolDescriptor {
-    pub fn allows_role(&self, role: BearAgentRole) -> bool {
+    pub fn allows_role(&self, role: BearProfile) -> bool {
         self.allowed_roles.iter().any(|allowed| *allowed == role.as_str())
     }
 }

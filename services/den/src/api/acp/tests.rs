@@ -71,7 +71,7 @@ use crate::core::prompt_memory_blocks::{
                 AcpToolTurnRegistration,
             },
             acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
-            bears::BearAgentRole,
+            bears::BearProfile,
             prompt_memory_block_store::{
                 archive_conflicting_prompt_memory_blocks,
                 archive_prompt_memory_blocks_superseded_by,
@@ -122,7 +122,7 @@ use crate::core::prompt_memory_blocks::{
             Uuid::new_v4(),
             format!("sess-{}", Uuid::new_v4()),
             format!("/workspace/test-{}", Uuid::new_v4()),
-            BearAgentRole::Pair.as_str().to_string(),
+            BearProfile::Pair.as_str().to_string(),
         )
     }
 
@@ -139,13 +139,13 @@ use crate::core::prompt_memory_blocks::{
 
     fn prompt_memory_runtime_query<'a>(
         bear_id: Uuid,
-        role_slug: &'a str,
+        profile_slug: &'a str,
         session_id: &'a str,
         root: &'a String,
     ) -> PromptMemoryBlockQuery<'a> {
         PromptMemoryBlockQuery {
             bear_id: Some(bear_id),
-            role_slug,
+            profile_slug,
             work_surfaces: std::slice::from_ref(root),
             session_id,
         }
@@ -154,13 +154,13 @@ use crate::core::prompt_memory_blocks::{
     async fn select_rendered_prompt_memory_runtime(
         pool: &sqlx::PgPool,
         bear_id: Uuid,
-        role_slug: &str,
+        profile_slug: &str,
         session_id: &str,
         root: &String,
     ) -> (crate::core::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
         let selection = select_prompt_memory_blocks_for_runtime(
             pool,
-            prompt_memory_runtime_query(bear_id, role_slug, session_id, root),
+            prompt_memory_runtime_query(bear_id, profile_slug, session_id, root),
         )
         .await
         .expect("persisted runtime selection");
@@ -177,7 +177,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let mut seeded_block_ids = Vec::new();
         for (index, (scope, block_type, work_surface, block_session_id, title, body, priority)) in [
             (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session budget", "session budget", 100),
@@ -198,7 +198,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope,
                     block_type,
                     state: PromptMemoryBlockState::Active,
@@ -253,7 +253,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let mut seeded_block_ids = Vec::new();
         for (scope, block_type, work_surface, block_session_id, title, body) in [
             (PromptMemoryBlockScope::BearWide, PromptMemoryBlockType::RoleGuidance, None, None, "Bear", "bear default"),
@@ -268,7 +268,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope,
                     block_type,
                     state: PromptMemoryBlockState::Active,
@@ -318,7 +318,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let seed_specs = vec![
             (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session focus", "session focus", 100),
             (PromptMemoryBlockScope::WorkSurface, PromptMemoryBlockType::WorkSurfaceContext, Some(root.clone()), None, "Surface alpha", "surface alpha", 90),
@@ -343,7 +343,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope,
                     block_type,
                     state: PromptMemoryBlockState::Active,
@@ -362,7 +362,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -1644,14 +1644,14 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
 
         let active_session_id = seed_prompt_memory_block(
             &pool,
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-session-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::Session,
                 block_type: PromptMemoryBlockType::SessionFocus,
                 state: PromptMemoryBlockState::Active,
@@ -1671,7 +1671,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-surface-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::WorkSurface,
                 block_type: PromptMemoryBlockType::WorkSurfaceContext,
                 state: PromptMemoryBlockState::Active,
@@ -1691,7 +1691,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-role-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Active,
@@ -1711,7 +1711,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-bear-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::BearWide,
                 block_type: PromptMemoryBlockType::UserInstruction,
                 state: PromptMemoryBlockState::Active,
@@ -1731,7 +1731,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-draft-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Draft,
@@ -1747,7 +1747,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-superseded-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Superseded,
@@ -1763,7 +1763,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-archived-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::Session,
                 block_type: PromptMemoryBlockType::SessionFocus,
                 state: PromptMemoryBlockState::Archived,
@@ -1779,7 +1779,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-other-session-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::Session,
                 block_type: PromptMemoryBlockType::SessionFocus,
                 state: PromptMemoryBlockState::Active,
@@ -1795,7 +1795,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-other-surface-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::WorkSurface,
                 block_type: PromptMemoryBlockType::WorkSurfaceContext,
                 state: PromptMemoryBlockState::Active,
@@ -1811,7 +1811,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-matrix-other-role-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some("watch".to_string()),
+                profile_slug: Some("watch".to_string()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Active,
@@ -1831,7 +1831,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -1871,7 +1871,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let mut seeded_block_ids = Vec::new();
         for (index, (scope, block_type, work_surface, block_session_id, title, body, priority)) in [
             (PromptMemoryBlockScope::Session, PromptMemoryBlockType::SessionFocus, None, Some(session_id.clone()), "Session exact", "session exact", 100),
@@ -1891,7 +1891,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope,
                     block_type,
                     state: PromptMemoryBlockState::Active,
@@ -1911,7 +1911,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -1936,13 +1936,13 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
 
         for write in [
             PromptMemoryBlockWrite {
                 block_id: format!("pm-no-match-archived-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::Session,
                 block_type: PromptMemoryBlockType::SessionFocus,
                 state: PromptMemoryBlockState::Archived,
@@ -1958,7 +1958,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: format!("pm-no-match-other-session-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::Session,
                 block_type: PromptMemoryBlockType::SessionFocus,
                 state: PromptMemoryBlockState::Active,
@@ -1978,7 +1978,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -1997,13 +1997,13 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let active_block_id = seed_prompt_memory_block(
             &pool,
             PromptMemoryBlockWrite {
                 block_id: format!("pm-lifecycle-active-{}", Uuid::new_v4()),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Active,
@@ -2029,7 +2029,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id: format!("pm-lifecycle-{}-{}", label.replace(' ', "-").to_ascii_lowercase(), Uuid::new_v4()),
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope: PromptMemoryBlockScope::RoleLocal,
                     block_type: PromptMemoryBlockType::RoleGuidance,
                     state,
@@ -2049,7 +2049,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -2075,7 +2075,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let titles = ["Zulu role", "Alpha role", "Mike role"];
         let mut ids_by_title = std::collections::BTreeMap::new();
         for title in titles {
@@ -2086,7 +2086,7 @@ use crate::core::prompt_memory_blocks::{
                 PromptMemoryBlockWrite {
                     block_id,
                     bear_id: Some(bear_id),
-                    role_slug: Some(role_slug.clone()),
+                    profile_slug: Some(profile_slug.clone()),
                     scope: PromptMemoryBlockScope::RoleLocal,
                     block_type: PromptMemoryBlockType::RoleGuidance,
                     state: PromptMemoryBlockState::Active,
@@ -2106,7 +2106,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )
@@ -2135,7 +2135,7 @@ use crate::core::prompt_memory_blocks::{
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
-        let (bear_id, session_id, root, role_slug) = prompt_memory_test_context();
+        let (bear_id, session_id, root, profile_slug) = prompt_memory_test_context();
         let original_block_id = format!("pm-role-original-{}", Uuid::new_v4());
         let replacement_block_id = format!("pm-role-replacement-{}", Uuid::new_v4());
         let draft_block_id = format!("pm-draft-{}", Uuid::new_v4());
@@ -2145,7 +2145,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: original_block_id.clone(),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Active,
@@ -2166,7 +2166,7 @@ use crate::core::prompt_memory_blocks::{
             PromptMemoryBlockWrite {
                 block_id: draft_block_id.clone(),
                 bear_id: Some(bear_id),
-                role_slug: Some(role_slug.clone()),
+                profile_slug: Some(profile_slug.clone()),
                 scope: PromptMemoryBlockScope::RoleLocal,
                 block_type: PromptMemoryBlockType::RoleGuidance,
                 state: PromptMemoryBlockState::Draft,
@@ -2185,7 +2185,7 @@ use crate::core::prompt_memory_blocks::{
         let replacement_write = PromptMemoryBlockWrite {
             block_id: replacement_block_id.clone(),
             bear_id: Some(bear_id),
-            role_slug: Some(role_slug.clone()),
+            profile_slug: Some(profile_slug.clone()),
             scope: PromptMemoryBlockScope::RoleLocal,
             block_type: PromptMemoryBlockType::RoleGuidance,
             state: PromptMemoryBlockState::Active,
@@ -2208,7 +2208,7 @@ use crate::core::prompt_memory_blocks::{
         let archived_superseded = archive_prompt_memory_blocks_superseded_by(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             original_block_id.as_str(),
         )
         .await
@@ -2230,7 +2230,7 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("patch draft block");
 
-        let all_blocks = list_prompt_memory_blocks_for_bear_role(&pool, bear_id, role_slug.as_str())
+        let all_blocks = list_prompt_memory_blocks_for_bear_role(&pool, bear_id, profile_slug.as_str())
             .await
             .expect("list prompt memory blocks");
         let original = all_blocks
@@ -2254,7 +2254,7 @@ use crate::core::prompt_memory_blocks::{
         let (selection, rendered) = select_rendered_prompt_memory_runtime(
             &pool,
             bear_id,
-            role_slug.as_str(),
+            profile_slug.as_str(),
             session_id.as_str(),
             &root,
         )

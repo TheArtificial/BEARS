@@ -3,7 +3,7 @@
 use den::{
     core::{
         acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearProfile},
     },
     startup::run_sqlx_migrations,
 };
@@ -60,14 +60,14 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
 async fn insert_role_agent(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    role: BearProfile,
     agent_id: &str,
 ) {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
         VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
@@ -101,7 +101,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     insert_role_agent(
         &pool,
         bear_id,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         "agent-pair-plan-mode-test",
     )
     .await;

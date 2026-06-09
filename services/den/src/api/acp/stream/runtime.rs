@@ -14,7 +14,7 @@ use crate::{
     core::{
         acp_sessions,
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         conversation_events::{
             canonical_persistence_context, spawn_persist_canonical_conversation_record,
             CanonicalConversationRecord,
@@ -589,8 +589,8 @@ pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
             let tool_context = DenToolInvocationContext {
                 bear_id: context.bear_id,
                 bear_slug: context.bear_slug.clone(),
-                role_agent_id: context.pair_agent_id.clone(),
-                agent_role: Some(BearAgentRole::Pair),
+                binding_id: context.pair_agent_id.clone(),
+                profile: Some(BearProfile::Pair),
                 user_id: context.user_id,
                 username: context
                     .user_profile
@@ -715,8 +715,8 @@ pub(in crate::api::acp) async fn invoke_acp_den_tool(
     let tool_context = DenToolInvocationContext {
         bear_id: context.bear_id,
         bear_slug: context.bear_slug.clone(),
-        role_agent_id: context.pair_agent_id.clone(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: context.pair_agent_id.clone(),
+        profile: Some(BearProfile::Pair),
         user_id: context.user_id,
         username: context
             .user_profile

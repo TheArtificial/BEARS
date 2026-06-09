@@ -10,7 +10,7 @@ use crate::{core::letta::LettaClient, errors::CustomError};
 /// by concatenating text into the user message.
 pub struct PairTurnRequest<'a> {
     pub conversation_id: &'a str,
-    pub role_agent_id: &'a str,
+    pub binding_id: &'a str,
     pub human_message: &'a str,
     pub client_tools: Option<Value>,
     pub stream_tokens: bool,
@@ -48,7 +48,7 @@ pub async fn post_pair_turn_messages_streaming(
         channel_family = %request.boundary.channel_family,
         session_id = %request.boundary.session_id,
         letta_conversation_id = %request.conversation_id,
-        role_agent_id = %request.role_agent_id,
+        binding_id = %request.binding_id,
         user_content_len = request.human_message.len(),
         user_content_has_system_reminder = request.human_message.contains("<system-reminder>")
             || request.human_message.contains("<system_reminder>"),
@@ -65,7 +65,7 @@ pub async fn post_pair_turn_messages_streaming(
     letta
         .post_conversation_messages_streaming(
             request.conversation_id,
-            Some(request.role_agent_id),
+            Some(request.binding_id),
             request.human_message,
             request.client_tools,
             request.stream_tokens,
@@ -83,7 +83,7 @@ mod tests {
     fn pair_turn_request_counts_client_tools() {
         let request = PairTurnRequest {
             conversation_id: "conv-test",
-            role_agent_id: "agent-test",
+            binding_id: "agent-test",
             human_message: "hello",
             client_tools: Some(json!([{ "name": "session_info" }, { "name": "memory_read" }])),
             stream_tokens: false,

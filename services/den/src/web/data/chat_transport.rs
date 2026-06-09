@@ -74,7 +74,7 @@ impl WebChatTransportDataSource for RealWebChatTransportDataSource {
                 session_id,
                 conversation_id,
                 bear,
-                role_agent_id: chat_agent_id,
+                binding_id: chat_agent_id,
                 user_id,
                 username,
                 membership_role,

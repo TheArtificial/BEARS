@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::{context_composition, Bear, BearAgentRole};
+use super::{context_composition, Bear, BearProfile};
 
 type ManagedBlockResolutionRow = (
     String,
@@ -160,13 +160,13 @@ pub fn content_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub fn managed_space_block_key(role: BearAgentRole) -> &'static str {
+pub fn managed_space_block_key(role: BearProfile) -> &'static str {
     match role {
-        BearAgentRole::Chat => "space_instruction.chat",
-        BearAgentRole::Pair => "space_instruction.pair",
-        BearAgentRole::Curate => "space_instruction.curate",
-        BearAgentRole::Work => "space_instruction.work",
-        BearAgentRole::Watch => "space_instruction.watch",
+        BearProfile::Chat => "space_instruction.chat",
+        BearProfile::Pair => "space_instruction.pair",
+        BearProfile::Curate => "space_instruction.curate",
+        BearProfile::Work => "space_instruction.work",
+        BearProfile::Watch => "space_instruction.watch",
     }
 }
 
@@ -485,7 +485,7 @@ pub fn compile_managed_config_for_bear(
     let mut rendered_prompts = serde_json::Map::new();
     let mut rendered_prompt_hashes = serde_json::Map::new();
 
-    for role in BearAgentRole::ALL {
+    for role in BearProfile::ALL {
         let role_prompt =
             context_composition::render_managed_role_prompt(bear, role, Some(&resolved))?;
         let role_key = role.as_str().to_string();
@@ -630,23 +630,23 @@ mod tests {
     #[test]
     fn managed_space_block_key_matches_roles() {
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Chat),
+            managed_space_block_key(BearProfile::Chat),
             "space_instruction.chat"
         );
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Pair),
+            managed_space_block_key(BearProfile::Pair),
             "space_instruction.pair"
         );
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Curate),
+            managed_space_block_key(BearProfile::Curate),
             "space_instruction.curate"
         );
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Work),
+            managed_space_block_key(BearProfile::Work),
             "space_instruction.work"
         );
         assert_eq!(
-            managed_space_block_key(BearAgentRole::Watch),
+            managed_space_block_key(BearProfile::Watch),
             "space_instruction.watch"
         );
     }

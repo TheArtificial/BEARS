@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     core::{
         bear_observations::{self, BearObservationRow, CreateBearObservation},
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{
             store::{
                 self, create_memory_observation, create_memory_proposal, create_reflection_run_outcome,
@@ -134,7 +134,7 @@ pub async fn list_proposals(
             sqlite_proposal_to_row(
                 bear_id,
                 &row,
-                BearAgentRole::Curate,
+                BearProfile::Curate,
             )
         })
         .collect())
@@ -228,7 +228,7 @@ pub async fn record_reflection_outcome_complete(
 fn sqlite_proposal_to_row(
     bear_id: Uuid,
     sqlite: &SqliteMemoryProposal,
-    source_role: BearAgentRole,
+    source_role: BearProfile,
 ) -> MemoryProposalRow {
     let p = &sqlite.payload_json;
     MemoryProposalRow {

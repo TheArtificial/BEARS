@@ -61,10 +61,10 @@ Trust follows armature; resources sit above both.
 1. Treat **`chat` and `pair` as interactive profiles**; channel choice selects armature template, not a second Bear.
 2. Attach **work surfaces to threads/sessions**, resolved from anchors and hints — not “owned by pair.”
 3. Retire harness/runtime-family language (`letta_code_harness`, five provisioned “agents”).
-4. Prefer **capability profile** in code comments and operator docs; keep **role** as the stable enum name for schemas.
+4. Prefer **profile** in code, Postgres registry (`bear_profile_bindings`), and operator docs.
 
 When `AGENT_RUNTIME=native`, `chat` and `pair` are capability profiles over one Den loop; work-surface **binding** is conversation-scoped. See [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
 
 ## Naming
 
-The implementation enum and Postgres registry use **`chat`** (formerly `talk`) for the conversational human-present profile, aligned with product language in [`bear-roles.md`](bear-roles.md).
+The implementation enum (`BearProfile`) and Postgres profile registry use **`chat`** (formerly `talk`) for the conversational human-present profile, aligned with product language in [`bear-roles.md`](bear-roles.md).

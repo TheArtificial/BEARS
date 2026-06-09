@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{
             get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
         },
@@ -342,7 +342,7 @@ async fn resolve_curate_proposal(
                     ProposalResolutionParams {
                         bear_id,
                         proposal_id: proposal.id,
-                        reviewer_role: BearAgentRole::Curate,
+                        reviewer_role: BearProfile::Curate,
                         reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
                         status: "deferred",
                         review_notes: Some(&format!(
@@ -376,7 +376,7 @@ async fn resolve_curate_proposal(
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearAgentRole::Curate,
+            reviewer_role: BearProfile::Curate,
             reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
             status: triage.resolution_status(),
             review_notes: Some(triage.review_notes()),
@@ -419,7 +419,7 @@ async fn apply_core_promotion(
             &proposal.id.to_string(),
             kind,
             &promotion_body(proposal),
-            BearAgentRole::Curate.as_str(),
+            BearProfile::Curate.as_str(),
         )
         .await?;
         (target_path, Some(memory_id))
@@ -461,7 +461,7 @@ async fn apply_core_promotion(
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearAgentRole::Curate,
+            reviewer_role: BearProfile::Curate,
             reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
             status: "approved",
             review_notes: Some(triage.review_notes()),

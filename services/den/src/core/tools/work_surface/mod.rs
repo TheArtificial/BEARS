@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::{append_markdown_section, fetch_memfs_role_memory_file, write_memfs_core_update, MemfsCoreUpdateRequest},
         tools::{memfs::memfs_http_client, session::DenToolInvocationContext, support::validate_bounded_text},
@@ -16,7 +16,7 @@ use super::support::clean_optional;
 
 pub(crate) fn infer_work_surface_hint(
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Value {
     let mut candidates = Vec::new();
     if let Some(runtime_target) = context.runtime_target.as_deref().and_then(clean_optional) {
@@ -48,10 +48,10 @@ pub(crate) fn infer_work_surface_hint(
             "confidence": "medium"
         }));
     }
-    let active_work_surface_roles = matches!(role, BearAgentRole::Pair | BearAgentRole::Work);
+    let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
     json!({
         "workplace": {
-            "role": role.as_str(),
+            "profile": role.as_str(),
             "memory_surface": format!("{}/", role.as_str()),
         },
         "work_surface": {
@@ -162,7 +162,7 @@ pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) ->
 }
 
 fn work_surface_scaffold_paths(
-    role: BearAgentRole,
+    role: BearProfile,
     slug: &str,
 ) -> (String, String, String, Option<String>, String) {
     (
@@ -170,7 +170,7 @@ fn work_surface_scaffold_paths(
         format!("core/work_surfaces/{slug}/overview.md"),
         format!("core/work_surfaces/{slug}/glossary.md"),
         match role {
-            BearAgentRole::Pair | BearAgentRole::Work => Some(format!(
+            BearProfile::Pair | BearProfile::Work => Some(format!(
                 "{}/work_surfaces/{slug}/current-understanding.md",
                 role.as_str()
             )),
@@ -189,7 +189,7 @@ pub(crate) fn work_surface_entry_body(slug: &str, name: &str) -> String {
 }
 
 pub(crate) fn work_surface_scaffold_requests(
-    role: BearAgentRole,
+    role: BearProfile,
     slug: &str,
     name: &str,
     overview: &str,
@@ -201,7 +201,7 @@ pub(crate) fn work_surface_scaffold_requests(
     let glossary_body =
         glossary.unwrap_or("Glossary terms for this work surface will be added here.");
     let understanding_body = current_understanding.unwrap_or(match role {
-        BearAgentRole::Work => {
+        BearProfile::Work => {
             "Current work understanding for this work surface will be maintained here."
         }
         _ => "Current pair understanding for this work surface will be maintained here.",
@@ -276,7 +276,7 @@ pub(crate) fn work_surface_scaffold_requests(
 }
 
 pub(crate) fn work_surface_anchor_paths(
-    role: BearAgentRole,
+    role: BearProfile,
     slug: &str,
 ) -> (Vec<String>, Vec<String>) {
     let canonical = vec![
@@ -288,7 +288,7 @@ pub(crate) fn work_surface_anchor_paths(
         format!("core/work_surfaces/{slug}/conventions.md"),
     ];
     let role_local = match role {
-        BearAgentRole::Pair | BearAgentRole::Work => vec![
+        BearProfile::Pair | BearProfile::Work => vec![
             format!(
                 "{}/work_surfaces/{slug}/current-understanding.md",
                 role.as_str()
@@ -325,7 +325,7 @@ async fn create_work_surface_scaffold_sqlite(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     work_surface_slug: &str,
     work_surface_name: &str,
     overview: &str,
@@ -370,10 +370,10 @@ pub(crate) async fn create_work_surface_scaffold(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Pair {
+    if role != BearProfile::Pair {
         return Err(CustomError::Authorization(
             "den.memory.create_work_surface_scaffold is currently available only to the pair role"
                 .to_string(),
@@ -524,7 +524,7 @@ pub(crate) async fn create_work_surface_scaffold(
 }
 
 pub(crate) fn build_work_surface_orientation_payload(
-    role: BearAgentRole,
+    role: BearProfile,
     hint_payload: &Value,
     files: &[String],
     candidate_slug: Option<String>,
@@ -553,7 +553,7 @@ pub(crate) fn build_work_surface_orientation_payload(
         .filter(|path| !sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
-    let active_work_surface_roles = matches!(role, BearAgentRole::Pair | BearAgentRole::Work);
+    let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
     let status = if slug.is_none() {
         "unresolved"
     } else if existing_canonical.is_empty() && existing_role_local.is_empty() {

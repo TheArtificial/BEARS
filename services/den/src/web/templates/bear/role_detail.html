@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ role_detail.role }} role · {{ bear.name | e }}{% endblock %}
+{% block title %}{{ role_detail.profile }} role · {{ bear.name | e }}{% endblock %}
 
 {% block subnav %}
 <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details">Bear details</a></li>
@@ -9,7 +9,7 @@
 
 {% block content %}
 <section data-role-detail-content>
-    <h2><code>{{ role_detail.role | e }}</code> — {{ role_detail.plain_name | e }}</h2>
+    <h2><code>{{ role_detail.profile | e }}</code> — {{ role_detail.plain_name | e }}</h2>
     <p>{{ role_detail.description | e }}</p>
 
     {% if role_detail.actions and role_detail.actions | length > 0 %}
@@ -74,7 +74,7 @@
             <div class="box full-width">
                 <h3>Contract</h3>
                 <p class="form-hint">Protected role instructions and boundaries.</p>
-                <pre class="den-bear-prompt-pre">{{ role_detail.role_contract | e }}</pre>
+                <pre class="den-bear-prompt-pre">{{ role_detail.profile_contract | e }}</pre>
             </div>
         </div>
     </section>

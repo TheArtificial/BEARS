@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     core::{
         acp_sessions,
-        bears::{db as bears_db, model::BearAgentRole, Bear},
+        bears::{db as bears_db, model::BearProfile, Bear},
         conversation_persistence,
         letta::{load_agent_conversations, LettaClient},
         native_runtime::NativeRuntimeConversationBackend,
@@ -30,7 +30,7 @@ pub async fn require_pair_runtime_binding(
     bear: &Bear,
 ) -> Result<RoleRuntimeBinding, CustomError> {
     if config.uses_native_agent_runtime() {
-        let binding_id = bears_db::role_runtime_binding_id(pool, bear.id, BearAgentRole::Pair)
+        let binding_id = bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
             .await?
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| format!("den-native:{}:pair", bear.id));
@@ -44,7 +44,7 @@ pub async fn require_pair_runtime_binding(
             "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
         ));
     }
-    bears_db::role_runtime_binding_id(pool, bear.id, BearAgentRole::Pair)
+    bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
         .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

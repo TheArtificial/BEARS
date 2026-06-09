@@ -87,9 +87,9 @@ smoke_pair_binding_ready() {
     SELECT EXISTS (
       SELECT 1
       FROM bears b
-      INNER JOIN bear_agents ba ON ba.bear_id = b.id
+      INNER JOIN bear_profile_bindings ba ON ba.bear_id = b.id
       WHERE b.slug = 'test-bear'
-        AND ba.role = 'pair'
+        AND ba.profile = 'pair'
         AND btrim(COALESCE(ba.letta_agent_id, '')) <> ''
     );
   " 2>/dev/null || true)"
@@ -108,11 +108,11 @@ apply_smoke_seed_until_pair_ready() {
 
   printf 'smoke seed did not provision the test-bear pair role binding\n' >&2
   compose_with_env exec -T bears-postgres psql -U bears -d den -c "
-    SELECT b.slug, ba.role, ba.letta_agent_id, ba.provisioning_status, ba.last_provisioning_error
+    SELECT b.slug, ba.profile, ba.binding_id, ba.letta_agent_id, ba.provisioning_status, ba.last_provisioning_error
     FROM bears b
-    LEFT JOIN bear_agents ba ON ba.bear_id = b.id
+    LEFT JOIN bear_profile_bindings ba ON ba.bear_id = b.id
     WHERE b.slug = 'test-bear'
-    ORDER BY ba.role;
+    ORDER BY ba.profile;
   " >&2 || true
   return 1
 }

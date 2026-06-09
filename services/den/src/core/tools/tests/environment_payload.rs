@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         tools::{arguments::DenToolChannelContext, payloads::bear_environment_payload, session::DenToolInvocationContext},
     },
 };
@@ -13,8 +13,8 @@ fn bear_environment_payload_exposes_baseline_sections() {
     let context = DenToolInvocationContext {
         bear_id: Uuid::nil(),
         bear_slug: "meta".to_string(),
-        role_agent_id: "agent-123".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-123".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 7,
         username: Some("gerwitz".to_string()),
         membership_role: Some("admin".to_string()),
@@ -41,7 +41,7 @@ fn bear_environment_payload_exposes_baseline_sections() {
     let payload = bear_environment_payload(
         &context,
         &Config::test_stub(),
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         None,
         2,
         json!({ "configured": false, "available": false }),

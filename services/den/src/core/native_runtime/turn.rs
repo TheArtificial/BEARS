@@ -11,7 +11,7 @@ use crate::{
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
             SessionTrackingStream,
         },
-        bears::BearAgentRole,
+        bears::BearProfile,
         llm::{ChatMessage, LlmClient},
         native_runtime::{
             profile::NativeCapabilityProfile,
@@ -157,12 +157,12 @@ async fn build_session(
 pub async fn start_native_acp_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {
-    start_native_role_turn_event_stream(request, BearAgentRole::Pair).await
+    start_native_role_turn_event_stream(request, BearProfile::Pair).await
 }
 
 pub async fn start_native_role_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<RuntimeEventStream, CustomError> {
     if !request.state.config.uses_native_agent_runtime() {
         return Err(CustomError::System(

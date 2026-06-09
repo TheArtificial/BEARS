@@ -295,7 +295,7 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
         &state.sqlx_pool,
         PromptMemoryBlockQuery {
             bear_id: Some(bear_id),
-            role_slug: "pair",
+            profile_slug: "pair",
             session_id,
             work_surfaces: &roots,
         },

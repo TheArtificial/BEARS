@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
         prompt_memory_blocks::{
             PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
@@ -34,8 +34,8 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        role_agent_id: "agent-test".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-test".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -59,7 +59,7 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let upsert = prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": format!("pm-{}", Uuid::new_v4()),
             "scope": "session",
@@ -74,14 +74,14 @@ async fn prompt_memory_tools_round_trip_through_store() {
     .expect("upsert prompt memory block");
     assert_eq!(upsert["status"], "ok");
     let block_id = upsert["block_id"].as_str().unwrap().to_string();
-    let listed = prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({}))
+    let listed = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
         .await
         .expect("list prompt memory blocks");
     assert!(listed["blocks"].as_array().unwrap().iter().any(|b| b["id"] == block_id));
     let patched = prompt_memory_patch(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": block_id,
             "state": "archived",
@@ -93,14 +93,14 @@ async fn prompt_memory_tools_round_trip_through_store() {
     .await
     .expect("patch prompt memory block");
     assert_eq!(patched["state"], "archived");
-    let listed_active = prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({}))
+    let listed_active = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
         .await
         .expect("list active prompt memory blocks");
     assert!(!listed_active["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
     let listed_all = prompt_memory_list(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({"include_archived": true}),
     )
     .await
@@ -120,7 +120,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         return;
     }
     let bear_id = Uuid::new_v4();
-    let role_slug = BearAgentRole::Pair.as_str();
+    let profile_slug = BearProfile::Pair.as_str();
     let session_id = format!("sess-{}", Uuid::new_v4());
     let work_surface = format!("ws-{}", Uuid::new_v4());
     let ids = [
@@ -133,7 +133,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         PromptMemoryBlockWrite {
             block_id: ids[0].clone(),
             bear_id: Some(bear_id),
-            role_slug: Some(role_slug.to_string()),
+            profile_slug: Some(profile_slug.to_string()),
             scope: PromptMemoryBlockScope::BearWide,
             block_type: PromptMemoryBlockType::RoleGuidance,
             state: PromptMemoryBlockState::Active,
@@ -149,7 +149,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         PromptMemoryBlockWrite {
             block_id: ids[1].clone(),
             bear_id: Some(bear_id),
-            role_slug: Some(role_slug.to_string()),
+            profile_slug: Some(profile_slug.to_string()),
             scope: PromptMemoryBlockScope::RoleLocal,
             block_type: PromptMemoryBlockType::RoleGuidance,
             state: PromptMemoryBlockState::Active,
@@ -165,7 +165,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         PromptMemoryBlockWrite {
             block_id: ids[2].clone(),
             bear_id: Some(bear_id),
-            role_slug: Some(role_slug.to_string()),
+            profile_slug: Some(profile_slug.to_string()),
             scope: PromptMemoryBlockScope::WorkSurface,
             block_type: PromptMemoryBlockType::WorkSurfaceContext,
             state: PromptMemoryBlockState::Active,
@@ -181,7 +181,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         PromptMemoryBlockWrite {
             block_id: ids[3].clone(),
             bear_id: Some(bear_id),
-            role_slug: Some(role_slug.to_string()),
+            profile_slug: Some(profile_slug.to_string()),
             scope: PromptMemoryBlockScope::Session,
             block_type: PromptMemoryBlockType::SessionFocus,
             state: PromptMemoryBlockState::Active,
@@ -204,7 +204,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         &pool,
         crate::core::prompt_memory_block_store::PromptMemoryBlockQuery {
             bear_id: Some(bear_id),
-            role_slug,
+            profile_slug,
             session_id: &session_id,
             work_surfaces: std::slice::from_ref(&work_surface),
         },
@@ -214,7 +214,7 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
     let compiled = crate::core::prompt_memory_blocks::compile_prompt_memory_blocks(
         &selection.blocks,
         crate::core::prompt_memory_blocks::PromptMemoryCompilationInput {
-            role: role_slug,
+            role: profile_slug,
             work_surfaces: std::slice::from_ref(&work_surface),
             session_id: &session_id,
             max_blocks: 4,
@@ -247,8 +247,8 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        role_agent_id: "agent-test".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-test".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -273,7 +273,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": original_block_id,
             "scope": "session",
@@ -289,7 +289,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     let replacement = prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": format!("pm-replacement-{}", Uuid::new_v4()),
             "scope": "session",
@@ -305,7 +305,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     .expect("upsert replacement block");
     assert_eq!(replacement["superseded_archived_count"], 1);
     let listed_all =
-        prompt_memory_list(&pool, &context, BearAgentRole::Pair, json!({"include_archived": true}))
+        prompt_memory_list(&pool, &context, BearProfile::Pair, json!({"include_archived": true}))
             .await
             .expect("list prompt memory blocks");
     let original = listed_all["blocks"]
@@ -332,8 +332,8 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        role_agent_id: "agent-test".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-test".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -357,7 +357,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": format!("pm-conflict-a-{}", Uuid::new_v4()),
             "scope": "session",
@@ -373,7 +373,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     let replacement = prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": format!("pm-conflict-b-{}", Uuid::new_v4()),
             "scope": "session",
@@ -390,7 +390,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
     let active = prompt_memory_list(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "scope": "session",
             "block_type": "session_focus",
@@ -417,8 +417,8 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-bear".to_string(),
-        role_agent_id: "agent-test".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-test".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -442,7 +442,7 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     prompt_memory_upsert(
         &pool,
         &context,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         json!({
             "block_id": format!("pm-status-{}", Uuid::new_v4()),
             "scope": "session",
@@ -456,7 +456,7 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     .await
     .expect("upsert status block");
     let config = Config::test_stub();
-    let status = memory_status_value(&config, &context, BearAgentRole::Pair, &pool)
+    let status = memory_status_value(&config, &context, BearProfile::Pair, &pool)
         .await
         .expect("memory status value");
     assert_eq!(status["prompt_memory_diagnostic"]["source"], "prompt_memory_blocks");

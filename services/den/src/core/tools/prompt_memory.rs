@@ -4,7 +4,7 @@ use sqlx::PgPool;
 
 use crate::{
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         prompt_memory_block_store::{
             archive_conflicting_prompt_memory_blocks,
             archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_role,
@@ -80,10 +80,10 @@ pub(crate) fn empty_json_object() -> Value {
 pub(crate) async fn prompt_memory_upsert(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Pair {
+    if role != BearProfile::Pair {
         return Err(CustomError::Authorization(
             "den.prompt_memory.upsert is currently available only to the pair role".to_string(),
         ));
@@ -103,7 +103,7 @@ pub(crate) async fn prompt_memory_upsert(
     let write = PromptMemoryBlockWrite {
         block_id: block_id.clone(),
         bear_id: Some(context.bear_id),
-        role_slug: Some(role.as_str().to_string()),
+        profile_slug: Some(role.as_str().to_string()),
         scope: args.scope,
         block_type: args.block_type,
         state: args.state,
@@ -154,10 +154,10 @@ pub(crate) async fn prompt_memory_upsert(
 pub(crate) async fn prompt_memory_list(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Pair {
+    if role != BearProfile::Pair {
         return Err(CustomError::Authorization(
             "den.prompt_memory.list is currently available only to the pair role".to_string(),
         ));
@@ -199,10 +199,10 @@ pub(crate) async fn prompt_memory_list(
 pub(crate) async fn prompt_memory_patch(
     pool: &PgPool,
     _context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Pair {
+    if role != BearProfile::Pair {
         return Err(CustomError::Authorization(
             "den.prompt_memory.patch is currently available only to the pair role".to_string(),
         ));

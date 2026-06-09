@@ -171,9 +171,9 @@ pub struct MemfsWriteRoleMemoryEntryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_agent_id: Option<String>,
+    pub binding_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_role: Option<String>,
+    pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
 }

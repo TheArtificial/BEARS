@@ -7,7 +7,7 @@
 {% if native_runtime %}
 <p>Native runtime bears use Den in-process role agents with SQLite memory.</p>
 {% else %}
-<p>Registry rows with Letta role agents in <code>bear_agents</code>.</p>
+<p>Registry rows with Letta role agents in <code>bear_profile_bindings</code>.</p>
 {% if memfs_message %}<p class="form-hint">{{ memfs_message | e }}</p>{% endif %}
 <form method="post" action="/admin/bears/register-memfs-views" style="margin: 0 0 1rem 0;">
   <button type="submit">Register MemFS role views</button>

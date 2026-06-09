@@ -24,7 +24,7 @@ use crate::{
         acp_plan_mode,
         acp_sessions,
         acp_tokens,
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
         prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
         role_runtime::{RoleRuntime, RoleTurnScope},
@@ -97,7 +97,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
     let row = acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id.trim())
         .await?
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
-    let mut blocks = list_prompt_memory_blocks_for_bear_role(&state.sqlx_pool, bear.id, BearAgentRole::Pair.as_str()).await?;
+    let mut blocks = list_prompt_memory_blocks_for_bear_role(&state.sqlx_pool, bear.id, BearProfile::Pair.as_str()).await?;
     if !query.include_archived {
         blocks.retain(|block| block.state != crate::core::prompt_memory_blocks::PromptMemoryBlockState::Archived);
     }
@@ -131,7 +131,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
     });
     Ok(Json(AcpPromptMemoryResponse {
         ok: true,
-        role: BearAgentRole::Pair.as_str().to_string(),
+        role: BearProfile::Pair.as_str().to_string(),
         count: blocks_json.len(),
         filters: serde_json::json!({
             "include_archived": query.include_archived,
@@ -279,7 +279,7 @@ pub(super) async fn get_acp_session_runtime_inner(
     let activity_plan = work_plans::get_visible_work_plan(
         &state.sqlx_pool,
         bear.id,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         user_id,
         WorkPlanLookup {
             plan_id: None,

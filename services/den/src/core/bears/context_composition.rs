@@ -3,7 +3,7 @@ use sqlx::types::Json;
 
 use super::{
     managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet},
-    Bear, BearAgentRole,
+    Bear, BearProfile,
 };
 use crate::errors::CustomError;
 
@@ -27,13 +27,13 @@ pub struct RoleContracts {
 }
 
 impl RoleContracts {
-    pub fn get(&self, role: BearAgentRole) -> &str {
+    pub fn get(&self, role: BearProfile) -> &str {
         match role {
-            BearAgentRole::Chat => &self.chat,
-            BearAgentRole::Pair => &self.pair,
-            BearAgentRole::Curate => &self.curate,
-            BearAgentRole::Work => &self.work,
-            BearAgentRole::Watch => &self.watch,
+            BearProfile::Chat => &self.chat,
+            BearProfile::Pair => &self.pair,
+            BearProfile::Curate => &self.curate,
+            BearProfile::Work => &self.work,
+            BearProfile::Watch => &self.watch,
         }
     }
 }
@@ -114,7 +114,7 @@ fn push_section(out: &mut String, heading: &str, body: &str) {
 
 pub fn render_managed_role_prompt(
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
     resolved: Option<&ResolvedManagedBlockSet>,
 ) -> Result<String, CustomError> {
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
@@ -147,11 +147,11 @@ pub fn render_managed_role_prompt(
     let mut composed = String::new();
     push_section(&mut composed, "Den baseline", &den_baseline_text);
     let instructions_heading = match role {
-        BearAgentRole::Chat => "Space instructions: Conversation Space".to_string(),
-        BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),
-        BearAgentRole::Curate => "Space instructions: Curation Space".to_string(),
-        BearAgentRole::Work => "Space instructions: Execution Space".to_string(),
-        BearAgentRole::Watch => "Space instructions: Observation Space".to_string(),
+        BearProfile::Chat => "Space instructions: Conversation Space".to_string(),
+        BearProfile::Pair => "Space instructions: Collaboration Space".to_string(),
+        BearProfile::Curate => "Space instructions: Curation Space".to_string(),
+        BearProfile::Work => "Space instructions: Execution Space".to_string(),
+        BearProfile::Watch => "Space instructions: Observation Space".to_string(),
     };
     push_section(&mut composed, &instructions_heading, &role_contract);
     push_section(&mut composed, "User steering", user_steering);
@@ -162,7 +162,7 @@ pub fn render_managed_role_prompt(
 
 pub fn compose_role_context(
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
     runtime_context: Option<&str>,
 ) -> Result<ComposedRoleContext, CustomError> {
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
@@ -201,7 +201,7 @@ pub fn compose_role_context(
     })
 }
 
-pub fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> Result<String, CustomError> {
+pub fn render_role_prompt(bear: &Bear, role: BearProfile) -> Result<String, CustomError> {
     Ok(compose_role_context(bear, role, None)?.composed_prompt)
 }
 
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn legacy_bear_uses_system_prompt() {
         let bear = test_bear(None);
-        let composed = compose_role_context(&bear, BearAgentRole::Chat, None).unwrap();
+        let composed = compose_role_context(&bear, BearProfile::Chat, None).unwrap();
         assert!(composed.is_legacy);
         assert_eq!(composed.composed_prompt, "legacy prompt");
     }
@@ -279,7 +279,7 @@ mod tests {
         };
         let bear = test_bear(Some(profile));
         let composed =
-            compose_role_context(&bear, BearAgentRole::Pair, Some("Runtime now.")).unwrap();
+            compose_role_context(&bear, BearProfile::Pair, Some("Runtime now.")).unwrap();
         assert!(!composed.is_legacy);
         assert!(composed.composed_prompt.contains("# Den baseline"));
         assert!(composed

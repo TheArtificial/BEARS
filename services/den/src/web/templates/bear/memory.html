@@ -40,10 +40,10 @@
                 {% for row in role_rows %}
                 <tr{% if row.selected %} class="selected"{% endif %}>
                     <td>
-                        <strong><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ row.role | e }}">{{ row.label | e }}</a></strong><br>
+                        <strong><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ row.profile | e }}">{{ row.label | e }}</a></strong><br>
                         <span class="caption">{{ row.description | e }}</span>
                     </td>
-                    <td><code>{{ row.role | e }}</code><br><span class="caption">{{ row.runtime_family | e }}</span></td>
+                    <td><code>{{ row.profile | e }}</code><br><span class="caption">{{ row.runtime_family | e }}</span></td>
                     <td>
                         {{ row.status_label | e }}
                         {% if row.error %}<br><span class="form-errors">{{ row.error | e }}</span>{% endif %}
@@ -84,7 +84,7 @@
             <label for="memory-role">Role</label>
             <select id="memory-role" name="role">
                 {% for row in role_rows %}
-                <option value="{{ row.role | e }}"{% if row.selected %} selected{% endif %}>{{ row.role | e }} — {{ row.label | e }}</option>
+                <option value="{{ row.profile | e }}"{% if row.selected %} selected{% endif %}>{{ row.profile | e }} — {{ row.label | e }}</option>
                 {% endfor %}
             </select>
             <label for="memory-q">Search path and content</label>

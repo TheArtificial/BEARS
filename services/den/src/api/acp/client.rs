@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     api::acp::AcpPromptRequest,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         tools::{
             constants::{
                 DEN_CONVERSATION_SET_TITLE, DEN_MEMORY_READ, DEN_MEMORY_REQUEST_REVIEW,
@@ -74,7 +74,7 @@ pub(crate) fn new_acp_conversation_id(client: &str) -> String {
 }
 
 pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
+    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair)
         .into_iter()
         .filter(|descriptor| {
             matches!(

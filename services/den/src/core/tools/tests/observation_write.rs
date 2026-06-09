@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        bears::{db, db::grant_membership, db::BearParams, BearAgentRole},
+        bears::{db, db::grant_membership, db::BearParams, BearProfile},
         memory::MemoryStoreManager,
         tools::{
             arguments::DenToolChannelContext,
@@ -23,9 +23,9 @@ async fn seed_watch_agent(
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id)
-        VALUES ($1, 'watch', $2)
-        ON CONFLICT (bear_id, role)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
+        VALUES ($1, 'watch', $2, $2)
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
         "#,
     )
@@ -73,8 +73,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-observation-write-bear".to_string(),
-        role_agent_id: agent_id.clone(),
-        agent_role: Some(BearAgentRole::Watch),
+        binding_id: agent_id.clone(),
+        profile: Some(BearProfile::Watch),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
@@ -130,8 +130,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     let replay_context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-observation-write-bear".to_string(),
-        role_agent_id: agent_id,
-        agent_role: Some(BearAgentRole::Watch),
+        binding_id: agent_id,
+        profile: Some(BearProfile::Watch),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),

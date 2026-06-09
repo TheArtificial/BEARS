@@ -30,12 +30,12 @@ pub struct Bear {
     pub letta_tool_ids: Json<Vec<String>>,
     /// Optional BearRuntimePlan v1 JSON for codepool (memory git remote, seeds; extensible).
     pub runtime_plan: Option<Json<serde_json::Value>>,
-    /// Optional role-aware context composition profile.
+    /// Optional profile-aware context composition profile.
     pub context_profile: Option<Json<serde_json::Value>>,
     /// Optional path to the Bear's bare MemFS repository.
     #[serde(default)]
     pub memfs_repo_path: Option<String>,
-    /// Coarse canonical config version for role provisioning/reconciliation.
+    /// Coarse canonical config version for profile provisioning/reconciliation.
     #[serde(default = "default_provisioning_version")]
     pub provisioning_version: i32,
     pub system_prompt: String,
@@ -49,7 +49,7 @@ fn default_provisioning_version() -> i32 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BearAgentRole {
+pub enum BearProfile {
     Chat,
     Pair,
     Curate,
@@ -57,7 +57,7 @@ pub enum BearAgentRole {
     Watch,
 }
 
-impl BearAgentRole {
+impl BearProfile {
     pub const ALL: [Self; 5] = [
         Self::Chat,
         Self::Pair,
@@ -91,38 +91,40 @@ impl BearAgentRole {
     pub fn tags_for_bear(self, bear_id: Uuid) -> Vec<String> {
         vec![
             format!("bear:{bear_id}"),
-            format!("role:{}", self.as_str()),
-            format!("bear:{bear_id}:role:{}", self.as_str()),
+            format!("profile:{}", self.as_str()),
+            format!("bear:{bear_id}:profile:{}", self.as_str()),
             "git-memory-enabled".to_string(),
         ]
     }
 }
 
-impl fmt::Display for BearAgentRole {
+impl fmt::Display for BearProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for BearAgentRole {
+impl FromStr for BearProfile {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
-            "chat" | "talk" => Ok(Self::Chat),
+            "chat" => Ok(Self::Chat),
             "pair" => Ok(Self::Pair),
             "curate" => Ok(Self::Curate),
             "work" => Ok(Self::Work),
             "watch" => Ok(Self::Watch),
-            other => Err(format!("unknown bear runtime role: {other}")),
+            other => Err(format!("unknown bear profile: {other}")),
         }
     }
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct BearAgent {
+pub struct BearProfileBinding {
     pub bear_id: Uuid,
-    pub role: String,
+    pub profile: String,
+    pub binding_id: String,
+    /// Deprecated: legacy Letta agent id only; canonical identity is `binding_id`.
     pub letta_agent_id: Option<String>,
     pub provisioning_status: String,
     pub last_provisioned_version: i32,
@@ -133,9 +135,9 @@ pub struct BearAgent {
     pub updated_at: OffsetDateTime,
 }
 
-impl BearAgent {
-    pub fn parsed_role(&self) -> Result<BearAgentRole, String> {
-        self.role.parse()
+impl BearProfileBinding {
+    pub fn parsed_profile(&self) -> Result<BearProfile, String> {
+        self.profile.parse()
     }
 }
 
@@ -146,7 +148,7 @@ pub struct BearSkillManifestEntry {
     pub skill_version: String,
     pub source: String,
     pub content_hash: String,
-    pub applies_to_roles: Vec<String>,
+    pub applies_to_profiles: Vec<String>,
     pub installed_at: Option<OffsetDateTime>,
     pub last_verified_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
@@ -174,34 +176,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn role_parse_and_display_round_trip() {
-        for role in BearAgentRole::ALL {
-            let parsed: BearAgentRole = role.as_str().parse().expect("role parses");
-            assert_eq!(parsed, role);
-            assert_eq!(role.to_string(), role.as_str());
+    fn profile_parse_and_display_round_trip() {
+        for profile in BearProfile::ALL {
+            let parsed: BearProfile = profile.as_str().parse().expect("profile parses");
+            assert_eq!(parsed, profile);
+            assert_eq!(profile.to_string(), profile.as_str());
         }
-        assert!("unknown".parse::<BearAgentRole>().is_err());
+        assert!("unknown".parse::<BearProfile>().is_err());
+        assert!("talk".parse::<BearProfile>().is_err());
     }
 
     #[test]
-    fn role_runtime_family_matches_harness_design() {
-        assert!(BearAgentRole::Chat.is_harness_backed());
-        assert!(BearAgentRole::Work.is_harness_backed());
-        assert!(!BearAgentRole::Pair.is_harness_backed());
-        assert!(!BearAgentRole::Curate.is_harness_backed());
-        assert!(!BearAgentRole::Watch.is_harness_backed());
-        assert_eq!(BearAgentRole::Chat.runtime_family(), "letta_code_harness");
-        assert_eq!(BearAgentRole::Work.runtime_family(), "letta_code_harness");
-        assert_eq!(BearAgentRole::Pair.runtime_family(), "letta_api_direct");
+    fn profile_runtime_family_matches_harness_design() {
+        assert!(BearProfile::Chat.is_harness_backed());
+        assert!(BearProfile::Work.is_harness_backed());
+        assert!(!BearProfile::Pair.is_harness_backed());
+        assert!(!BearProfile::Curate.is_harness_backed());
+        assert!(!BearProfile::Watch.is_harness_backed());
+        assert_eq!(BearProfile::Chat.runtime_family(), "letta_code_harness");
+        assert_eq!(BearProfile::Work.runtime_family(), "letta_code_harness");
+        assert_eq!(BearProfile::Pair.runtime_family(), "letta_api_direct");
     }
 
     #[test]
-    fn role_tags_include_bear_role_and_git_memory() {
+    fn profile_tags_include_bear_profile_and_git_memory() {
         let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
-        let tags = BearAgentRole::Work.tags_for_bear(bear_id);
+        let tags = BearProfile::Work.tags_for_bear(bear_id);
         assert!(tags.contains(&format!("bear:{bear_id}")));
-        assert!(tags.contains(&"role:work".to_string()));
-        assert!(tags.contains(&format!("bear:{bear_id}:role:work")));
+        assert!(tags.contains(&"profile:work".to_string()));
+        assert!(tags.contains(&format!("bear:{bear_id}:profile:work")));
         assert!(tags.contains(&"git-memory-enabled".to_string()));
     }
 }

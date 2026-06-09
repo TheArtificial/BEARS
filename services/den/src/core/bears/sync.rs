@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::core::{
     bears::{
         db as bears_db,
-        model::{Bear, BearAgent, BearAgentRole},
+        model::{Bear, BearProfileBinding, BearProfile},
         provision::{desired_role_tool_ids, role_agent_name, role_config_hash, role_prompt_text},
         runtime_plan::default_runtime_plan,
     },
@@ -18,8 +18,8 @@ use crate::core::{
 use crate::errors::CustomError;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BearRoleSyncOutcome {
-    pub role: String,
+pub struct BearProfileSyncOutcome {
+    pub profile: String,
     pub runtime_binding_id: Option<String>,
     pub status: String,
     pub message: Option<String>,
@@ -28,18 +28,18 @@ pub struct BearRoleSyncOutcome {
 #[derive(Debug, Clone, Serialize)]
 pub struct BearSyncSummary {
     pub bear_id: Uuid,
-    pub outcomes: Vec<BearRoleSyncOutcome>,
+    pub outcomes: Vec<BearProfileSyncOutcome>,
 }
 
 impl BearSyncSummary {
-    pub fn failed_roles(&self) -> Vec<&BearRoleSyncOutcome> {
+    pub fn failed_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
         self.outcomes
             .iter()
             .filter(|o| o.status == "failed")
             .collect()
     }
 
-    pub fn skipped_roles(&self) -> Vec<&BearRoleSyncOutcome> {
+    pub fn skipped_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
         self.outcomes
             .iter()
             .filter(|o| o.status == "skipped_missing_binding")
@@ -54,7 +54,7 @@ impl BearSyncSummary {
     }
 
     pub fn diagnostic_message(&self) -> Option<String> {
-        let failed = self.failed_roles();
+        let failed = self.failed_profiles();
         if failed.is_empty() {
             return None;
         }
@@ -63,7 +63,7 @@ impl BearSyncSummary {
             .map(|o| {
                 format!(
                     "{} ({})",
-                    o.role,
+                    o.profile,
                     o.message.as_deref().unwrap_or("unknown error")
                 )
             })
@@ -73,9 +73,9 @@ impl BearSyncSummary {
     }
 }
 
-fn skipped_missing(role: BearAgentRole) -> BearRoleSyncOutcome {
-    BearRoleSyncOutcome {
-        role: role.as_str().to_string(),
+fn skipped_missing(role: BearProfile) -> BearProfileSyncOutcome {
+    BearProfileSyncOutcome {
+        profile: role.as_str().to_string(),
         runtime_binding_id: None,
         status: "skipped_missing_binding".to_string(),
         message: Some("No Letta runtime binding is recorded for this role.".to_string()),
@@ -87,9 +87,9 @@ async fn sync_one_role(
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear: &Bear,
-    agent: &BearAgent,
-    role: BearAgentRole,
-) -> BearRoleSyncOutcome {
+    agent: &BearProfileBinding,
+    role: BearProfile,
+) -> BearProfileSyncOutcome {
     let Some(agent_id) = agent
         .letta_agent_id
         .as_deref()
@@ -118,10 +118,10 @@ async fn sync_one_role(
         Ok(ids) => ids,
         Err(err) => {
             let msg = format!("tool roster resolution failed before patching Letta: {err}");
-            let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+            let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
             tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync failed resolving tool roster");
-            return BearRoleSyncOutcome {
-                role: role.as_str().to_string(),
+            return BearProfileSyncOutcome {
+                profile: role.as_str().to_string(),
                 runtime_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
@@ -134,10 +134,10 @@ async fn sync_one_role(
             Ok(model) => model.map(|m| m.context_window),
             Err(err) => {
                 let msg = format!("model metadata lookup failed before patching Letta: {err}");
-                let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+                let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
                 tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync failed resolving model metadata");
-                return BearRoleSyncOutcome {
-                    role: role.as_str().to_string(),
+                return BearProfileSyncOutcome {
+                    profile: role.as_str().to_string(),
                     runtime_binding_id: Some(agent_id),
                     status: "failed".to_string(),
                     message: Some(msg),
@@ -152,10 +152,10 @@ async fn sync_one_role(
         Ok(prompt) => prompt,
         Err(err) => {
             let msg = format!("role prompt rendering failed: {err}");
-            let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+            let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
             tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync failed rendering prompt");
-            return BearRoleSyncOutcome {
-                role: role.as_str().to_string(),
+            return BearProfileSyncOutcome {
+                profile: role.as_str().to_string(),
                 runtime_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
@@ -178,10 +178,10 @@ async fn sync_one_role(
         .await
     {
         let msg = format!("Letta PATCH failed: {err}");
-        let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+        let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
         tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync patch failed");
-        return BearRoleSyncOutcome {
-            role: role.as_str().to_string(),
+        return BearProfileSyncOutcome {
+            profile: role.as_str().to_string(),
             runtime_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
@@ -190,10 +190,10 @@ async fn sync_one_role(
 
     if let Err(err) = letta.recompile_agent(&agent_id).await {
         let msg = format!("Letta recompile failed after PATCH: {err}");
-        let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+        let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
         tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync recompile failed");
-        return BearRoleSyncOutcome {
-            role: role.as_str().to_string(),
+        return BearProfileSyncOutcome {
+            profile: role.as_str().to_string(),
             runtime_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
@@ -204,17 +204,17 @@ async fn sync_one_role(
         Ok(config_hash) => config_hash,
         Err(err) => {
             let msg = format!("failed to compute role config hash after sync: {err}");
-            let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+            let _ = bears_db::mark_bear_profile_binding_drifted(pool, bear.id, role, &msg).await;
             tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync config hash computation failed");
-            return BearRoleSyncOutcome {
-                role: role.as_str().to_string(),
+            return BearProfileSyncOutcome {
+                profile: role.as_str().to_string(),
                 runtime_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
             };
         }
     };
-    if let Err(err) = bears_db::mark_bear_agent_synced(
+    if let Err(err) = bears_db::mark_bear_profile_binding_synced(
         pool,
         bear.id,
         role,
@@ -225,8 +225,8 @@ async fn sync_one_role(
     {
         let msg = format!("Den updated Letta but failed to record role sync status: {err}");
         tracing::warn!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, error = %err, "role sync status update failed");
-        return BearRoleSyncOutcome {
-            role: role.as_str().to_string(),
+        return BearProfileSyncOutcome {
+            profile: role.as_str().to_string(),
             runtime_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
@@ -234,8 +234,8 @@ async fn sync_one_role(
     }
 
     tracing::info!(bear_id = %bear.id, role = %role, runtime_binding_id = %agent_id, "role sync completed");
-    BearRoleSyncOutcome {
-        role: role.as_str().to_string(),
+    BearProfileSyncOutcome {
+        profile: role.as_str().to_string(),
         runtime_binding_id: Some(agent_id),
         status: "synced".to_string(),
         message: None,
@@ -257,10 +257,10 @@ pub async fn sync_all_bear_roles_to_letta(
     if !letta.is_enabled() {
         return Ok(BearSyncSummary {
             bear_id,
-            outcomes: BearAgentRole::ALL
+            outcomes: BearProfile::ALL
                 .iter()
-                .map(|role| BearRoleSyncOutcome {
-                    role: role.as_str().to_string(),
+                .map(|role| BearProfileSyncOutcome {
+                    profile: role.as_str().to_string(),
                     runtime_binding_id: None,
                     status: "skipped_letta_disabled".to_string(),
                     message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
@@ -269,15 +269,15 @@ pub async fn sync_all_bear_roles_to_letta(
         });
     }
 
-    bears_db::ensure_bear_agent_rows(pool, bear_id).await?;
-    let agents = bears_db::list_bear_agents(pool, bear_id).await?;
+    bears_db::ensure_bear_profile_binding_rows(pool, bear_id).await?;
+    let agents = bears_db::list_bear_profile_bindings(pool, bear_id).await?;
     let mut outcomes = Vec::with_capacity(agents.len());
     for agent in agents {
-        let role = match agent.parsed_role() {
+        let role = match agent.parsed_profile() {
             Ok(role) => role,
             Err(err) => {
-                outcomes.push(BearRoleSyncOutcome {
-                    role: agent.role.clone(),
+                outcomes.push(BearProfileSyncOutcome {
+                    profile: agent.profile.clone(),
                     runtime_binding_id: agent.letta_agent_id.clone(),
                     status: "failed".to_string(),
                     message: Some(format!("invalid role in DB: {err}")),

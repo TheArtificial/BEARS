@@ -95,7 +95,7 @@ pub async fn create_run(
 
 pub struct ProposalEnqueueParams<'a> {
     pub bear_id: Uuid,
-    pub role_agent_id: Option<&'a str>,
+    pub binding_id: Option<&'a str>,
     pub conversation_id: Option<&'a str>,
     pub conversation_key: Option<&'a str>,
     pub conversation_date: Option<Date>,
@@ -211,7 +211,7 @@ pub async fn enqueue_memory_curate_for_proposals(
             lane: "memory_curate",
             trigger: params.trigger,
             status: "queued",
-            role_agent_id: params.role_agent_id,
+            role_agent_id: params.binding_id,
             conversation_id: params.conversation_id,
             conversation_key: params.conversation_key,
             conversation_date: params.conversation_date,
@@ -618,7 +618,7 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        core::{bears::BearAgentRole, memory::MemoryStoreManager, memory_proposals},
+        core::{bears::BearProfile, memory::MemoryStoreManager, memory_proposals},
     };
     use sqlx::postgres::PgPoolOptions;
 
@@ -640,7 +640,7 @@ mod tests {
             &pool,
             ProposalEnqueueParams {
                 bear_id,
-                role_agent_id: Some("pair-agent"),
+                binding_id: Some("pair-agent"),
                 conversation_id: Some("conv-a"),
                 conversation_key: Some("memory_curate:test-a"),
                 conversation_date: None,
@@ -654,7 +654,7 @@ mod tests {
             &pool,
             ProposalEnqueueParams {
                 bear_id,
-                role_agent_id: Some("pair-agent"),
+                binding_id: Some("pair-agent"),
                 conversation_id: Some("conv-b"),
                 conversation_key: Some("memory_curate:test-b"),
                 conversation_date: None,
@@ -697,7 +697,7 @@ mod tests {
             &pool,
             memory_proposals::CreateMemoryProposal {
                 bear_id,
-                source_role: BearAgentRole::Pair,
+                source_role: BearProfile::Pair,
                 source_agent_id: Some("pair-agent".to_string()),
                 source_paths: vec!["pair/notes/worker.md".to_string()],
                 source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-worker-test"}),
@@ -721,7 +721,7 @@ mod tests {
             &pool,
             ProposalEnqueueParams {
                 bear_id,
-                role_agent_id: Some("pair-agent"),
+                binding_id: Some("pair-agent"),
                 conversation_id: Some("conv-memory-curate-worker-test"),
                 conversation_key: Some("memory_curate:test-worker"),
                 conversation_date: None,
@@ -786,7 +786,7 @@ mod tests {
             &pool,
             memory_proposals::CreateMemoryProposal {
                 bear_id,
-                source_role: BearAgentRole::Pair,
+                source_role: BearProfile::Pair,
                 source_agent_id: Some("pair-agent".to_string()),
                 source_paths: vec!["pair/notes/example.md".to_string()],
                 source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-test"}),
@@ -810,7 +810,7 @@ mod tests {
             &pool,
             ProposalEnqueueParams {
                 bear_id,
-                role_agent_id: Some("pair-agent"),
+                binding_id: Some("pair-agent"),
                 conversation_id: Some("conv-memory-curate-test"),
                 conversation_key: Some("memory_curate:test-runner"),
                 conversation_date: None,

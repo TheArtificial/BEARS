@@ -18,7 +18,7 @@ use crate::{
 use super::context_composition::render_role_prompt;
 use super::db as bears_db;
 use super::managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config};
-use super::model::{Bear, BearAgentRole};
+use super::model::{Bear, BearProfile};
 use super::runtime_plan::default_runtime_plan;
 use crate::errors::CustomError;
 
@@ -32,7 +32,7 @@ fn memfs_sidecar_url_from_env() -> String {
 pub async fn register_role_view_if_configured(
     letta: &LettaClient,
     bear_id: Uuid,
-    role: BearAgentRole,
+    role: BearProfile,
     agent_id: &str,
 ) -> Result<(), CustomError> {
     let base = memfs_sidecar_url_from_env();
@@ -100,7 +100,7 @@ async fn provision_bear_native(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    bears_db::ensure_bear_agent_rows(pool, bear_id).await?;
+    bears_db::ensure_bear_profile_binding_rows(pool, bear_id).await?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
 
     let memory_stores = MemoryStoreManager::new(config);
@@ -110,14 +110,15 @@ async fn provision_bear_native(
         compile_and_store_managed_config_for_bear(pool, &bear).await?;
     }
 
-    for role in BearAgentRole::ALL {
+    for role in BearProfile::ALL {
         let binding_id = format!("den-native:{bear_id}:{}", role.as_str());
         let config_hash = role_config_hash(pool, &bear, role).await?;
-        bears_db::mark_bear_agent_ready(
+        bears_db::mark_bear_profile_binding_ready(
             pool,
             bear_id,
             role,
             &binding_id,
+            None,
             bear.provisioning_version,
             &config_hash,
         )
@@ -134,9 +135,9 @@ async fn provision_bear_roles(
     bifrost: &BifrostClient,
     bear: &Bear,
 ) -> Result<(), CustomError> {
-    bears_db::ensure_bear_agent_rows(pool, bear.id).await?;
+    bears_db::ensure_bear_profile_binding_rows(pool, bear.id).await?;
 
-    for role in BearAgentRole::ALL {
+    for role in BearProfile::ALL {
         provision_bear_role(pool, letta, bifrost, bear, role).await?;
     }
 
@@ -158,11 +159,11 @@ pub async fn provision_missing_bear_roles(
     let bear = bears_db::get_bear(pool, bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    bears_db::ensure_bear_agent_rows(pool, bear.id).await?;
+    bears_db::ensure_bear_profile_binding_rows(pool, bear.id).await?;
 
     let mut provisioned = 0usize;
-    for role in BearAgentRole::ALL {
-        let existing = bears_db::get_bear_agent(pool, bear.id, role).await?;
+    for role in BearProfile::ALL {
+        let existing = bears_db::get_bear_profile_binding(pool, bear.id, role).await?;
         let has_agent = existing
             .as_ref()
             .and_then(|row| row.letta_agent_id.as_deref())
@@ -184,12 +185,12 @@ pub async fn register_existing_role_views(
     let bears = bears_db::list_bears(pool).await?;
     let mut registered = 0usize;
     for bear in bears {
-        let agents = bears_db::list_bear_agents(pool, bear.id).await?;
+        let agents = bears_db::list_bear_profile_bindings(pool, bear.id).await?;
         for agent in agents {
-            let role = match agent.parsed_role() {
+            let role = match agent.parsed_profile() {
                 Ok(role) => role,
                 Err(err) => {
-                    tracing::warn!(bear_id = %bear.id, role = %agent.role, error = %err, "skipping MemFS view registration for invalid role");
+                    tracing::warn!(bear_id = %bear.id, profile = %agent.profile, error = %err, "skipping MemFS view registration for invalid profile");
                     continue;
                 }
             };
@@ -225,10 +226,10 @@ pub async fn reconcile_bear_if_configured(
     if !letta.is_enabled() {
         return Ok(crate::core::bears::sync::BearSyncSummary {
             bear_id,
-            outcomes: BearAgentRole::ALL
+            outcomes: BearProfile::ALL
                 .iter()
-                .map(|role| crate::core::bears::sync::BearRoleSyncOutcome {
-                    role: role.as_str().to_string(),
+                .map(|role| crate::core::bears::sync::BearProfileSyncOutcome {
+                    profile: role.as_str().to_string(),
                     runtime_binding_id: None,
                     status: "skipped_letta_disabled".to_string(),
                     message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
@@ -244,9 +245,9 @@ async fn provision_bear_role(
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<(), CustomError> {
-    let existing = bears_db::get_bear_agent(pool, bear.id, role).await?;
+    let existing = bears_db::get_bear_profile_binding(pool, bear.id, role).await?;
     if let Some(existing) = existing.as_ref() {
         if existing
             .letta_agent_id
@@ -273,17 +274,18 @@ async fn provision_bear_role(
         }
     }
 
-    bears_db::mark_bear_agent_provisioning(pool, bear.id, role).await?;
+    bears_db::mark_bear_profile_binding_provisioning(pool, bear.id, role).await?;
 
     let result = create_role_agent(pool, letta, bifrost, bear, role).await;
     match result {
         Ok(agent_id) => {
             let config_hash = role_config_hash(pool, bear, role).await?;
-            bears_db::mark_bear_agent_ready(
+            bears_db::mark_bear_profile_binding_ready(
                 pool,
                 bear.id,
                 role,
                 &agent_id,
+                Some(&agent_id),
                 bear.provisioning_version,
                 &config_hash,
             )
@@ -294,7 +296,7 @@ async fn provision_bear_role(
         }
         Err(err) => {
             let message = err.to_string();
-            bears_db::mark_bear_agent_failed(pool, bear.id, role, &message).await?;
+            bears_db::mark_bear_profile_binding_failed(pool, bear.id, role, &message).await?;
             Err(err)
         }
     }
@@ -305,7 +307,7 @@ async fn create_role_agent(
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<String, CustomError> {
     let model = bear
         .default_model
@@ -351,7 +353,7 @@ async fn create_role_agent(
         .await
 }
 
-pub(crate) fn role_agent_name(bear: &Bear, role: BearAgentRole) -> String {
+pub(crate) fn role_agent_name(bear: &Bear, role: BearProfile) -> String {
     // Letta validates agent names using a filesystem-safe allow-list. Keep the name readable
     // while stripping punctuation that can fail export/memfs paths (notably parentheses).
     let base = sanitize_letta_agent_name(&bear.name);
@@ -386,21 +388,21 @@ fn sanitize_letta_agent_name(name: &str) -> String {
     }
 }
 
-pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<String> {
+pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearProfile) -> Vec<String> {
     // Until explicit per-role tool roster configuration lands, be conservative:
     // harness-backed roles keep the operator-selected Letta tools, while API-direct roles receive
     // no broad operator-selected harness tools. Den/ACP tools are exposed through their own
     // controlled paths rather than by attaching every legacy Letta tool to every role.
     match role {
-        BearAgentRole::Chat | BearAgentRole::Work => bear.letta_tool_ids.0.clone(),
-        BearAgentRole::Pair | BearAgentRole::Curate | BearAgentRole::Watch => Vec::new(),
+        BearProfile::Chat | BearProfile::Work => bear.letta_tool_ids.0.clone(),
+        BearProfile::Pair | BearProfile::Curate | BearProfile::Watch => Vec::new(),
     }
 }
 
 pub(crate) async fn role_prompt_text(
     pool: &PgPool,
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<String, CustomError> {
     if bear.context_profile.is_none() {
         return render_role_prompt(bear, role);
@@ -434,7 +436,7 @@ pub(crate) async fn role_prompt_text(
 pub(crate) async fn role_config_hash(
     pool: &PgPool,
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<serde_json::Value, CustomError> {
     let mut payload = json!({
         "schema_version": 1,
@@ -507,7 +509,7 @@ mod tests {
     fn role_agent_name_uses_letta_safe_role_suffix() {
         let bear = test_bear("Builder Bear");
         assert_eq!(
-            role_agent_name(&bear, BearAgentRole::Pair),
+            role_agent_name(&bear, BearProfile::Pair),
             "Builder Bear - pair"
         );
     }
@@ -515,7 +517,7 @@ mod tests {
     #[test]
     fn role_agent_name_sanitizes_filesystem_unsafe_characters() {
         let bear = test_bear("Builder/Bear: Alpha (v2) \"ops\"?");
-        let name = role_agent_name(&bear, BearAgentRole::Work);
+        let name = role_agent_name(&bear, BearProfile::Work);
         assert_eq!(name, "Builder Bear Alpha v2 ops - work");
         assert!(name
             .chars()
@@ -526,7 +528,7 @@ mod tests {
     fn role_agent_name_keeps_unicode_letters_and_normalizes_apostrophes() {
         let bear = test_bear("Zoë’s 建築_Bear");
         assert_eq!(
-            role_agent_name(&bear, BearAgentRole::Chat),
+            role_agent_name(&bear, BearProfile::Chat),
             "Zoë's 建築_Bear - chat"
         );
     }
@@ -535,7 +537,7 @@ mod tests {
     fn role_agent_name_falls_back_when_base_name_has_no_safe_characters() {
         let bear = test_bear("()/?*");
         assert_eq!(
-            role_agent_name(&bear, BearAgentRole::Curate),
+            role_agent_name(&bear, BearProfile::Curate),
             "Bear - curate"
         );
     }

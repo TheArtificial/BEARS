@@ -1,16 +1,16 @@
-use crate::core::{bears::BearAgentRole, tools::constants::*};
+use crate::core::{bears::BearProfile, tools::constants::*};
 
 use super::core_helpers::names_for_role;
 
 #[test]
 fn privileged_descriptors_are_role_scoped() {
-    let chat = names_for_role(BearAgentRole::Chat);
+    let chat = names_for_role(BearProfile::Chat);
     assert!(chat.contains(DEN_TASK_WRITE_INTENT));
     assert!(chat.contains(DEN_SKILL_PROPOSE));
     assert!(!chat.contains(DEN_OBSERVATION_WRITE));
     assert!(!chat.contains(DEN_RUN_WRITE_RESULT));
 
-    let pair = names_for_role(BearAgentRole::Pair);
+    let pair = names_for_role(BearProfile::Pair);
     assert!(pair.contains(DEN_TASK_WRITE_INTENT));
     assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
     assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
@@ -18,7 +18,7 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!pair.contains(DEN_OBSERVATION_WRITE));
     assert!(!pair.contains(DEN_RUN_WRITE_RESULT));
 
-    let curate = names_for_role(BearAgentRole::Curate);
+    let curate = names_for_role(BearProfile::Curate);
     assert!(curate.contains(DEN_TASK_APPROVE_INTENT));
     assert!(curate.contains(DEN_TASK_REJECT_INTENT));
     assert!(curate.contains(DEN_CORE_WRITE_RESULT_SUMMARY));
@@ -29,7 +29,7 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!curate.contains(DEN_OBSERVATION_WRITE));
     assert!(!curate.contains(DEN_RUN_WRITE_RESULT));
 
-    let watch = names_for_role(BearAgentRole::Watch);
+    let watch = names_for_role(BearProfile::Watch);
     assert!(watch.contains(DEN_OBSERVATION_WRITE));
     assert!(watch.contains(DEN_SKILL_PROPOSE));
     assert!(!watch.contains(DEN_WORK_PLAN_LIST));
@@ -37,7 +37,7 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!watch.contains(DEN_TASK_WRITE_INTENT));
     assert!(!watch.contains(DEN_RUN_WRITE_RESULT));
 
-    let work = names_for_role(BearAgentRole::Work);
+    let work = names_for_role(BearProfile::Work);
     assert!(work.contains(DEN_RUN_WRITE_RESULT));
     assert!(work.contains(DEN_WORK_PLAN_LIST));
     assert!(work.contains(DEN_WORK_PLAN_UPDATE));

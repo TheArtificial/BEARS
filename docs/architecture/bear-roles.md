@@ -1,6 +1,6 @@
-# Bear roles: chat, pair, review, work, and watch
+# Bear profiles: chat, pair, curate, work, and watch
 
-This document describes the five internal roles Bear Den uses. It is the core reference for role names, role responsibilities, cross-role cooperation, and role-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full role model.
+This document describes the five internal profiles Bear Den uses. It is the core reference for role names, role responsibilities, cross-role cooperation, and role-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full role model.
 
 A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-role runtime. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
 
@@ -8,7 +8,7 @@ Roles are the preferred conceptual vocabulary. They are useful for code, schemas
 
 ## Status and relationship to other docs
 
-This is the durable conceptual source for the five Bear roles: what they are, why they exist, how they cooperate, and how we should talk about them.
+This is the durable conceptual source for the five Bear profiles: what they are, why they exist, how they cooperate, and how we should talk about them.
 
 For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-profiles-and-role-axes.md`](interactive-profiles-and-role-axes.md).
 
@@ -18,7 +18,7 @@ It is not the implementation spec for provisioning, prompt hashes, tool ids, run
 
 | Document | Audience | Purpose |
 |----------|----------|---------|
-| [`bear-roles.md`](bear-roles.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five internal roles. |
+| [`bear-roles.md`](bear-roles.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five internal profiles. |
 | `docs/decisions/*` | Engineering and architecture | Historical decision records and rationale. |
 | Runtime/provisioning specs such as `den-bear-spec.md` | Engineering implementation | Den-owned runtime and provisioning behavior. |
 
@@ -32,19 +32,19 @@ A Bear is one assistant that can operate through five coordinated roles:
 |------|-----------------------------------|-------------|-------------------------------------|
 | `chat` | Conversational agent | Chat with people in chat channels and capture task intent. | Slack, web chat, Discord, future chat surfaces. |
 | `pair` | Collaborative agent | Work alongside a person inside tools such as IDEs. | ACP clients, IDEs, Cowork, Figma plugins, future client tools. |
-| `review` | Internal integrator | Decide what becomes shared memory, shared capability, approved work, or reviewed observation. | Not directly user-facing. |
+| `curate` | Internal integrator | Decide what becomes shared memory, shared capability, approved work, or reviewed observation. | Not directly user-facing. |
 | `work` | Outbound executor | Carry out approved scheduled or event-triggered work against external systems. | Not conversational; invoked by Den task dispatch. |
 | `watch` | Inbound observer | Receive external events and turn them into structured observations for review. | Webhooks, polling, queues, subscriptions, streams. |
 
 The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful runtime. The role is the operating mode and trust boundary; the channel is the concrete touchpoint; the work surface is the durable work context the Bear may be acting on.
 
-## Why five roles?
+## Why five profiles?
 
-The five-role model supports five product and safety goals at once:
+The five-profile model supports five product and safety goals at once:
 
 1. **One coherent Bear, many contexts.** Users experience one assistant, while the system routes different contexts to the right internal role.
 2. **Better concurrency.** Chat, IDE collaboration, background work, and inbound events can proceed without all traffic bottlenecking through one stateful agent.
-3. **Cleaner memory.** Raw interactions stay in role-specific branches until `review` promotes durable knowledge into shared `core/` memory.
+3. **Cleaner memory.** Raw interactions stay in role-specific branches until `curate` promotes durable knowledge into shared `core/` memory.
 4. **Safer autonomy.** No single role combines broad private data, outbound external communication, and unrestricted durable state mutation.
 5. **Clearer product language.** Each role has a stable purpose that can guide UI, documentation, onboarding, data modeling, and marketing.
 
@@ -56,7 +56,7 @@ The five-role model supports five product and safety goals at once:
 
 `chat` should be understood as the Bear's conversational front door. It can answer questions, help users think through work, use appropriate channel tools, and write down task intents when a user asks for external or autonomous work.
 
-`chat` does not directly perform arbitrary outbound autonomous work. If a user asks for something like “check this every morning,” “post this to another system,” or “monitor that service,” `chat` captures the intent in a structured form so `review` and Den can review and route it.
+`chat` does not directly perform arbitrary outbound autonomous work. If a user asks for something like “check this every morning,” “post this to another system,” or “monitor that service,” `chat` captures the intent in a structured form so `curate` and Den can review and route it.
 
 **Good shorthand:** “the role that talks with you in chat.”
 
@@ -71,7 +71,7 @@ The five-role model supports five product and safety goals at once:
 **Intentional limits:**
 
 - No direct autonomous outbound work.
-- No access to `pair`, `review`, `work`, or `watch` branches.
+- No access to `pair`, `curate`, `work`, or `watch` branches.
 - No unilateral promotion of memories into shared `core/`.
 
 ### `pair`: collaborative agent
@@ -98,7 +98,7 @@ The five-role model supports five product and safety goals at once:
 - No autonomous outbound work outside the client-mediated permission model.
 - No unilateral promotion of memories into shared `core/`.
 
-### `review`: internal integrator
+### `curate`: internal integrator
 
 `review` is the Bear's internal integrator. It reads across the Bear's branches, reflects on and reorganizes accumulated activity, promotes durable knowledge into shared `core/`, reviews task intents and watch observations, promotes work results, and governs skill learning.
 
@@ -172,11 +172,11 @@ It is the primary semantic authority for what becomes shared Bear memory or shar
 - No outbound action capability.
 - No direct access to `chat`, `pair`, `review`, or `work` branches.
 - No direct promotion of observations into shared memory.
-- No direct conversion of events into external action without `review` and Den mediation.
+- No direct conversion of events into external action without `curate` and Den mediation.
 
 ## How the roles cooperate
 
-The five roles form a flow from raw interaction to durable memory and approved action:
+The five profiles form a flow from raw interaction to durable memory and approved action:
 
 1. A person talks with `chat` or works with `pair`.
 2. `chat` or `pair` answers directly when the request fits the synchronous surface.
@@ -220,14 +220,14 @@ Use role/channel/work-surface language for ordinary explanation:
 - “Each role has a clear job and a clear trust boundary.”
 - “The `chat` role is where the Bear talks with people in chat-like channels.”
 - “The `pair` role is where the Bear works alongside a person in a client or workspace.”
-- “The `review` role reviews what becomes shared memory.”
+- “The `curate` profile reviews what becomes shared memory.”
 - “The `work` role performs approved external tasks.”
 - “The `watch` role receives external events and records observations.”
 
 Use implementation detail carefully:
 
 - “Den projects the Bear into a runtime for the appropriate role.”
-- “The `review` role reviews and integrates durable knowledge.”
+- “The `curate` profile reviews and integrates durable knowledge.”
 - “The `chat` and `pair` roles are the two synchronous user-facing roles.”
 
 ### Avoid
@@ -269,7 +269,7 @@ For example:
 
 ## Design and data-model implications
 
-The five roles should shape product and data design:
+The five profiles should shape product and data design:
 
 - User-facing conversation history belongs primarily to `chat` or `pair` channels, not to `work` or `watch`.
 - Background tasks should be represented as reviewed work, not as hidden chat side effects.
@@ -289,4 +289,4 @@ A sixth role should not be added merely because a new feature exists. A new role
 - runtime/tooling needs,
 - and product meaning.
 
-Until then, new capabilities should usually attach to one of the existing five roles.
+Until then, new capabilities should usually attach to one of the existing five profiles.

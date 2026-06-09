@@ -13,7 +13,7 @@ use den::{
     config::Config,
     core::{
         acp_sessions, acp_tokens,
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearProfile},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
@@ -280,9 +280,9 @@ async fn create_test_user_bear_with_pair(
     if provision_pair {
         sqlx::query(
             r#"
-            INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+            INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
             VALUES ($1, $2, $3, 'ready', NOW())
-            ON CONFLICT (bear_id, role)
+            ON CONFLICT (bear_id, profile)
             DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                           provisioning_status = 'ready',
                           last_synced_at = NOW(),
@@ -290,7 +290,7 @@ async fn create_test_user_bear_with_pair(
             "#,
         )
         .bind(bear_id)
-        .bind(BearAgentRole::Pair.as_str())
+        .bind(BearProfile::Pair.as_str())
         .bind(&pair_agent_id)
         .execute(pool)
         .await
@@ -323,7 +323,7 @@ async fn create_acp_session_work_plan(
         pool,
         WorkPlanUpsert {
             bear_id: user_bear.bear_id,
-            owner_role: BearAgentRole::Pair,
+            owner_role: BearProfile::Pair,
             owner_agent_id: Some(user_bear.pair_agent_id.clone()),
             created_by_user_id: Some(user_bear.user_id),
             source_conversation_id: Some("conv-acp-workboard-context".to_string()),

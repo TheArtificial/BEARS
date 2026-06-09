@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::{
-    bears::{db, db::grant_membership, db::BearParams, BearAgentRole},
+    bears::{db, db::grant_membership, db::BearParams, BearProfile},
     den_tools::{
         invoke_den_tool, DenToolChannelContext, DenToolInvocationContext,
         DEN_MEMORY_APPLY_CORE_UPDATE,
@@ -19,9 +19,9 @@ async fn seed_curate_agent(
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id)
-        VALUES ($1, 'curate', $2)
-        ON CONFLICT (bear_id, role)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
+        VALUES ($1, 'curate', $2, $2)
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
         "#,
     )
@@ -80,7 +80,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         &pool,
         CreateMemoryProposal {
             bear_id,
-            source_role: BearAgentRole::Pair,
+            source_role: BearProfile::Pair,
             source_agent_id: Some("agent-pair".to_string()),
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: json!({
@@ -105,8 +105,8 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     let context = DenToolInvocationContext {
         bear_id,
         bear_slug: "test-memory-apply-tool-bear".to_string(),
-        role_agent_id: agent_id,
-        agent_role: Some(BearAgentRole::Curate),
+        binding_id: agent_id,
+        profile: Some(BearProfile::Curate),
         user_id,
         username: Some("tester".to_string()),
         membership_role: Some("admin".to_string()),

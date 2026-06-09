@@ -4,8 +4,8 @@ fn pair_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+        binding_id: "agent".to_string(),
+        profile: Some(crate::core::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -288,8 +288,8 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
     let context = DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+        binding_id: "agent".to_string(),
+        profile: Some(crate::core::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -350,8 +350,8 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
     let context = DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+        binding_id: "agent".to_string(),
+        profile: Some(crate::core::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,

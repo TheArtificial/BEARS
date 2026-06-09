@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
         prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
         prompt_memory_blocks::{PromptMemoryBlock, PromptMemoryBlockState},
@@ -87,7 +87,7 @@ pub(crate) async fn memory_status(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<Value, CustomError> {
     if config.uses_native_agent_runtime() {
         let stores = MemoryStoreManager::new(config);
@@ -128,7 +128,7 @@ pub(crate) async fn memory_status(
         "configured": true,
         "available": response.ok,
         "bear_id": context.bear_id,
-        "role": role.as_str(),
+        "profile": role.as_str(),
         "canonical_tip": response.canonical_tip,
         "allowed_prefixes": response.allowed_prefixes,
         "file_count": response.file_count,
@@ -141,7 +141,7 @@ pub(crate) async fn memory_status(
 pub(crate) async fn memory_status_value(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     pool: &PgPool,
 ) -> Result<Value, CustomError> {
     memory_status(pool, config, context, role).await
@@ -150,7 +150,7 @@ pub(crate) async fn memory_status_value(
 pub(crate) async fn memory_browse(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<Value, CustomError> {
     if config.uses_native_agent_runtime() {
         let stores = MemoryStoreManager::new(config);
@@ -182,7 +182,7 @@ pub(crate) async fn memory_browse(
 pub(crate) async fn memory_read(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: MemoryReadArguments = serde_json::from_value(arguments)?;
@@ -223,7 +223,7 @@ pub(crate) async fn memory_read(
 pub(crate) async fn memory_search(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: MemorySearchArguments = serde_json::from_value(arguments)?;

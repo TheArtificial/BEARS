@@ -143,8 +143,8 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
         &crate::core::tools::session::DenToolInvocationContext {
             bear_id: uuid::Uuid::nil(),
             bear_slug: "test".to_string(),
-            role_agent_id: "agent".to_string(),
-            agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+            binding_id: "agent".to_string(),
+            profile: Some(crate::core::bears::BearProfile::Pair),
             user_id: 1,
             username: Some("tester".to_string()),
             membership_role: None,

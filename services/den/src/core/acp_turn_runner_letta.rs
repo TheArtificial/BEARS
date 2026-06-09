@@ -134,7 +134,7 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
         &self,
         request: CancelTurnRequest,
     ) -> Result<CancelTurnResult, CustomError> {
-        let role_agent_id = request
+        let binding_id = request
             .binding
             .as_ref()
             .map(|binding| binding.binding_id.as_str())
@@ -143,7 +143,7 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
         let run_ids = request.run_ids;
         if run_ids.is_empty() {
             tracing::warn!(
-                pair_agent_id = role_agent_id,
+                pair_agent_id = binding_id,
                 reason,
                 "Skipping runtime run cancellation because no active run ids were recorded"
             );
@@ -154,7 +154,7 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
         }
 
         let url = format!(
-            "{}/v1/agents/{role_agent_id}/messages/cancel",
+            "{}/v1/agents/{binding_id}/messages/cancel",
             self.letta.base_url()
         );
         let body = serde_json::json!({ "run_ids": run_ids });
@@ -167,7 +167,7 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 tracing::warn!(
-                    pair_agent_id = role_agent_id,
+                    pair_agent_id = binding_id,
                     reason,
                     run_ids = ?body["run_ids"],
                     %status,
@@ -178,7 +178,7 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
             }
             Err(err) => {
                 tracing::warn!(
-                    pair_agent_id = role_agent_id,
+                    pair_agent_id = binding_id,
                     reason,
                     run_ids = ?body["run_ids"],
                     error = %err,
@@ -245,7 +245,7 @@ impl<'a> LettaRuntimeTurnBackend<'a> {
             self.letta,
             PairTurnRequest {
                 conversation_id: &request.conversation.id,
-                role_agent_id: &request.binding.binding_id,
+                binding_id: &request.binding.binding_id,
                 human_message: &request.human_message,
                 client_tools: request.client_tools.clone(),
                 stream_tokens: request.stream_tokens,

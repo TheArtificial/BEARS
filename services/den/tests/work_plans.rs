@@ -3,7 +3,7 @@
 use den::{
     config::Config,
     core::{
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearProfile},
         tools::{
             constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
             session::{invoke_den_tool, DenToolInvocationContext},
@@ -69,14 +69,14 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
 async fn insert_role_agent(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
-    role: BearAgentRole,
+    role: BearProfile,
     agent_id: &str,
 ) {
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
         VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
@@ -91,12 +91,12 @@ async fn insert_role_agent(
     .expect("insert role agent");
 }
 
-fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvocationContext {
+fn den_context(bear_id: Uuid, user_id: i32, binding_id: &str) -> DenToolInvocationContext {
     serde_json::from_value(json!({
         "bear_id": bear_id,
         "bear_slug": "work-plan-test",
-        "role_agent_id": role_agent_id,
-        "agent_role": "pair",
+        "binding_id": binding_id,
+        "profile": "pair",
         "user_id": user_id,
         "username": "work-plan-user",
         "membership_role": bears_db::BEAR_ROLE_ADMIN,
@@ -160,7 +160,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
         &pool,
         WorkPlanUpsert {
             bear_id,
-            owner_role: BearAgentRole::Pair,
+            owner_role: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),
@@ -178,7 +178,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     let pair_plans = work_plans::list_visible_work_plans(
         &pool,
         bear_id,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         user_id,
         WorkPlanListFilter::default(),
     )
@@ -191,7 +191,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     let chat_plans = work_plans::list_visible_work_plans(
         &pool,
         bear_id,
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         user_id,
         WorkPlanListFilter::default(),
     )
@@ -203,7 +203,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
         &pool,
         WorkPlanUpsert {
             bear_id,
-            owner_role: BearAgentRole::Pair,
+            owner_role: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),
@@ -221,7 +221,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     let chat_plans = work_plans::list_visible_work_plans(
         &pool,
         bear_id,
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         user_id,
         WorkPlanListFilter::default(),
     )
@@ -258,7 +258,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     insert_role_agent(
         &pool,
         bear_id,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         "agent-pair-den-tool-plan",
     )
     .await;

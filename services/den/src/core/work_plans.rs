@@ -5,7 +5,7 @@ use std::fmt;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::core::bears::BearAgentRole;
+use crate::core::bears::BearProfile;
 use crate::errors::CustomError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,7 +172,7 @@ pub struct BearWorkPlanRow {
 #[derive(Debug, Clone)]
 pub struct WorkPlanUpsert {
     pub bear_id: Uuid,
-    pub owner_role: BearAgentRole,
+    pub owner_role: BearProfile,
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
@@ -186,7 +186,7 @@ pub struct WorkPlanUpsert {
 #[derive(Debug, Clone, Default)]
 pub struct WorkPlanListFilter {
     pub statuses: Option<Vec<WorkPlanStatus>>,
-    pub owner_role: Option<BearAgentRole>,
+    pub owner_role: Option<BearProfile>,
     pub include_archived: bool,
 }
 
@@ -256,7 +256,7 @@ impl From<WorkPlanValidationError> for CustomError {
 }
 
 impl BearWorkPlanRow {
-    pub fn parsed_owner_role(&self) -> Result<BearAgentRole, CustomError> {
+    pub fn parsed_owner_role(&self) -> Result<BearProfile, CustomError> {
         self.owner_role.parse().map_err(CustomError::Parsing)
     }
 
@@ -270,7 +270,7 @@ impl BearWorkPlanRow {
 
     pub fn is_visible_to(
         &self,
-        viewer_role: BearAgentRole,
+        viewer_role: BearProfile,
         user_id: i32,
     ) -> Result<bool, CustomError> {
         let owner_role = self.parsed_owner_role()?;
@@ -286,7 +286,7 @@ impl BearWorkPlanRow {
 
     pub fn project_for_role(
         &self,
-        viewer_role: BearAgentRole,
+        viewer_role: BearProfile,
         user_id: i32,
     ) -> Result<Option<WorkPlanProjection>, CustomError> {
         if !self.is_visible_to(viewer_role, user_id)? {
@@ -397,7 +397,7 @@ pub async fn create_or_update_work_plan(
 async fn find_existing_plan_id(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     bear_id: Uuid,
-    owner_role: BearAgentRole,
+    owner_role: BearProfile,
     source_conversation_id: Option<&str>,
     source_acp_session_id: Option<&str>,
 ) -> Result<Option<Uuid>, CustomError> {
@@ -511,7 +511,7 @@ async fn update_existing_plan(
 struct WorkPlanEventParams<'a> {
     plan_id: Uuid,
     bear_id: Uuid,
-    actor_role: Option<BearAgentRole>,
+    actor_role: Option<BearProfile>,
     actor_agent_id: Option<&'a str>,
     actor_user_id: Option<i32>,
     event_type: &'a str,
@@ -545,7 +545,7 @@ async fn append_event(
 pub async fn list_visible_work_plans(
     pool: &PgPool,
     bear_id: Uuid,
-    viewer_role: BearAgentRole,
+    viewer_role: BearProfile,
     user_id: i32,
     filter: WorkPlanListFilter,
 ) -> Result<Vec<WorkPlanProjection>, CustomError> {
@@ -590,7 +590,7 @@ pub async fn list_visible_work_plans(
 pub async fn get_visible_work_plan(
     pool: &PgPool,
     bear_id: Uuid,
-    viewer_role: BearAgentRole,
+    viewer_role: BearProfile,
     user_id: i32,
     lookup: WorkPlanLookup,
 ) -> Result<Option<WorkPlanProjection>, CustomError> {
@@ -715,20 +715,20 @@ pub fn validate_work_plan_items(items: &[WorkPlanItem]) -> Result<(), WorkPlanVa
     Ok(())
 }
 
-pub fn role_can_update_work_plan(role: BearAgentRole) -> bool {
+pub fn role_can_update_work_plan(role: BearProfile) -> bool {
     matches!(
         role,
-        BearAgentRole::Chat | BearAgentRole::Pair | BearAgentRole::Work
+        BearProfile::Chat | BearProfile::Pair | BearProfile::Work
     )
 }
 
-pub fn role_can_request_work_handoff(role: BearAgentRole) -> bool {
-    matches!(role, BearAgentRole::Chat | BearAgentRole::Pair)
+pub fn role_can_request_work_handoff(role: BearProfile) -> bool {
+    matches!(role, BearProfile::Chat | BearProfile::Pair)
 }
 
 pub fn role_can_read_work_plan(
-    viewer_role: BearAgentRole,
-    owner_role: BearAgentRole,
+    viewer_role: BearProfile,
+    owner_role: BearProfile,
     visibility: WorkPlanVisibility,
     same_user: bool,
 ) -> bool {
@@ -737,7 +737,7 @@ pub fn role_can_read_work_plan(
         WorkPlanVisibility::SameUser => same_user || viewer_role == owner_role,
         WorkPlanVisibility::BearVisible => true,
         WorkPlanVisibility::HandoffRequested => {
-            matches!(viewer_role, BearAgentRole::Curate) || viewer_role == owner_role
+            matches!(viewer_role, BearProfile::Curate) || viewer_role == owner_role
         }
     }
 }
@@ -793,32 +793,32 @@ mod tests {
     #[test]
     fn visibility_preserves_role_boundaries() {
         assert!(role_can_read_work_plan(
-            BearAgentRole::Pair,
-            BearAgentRole::Pair,
+            BearProfile::Pair,
+            BearProfile::Pair,
             WorkPlanVisibility::PrivateToRole,
             false
         ));
         assert!(!role_can_read_work_plan(
-            BearAgentRole::Chat,
-            BearAgentRole::Pair,
+            BearProfile::Chat,
+            BearProfile::Pair,
             WorkPlanVisibility::PrivateToRole,
             false
         ));
         assert!(role_can_read_work_plan(
-            BearAgentRole::Chat,
-            BearAgentRole::Pair,
+            BearProfile::Chat,
+            BearProfile::Pair,
             WorkPlanVisibility::BearVisible,
             false
         ));
         assert!(role_can_read_work_plan(
-            BearAgentRole::Curate,
-            BearAgentRole::Pair,
+            BearProfile::Curate,
+            BearProfile::Pair,
             WorkPlanVisibility::HandoffRequested,
             false
         ));
         assert!(!role_can_read_work_plan(
-            BearAgentRole::Work,
-            BearAgentRole::Pair,
+            BearProfile::Work,
+            BearProfile::Pair,
             WorkPlanVisibility::HandoffRequested,
             false
         ));
@@ -826,10 +826,10 @@ mod tests {
 
     #[test]
     fn only_channel_roles_request_handoff() {
-        assert!(role_can_request_work_handoff(BearAgentRole::Chat));
-        assert!(role_can_request_work_handoff(BearAgentRole::Pair));
-        assert!(!role_can_request_work_handoff(BearAgentRole::Work));
-        assert!(!role_can_request_work_handoff(BearAgentRole::Curate));
+        assert!(role_can_request_work_handoff(BearProfile::Chat));
+        assert!(role_can_request_work_handoff(BearProfile::Pair));
+        assert!(!role_can_request_work_handoff(BearProfile::Work));
+        assert!(!role_can_request_work_handoff(BearProfile::Curate));
     }
 
     #[test]

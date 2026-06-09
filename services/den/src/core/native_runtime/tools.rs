@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         llm::LlmToolDefinition,
         tools::{
             descriptor::builtin_den_tool_descriptors_for_role,
@@ -13,7 +13,7 @@ use crate::{
     errors::CustomError,
 };
 
-pub fn den_tools_for_role(role: BearAgentRole) -> Vec<LlmToolDefinition> {
+pub fn den_tools_for_role(role: BearProfile) -> Vec<LlmToolDefinition> {
     builtin_den_tool_descriptors_for_role(role)
         .into_iter()
         .map(|d| LlmToolDefinition {
@@ -26,7 +26,7 @@ pub fn den_tools_for_role(role: BearAgentRole) -> Vec<LlmToolDefinition> {
 
 pub fn merge_den_and_client_tools(
     config: &Config,
-    role: BearAgentRole,
+    role: BearProfile,
     client_tools: Option<&Value>,
 ) -> Result<Vec<LlmToolDefinition>, CustomError> {
     let mut merged = den_tools_for_role(role);

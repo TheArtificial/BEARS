@@ -14,7 +14,7 @@ use crate::{
                 DEFAULT_ROLE_CONTRACT_VERSION,
             },
             context_profile_from_json, context_profile_to_json, db as bears_db, db::BearParams,
-            default_role_contracts_for_bear, templates::first_bear_template, Bear, BearAgentRole,
+            default_role_contracts_for_bear, templates::first_bear_template, Bear, BearProfile,
         },
         letta::{LettaModelOption, LettaToolOption},
     },
@@ -678,7 +678,7 @@ pub fn composed_system_prompt_for_profile_json(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    crate::core::bears::compose_role_context(&bear, BearAgentRole::Chat, None)
+    crate::core::bears::compose_role_context(&bear, BearProfile::Chat, None)
         .map(|context| context.composed_prompt)
 }
 

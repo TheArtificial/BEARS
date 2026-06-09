@@ -24,7 +24,7 @@ async fn persist_for_test(
 }
 
 use crate::core::{
-    bears::{db::BearParams, db::create_bear, BearAgentRole},
+    bears::{db::BearParams, db::create_bear, BearProfile},
     conversation_events::{
         canonical_persistence_context, persist_projection, MemoryCurateCompletedPayload,
         MemoryCurateEnqueuedPayload, MemoryCurateFailedPayload, MemoryCurateStartedPayload,
@@ -69,7 +69,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         &pool,
         CreateMemoryProposal {
             bear_id,
-            source_role: BearAgentRole::Pair,
+            source_role: BearProfile::Pair,
             source_agent_id: Some("agent-pair".to_string()),
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: serde_json::json!({
@@ -95,7 +95,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearAgentRole::Curate,
+            reviewer_role: BearProfile::Curate,
             reviewer_agent_id: Some("agent-curate"),
             status: "approved",
             review_notes: Some("looks good"),
@@ -400,7 +400,7 @@ async fn non_acp_memory_curate_enqueue_projection_respects_conversation_gating(
         &pool,
         ProposalEnqueueParams {
             bear_id,
-            role_agent_id: Some("agent-pair"),
+            binding_id: Some("agent-pair"),
             conversation_id: Some("conv-memory-curate-test"),
             conversation_key: Some("conv-key"),
             conversation_date: None,

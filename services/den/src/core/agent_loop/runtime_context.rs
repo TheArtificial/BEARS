@@ -84,7 +84,7 @@ pub fn native_runtime_compaction_prompt_context(
 async fn load_prompt_memory_runtime_text(
     pool: &PgPool,
     bear_id: Uuid,
-    role_slug: &str,
+    profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
 ) -> Result<String, CustomError> {
@@ -92,7 +92,7 @@ async fn load_prompt_memory_runtime_text(
         pool,
         PromptMemoryBlockQuery {
             bear_id: Some(bear_id),
-            role_slug,
+            profile_slug,
             session_id,
             work_surfaces: workspace_roots,
         },
@@ -116,7 +116,7 @@ async fn load_prompt_memory_runtime_text(
     let compilation = compile_prompt_memory_blocks(
         &selection.blocks,
         PromptMemoryCompilationInput {
-            role: role_slug,
+            role: profile_slug,
             work_surfaces: workspace_roots,
             session_id,
             max_blocks: 6,
@@ -128,7 +128,7 @@ async fn load_prompt_memory_runtime_text(
 pub async fn assemble_den_owned_runtime_supplement(
     pool: &PgPool,
     bear_id: Uuid,
-    role_slug: &str,
+    profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
     client_context: &Value,
@@ -137,7 +137,7 @@ pub async fn assemble_den_owned_runtime_supplement(
     let prompt_memory = load_prompt_memory_runtime_text(
         pool,
         bear_id,
-        role_slug,
+        profile_slug,
         session_id,
         workspace_roots,
     )

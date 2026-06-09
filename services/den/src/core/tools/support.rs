@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 
 use crate::{
-    core::{bears::BearAgentRole, prompt_memory_blocks::PromptMemoryBlockScope},
+    core::{bears::BearProfile, prompt_memory_blocks::PromptMemoryBlockScope},
     errors::CustomError,
 };
 
@@ -201,19 +201,19 @@ pub(crate) fn validate_optional_object(field: &str, value: &Option<Value>) -> Re
     Ok(())
 }
 
-pub(crate) fn memory_read_scopes(role: BearAgentRole) -> Vec<&'static str> {
+pub(crate) fn memory_read_scopes(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Pair => vec!["pair/", "core/"],
-        BearAgentRole::Chat => vec!["chat/", "core/"],
-        BearAgentRole::Curate => vec!["chat/", "pair/", "curate/", "work/", "watch/", "core/"],
-        BearAgentRole::Work => vec!["work/", "core/"],
-        BearAgentRole::Watch => vec!["watch/", "core/"],
+        BearProfile::Pair => vec!["pair/", "core/"],
+        BearProfile::Chat => vec!["chat/", "core/"],
+        BearProfile::Curate => vec!["chat/", "pair/", "curate/", "work/", "watch/", "core/"],
+        BearProfile::Work => vec!["work/", "core/"],
+        BearProfile::Watch => vec!["watch/", "core/"],
     }
 }
 
-pub(crate) fn memory_write_scopes(role: BearAgentRole) -> Vec<&'static str> {
+pub(crate) fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Pair => vec!["pair/notes/", "pair/logs/", "pair/decisions/", "pair/reflections/", "pair/scratch/", "pair/summaries/"],
+        BearProfile::Pair => vec!["pair/notes/", "pair/logs/", "pair/decisions/", "pair/reflections/", "pair/scratch/", "pair/summaries/"],
         _ => Vec::new(),
     }
 }
@@ -364,8 +364,8 @@ fn memory_confirmation_payload_hash(args: &MemoryWriteEntryArguments, context: &
         "tool": DEN_MEMORY_WRITE_ENTRY,
         "category": category,
         "bear_id": context.bear_id,
-        "role_agent_id": context.role_agent_id,
-        "agent_role": context.agent_role.map(|role| role.as_str()),
+        "binding_id": context.binding_id,
+        "profile": context.profile.map(|role| role.as_str()),
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,
         "acp_session_id": context.acp_session_id,

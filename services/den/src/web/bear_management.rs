@@ -27,7 +27,7 @@ use crate::{
             db::{
                 role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
             },
-            provision, sync, Bear, BearAgent, BearAgentRole,
+            provision, sync, Bear, BearProfileBinding, BearProfile,
         },
         letta::{AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
@@ -202,7 +202,7 @@ struct BearMemoryDeleteForm {
 
 #[derive(Serialize)]
 struct BearMemoryRoleRow {
-    role: String,
+    profile: String,
     label: String,
     description: String,
     runtime_family: String,
@@ -234,7 +234,7 @@ struct BearMemoryEntryCountRow {
 
 #[derive(Serialize)]
 struct RoleDetailView {
-    role: String,
+    profile: String,
     label: String,
     plain_name: &'static str,
     description: String,
@@ -267,7 +267,7 @@ struct RoleActionLink {
 
 #[derive(Serialize)]
 struct RuntimeBlockRoleRow {
-    role: String,
+    profile: String,
     label: String,
     letta_agent_id: Option<String>,
     block_count: usize,
@@ -289,43 +289,43 @@ struct AcpToolDetailRow {
     highlighted: bool,
 }
 
-fn role_memory_label(role: BearAgentRole) -> &'static str {
+fn role_memory_label(role: BearProfile) -> &'static str {
     match role {
-        BearAgentRole::Chat => "Conversation memory",
-        BearAgentRole::Pair => "Pairing memory",
-        BearAgentRole::Curate => "Review memory",
-        BearAgentRole::Work => "Work memory",
-        BearAgentRole::Watch => "Watch memory",
+        BearProfile::Chat => "Conversation memory",
+        BearProfile::Pair => "Pairing memory",
+        BearProfile::Curate => "Review memory",
+        BearProfile::Work => "Work memory",
+        BearProfile::Watch => "Watch memory",
     }
 }
 
-fn role_memory_description(role: BearAgentRole) -> &'static str {
+fn role_memory_description(role: BearProfile) -> &'static str {
     match role {
-        BearAgentRole::Chat => "Notes and local memory from chat-like conversations.",
-        BearAgentRole::Pair => "Coding collaboration notes, logs, decisions, and summaries.",
-        BearAgentRole::Curate => "Review, reflection, and memory integration work.",
-        BearAgentRole::Work => "Task execution logs, decisions, and summaries.",
-        BearAgentRole::Watch => "Event/subscription logs and summaries.",
+        BearProfile::Chat => "Notes and local memory from chat-like conversations.",
+        BearProfile::Pair => "Coding collaboration notes, logs, decisions, and summaries.",
+        BearProfile::Curate => "Review, reflection, and memory integration work.",
+        BearProfile::Work => "Task execution logs, decisions, and summaries.",
+        BearProfile::Watch => "Event/subscription logs and summaries.",
     }
 }
 
-fn role_plain_name(role: BearAgentRole) -> &'static str {
+fn role_plain_name(role: BearProfile) -> &'static str {
     match role {
-        BearAgentRole::Chat => "Conversational front door",
-        BearAgentRole::Pair => "Collaborative tool/IDE partner",
-        BearAgentRole::Curate => "Memory and integration reviewer",
-        BearAgentRole::Work => "Approved outbound executor",
-        BearAgentRole::Watch => "Inbound observer",
+        BearProfile::Chat => "Conversational front door",
+        BearProfile::Pair => "Collaborative tool/IDE partner",
+        BearProfile::Curate => "Memory and integration reviewer",
+        BearProfile::Work => "Approved outbound executor",
+        BearProfile::Watch => "Inbound observer",
     }
 }
 
-fn role_surfaces(role: BearAgentRole) -> Vec<&'static str> {
+fn role_surfaces(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Chat => vec!["Web chat", "Future chat surfaces"],
-        BearAgentRole::Pair => vec!["ACP clients", "IDEs", "Future design/productivity tools"],
-        BearAgentRole::Curate => vec!["Internal review and integration"],
-        BearAgentRole::Work => vec!["Den task dispatch", "Schedules", "Approved background jobs"],
-        BearAgentRole::Watch => vec![
+        BearProfile::Chat => vec!["Web chat", "Future chat surfaces"],
+        BearProfile::Pair => vec!["ACP clients", "IDEs", "Future design/productivity tools"],
+        BearProfile::Curate => vec!["Internal review and integration"],
+        BearProfile::Work => vec!["Den task dispatch", "Schedules", "Approved background jobs"],
+        BearProfile::Watch => vec![
             "Webhooks",
             "Polling",
             "Queues",
@@ -335,34 +335,34 @@ fn role_surfaces(role: BearAgentRole) -> Vec<&'static str> {
     }
 }
 
-fn role_capabilities(role: BearAgentRole) -> Vec<&'static str> {
+fn role_capabilities(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Chat => vec![
+        BearProfile::Chat => vec![
             "Synchronous conversation",
             "Task intent capture",
             "Channel-safe tools",
             "Work plan updates",
         ],
-        BearAgentRole::Pair => vec![
+        BearProfile::Pair => vec![
             "Client-mediated tool use",
             "Code/workspace context",
             "User-gated actions",
             "File/document collaboration",
         ],
-        BearAgentRole::Curate => vec![
+        BearProfile::Curate => vec![
             "Memory review",
             "Task intent review",
             "Observation review",
             "Skill proposal review",
             "Shared memory promotion",
         ],
-        BearAgentRole::Work => vec![
+        BearProfile::Work => vec![
             "Approved API calls",
             "Scheduled tasks",
             "Event-triggered work",
             "Run-status reporting",
         ],
-        BearAgentRole::Watch => vec![
+        BearProfile::Watch => vec![
             "Inbound event parsing",
             "Observation creation",
             "Subscription monitoring",
@@ -486,31 +486,31 @@ fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
     }
 }
 
-fn role_memory_rules(role: BearAgentRole) -> Vec<&'static str> {
+fn role_memory_rules(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Chat => vec![
+        BearProfile::Chat => vec![
             "Reads core/",
             "Reads and writes chat/",
             "Does not directly promote to core/",
         ],
-        BearAgentRole::Pair => vec![
+        BearProfile::Pair => vec![
             "Reads core/",
             "Reads and writes pair/",
             "Does not directly promote to core/",
         ],
-        BearAgentRole::Curate => vec![
+        BearProfile::Curate => vec![
             "Reads across role branches, subject to policy",
             "Writes curate/",
             "Promotes durable knowledge into core/",
             "Does not write directly to other role branches",
         ],
-        BearAgentRole::Work => vec![
+        BearProfile::Work => vec![
             "Reads core/",
             "Reads task definition/run context",
             "Reads and writes work/",
             "Does not read raw chat/, pair/, or watch/ directly",
         ],
-        BearAgentRole::Watch => vec![
+        BearProfile::Watch => vec![
             "Reads core/",
             "Reads delivered event payloads",
             "Reads and writes watch/",
@@ -581,7 +581,8 @@ struct DetailsConvRow {
 
 #[derive(Serialize)]
 struct BearRoleViewRow {
-    role: String,
+    profile: String,
+    binding_id: String,
     runtime_family: String,
     letta_agent_id: Option<String>,
     provisioning_status: String,
@@ -657,9 +658,10 @@ struct BearWorkSurfaceRow {
 }
 
 impl BearRoleViewRow {
-    fn from_agent(agent: BearAgent, role: BearAgentRole) -> Self {
+    fn from_agent(agent: BearProfileBinding, role: BearProfile) -> Self {
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             letta_agent_id: agent.letta_agent_id,
             provisioning_status: agent.provisioning_status,
@@ -726,7 +728,7 @@ async fn bear_work_surface_rows(
         &http,
         &config.letta_memfs_service_url,
         bear_id,
-        BearAgentRole::Pair.as_str(),
+        BearProfile::Pair.as_str(),
     )
     .await?;
     let Some(core_tree) = core_tree else {
@@ -772,7 +774,7 @@ async fn bear_work_surface_rows(
             &http,
             &config.letta_memfs_service_url,
             bear_id,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &index_path,
         )
         .await?;
@@ -780,7 +782,7 @@ async fn bear_work_surface_rows(
             &http,
             &config.letta_memfs_service_url,
             bear_id,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &overview_path,
         )
         .await?;
@@ -796,7 +798,7 @@ async fn bear_work_surface_rows(
             &http,
             &config.letta_memfs_service_url,
             bear_id,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &format!("pair/work_surfaces/{slug}/current-understanding.md"),
         )
         .await?
@@ -805,14 +807,14 @@ async fn bear_work_surface_rows(
             &http,
             &config.letta_memfs_service_url,
             bear_id,
-            BearAgentRole::Work.as_str(),
+            BearProfile::Work.as_str(),
             &format!("work/work_surfaces/{slug}/current-understanding.md"),
         )
         .await?
         .is_some();
         let workplace_labels = [
-            (BearAgentRole::Pair, pair_current_understanding_present),
-            (BearAgentRole::Work, work_current_understanding_present),
+            (BearProfile::Pair, pair_current_understanding_present),
+            (BearProfile::Work, work_current_understanding_present),
         ]
         .into_iter()
         .filter(|(_, present)| *present)
@@ -1073,10 +1075,10 @@ async fn bear_plan_mode_rows(
 async fn build_role_detail_view(
     state: &AppState,
     bear: &Bear,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<RoleDetailView, CustomError> {
-    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
-    let agent = bears_db::get_bear_agent(state.sqlx_pool(), bear.id, role)
+    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
+    let agent = bears_db::get_bear_profile_binding(state.sqlx_pool(), bear.id, role)
         .await?
         .ok_or_else(|| CustomError::NotFound("role agent not found".to_string()))?;
 
@@ -1150,7 +1152,7 @@ async fn build_role_detail_view(
 
     let mut actions = Vec::new();
     match role {
-        BearAgentRole::Chat => {
+        BearProfile::Chat => {
             actions.push(RoleActionLink {
                 label: "Open chat",
                 href: format!("/bear/{}", bear.slug),
@@ -1160,7 +1162,7 @@ async fn build_role_detail_view(
                 href: format!("/bear/{}/details/conversations", bear.slug),
             });
         }
-        BearAgentRole::Pair => {
+        BearProfile::Pair => {
             actions.push(RoleActionLink {
                 label: "Code with this Bear",
                 href: format!("/bear/{}/details/code-token", bear.slug),
@@ -1174,7 +1176,7 @@ async fn build_role_detail_view(
     });
 
     Ok(RoleDetailView {
-        role: role.as_str().to_string(),
+        profile: role.as_str().to_string(),
         label: role_memory_label(role).to_string(),
         plain_name: role_plain_name(role),
         description: role_memory_description(role).to_string(),
@@ -1204,12 +1206,12 @@ async fn bear_role_rows(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<Vec<BearRoleViewRow>, CustomError> {
-    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear_id).await?;
+    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
     let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut rows = Vec::new();
-    for agent in bears_db::list_bear_agents(state.sqlx_pool(), bear_id).await? {
+    for agent in bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await? {
         let role = agent
-            .parsed_role()
+            .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = BearRoleViewRow::from_agent(agent, role);
         if !memfs_url.is_empty() {
@@ -1239,7 +1241,7 @@ async fn chat_agent_id_for_bear(
     pool: &sqlx::PgPool,
     bear: &Bear,
 ) -> Result<Option<String>, CustomError> {
-    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Chat)
+    bears_db::profile_binding_id(pool, bear.id, BearProfile::Chat)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
@@ -1248,7 +1250,7 @@ async fn pair_agent_id_for_bear(
     pool: &sqlx::PgPool,
     bear: &Bear,
 ) -> Result<Option<String>, CustomError> {
-    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Pair)
+    bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
@@ -1528,7 +1530,7 @@ async fn render_bear_details_page(
     let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;
     let mut role_details = Vec::new();
-    for role in BearAgentRole::ALL {
+    for role in BearProfile::ALL {
         role_details.push(build_role_detail_view(state, &bear, role).await?);
     }
 
@@ -1646,13 +1648,13 @@ async fn render_bear_details_page(
     });
     let chat_composed_prompt = crate::core::bears::compose_role_context(
         &bear,
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         Some("Runtime/conversation context is injected when this role handles a specific chat."),
     )?
     .composed_prompt;
     let pair_composed_prompt = crate::core::bears::compose_role_context(
         &bear,
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         Some("Runtime/conversation context is injected when this role handles a specific ACP/client session."),
     )?
     .composed_prompt;
@@ -2319,7 +2321,7 @@ async fn bear_role_get(
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let role = role
-        .parse::<BearAgentRole>()
+        .parse::<BearProfile>()
         .map_err(|err| CustomError::NotFound(err.to_string()))?;
     let role_detail = build_role_detail_view(&state, &bear, role).await?;
     let role_rows = bear_role_rows(&state, bear.id).await?;
@@ -2481,8 +2483,8 @@ async fn bear_memory_get(
     let memfs_url = state.config.letta_memfs_service_url.as_str();
     let requested_role = q.role.as_deref().unwrap_or("pair");
     let selected_role = requested_role
-        .parse::<BearAgentRole>()
-        .unwrap_or(BearAgentRole::Pair);
+        .parse::<BearProfile>()
+        .unwrap_or(BearProfile::Pair);
     let selected_role_name = selected_role.as_str().to_string();
     let search_query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let selected_path = q.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -2490,15 +2492,15 @@ async fn bear_memory_get(
     let review_notice = q.review_requested;
     let delete_error = q.error.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
-    let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear.id).await?;
+    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
+    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear.id).await?;
     let mut role_rows = Vec::new();
     for agent in agents {
         let role = agent
-            .parsed_role()
+            .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = BearMemoryRoleRow {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
             label: role_memory_label(role).to_string(),
             description: role_memory_description(role).to_string(),
             runtime_family: role.runtime_family().to_string(),
@@ -2676,7 +2678,7 @@ async fn bear_memory_delete_post(
     }
     let role = form
         .role
-        .parse::<BearAgentRole>()
+        .parse::<BearProfile>()
         .map_err(CustomError::ValidationError)?;
     let action = form.action.as_deref().unwrap_or("delete").trim();
     let confirm = form.confirm.trim();
@@ -2715,7 +2717,7 @@ async fn bear_memory_delete_post(
             CreateMemoryProposal {
                 bear_id: bear.id,
                 source_role: role,
-                source_agent_id: bears_db::role_agent_id(state.sqlx_pool(), bear.id, role).await?,
+                source_agent_id: bears_db::profile_binding_id(state.sqlx_pool(), bear.id, role).await?,
                 source_paths: paths,
                 source_refs: serde_json::json!([]),
                 suggested_action: form
@@ -2872,7 +2874,7 @@ async fn bear_memory_proposal_post(
         memory_proposals::ProposalResolutionParams {
             bear_id: bear.id,
             proposal_id,
-            reviewer_role: BearAgentRole::Curate,
+            reviewer_role: BearProfile::Curate,
             reviewer_agent_id: None,
             status,
             review_notes: form.review_notes.as_deref(),
@@ -2906,15 +2908,15 @@ async fn bear_runtime_blocks_get(
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = state.web_letta_data.is_enabled();
-    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
-    let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear.id).await?;
+    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
+    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear.id).await?;
     let mut rows = Vec::new();
     for agent in agents {
         let role = agent
-            .parsed_role()
+            .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = RuntimeBlockRoleRow {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
             label: role_memory_label(role).to_string(),
             letta_agent_id: agent.letta_agent_id.clone(),
             block_count: 0,

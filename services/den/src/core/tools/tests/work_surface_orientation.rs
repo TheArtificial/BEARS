@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::core::{
-    bears::BearAgentRole,
+    bears::BearProfile,
     tools::{
         session::DenToolInvocationContext,
         work_surface::{
@@ -11,12 +11,12 @@ use crate::core::{
     },
 };
 
-fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
+fn context_for(role: BearProfile) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(role),
+        binding_id: "agent".to_string(),
+        profile: Some(role),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -38,14 +38,14 @@ fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
 #[test]
 fn work_surface_candidate_slug_prefers_trusted_repo_like_hint() {
     assert_eq!(
-        work_surface_candidate_slug(&context_for(BearAgentRole::Pair)).as_deref(),
+        work_surface_candidate_slug(&context_for(BearProfile::Pair)).as_deref(),
         Some("builder-bear")
     );
 }
 
 #[test]
 fn work_surface_anchor_paths_are_stable() {
-    let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Pair, "builder-bear");
+    let (canonical, role_local) = work_surface_anchor_paths(BearProfile::Pair, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert_eq!(canonical[1], "core/work_surfaces/builder-bear/overview.md");
     assert_eq!(
@@ -72,15 +72,15 @@ fn collect_memory_tree_paths_walks_nested_values() {
 
 #[test]
 fn build_work_surface_orientation_payload_reports_existing_anchors() {
-    let context = context_for(BearAgentRole::Pair);
-    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
+    let context = context_for(BearProfile::Pair);
+    let hint_payload = infer_work_surface_hint(&context, BearProfile::Pair);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
         "core/work_surfaces/builder-bear/overview.md".to_string(),
         "pair/work_surfaces/builder-bear/current-understanding.md".to_string(),
     ];
     let payload = build_work_surface_orientation_payload(
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         &hint_payload,
         &files,
         Some("builder-bear".to_string()),
@@ -94,32 +94,32 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
 
 #[test]
 fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
-    let context = context_for(BearAgentRole::Pair);
-    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
+    let context = context_for(BearProfile::Pair);
+    let hint_payload = infer_work_surface_hint(&context, BearProfile::Pair);
     let payload =
-        build_work_surface_orientation_payload(BearAgentRole::Pair, &hint_payload, &[], None);
+        build_work_surface_orientation_payload(BearProfile::Pair, &hint_payload, &[], None);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["canonical_paths"], json!([]));
 }
 
 #[test]
 fn work_surface_anchor_paths_skip_role_local_paths_for_chat() {
-    let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Chat, "builder-bear");
+    let (canonical, role_local) = work_surface_anchor_paths(BearProfile::Chat, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert!(role_local.is_empty());
 }
 
 #[test]
 fn build_work_surface_orientation_payload_for_chat_is_reference_only() {
-    let context = context_for(BearAgentRole::Chat);
-    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Chat);
+    let context = context_for(BearProfile::Chat);
+    let hint_payload = infer_work_surface_hint(&context, BearProfile::Chat);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
         "core/work_surfaces/builder-bear/overview.md".to_string(),
         "chat/work_surfaces/builder-bear/current-understanding.md".to_string(),
     ];
     let payload = build_work_surface_orientation_payload(
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         &hint_payload,
         &files,
         Some("builder-bear".to_string()),

@@ -45,8 +45,8 @@ real-page smoke testing in development.
 - `GET|POST /bear/{slug}/details/edit/configuration` — edit default model, default Letta agent type, and default tool ids for role agents (bear admins)
 - `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
 - `GET /bear/{slug}/details/conversations` — all threads including archived (Letta); membership required
-- `GET /bear/{slug}/details/roles/{role}` — server-rendered role detail page for `talk`, `pair`, `curate`, `work`, or `watch`; used directly without JS and as progressive-enhancement pane content
-- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser for members: role-aware memory overview, path/content search (`role`, `q`), tree browse, selected file inspection (`path`), activity/status summary, select-and-delete form for bear admins, and link to runtime memory blocks.
+- `GET /bear/{slug}/details/roles/{profile}` — server-rendered profile detail page for `chat`, `pair`, `curate`, `work`, or `watch`
+- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser; query `profile` (not `role`) selects the memory branch
 - `POST /bear/{slug}/details/memory` — bear admin memory cleanup action; deletes selected Markdown memory files from the selected role branch after confirmation and resets registered role views to canonical.
 - `GET /bear/{slug}/details/memory/runtime-blocks` — Letta-native runtime memory blocks by role agent; separated from Bear MemFS memory and expected to trend toward zero blocks.
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
@@ -69,9 +69,9 @@ real-page smoke testing in development.
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and role-agent provisioning defaults)
-- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den role registry reference (`bear_agents.letta_agent_id`); link to new-bear-from-agent flow
+- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den role registry reference (`bear_profile_bindings.letta_agent_id`); link to new-bear-from-agent flow
 - `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
-- `POST /admin/bears/register-memfs-views` — register/refresh MemFS sidecar per-agent repo views for existing `bear_agents` rows with Letta ids; redirects to the bear list with counts
+- `POST /admin/bears/register-memfs-views` — register/refresh MemFS sidecar per-agent repo views for existing `bear_profile_bindings` rows with Letta ids; redirects to the bear list with counts
 - `GET /admin/bears/{id}` — operator bear registry detail; no longer the primary bear administration surface, which lives at member-facing `/bear/{slug}/details`
 - `POST /admin/bears/{id}/provision-missing-roles` — create Letta agents only for roles under this Bear that have no recorded role agent id; renders detail with a status line
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)

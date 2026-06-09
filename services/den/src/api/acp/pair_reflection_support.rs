@@ -2,7 +2,7 @@ use crate::{
     api::service::ApiState,
     core::{
         acp_sessions,
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         conversation_persistence,
         memory::{create_proposal, tools as sqlite_memory},
         memory_proposals::CreateMemoryProposal,
@@ -133,7 +133,7 @@ pub(crate) async fn run_pair_reflection_summary(
             state.config.as_ref(),
             session.bear_id,
             &logical_path,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &title,
             &body,
             serde_json::json!({
@@ -189,8 +189,8 @@ pub(crate) async fn run_pair_reflection_summary(
             acp_session_id: Some(session.acp_session_id.clone()),
             conversation_selection: Some(session.conversation_id.clone()),
             runtime_target: conversation_id.map(str::to_string),
-            role_agent_id: None,
-            agent_role: Some(pair_reflection::pair_reflection_role().as_str().to_string()),
+            binding_id: None,
+            profile: Some(pair_reflection::pair_reflection_role().as_str().to_string()),
             request_id: None,
         };
         let http = reqwest::Client::builder()
@@ -204,7 +204,7 @@ pub(crate) async fn run_pair_reflection_summary(
             &http,
             &state.config.letta_memfs_service_url,
             session.bear_id,
-            BearAgentRole::Pair.as_str(),
+            BearProfile::Pair.as_str(),
             &request,
         )
         .await?;
@@ -245,7 +245,7 @@ pub(crate) async fn run_pair_reflection_summary(
     .await?;
 
     let pair_agent_id =
-        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+        bears_db::profile_binding_id(&state.sqlx_pool, session.bear_id, BearProfile::Pair)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
@@ -255,7 +255,7 @@ pub(crate) async fn run_pair_reflection_summary(
         &state.memory_stores,
         CreateMemoryProposal {
             bear_id: session.bear_id,
-            source_role: BearAgentRole::Pair,
+            source_role: BearProfile::Pair,
             source_agent_id: pair_agent_id.clone(),
             source_paths: vec![summary_path.clone()],
             source_refs: serde_json::json!({
@@ -288,7 +288,7 @@ pub(crate) async fn run_pair_reflection_summary(
         &state.sqlx_pool,
         reflection_conductor::ProposalEnqueueParams {
             bear_id: session.bear_id,
-            role_agent_id: pair_agent_id.as_deref(),
+            binding_id: pair_agent_id.as_deref(),
             conversation_id,
             conversation_key: Some(&conversation_key),
             conversation_date: Some(reflection_date),

@@ -11,7 +11,7 @@ use axum::{
 use den::{
     config::Config,
     core::{
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearProfile},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
@@ -168,9 +168,9 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
 
     sqlx::query(
         r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
         VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
@@ -178,7 +178,7 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
         "#,
     )
     .bind(bear_id)
-    .bind(BearAgentRole::Chat.as_str())
+    .bind(BearProfile::Chat.as_str())
     .bind("agent-chat-web")
     .execute(pool)
     .await
@@ -201,7 +201,7 @@ async fn create_visible_work_plan(pool: &sqlx::PgPool, user_bear: &TestUserBear)
         pool,
         WorkPlanUpsert {
             bear_id: user_bear.bear_id,
-            owner_role: BearAgentRole::Pair,
+            owner_role: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-web-context".to_string()),
             created_by_user_id: Some(user_bear.user_id),
             source_conversation_id: Some("conv-web-context".to_string()),
@@ -261,7 +261,7 @@ async fn login_cookie(app: axum::Router, user: &TestUserBear) -> String {
 }
 
 #[tokio::test]
-async fn web_chat_send_uses_chat_role_agent_id_for_codepool() {
+async fn web_chat_send_uses_chat_binding_id_for_codepool() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool).await;
     create_visible_work_plan(&fixture.pool, &user_bear).await;
@@ -299,9 +299,9 @@ async fn web_chat_send_uses_chat_role_agent_id_for_codepool() {
         .await
         .clone()
         .expect("Codepool request captured");
-    assert_eq!(captured["bear"]["role_agent_id"], "agent-chat-web");
+    assert_eq!(captured["bear"]["binding_id"], "agent-chat-web");
     assert!(captured["bear"].get("letta_agent_id").is_none());
-    assert_eq!(captured["bear"]["agent_role"], "chat");
+    assert_eq!(captured["bear"]["profile"], "chat");
     assert_eq!(captured["bear"]["runtime_family"], "letta_code_harness");
     let server_tools = captured["capabilities"]["server_tools"]
         .as_array()

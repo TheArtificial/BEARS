@@ -21,7 +21,7 @@ use crate::{
         acp_sessions, archived_conversations, conversation_persistence,
         bears::{
             db::{self as bears_db, role_is_bear_admin},
-            BearAgentRole,
+            BearProfile,
         },
         tools::{
             arguments::DenToolChannelContext,
@@ -721,7 +721,7 @@ async fn web_chat_workboard_prompt_context(
     let plans = work_plans::list_visible_work_plans(
         pool,
         bear_id,
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         user_id,
         WorkPlanListFilter {
             statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
@@ -803,8 +803,8 @@ async fn maybe_handle_direct_set_conversation_title(
     let context = DenToolInvocationContext {
         bear_id: bear.id,
         bear_slug: bear.slug.clone(),
-        role_agent_id: chat_agent_id.to_string(),
-        agent_role: Some(BearAgentRole::Chat),
+        binding_id: chat_agent_id.to_string(),
+        profile: Some(BearProfile::Chat),
         user_id,
         username: username.map(str::to_string),
         membership_role: membership_role.map(str::to_string),
@@ -893,7 +893,7 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let chat_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Chat)
+    let chat_agent_id = bears_db::profile_binding_id(state.sqlx_pool(), bear.id, BearProfile::Chat)
         .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

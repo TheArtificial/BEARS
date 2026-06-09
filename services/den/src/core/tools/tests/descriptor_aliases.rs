@@ -1,5 +1,5 @@
 use crate::core::{
-    bears::BearAgentRole,
+    bears::BearProfile,
     tools::{
         aliases::is_builtin_den_tool,
         constants::*,
@@ -116,7 +116,7 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
 
 #[test]
 fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
-    let provider_names = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
+    let provider_names = builtin_den_tool_descriptors_for_role(BearProfile::Pair)
         .into_iter()
         .map(|descriptor| descriptor.provider_name)
         .collect::<HashSet<_>>();

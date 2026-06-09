@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::core::bears::model::{Bear, BearAgentRole};
+use crate::core::bears::model::{Bear, BearProfile};
 
 use crate::{config::Config, errors::CustomError};
 
@@ -14,7 +14,7 @@ pub struct BearRuntimeMessageRequest<'a> {
     pub session_id: &'a str,
     pub conversation_id: &'a str,
     pub bear: &'a Bear,
-    pub role_agent_id: &'a str,
+    pub binding_id: &'a str,
     pub user_id: i32,
     pub username: Option<&'a str>,
     pub membership_role: Option<&'a str>,
@@ -353,7 +353,7 @@ impl CodePoolClient {
             session_id,
             conversation_id,
             bear,
-            role_agent_id,
+            binding_id,
             user_id,
             username,
             membership_role,
@@ -362,8 +362,8 @@ impl CodePoolClient {
             request_id,
         } = runtime;
 
-        let agent_role = BearAgentRole::Chat;
-        let agent_id = role_agent_id.trim();
+        let profile = BearProfile::Chat;
+        let agent_id = binding_id.trim();
         if agent_id.is_empty() {
             return Err(CustomError::System(
                 "This bear is not provisioned in Letta yet (missing chat role agent).".to_string(),
@@ -377,9 +377,9 @@ impl CodePoolClient {
                 "id": bear.id.to_string(),
                 "slug": bear.slug,
                 "name": bear.name,
-                "agent_role": agent_role.as_str(),
-                "role_agent_id": agent_id,
-                "runtime_family": agent_role.runtime_family(),
+                "profile": profile.as_str(),
+                "binding_id": agent_id,
+                "runtime_family": profile.runtime_family(),
             },
             "user": {
                 "id": user_id,
@@ -396,7 +396,7 @@ impl CodePoolClient {
                 "content": user_input,
             },
             "capabilities": {
-                "server_tools": crate::core::tools::descriptor::builtin_den_tool_descriptors_for_role(agent_role),
+                "server_tools": crate::core::tools::descriptor::builtin_den_tool_descriptors_for_role(profile),
                 "supports_cancellation": supports_cancellation,
                 "supports_rich_events": supports_rich_events,
             },
@@ -445,7 +445,7 @@ impl CodePoolClient {
     }
 
     /// Same contract as [`crate::core::letta::LettaClient::post_conversation_messages_streaming`],
-    /// plus `bear_id`, `role_agent_id`, and `runtime_plan` for codepool memfs provisioning.
+    /// plus `bear_id`, `binding_id`, and `runtime_plan` for codepool memfs provisioning.
     /// Kept for compatibility; Den web chat should use [`Self::post_bear_channel_message_streaming`].
     pub async fn post_conversation_messages_streaming(
         &self,
@@ -474,13 +474,13 @@ impl CodePoolClient {
         body.insert("stream_tokens".to_string(), json!(true));
         body.insert("bear_id".to_string(), json!(bear_id.to_string()));
         body.insert("runtime_plan".to_string(), runtime_plan.clone());
-        let role_agent_id = agent_id
+        let binding_id = agent_id
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CustomError::System("role_agent_id is required for Codepool".to_string())
+                CustomError::System("binding_id is required for Codepool".to_string())
             })?;
-        body.insert("role_agent_id".to_string(), json!(role_agent_id));
+        body.insert("binding_id".to_string(), json!(binding_id));
 
         let url = format!(
             "{}/v1/conversations/{}/messages",

@@ -181,7 +181,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
     apply_migrations(&pool).await;
 
     for table in [
-        "bear_agents",
+        "bear_profile_bindings",
         "bear_skills_manifest",
         "bear_skill_proposals",
         "bear_subscriptions",
@@ -220,7 +220,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
-        WHERE t.relname = 'bear_agents'
+        WHERE t.relname = 'bear_profile_bindings'
           AND c.contype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE '%watch%'
         LIMIT 1
@@ -228,7 +228,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
     )
     .fetch_one(&pool)
     .await
-    .expect("bear_agents role check");
+    .expect("bear_profile_bindings profile check");
     assert!(role_check.contains("chat"));
     assert!(role_check.contains("watch"));
 }
@@ -305,7 +305,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
             'lane',
             'trigger',
             'status',
-            'role_agent_id',
+            'binding_id',
             'conversation_id',
             'conversation_key',
             'conversation_date',
@@ -352,7 +352,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
           AND column_name IN (
             'id',
             'bear_id',
-            'role_agent_id',
+            'binding_id',
             'lane',
             'conversation_date',
             'conversation_key',

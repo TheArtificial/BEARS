@@ -17,7 +17,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     core::{
-        bears::{db as bears_db, db::BearParams, provision, sync, BearAgent, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, provision, sync, BearProfileBinding, BearProfile},
         letta::{AgentSummary, LettaAgentListItem},
         memory_manager_head::fetch_memfs_role_view_health,
         user::db as user_db,
@@ -141,8 +141,9 @@ struct BearPlanModeRow {
 }
 
 #[derive(Debug, Serialize)]
-struct BearAgentHealthRow {
-    role: String,
+struct BearProfileBindingHealthRow {
+    profile: String,
+    binding_id: String,
     runtime_family: String,
     branch: String,
     letta_agent_id: Option<String>,
@@ -179,8 +180,8 @@ fn membership_role_label(role: Option<&str>) -> String {
     }
 }
 
-impl BearAgentHealthRow {
-    fn native(agent: &BearAgent, role: BearAgentRole) -> Self {
+impl BearProfileBindingHealthRow {
+    fn native(agent: &BearProfileBinding, role: BearProfile) -> Self {
         let binding = agent
             .letta_agent_id
             .as_deref()
@@ -203,7 +204,8 @@ impl BearAgentHealthRow {
             other => ("unknown", other, agent.last_provisioning_error.clone()),
         };
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
             letta_agent_id: binding,
@@ -224,9 +226,10 @@ impl BearAgentHealthRow {
         }
     }
 
-    fn not_configured(agent: &BearAgent, role: BearAgentRole) -> Self {
+    fn not_configured(agent: &BearProfileBinding, role: BearProfile) -> Self {
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
             letta_agent_id: agent.letta_agent_id.clone(),
@@ -247,9 +250,10 @@ impl BearAgentHealthRow {
         }
     }
 
-    fn missing(agent: &BearAgent, role: BearAgentRole) -> Self {
+    fn missing(agent: &BearProfileBinding, role: BearProfile) -> Self {
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
             letta_agent_id: None,
@@ -273,9 +277,10 @@ impl BearAgentHealthRow {
         }
     }
 
-    fn ok(agent: &BearAgent, role: BearAgentRole, summary: AgentSummary) -> Self {
+    fn ok(agent: &BearProfileBinding, role: BearProfile, summary: AgentSummary) -> Self {
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
             letta_agent_id: agent.letta_agent_id.clone(),
@@ -296,9 +301,10 @@ impl BearAgentHealthRow {
         }
     }
 
-    fn error(agent: &BearAgent, role: BearAgentRole, error: String) -> Self {
+    fn error(agent: &BearProfileBinding, role: BearProfile, error: String) -> Self {
         Self {
-            role: role.as_str().to_string(),
+            profile: role.as_str().to_string(),
+            binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
             letta_agent_id: agent.letta_agent_id.clone(),
@@ -539,15 +545,15 @@ async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
     letta_configured: bool,
-) -> Result<Vec<BearAgentHealthRow>, CustomError> {
-    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear_id).await?;
-    let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear_id).await?;
+) -> Result<Vec<BearProfileBindingHealthRow>, CustomError> {
+    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
+    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await?;
     if state.config.uses_native_agent_runtime() {
         return Ok(agents
             .into_iter()
             .map(|agent| {
-                let role = agent.parsed_role().unwrap_or(BearAgentRole::Chat);
-                BearAgentHealthRow::native(&agent, role)
+                let role = agent.parsed_profile().unwrap_or(BearProfile::Chat);
+                BearProfileBindingHealthRow::native(&agent, role)
             })
             .collect());
     }
@@ -556,10 +562,10 @@ async fn bear_agent_health_rows(
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
         let role = agent
-            .parsed_role()
+            .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = if !letta_configured {
-            BearAgentHealthRow::not_configured(&agent, role)
+            BearProfileBindingHealthRow::not_configured(&agent, role)
         } else if let Some(agent_id) = agent
             .letta_agent_id
             .as_deref()
@@ -568,12 +574,12 @@ async fn bear_agent_health_rows(
         {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => {
-                    BearAgentHealthRow::ok(&agent, role, AgentSummary::from_letta_agent_state(&v))
+                    BearProfileBindingHealthRow::ok(&agent, role, AgentSummary::from_letta_agent_state(&v))
                 }
-                Err(err) => BearAgentHealthRow::error(&agent, role, err.to_string()),
+                Err(err) => BearProfileBindingHealthRow::error(&agent, role, err.to_string()),
             }
         } else {
-            BearAgentHealthRow::missing(&agent, role)
+            BearProfileBindingHealthRow::missing(&agent, role)
         };
 
         if !memfs_url.is_empty() {
@@ -637,7 +643,7 @@ async fn bear_detail_response(
     let web_fetches = bear_web_fetches(state.sqlx_pool(), id).await?;
     let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), id).await?;
 
-    let chat_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Chat)
+    let chat_agent_id = bears_db::profile_binding_id(state.sqlx_pool(), bear.id, BearProfile::Chat)
         .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
@@ -1149,7 +1155,7 @@ async fn edit_action(
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
             let page = admin_bear_edit_page_context(&state, &form).await;
             let empty_errors = ValidationErrors::new();
-            let skipped = sync_summary.skipped_roles().len();
+            let skipped = sync_summary.skipped_profiles().len();
             return web::render_template(
                 &state,
                 "admin/bears/edit.html",
@@ -1523,7 +1529,7 @@ async fn retry_letta_action(
         return Err(CustomError::NotFound("bear not found".to_string()));
     }
 
-    let existing_agents = bears_db::list_bear_agents(state.sqlx_pool(), id).await?;
+    let existing_agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), id).await?;
     let has_any_role_agent = existing_agents.iter().any(|agent| {
         agent
             .letta_agent_id
@@ -1558,7 +1564,7 @@ async fn retry_letta_action(
                     Ok(summary) => format!(
                         "Role agent provisioning finished. {} role(s) synced; {} unprovisioned role(s) skipped.",
                         summary.synced_count(),
-                        summary.skipped_roles().len()
+                        summary.skipped_profiles().len()
                     ),
                     Err(e) => format!(
                         "Role agent provisioning finished, but follow-up role sync failed: {e}"

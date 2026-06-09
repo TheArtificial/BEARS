@@ -19,7 +19,7 @@ use crate::{
     },
     core::{
         acp_plan_mode, acp_sessions,
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, BearProfile},
         archived_conversations,
     },
     errors::CustomError,
@@ -175,7 +175,7 @@ pub(super) async fn cancel_session_inner(
         .acp_tool_turns
         .cancel_active_turn(&session.acp_session_id);
     let pair_agent_id =
-        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+        bears_db::profile_binding_id(&state.sqlx_pool, session.bear_id, BearProfile::Pair)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());

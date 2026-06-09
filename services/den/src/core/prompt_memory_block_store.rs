@@ -14,7 +14,7 @@ use crate::{
 pub(crate) struct PromptMemoryBlockWrite {
     pub(crate) block_id: String,
     pub(crate) bear_id: Option<uuid::Uuid>,
-    pub(crate) role_slug: Option<String>,
+    pub(crate) profile_slug: Option<String>,
     pub(crate) scope: PromptMemoryBlockScope,
     pub(crate) block_type: PromptMemoryBlockType,
     pub(crate) state: PromptMemoryBlockState,
@@ -41,7 +41,7 @@ pub(crate) struct PromptMemoryBlockPatch {
 #[derive(Debug, Clone)]
 pub(crate) struct PromptMemoryBlockQuery<'a> {
     pub(crate) bear_id: Option<uuid::Uuid>,
-    pub(crate) role_slug: &'a str,
+    pub(crate) profile_slug: &'a str,
     pub(crate) session_id: &'a str,
     pub(crate) work_surfaces: &'a [String],
 }
@@ -61,7 +61,7 @@ pub(crate) async fn upsert_prompt_memory_block(
         INSERT INTO prompt_memory_blocks (
             block_id,
             bear_id,
-            role_slug,
+            profile_slug,
             scope,
             block_type,
             state,
@@ -78,7 +78,7 @@ pub(crate) async fn upsert_prompt_memory_block(
         ON CONFLICT (block_id)
         DO UPDATE SET
             bear_id = EXCLUDED.bear_id,
-            role_slug = EXCLUDED.role_slug,
+            profile_slug = EXCLUDED.profile_slug,
             scope = EXCLUDED.scope,
             block_type = EXCLUDED.block_type,
             state = EXCLUDED.state,
@@ -95,7 +95,7 @@ pub(crate) async fn upsert_prompt_memory_block(
     )
     .bind(&write.block_id)
     .bind(write.bear_id)
-    .bind(&write.role_slug)
+    .bind(&write.profile_slug)
     .bind(scope_to_db(write.scope))
     .bind(block_type_to_db(write.block_type))
     .bind(state_to_db(write.state))
@@ -155,13 +155,13 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
 ) -> Result<Vec<PromptMemoryBlock>, CustomError> {
     let rows = sqlx::query(
         r#"
-        SELECT block_id, scope, block_type, state, role_slug, work_surface, session_id, title, body, priority
+        SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
         FROM prompt_memory_blocks
         WHERE state = 'active'
           AND (bear_id = $1 OR bear_id IS NULL)
           AND (
             scope = 'bear_wide'
-            OR (scope = 'role_local' AND role_slug = $2)
+            OR (scope = 'role_local' AND profile_slug = $2)
             OR (scope = 'session' AND session_id = $3)
             OR (scope = 'work_surface' AND work_surface = ANY($4))
           )
@@ -169,7 +169,7 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
         "#,
     )
     .bind(query.bear_id)
-    .bind(query.role_slug)
+    .bind(query.profile_slug)
     .bind(query.session_id)
     .bind(query.work_surfaces)
     .fetch_all(pool)
@@ -182,19 +182,19 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
 pub(crate) async fn list_prompt_memory_blocks_for_bear_role(
     pool: &PgPool,
     bear_id: uuid::Uuid,
-    role_slug: &str,
+    profile_slug: &str,
 ) -> Result<Vec<PromptMemoryBlock>, CustomError> {
     let rows = sqlx::query(
         r#"
-        SELECT block_id, scope, block_type, state, role_slug, work_surface, session_id, title, body, priority
+        SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
         FROM prompt_memory_blocks
         WHERE bear_id = $1
-          AND role_slug = $2
+          AND profile_slug = $2
         ORDER BY updated_at DESC, priority DESC
         "#,
     )
     .bind(bear_id)
-    .bind(role_slug)
+    .bind(profile_slug)
     .fetch_all(pool)
     .await
     .map_err(|err| CustomError::Database(format!("list prompt_memory_blocks for bear role: {err}")))?;
@@ -205,7 +205,7 @@ pub(crate) async fn list_prompt_memory_blocks_for_bear_role(
 pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
     pool: &PgPool,
     bear_id: uuid::Uuid,
-    role_slug: &str,
+    profile_slug: &str,
     supersedes_block_id: &str,
 ) -> Result<u64, CustomError> {
     let result = sqlx::query(
@@ -213,13 +213,13 @@ pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
         UPDATE prompt_memory_blocks
         SET state = 'archived', updated_at = now()
         WHERE bear_id = $1
-          AND role_slug = $2
+          AND profile_slug = $2
           AND block_id = $3
           AND state <> 'archived'
         "#,
     )
     .bind(bear_id)
-    .bind(role_slug)
+    .bind(profile_slug)
     .bind(supersedes_block_id)
     .execute(pool)
     .await
@@ -236,7 +236,7 @@ pub(crate) async fn archive_conflicting_prompt_memory_blocks(
         UPDATE prompt_memory_blocks
         SET state = 'archived', updated_at = now()
         WHERE bear_id = $1
-          AND role_slug = $2
+          AND profile_slug = $2
           AND block_id <> $3
           AND state = 'active'
           AND scope = $4
@@ -246,7 +246,7 @@ pub(crate) async fn archive_conflicting_prompt_memory_blocks(
         "#,
     )
     .bind(write.bear_id)
-    .bind(&write.role_slug)
+    .bind(&write.profile_slug)
     .bind(&write.block_id)
     .bind(scope_to_db(write.scope))
     .bind(block_type_to_db(write.block_type))
@@ -267,7 +267,7 @@ pub(crate) async fn select_prompt_memory_blocks_for_runtime(
         "source": "prompt_memory_blocks",
         "persisted": true,
         "bear_id": query.bear_id.map(|id| id.to_string()),
-        "role_slug": query.role_slug,
+        "profile_slug": query.profile_slug,
         "session_id": query.session_id,
         "work_surfaces": query.work_surfaces,
         "matched_block_ids": blocks.iter().map(|block| block.id.clone()).collect::<Vec<_>>(),
@@ -282,7 +282,7 @@ fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, CustomE
         block_type: block_type_from_db(&row.try_get::<String, _>("block_type").map_err(db_decode("block_type"))?)?,
         scope: scope_from_db(&row.try_get::<String, _>("scope").map_err(db_decode("scope"))?)?,
         state: state_from_db(&row.try_get::<String, _>("state").map_err(db_decode("state"))?)?,
-        role: row.try_get("role_slug").map_err(db_decode("role_slug"))?,
+        role: row.try_get("profile_slug").map_err(db_decode("profile_slug"))?,
         work_surface: row.try_get("work_surface").map_err(db_decode("work_surface"))?,
         session_id: row.try_get("session_id").map_err(db_decode("session_id"))?,
         title: row.try_get("title").map_err(db_decode("title"))?,

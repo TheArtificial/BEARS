@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     core::{
         bear_observations::{self, BearObservationRow},
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{
             create_observation, create_proposal, get_observation,
             mark_observation_review_queued_for_bear, MemoryStoreManager,
@@ -73,10 +73,10 @@ pub(crate) async fn write_observation(
     config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Watch {
+    if role != BearProfile::Watch {
         return Err(CustomError::Authorization(
             "den.observation.write is available only to watch".to_string(),
         ));
@@ -100,7 +100,7 @@ pub(crate) async fn write_observation(
 
     let source = args.source.unwrap_or_else(|| {
         json!({
-            "role_agent_id": context.role_agent_id,
+            "binding_id": context.binding_id,
             "conversation_id": clean_optional(&context.conversation_id),
             "session_id": clean_optional(&context.session_id),
             "request_id": context.request_id,
@@ -174,8 +174,8 @@ async fn enqueue_observation_review(
         stores,
         CreateMemoryProposal {
             bear_id: context.bear_id,
-            source_role: BearAgentRole::Watch,
-            source_agent_id: Some(context.role_agent_id.clone()),
+            source_role: BearProfile::Watch,
+            source_agent_id: Some(context.binding_id.clone()),
             source_paths: vec![observation.logical_path.clone()],
             source_refs: serde_json::json!({
                 "observation_id": observation.observation_id,
@@ -214,7 +214,7 @@ async fn enqueue_observation_review(
         pool,
         ProposalEnqueueParams {
             bear_id: context.bear_id,
-            role_agent_id: Some(context.role_agent_id.as_str()),
+            binding_id: Some(context.binding_id.as_str()),
             conversation_id: conversation_id.as_deref(),
             conversation_key: Some(&conversation_key),
             conversation_date: Some(reflection_date),

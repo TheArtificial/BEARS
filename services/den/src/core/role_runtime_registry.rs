@@ -8,18 +8,18 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        bears::{db as bears_db, model::BearAgentRole},
+        bears::{db as bears_db, model::BearProfile},
         runtime_contracts::{RoleProfileRegistry, RoleRuntimeBinding},
     },
     errors::CustomError,
 };
 
-pub struct DenNativeRoleProfileRegistry<'a> {
+pub struct DenNativeProfileRegistry<'a> {
     pool: &'a PgPool,
     config: &'a Config,
 }
 
-impl<'a> DenNativeRoleProfileRegistry<'a> {
+impl<'a> DenNativeProfileRegistry<'a> {
     pub fn new(pool: &'a PgPool, config: &'a Config) -> Self {
         Self { pool, config }
     }
@@ -27,19 +27,19 @@ impl<'a> DenNativeRoleProfileRegistry<'a> {
     pub async fn resolve_binding(
         &self,
         bear_id: Uuid,
-        role: BearAgentRole,
+        profile: BearProfile,
     ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
         if self.config.uses_native_agent_runtime() {
-            let binding_id = bears_db::role_runtime_binding_id(self.pool, bear_id, role)
+            let binding_id = bears_db::profile_binding_id(self.pool, bear_id, profile)
                 .await?
                 .filter(|id| !id.trim().is_empty())
-                .unwrap_or_else(|| format!("den-native:{bear_id}:{}", role.as_str()));
+                .unwrap_or_else(|| format!("den-native:{bear_id}:{}", profile.as_str()));
             return Ok(Some(RoleRuntimeBinding {
                 binding_id,
                 compatibility_backend: Some("runtime:native".to_string()),
             }));
         }
-        Ok(bears_db::role_runtime_binding_id(self.pool, bear_id, role)
+        Ok(bears_db::profile_binding_id(self.pool, bear_id, profile)
             .await?
             .map(|binding_id| RoleRuntimeBinding {
                 binding_id,
@@ -49,15 +49,15 @@ impl<'a> DenNativeRoleProfileRegistry<'a> {
 }
 
 #[allow(async_fn_in_trait)]
-impl RoleProfileRegistry for DenNativeRoleProfileRegistry<'_> {
+impl RoleProfileRegistry for DenNativeProfileRegistry<'_> {
     async fn resolve_compatibility_binding(
         &self,
         bear_id: Uuid,
-        role: &str,
+        profile: &str,
     ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
-        let role = BearAgentRole::from_str(role).map_err(|_| {
-            CustomError::ValidationError(format!("unknown bear role: {role}"))
+        let profile = BearProfile::from_str(profile).map_err(|_| {
+            CustomError::ValidationError(format!("unknown bear profile: {profile}"))
         })?;
-        self.resolve_binding(bear_id, role).await
+        self.resolve_binding(bear_id, profile).await
     }
 }

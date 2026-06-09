@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::{
     config::Config,
     core::{
-        bears::{db::role_is_bear_admin, BearAgentRole},
+        bears::{db::role_is_bear_admin, BearProfile},
         tools::{
             constants::{
                 DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER,
@@ -23,7 +23,7 @@ use crate::{
 pub(crate) fn bear_environment_payload(
     context: &DenToolInvocationContext,
     config: &Config,
-    role: BearAgentRole,
+    role: BearProfile,
     current_user: Option<&user::User>,
     member_count: i64,
     memory_status: Value,
@@ -103,7 +103,7 @@ pub(crate) fn bear_environment_payload(
             "status": "ok",
             "configured": true,
             "reachable": true,
-            "role": role.as_str(),
+            "profile": role.as_str(),
             "channel": context.channel,
         },
         "memory": {
@@ -195,11 +195,11 @@ pub(crate) fn bear_environment_payload(
         "bear": {
             "id": context.bear_id,
             "slug": context.bear_slug,
-            "role": role.as_str(),
-            "role_agent_id": context.role_agent_id,
+            "profile": role.as_str(),
+            "binding_id": context.binding_id,
             "member_count": member_count,
             "contract_label": match role {
-                BearAgentRole::Pair => Value::String("Builder Bear".to_string()),
+                BearProfile::Pair => Value::String("Builder Bear".to_string()),
                 _ => Value::Null,
             },
             "current_user": current_user.map(|user| json!({
@@ -241,7 +241,7 @@ pub(crate) fn bear_environment_payload(
 
 pub(crate) fn session_info_payload(
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     current_user: Option<&user::User>,
     member_count: i64,
     memory_status: Value,
@@ -276,24 +276,24 @@ pub(crate) fn session_info_payload(
         })
     });
     let workplace = json!({
-        "role": role.as_str(),
+        "profile": role.as_str(),
         "memory_surface": format!("{}/", role.as_str()),
         "space": match role {
-            BearAgentRole::Pair => "Collaboration Space",
-            BearAgentRole::Chat => "Conversation Space",
-            BearAgentRole::Curate => "Curation Space",
-            BearAgentRole::Work => "Execution Space",
-            BearAgentRole::Watch => "Observation Space",
+            BearProfile::Pair => "Collaboration Space",
+            BearProfile::Chat => "Conversation Space",
+            BearProfile::Curate => "Curation Space",
+            BearProfile::Work => "Execution Space",
+            BearProfile::Watch => "Observation Space",
         },
     });
     let role_contract_label = match role {
-        BearAgentRole::Pair => Some("Builder Bear"),
+        BearProfile::Pair => Some("Builder Bear"),
         _ => None,
     };
     json!({
         "role_contract_context": {
-            "role": role.as_str(),
-            "agent_id": context.role_agent_id,
+            "profile": role.as_str(),
+            "agent_id": context.binding_id,
             "contract_label": role_contract_label,
             "contract_source": if role_contract_label.is_some() { json!("system_prompt") } else { Value::Null },
             "contract_purpose": if role_contract_label.is_some() { json!("behavioral_style_and_role_guidance") } else { Value::Null },
@@ -325,12 +325,12 @@ pub(crate) fn session_info_payload(
             "bear_slug": context.bear_slug,
             "member_count": member_count
         },
-        "role": {
+        "profile": {
             "name": role.as_str(),
-            "agent_id": context.role_agent_id,
+            "agent_id": context.binding_id,
             "workplace": workplace,
         },
-        "role_agent_id": context.role_agent_id,
+        "binding_id": context.binding_id,
         "human": {
             "user_id": context.user_id,
             "username": current_user.as_ref().map(|user| user.username.clone()).or_else(|| context.username.clone()),

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         conversation_events::{
             project_to_conversation, PairReflectionCompletedPayload, Projection,
             ProjectionEvent, ProjectionProvenance, ProjectionSource,
@@ -224,6 +224,6 @@ pub fn render_pair_summary_markdown(
     out
 }
 
-pub fn pair_reflection_role() -> BearAgentRole {
-    BearAgentRole::Pair
+pub fn pair_reflection_role() -> BearProfile {
+    BearProfile::Pair
 }

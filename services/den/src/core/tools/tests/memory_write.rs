@@ -2,7 +2,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::core::{
-    bears::model::BearAgentRole,
+    bears::model::BearProfile,
     den_tools::{
         merge_memory_entry_source_with_human, DenToolChannelContext, DenToolInvocationContext,
     },
@@ -13,8 +13,8 @@ fn sample_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: Uuid::nil(),
         bear_slug: "meta".to_string(),
-        role_agent_id: "agent-123".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        binding_id: "agent-123".to_string(),
+        profile: Some(BearProfile::Pair),
         user_id: 7,
         username: Some("context-user".to_string()),
         membership_role: Some("admin".to_string()),

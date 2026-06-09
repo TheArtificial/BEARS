@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     core::{
         acp_sessions,
-        bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
+        bears::{db as bears_db, db::role_is_bear_admin, BearProfile},
         memory::MemoryStoreManager,
         tools::descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role},
         user,
@@ -69,7 +69,7 @@ fn clean_optional(value: &str) -> Option<String> {
 async fn memory_orient_work_surface(
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
 ) -> Result<Value, CustomError> {
     let hint_payload = infer_work_surface_hint(context, role);
     let candidate_slug = work_surface_candidate_slug(context);
@@ -86,7 +86,7 @@ async fn memory_orient_work_surface(
             "configured": true,
             "storage": "sqlite",
             "bear_id": context.bear_id,
-            "role": role.as_str(),
+            "profile": role.as_str(),
             "orientation": orientation,
         }));
     }
@@ -108,7 +108,7 @@ async fn memory_orient_work_surface(
         "ok": tree.ok,
         "configured": true,
         "bear_id": context.bear_id,
-        "role": role.as_str(),
+        "profile": role.as_str(),
         "canonical_tip": tree.canonical_tip,
         "orientation": orientation,
     }))
@@ -158,8 +158,8 @@ async fn patch_letta_conversation_summary(
 pub struct DenToolInvocationContext {
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub role_agent_id: String,
-    pub agent_role: Option<BearAgentRole>,
+    pub binding_id: String,
+    pub profile: Option<BearProfile>,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,
@@ -312,7 +312,7 @@ pub async fn invoke_den_tool(
 async fn authorize_context(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-) -> Result<BearAgentRole, CustomError> {
+) -> Result<BearProfile, CustomError> {
     if !bears_db::user_may_use_bear(pool, context.user_id, context.bear_id).await? {
         return Err(CustomError::Authorization(
             "user is not a member of this bear".to_string(),
@@ -324,44 +324,44 @@ async fn authorize_context(
 async fn context_role(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-) -> Result<BearAgentRole, CustomError> {
-    let agent_id = context.role_agent_id.trim();
+) -> Result<BearProfile, CustomError> {
+    let agent_id = context.binding_id.trim();
     if agent_id.is_empty() {
         return Err(CustomError::Authorization(
-            "Den tool context is missing role_agent_id".to_string(),
+            "Den tool context is missing binding_id".to_string(),
         ));
     }
 
     let row: Option<(String,)> = sqlx::query_as(
         r#"
-        SELECT role
-        FROM bear_agents
+        SELECT profile
+        FROM bear_profile_bindings
         WHERE bear_id = $1
-          AND letta_agent_id = $2
+          AND binding_id = $2
         "#,
     )
     .bind(context.bear_id)
     .bind(agent_id)
     .fetch_optional(pool)
     .await?;
-    let registered_role: BearAgentRole = row
+    let registered_profile: BearProfile = row
         .ok_or_else(|| {
-            CustomError::Authorization("role_agent_id is not registered for this bear".to_string())
+            CustomError::Authorization("binding_id is not registered for this bear".to_string())
         })?
         .0
         .parse()
         .map_err(CustomError::System)?;
-    if let Some(declared_role) = context.agent_role {
-        if declared_role != registered_role {
+    if let Some(declared_profile) = context.profile {
+        if declared_profile != registered_profile {
             return Err(CustomError::Authorization(format!(
-                "Den tool context role `{declared_role}` does not match registered role `{registered_role}` for role_agent_id"
+                "Den tool context profile `{declared_profile}` does not match registered profile `{registered_profile}` for binding_id"
             )));
         }
     }
-    Ok(registered_role)
+    Ok(registered_profile)
 }
 
-pub(crate) fn authorize_tool_for_role(tool_name: &str, role: BearAgentRole) -> Result<(), CustomError> {
+pub(crate) fn authorize_tool_for_role(tool_name: &str, role: BearProfile) -> Result<(), CustomError> {
     let descriptor = builtin_den_tool_descriptors()
         .into_iter()
         .find(|descriptor| descriptor.name == tool_name)
@@ -469,8 +469,8 @@ async fn list_capabilities_self(
 fn channel_context(context: &DenToolInvocationContext) -> Value {
     json!({
         "bear_id": context.bear_id,
-        "role_agent_id": context.role_agent_id,
-        "agent_role": context.agent_role,
+        "binding_id": context.binding_id,
+        "profile": context.profile,
         "user_id": context.user_id,
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,

@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use crate::{
     config::Config,
     core::{
-        bears::BearAgentRole,
+        bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::MemfsWriteRoleMemoryEntryRequest,
         user,
@@ -96,10 +96,10 @@ pub(crate) async fn write_memory_entry(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
-    role: BearAgentRole,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    if role != BearAgentRole::Pair {
+    if role != BearProfile::Pair {
         return Err(CustomError::Authorization(
             "den.memory.write_entry is currently available only to the pair role".to_string(),
         ));
@@ -151,8 +151,8 @@ pub(crate) async fn write_memory_entry(
             .or_else(|| source_acp_session_id(context)),
         conversation_selection: context.conversation_selection.clone(),
         runtime_target: context.runtime_target.clone(),
-        role_agent_id: Some(context.role_agent_id.clone()),
-        agent_role: context.agent_role.map(|role| role.as_str().to_string()),
+        binding_id: Some(context.binding_id.clone()),
+        profile: context.profile.map(|role| role.as_str().to_string()),
         request_id: context.request_id.clone(),
     };
     let http = memfs_http_client("MemFS memory entry client build failed")?;
@@ -171,7 +171,7 @@ pub(crate) async fn write_memory_entry(
     };
     Ok(json!({
         "bear_id": context.bear_id,
-        "role": role.as_str(),
+        "profile": role.as_str(),
         "kind": response.kind,
         "entry_id": response.entry_id,
         "path": response.path,

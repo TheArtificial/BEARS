@@ -1,16 +1,16 @@
 use serde_json::json;
 
 use crate::core::{
-    bears::BearAgentRole,
+    bears::BearProfile,
     tools::{session::DenToolInvocationContext, work_surface::infer_work_surface_hint},
 };
 
-fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
+fn context_for(role: BearProfile) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        role_agent_id: "agent".to_string(),
-        agent_role: Some(role),
+        binding_id: "agent".to_string(),
+        profile: Some(role),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -31,19 +31,19 @@ fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
 
 #[test]
 fn infer_work_surface_hint_marks_pair_as_active_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearAgentRole::Pair), BearAgentRole::Pair);
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Pair), BearProfile::Pair);
     assert_eq!(payload["work_surface"]["mode"], json!("active"));
 }
 
 #[test]
 fn infer_work_surface_hint_marks_work_as_active_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearAgentRole::Work), BearAgentRole::Work);
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Work), BearProfile::Work);
     assert_eq!(payload["work_surface"]["mode"], json!("active"));
 }
 
 #[test]
 fn infer_work_surface_hint_marks_chat_as_reference_only_mode() {
-    let payload = infer_work_surface_hint(&context_for(BearAgentRole::Chat), BearAgentRole::Chat);
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Chat), BearProfile::Chat);
     assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
     assert!(payload["work_surface"]["note"]
         .as_str()

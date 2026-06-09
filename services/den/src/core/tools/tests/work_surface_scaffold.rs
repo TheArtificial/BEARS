@@ -1,5 +1,5 @@
 use crate::core::{
-    bears::BearAgentRole,
+    bears::BearProfile,
     tools::work_surface::{
         normalize_work_surface_slug, work_surface_entry_body, work_surface_index_file_body,
         work_surface_scaffold_requests,
@@ -33,7 +33,7 @@ fn work_surface_entry_body_links_to_scaffold_index() {
 #[test]
 fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
     let requests = work_surface_scaffold_requests(
-        BearAgentRole::Pair,
+        BearProfile::Pair,
         "meta",
         "Meta",
         "Meta overview.",
@@ -63,7 +63,7 @@ fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
 #[test]
 fn work_surface_scaffold_requests_use_work_role_local_path_when_role_is_work() {
     let requests = work_surface_scaffold_requests(
-        BearAgentRole::Work,
+        BearProfile::Work,
         "meta",
         "Meta",
         "Meta overview.",
@@ -80,7 +80,7 @@ fn work_surface_scaffold_requests_use_work_role_local_path_when_role_is_work() {
 #[test]
 fn work_surface_scaffold_requests_skip_role_local_file_for_chat() {
     let requests = work_surface_scaffold_requests(
-        BearAgentRole::Chat,
+        BearProfile::Chat,
         "meta",
         "Meta",
         "Meta overview.",
