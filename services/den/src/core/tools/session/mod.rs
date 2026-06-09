@@ -73,6 +73,23 @@ async fn memory_orient_work_surface(
 ) -> Result<Value, CustomError> {
     let hint_payload = infer_work_surface_hint(context, role);
     let candidate_slug = work_surface_candidate_slug(context);
+    if config.uses_native_agent_runtime() {
+        let stores = MemoryStoreManager::new(config);
+        let store = stores.store_for_bear(context.bear_id).await?;
+        let files =
+            crate::core::memory::tools::sqlite_collect_role_logical_paths(&store, role.as_str())
+                .await?;
+        let orientation =
+            build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+        return Ok(json!({
+            "ok": true,
+            "configured": true,
+            "storage": "sqlite",
+            "bear_id": context.bear_id,
+            "role": role.as_str(),
+            "orientation": orientation,
+        }));
+    }
     let http = memfs_http_client("MemFS work-surface orientation client build failed")?;
     let tree = fetch_role_memory_tree(&http, &config.letta_memfs_service_url, context.bear_id, role.as_str()).await?;
     let Some(tree) = tree else {
@@ -211,7 +228,7 @@ pub async fn invoke_den_tool(
             memory_orient_work_surface(config, &context, role).await
         }
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
-            create_work_surface_scaffold(config, &context, role, arguments).await
+            create_work_surface_scaffold(config, stores, &context, role, arguments).await
         }
         DEN_PROMPT_MEMORY_UPSERT => prompt_memory_upsert(pool, &context, role, arguments).await,
         DEN_PROMPT_MEMORY_LIST => prompt_memory_list(pool, &context, role, arguments).await,
@@ -235,6 +252,7 @@ pub async fn invoke_den_tool(
             list_work_plans(
                 pool,
                 config,
+                stores,
                 &context,
                 role,
                 arguments,
@@ -265,7 +283,7 @@ pub async fn invoke_den_tool(
             record_plan_approval(pool, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await
         }
         DEN_PLAN_MODE_EXIT => {
-            exit_plan_mode(pool, config, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await
+            exit_plan_mode(pool, config, stores, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await
         }
         DEN_PLAN_MODE_CANCEL => {
             cancel_plan_mode(pool, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await

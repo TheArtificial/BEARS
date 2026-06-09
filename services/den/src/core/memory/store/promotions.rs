@@ -3,7 +3,9 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::{logical_path::LogicalMemoryPath, records::BearMemoryStore};
+use super::{
+    links::append_memory_link, logical_path::LogicalMemoryPath, records::BearMemoryStore,
+};
 
 pub async fn append_memory_promotion(
     store: &BearMemoryStore,
@@ -64,6 +66,14 @@ pub async fn promote_to_shared_core(
         Some(&row.memory_id),
         "promote_to_core",
         None,
+    )
+    .await?;
+    let _ = append_memory_link(
+        store,
+        source_memory_id,
+        "memory_record",
+        &row.memory_id,
+        "promotion",
     )
     .await?;
     Ok((row.memory_id, promotion_id))

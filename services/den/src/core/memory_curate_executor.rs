@@ -6,8 +6,11 @@ use crate::{
     config::Config,
     core::{
         bears::BearAgentRole,
+        memory::{
+            get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
+        },
         memory_manager_head::{write_memfs_core_update, MemfsCoreUpdateRequest},
-        memory_proposals::{self, MemoryProposalRow, ProposalResolutionParams},
+        memory_proposals::{MemoryProposalRow, ProposalResolutionParams},
         tools::memfs::memfs_http_client,
     },
     errors::CustomError,
@@ -231,20 +234,22 @@ fn promotion_body(proposal: &MemoryProposalRow) -> String {
 pub async fn execute_memory_curate_proposals(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
     trigger: Option<&str>,
     proposal_ids: &[Uuid],
 ) -> Result<MemoryCurateRunOutput, CustomError> {
     let mut outcomes = Vec::new();
     for proposal_id in proposal_ids {
-        let Some(proposal) = memory_proposals::get_for_bear(pool, bear_id, *proposal_id).await?
+        let Some(proposal) = get_proposal(pool, config, stores, bear_id, *proposal_id).await?
         else {
             continue;
         };
         if proposal.status != "pending" {
             continue;
         }
-        let outcome = resolve_curate_proposal(pool, config, bear_id, &proposal, trigger).await?;
+        let outcome =
+            resolve_curate_proposal(pool, config, stores, bear_id, &proposal, trigger).await?;
         outcomes.push(outcome);
     }
 
@@ -262,7 +267,7 @@ pub async fn execute_memory_curate_proposals(
         }
     }
     let resolution_status = aggregate_resolution_status(&outcomes);
-    let briefing = build_curate_briefing(pool, bear_id, &outcomes).await?;
+    let briefing = build_curate_briefing(pool, config, stores, bear_id, &outcomes).await?;
 
     Ok(MemoryCurateRunOutput {
         resolved_proposal_ids,
@@ -275,6 +280,8 @@ pub async fn execute_memory_curate_proposals(
 
 async fn build_curate_briefing(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
     outcomes: &[CurateProposalOutcome],
 ) -> Result<Vec<CurateBriefingItem>, CustomError> {
@@ -287,7 +294,7 @@ async fn build_curate_briefing(
             continue;
         }
         let Some(proposal) =
-            memory_proposals::get_for_bear(pool, bear_id, outcome.proposal_id).await?
+            get_proposal(pool, config, stores, bear_id, outcome.proposal_id).await?
         else {
             continue;
         };
@@ -307,6 +314,7 @@ async fn build_curate_briefing(
 async fn resolve_curate_proposal(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
@@ -315,7 +323,7 @@ async fn resolve_curate_proposal(
     let triage_label = triage.triage_label().to_string();
 
     if matches!(triage, CurateTriage::PromoteToCore { .. }) {
-        match apply_core_promotion(pool, config, bear_id, proposal, &triage).await {
+        match apply_core_promotion(pool, config, stores, bear_id, proposal, &triage).await {
             Ok((result_path, _result_commit)) => {
                 return Ok(CurateProposalOutcome {
                     proposal_id: proposal.id,
@@ -327,8 +335,10 @@ async fn resolve_curate_proposal(
                 });
             }
             Err(error) => {
-                let deferred = memory_proposals::resolve_for_bear(
+                let deferred = resolve_proposal(
                     pool,
+                    config,
+                    stores,
                     ProposalResolutionParams {
                         bear_id,
                         proposal_id: proposal.id,
@@ -359,8 +369,10 @@ async fn resolve_curate_proposal(
         }
     }
 
-    let resolved = memory_proposals::resolve_for_bear(
+    let resolved = resolve_proposal(
         pool,
+        config,
+        stores,
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
@@ -389,40 +401,63 @@ async fn resolve_curate_proposal(
 async fn apply_core_promotion(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal: &MemoryProposalRow,
     triage: &CurateTriage,
 ) -> Result<(String, Option<String>), CustomError> {
-    if config.letta_memfs_service_url.trim().is_empty() {
-        return Err(CustomError::System(
-            "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-        ));
-    }
-    let http = memfs_http_client("MemFS memory_curate core update client build failed")?;
-    let request = MemfsCoreUpdateRequest {
-        target_path: core_target_path(proposal),
-        mode: "append_section".to_string(),
-        title: Some(proposal.title.clone()),
-        body: Some(promotion_body(proposal)),
-        old_text: None,
-        new_text: None,
-        proposal_id: Some(proposal.id),
-        source_paths: proposal.source_paths.clone(),
+    let target_path = core_target_path(proposal);
+    let (result_path, result_commit) = if config.uses_native_agent_runtime() {
+        let kind = target_path
+            .split('/')
+            .next_back()
+            .unwrap_or("note")
+            .trim_end_matches(".md");
+        let (memory_id, _promotion_id) = promote_core_content(
+            stores,
+            bear_id,
+            &proposal.id.to_string(),
+            kind,
+            &promotion_body(proposal),
+            BearAgentRole::Curate.as_str(),
+        )
+        .await?;
+        (target_path, Some(memory_id))
+    } else {
+        if config.letta_memfs_service_url.trim().is_empty() {
+            return Err(CustomError::System(
+                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+            ));
+        }
+        let http = memfs_http_client("MemFS memory_curate core update client build failed")?;
+        let request = MemfsCoreUpdateRequest {
+            target_path: target_path.clone(),
+            mode: "append_section".to_string(),
+            title: Some(proposal.title.clone()),
+            body: Some(promotion_body(proposal)),
+            old_text: None,
+            new_text: None,
+            proposal_id: Some(proposal.id),
+            source_paths: proposal.source_paths.clone(),
+        };
+        let response = write_memfs_core_update(
+            &http,
+            &config.letta_memfs_service_url,
+            bear_id,
+            &request,
+        )
+        .await?;
+        let Some(response) = response else {
+            return Err(CustomError::System(
+                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+            ));
+        };
+        (response.path, response.canonical_tip)
     };
-    let response = write_memfs_core_update(
-        &http,
-        &config.letta_memfs_service_url,
-        bear_id,
-        &request,
-    )
-    .await?;
-    let Some(response) = response else {
-        return Err(CustomError::System(
-            "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-        ));
-    };
-    memory_proposals::resolve_for_bear(
+    resolve_proposal(
         pool,
+        config,
+        stores,
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
@@ -431,13 +466,13 @@ async fn apply_core_promotion(
             status: "approved",
             review_notes: Some(triage.review_notes()),
             decision_summary: Some(triage.decision_summary()),
-            result_path: Some(response.path.as_str()),
-            result_commit: response.canonical_tip.as_deref(),
+            result_path: Some(result_path.as_str()),
+            result_commit: result_commit.as_deref(),
             project_to_conversation: true,
         },
     )
     .await?;
-    Ok((response.path, response.canonical_tip))
+    Ok((result_path, result_commit))
 }
 
 fn aggregate_resolution_status(outcomes: &[CurateProposalOutcome]) -> String {

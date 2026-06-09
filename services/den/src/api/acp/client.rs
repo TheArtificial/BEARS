@@ -14,6 +14,7 @@ use crate::{
                 DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
             },
             descriptor::builtin_den_tool_descriptors_for_role,
+            memfs::filter_client_tools_for_native_runtime,
         },
     },
     errors::CustomError,
@@ -111,7 +112,15 @@ pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
     serde_json::json!(descriptors)
 }
 
-pub(crate) fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_json::Value {
+pub(crate) fn merge_acp_pair_tool_descriptors(
+    client_tools: serde_json::Value,
+    native_runtime: bool,
+) -> serde_json::Value {
+    let client_tools = if native_runtime {
+        filter_client_tools_for_native_runtime(Some(&client_tools)).unwrap_or(client_tools)
+    } else {
+        client_tools
+    };
     let mut merged = client_tools.as_array().cloned().unwrap_or_default();
     if let Some(server_tools) = acp_pair_den_tool_descriptors().as_array() {
         merged.extend(server_tools.iter().cloned());

@@ -11,6 +11,51 @@ use crate::{
 
 use super::store::BearMemoryStore;
 
+pub async fn sqlite_write_at_path(
+    stores: &MemoryStoreManager,
+    config: &Config,
+    bear_id: Uuid,
+    logical_path: &str,
+    author_role: &str,
+    title: &str,
+    body: &str,
+    metadata: Value,
+) -> Result<Value, CustomError> {
+    let store = stores.store_for_bear(bear_id).await?;
+    let logical = LogicalMemoryPath::from_logical_path(logical_path);
+    let content = if body.starts_with('#') {
+        body.to_string()
+    } else {
+        format!("# {title}\n\n{body}")
+    };
+    let mut metadata_obj = metadata.as_object().cloned().unwrap_or_default();
+    metadata_obj.insert("title".to_string(), json!(title));
+    metadata_obj.insert("storage".to_string(), json!("sqlite"));
+    metadata_obj.insert(
+        "runtime".to_string(),
+        json!(config.agent_runtime_mode.as_str()),
+    );
+    let row = append_memory_record(
+        &store,
+        &logical,
+        &logical.kind,
+        author_role,
+        None,
+        &content,
+        &Value::Object(metadata_obj),
+    )
+    .await?;
+    Ok(json!({
+        "bear_id": bear_id,
+        "role": author_role,
+        "kind": row.kind,
+        "entry_id": row.memory_id,
+        "path": row.logical_path,
+        "sequence_no": row.sequence_no,
+        "storage": "sqlite",
+    }))
+}
+
 pub async fn sqlite_write_role_entry(
     stores: &MemoryStoreManager,
     config: &Config,
@@ -164,6 +209,61 @@ pub async fn sqlite_memory_search(
         "query": query,
         "hits": hits,
     }))
+}
+
+pub async fn sqlite_collect_role_logical_paths(
+    store: &BearMemoryStore,
+    role: &str,
+) -> Result<Vec<String>, CustomError> {
+    sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT logical_path
+        FROM memory_records
+        WHERE bear_id = ? AND scope_role = ? AND logical_path IS NOT NULL
+        ORDER BY logical_path ASC
+        "#,
+    )
+    .bind(store.bear_id().to_string())
+    .bind(role)
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("sqlite collect paths failed: {e}")))
+}
+
+pub async fn sqlite_list_plan_artifacts(
+    store: &BearMemoryStore,
+    role: &str,
+    limit: i64,
+) -> Result<Value, CustomError> {
+    let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+        r#"
+        SELECT memory_id, logical_path, content_text, sequence_no
+        FROM memory_records
+        WHERE bear_id = ? AND scope_role = ? AND logical_path LIKE ?
+        ORDER BY sequence_no DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(store.bear_id().to_string())
+    .bind(role)
+    .bind(format!("{role}/plans/%"))
+    .bind(limit)
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("sqlite list plan artifacts failed: {e}")))?;
+    let results: Vec<Value> = rows
+        .into_iter()
+        .map(|(memory_id, path, content, sequence_no)| {
+            json!({
+                "memory_id": memory_id,
+                "path": path,
+                "snippet": content.chars().take(240).collect::<String>(),
+                "sequence_no": sequence_no,
+                "storage": "sqlite",
+            })
+        })
+        .collect();
+    Ok(json!(results))
 }
 
 pub async fn sqlite_memory_status(

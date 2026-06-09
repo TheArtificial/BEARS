@@ -17,6 +17,45 @@ use crate::{
     errors::CustomError,
 };
 
+async fn memory_status_for_environment(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    pool: &PgPool,
+) -> Value {
+    if config.uses_native_agent_runtime() {
+        return memory_status_value(config, context, role, pool)
+            .await
+            .unwrap_or_else(|err| {
+                json!({
+                    "configured": true,
+                    "available": false,
+                    "storage": "sqlite",
+                    "status": "degraded",
+                    "error": err.to_string()
+                })
+            });
+    }
+    if config.letta_memfs_service_url.trim().is_empty() {
+        return json!({
+            "configured": false,
+            "available": false,
+            "status": "unavailable",
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+        });
+    }
+    memory_status_value(config, context, role, pool)
+        .await
+        .unwrap_or_else(|err| {
+            json!({
+                "configured": !config.letta_memfs_service_url.trim().is_empty(),
+                "available": false,
+                "status": "degraded",
+                "error": err.to_string()
+            })
+        })
+}
+
 pub(crate) async fn fetch_acp_adapter_environment(
     config: &Config,
     context: &DenToolInvocationContext,
@@ -90,25 +129,7 @@ pub(crate) async fn bear_environment(
         }
     };
     let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = if config.letta_memfs_service_url.trim().is_empty() {
-        json!({
-            "configured": false,
-            "available": false,
-            "status": "unavailable",
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
-        })
-    } else {
-        memory_status_value(config, context, role, pool)
-            .await
-            .unwrap_or_else(|err| {
-                json!({
-                    "configured": !config.letta_memfs_service_url.trim().is_empty(),
-                    "available": false,
-                    "status": "degraded",
-                    "error": err.to_string()
-                })
-            })
-    };
+    let memory_status = memory_status_for_environment(config, context, role, pool).await;
     let adapter_runtime = match fetch_acp_adapter_environment(config, context).await {
         Ok(Some(value)) => value,
         Ok(None) => json!({
@@ -154,23 +175,7 @@ pub(crate) async fn session_info(
         }
     };
     let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = if config.letta_memfs_service_url.trim().is_empty() {
-        json!({
-            "configured": false,
-            "available": false,
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
-        })
-    } else {
-        memory_status_value(config, context, role, pool)
-            .await
-            .unwrap_or_else(|err| {
-                json!({
-                    "configured": !config.letta_memfs_service_url.trim().is_empty(),
-                    "available": false,
-                    "error": err.to_string()
-                })
-            })
-    };
+    let memory_status = memory_status_for_environment(config, context, role, pool).await;
     Ok(session_info_payload(
         context,
         role,

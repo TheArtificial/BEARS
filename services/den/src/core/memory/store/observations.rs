@@ -61,6 +61,26 @@ pub async fn create_memory_observation(
     })
 }
 
+pub async fn get_memory_observation(
+    store: &BearMemoryStore,
+    observation_id: &str,
+) -> Result<Option<SqliteMemoryObservation>, CustomError> {
+    let row = sqlx::query_as::<_, ObservationSqlRow>(
+        r#"
+        SELECT observation_id, sequence_no, summary, salience, logical_path, status,
+               proposal_id, source_json, created_at
+        FROM memory_observations
+        WHERE bear_id = ? AND observation_id = ?
+        "#,
+    )
+    .bind(store.bear_id().to_string())
+    .bind(observation_id)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("sqlite get observation failed: {e}")))?;
+    Ok(row.map(ObservationSqlRow::into_row))
+}
+
 pub async fn mark_observation_review_queued(
     store: &BearMemoryStore,
     observation_id: &str,
@@ -80,4 +100,33 @@ pub async fn mark_observation_review_queued(
     .await
     .map_err(|e| CustomError::System(format!("sqlite mark observation queued failed: {e}")))?;
     Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct ObservationSqlRow {
+    observation_id: String,
+    sequence_no: i64,
+    summary: String,
+    salience: String,
+    logical_path: String,
+    status: String,
+    proposal_id: Option<String>,
+    source_json: String,
+    created_at: String,
+}
+
+impl ObservationSqlRow {
+    fn into_row(self) -> SqliteMemoryObservation {
+        SqliteMemoryObservation {
+            observation_id: self.observation_id,
+            sequence_no: self.sequence_no,
+            summary: self.summary,
+            logical_path: self.logical_path,
+            status: self.status,
+            proposal_id: self.proposal_id,
+            source_json: serde_json::from_str(&self.source_json)
+                .unwrap_or_else(|_| serde_json::json!({})),
+            created_at: self.created_at,
+        }
+    }
 }

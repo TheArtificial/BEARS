@@ -10,8 +10,8 @@ use crate::{
         bear_observations::{self, BearObservationRow},
         bears::BearAgentRole,
         memory::{
-            create_observation, create_proposal, mark_observation_review_queued_for_bear,
-            MemoryStoreManager,
+            create_observation, create_proposal, get_observation,
+            mark_observation_review_queued_for_bear, MemoryStoreManager,
         },
         memory_proposals::{self, CreateMemoryProposal},
         reflection_conductor::{self, ProposalEnqueueParams},
@@ -93,7 +93,7 @@ pub(crate) async fn write_observation(
     validate_optional_object("source", &args.source)?;
 
     if let Some(existing) =
-        bear_observations::get_for_bear(pool, context.bear_id, &observation_id).await?
+        get_observation(pool, config, stores, context.bear_id, &observation_id).await?
     {
         return Ok(observation_write_payload(&existing, true));
     }

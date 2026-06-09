@@ -373,6 +373,7 @@ pub async fn render_template(
         app_slug => state.config.app_slug.clone(),
         public_web_origin => state.config.web_public_origin(),
         ui_fixture_profile => state.config.ui_fixture_profile.map(|p| p.as_str().to_string()),
+        native_runtime => state.config.uses_native_agent_runtime(),
         ..ctx
     };
     let template_env = state.template_env.clone();

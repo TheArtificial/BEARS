@@ -8,6 +8,7 @@ use crate::{
     core::{
         acp_plan_mode,
         bears::BearAgentRole,
+        memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::fetch_memfs_role_plan_artifacts,
         tools::{
             memfs::memfs_http_client,
@@ -73,6 +74,7 @@ pub(crate) fn empty_json_object() -> Value {
 pub(crate) async fn list_work_plans(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -103,18 +105,31 @@ pub(crate) async fn list_work_plans(
         Vec::new()
     };
     let plan_artifacts = if include_artifacts {
-        let http = memfs_http_client("MemFS plan artifact list client build failed")?;
-        match fetch_memfs_role_plan_artifacts(
-            &http,
-            &config.letta_memfs_service_url,
-            context.bear_id,
-            BearAgentRole::Pair.as_str(),
-        )
-        .await
-        {
-            Ok(Some(response)) => response.results,
-            Ok(None) => json!([]),
-            Err(err) => json!({ "error": err.to_string() }),
+        if config.uses_native_agent_runtime() {
+            match stores.store_for_bear(context.bear_id).await {
+                Ok(store) => sqlite_memory::sqlite_list_plan_artifacts(
+                    &store,
+                    BearAgentRole::Pair.as_str(),
+                    50,
+                )
+                .await
+                .unwrap_or_else(|err| json!({ "error": err.to_string() })),
+                Err(err) => json!({ "error": err.to_string() }),
+            }
+        } else {
+            let http = memfs_http_client("MemFS plan artifact list client build failed")?;
+            match fetch_memfs_role_plan_artifacts(
+                &http,
+                &config.letta_memfs_service_url,
+                context.bear_id,
+                BearAgentRole::Pair.as_str(),
+            )
+            .await
+            {
+                Ok(Some(response)) => response.results,
+                Ok(None) => json!([]),
+                Err(err) => json!({ "error": err.to_string() }),
+            }
         }
     } else {
         json!([])

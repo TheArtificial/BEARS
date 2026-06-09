@@ -86,6 +86,21 @@ pub async fn create_observation(
     Ok(sqlite_observation_to_row(params.bear_id, &sqlite))
 }
 
+pub async fn get_observation(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    observation_id: &str,
+) -> Result<Option<BearObservationRow>, CustomError> {
+    if !uses_sqlite_governance(config) {
+        return bear_observations::get_for_bear(pool, bear_id, observation_id).await;
+    }
+    let store = stores.store_for_bear(bear_id).await?;
+    let sqlite = store::get_memory_observation(&store, observation_id).await?;
+    Ok(sqlite.map(|row| sqlite_observation_to_row(bear_id, &row)))
+}
+
 pub async fn mark_observation_review_queued_for_bear(
     config: &Config,
     stores: &MemoryStoreManager,

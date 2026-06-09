@@ -2,12 +2,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
+    config::Config,
     core::{
         bears::BearAgentRole,
+        memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::{append_markdown_section, fetch_memfs_role_memory_file, write_memfs_core_update, MemfsCoreUpdateRequest},
         tools::{memfs::memfs_http_client, session::DenToolInvocationContext, support::validate_bounded_text},
     },
-    config::Config,
     errors::CustomError,
 };
 
@@ -320,8 +321,54 @@ pub(crate) fn collect_memory_tree_paths(files: &Value, out: &mut Vec<String>) {
     }
 }
 
+async fn create_work_surface_scaffold_sqlite(
+    config: &Config,
+    stores: &MemoryStoreManager,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    work_surface_slug: &str,
+    work_surface_name: &str,
+    overview: &str,
+    glossary: Option<&str>,
+    current_understanding: Option<&str>,
+) -> Result<Vec<Value>, CustomError> {
+    let mut responses = Vec::new();
+    for request in work_surface_scaffold_requests(
+        role,
+        work_surface_slug,
+        work_surface_name,
+        overview,
+        glossary,
+        current_understanding,
+    ) {
+        let body = request
+            .body
+            .as_deref()
+            .unwrap_or_default()
+            .to_string();
+        let title = request.title.as_deref().unwrap_or(work_surface_name);
+        let written = sqlite_memory::sqlite_write_at_path(
+            stores,
+            config,
+            context.bear_id,
+            &request.target_path,
+            role.as_str(),
+            title,
+            &body,
+            serde_json::json!({
+                "mode": request.mode,
+                "work_surface_slug": work_surface_slug,
+            }),
+        )
+        .await?;
+        responses.push(written);
+    }
+    Ok(responses)
+}
+
 pub(crate) async fn create_work_surface_scaffold(
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
@@ -347,6 +394,39 @@ pub(crate) async fn create_work_surface_scaffold(
         .as_deref()
         .map(|value| validate_bounded_text("current_understanding", value, 1, 20_000))
         .transpose()?;
+    if config.uses_native_agent_runtime() {
+        let responses = create_work_surface_scaffold_sqlite(
+            config,
+            stores,
+            context,
+            role,
+            &work_surface_slug,
+            &work_surface_name,
+            &overview,
+            glossary.as_deref(),
+            current_understanding.as_deref(),
+        )
+        .await?;
+        let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
+            work_surface_scaffold_paths(role, &work_surface_slug);
+        return Ok(json!({
+            "ok": true,
+            "bear_id": context.bear_id,
+            "storage": "sqlite",
+            "work_surface": {
+                "slug": work_surface_slug,
+                "name": work_surface_name,
+                "paths": {
+                    "registry": registry_path,
+                    "index": index_path,
+                    "overview": overview_path,
+                    "glossary": glossary_path,
+                    "current_understanding": current_understanding_path,
+                }
+            },
+            "updates": responses,
+        }));
+    }
     let http = memfs_http_client("MemFS work-surface scaffold client build failed")?;
     let mut responses = Vec::new();
     for request in work_surface_scaffold_requests(

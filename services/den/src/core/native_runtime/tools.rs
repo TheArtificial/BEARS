@@ -1,10 +1,14 @@
 use serde_json::Value;
 
 use crate::{
+    config::Config,
     core::{
         bears::BearAgentRole,
         llm::LlmToolDefinition,
-        tools::descriptor::builtin_den_tool_descriptors_for_role,
+        tools::{
+            descriptor::builtin_den_tool_descriptors_for_role,
+            memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name},
+        },
     },
     errors::CustomError,
 };
@@ -21,11 +25,17 @@ pub fn den_tools_for_role(role: BearAgentRole) -> Vec<LlmToolDefinition> {
 }
 
 pub fn merge_den_and_client_tools(
+    config: &Config,
     role: BearAgentRole,
     client_tools: Option<&Value>,
 ) -> Result<Vec<LlmToolDefinition>, CustomError> {
     let mut merged = den_tools_for_role(role);
-    let Some(client_tools) = client_tools.and_then(|v| v.as_array()) else {
+    let filtered_client_tools = if config.uses_native_agent_runtime() {
+        filter_client_tools_for_native_runtime(client_tools)
+    } else {
+        client_tools.cloned()
+    };
+    let Some(client_tools) = filtered_client_tools.as_ref().and_then(|v| v.as_array()) else {
         return Ok(merged);
     };
     let mut seen = std::collections::HashSet::<String>::new();
@@ -41,6 +51,9 @@ pub fn merge_den_and_client_tools(
         let Some(name) = name else {
             continue;
         };
+        if config.uses_native_agent_runtime() && is_memfs_client_tool_name(name) {
+            continue;
+        }
         if !seen.insert(name.to_string()) {
             continue;
         }

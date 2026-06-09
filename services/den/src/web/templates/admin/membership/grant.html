@@ -1,41 +1,36 @@
 {% extends "admin/base.html" %}
 
-{% block title %}Grant membership{% endblock %}
+{% block title %}Grant access{% endblock %}
 
 {% block admin_content %}
 <div class="box">
-<h3>Grant user access to a bear</h3>
+<h3>Grant bear access</h3>
 <form method="post">
   <label for="user_id_select">User</label>
-  <div class="form-field{% if errors and errors.user_id %} has-error{% endif %}">
+  <div class="form-field">
     <select id="user_id_select" name="user_id" required>
       {% for u in users %}
-      <option value="{{ u.id }}"{% if form and form.user_id == u.id %} selected{% endif %}>{{ u.username }} ({{ u.email }})</option>
+      <option value="{{ u.id }}">{{ u.username | e }} ({{ u.email | e }})</option>
       {% endfor %}
     </select>
-    {% if errors and errors.user_id %}
-    <span class="form-hint form-errors">Submission error: {{ errors.user_id | map(attribute="message", default="unknown error") | join(", ") }}</span>
-    {% endif %}
   </div>
-
   <label for="bear_id_select">Bear</label>
-  <div class="form-field{% if errors and errors.bear_id %} has-error{% endif %}">
+  <div class="form-field">
     <select id="bear_id_select" name="bear_id" required>
       {% for b in bears %}
-      <option value="{{ b.id }}"{% if form and form.bear_id == b.id|string %} selected{% endif %}><code>{{ b.slug }}</code> — {{ b.name }}</option>
+      <option value="{{ b.id }}"><code>{{ b.slug | e }}</code> — {{ b.name | e }}</option>
       {% endfor %}
     </select>
-    {% if errors and errors.bear_id %}
-    <span class="form-hint form-errors">Submission error: {{ errors.bear_id | map(attribute="message", default="unknown error") | join(", ") }}</span>
-    {% endif %}
   </div>
-
-  <label for="role_input">Role (optional)</label>
+  <label for="role_select">Access</label>
   <div class="form-field">
-    <input id="role_input" name="role" type="text" maxlength="64" value="{{ form.role if form else '' }}">
+    <select id="role_select" name="role">
+      <option value="member" selected>Member</option>
+      <option value="admin">Admin</option>
+    </select>
   </div>
-
-  <button type="submit">Grant</button>
+  <button type="submit">Grant access</button>
 </form>
+<p><a href="/admin/membership/">All access grants</a></p>
 </div>
 {% endblock %}

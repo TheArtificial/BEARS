@@ -4,8 +4,9 @@ use crate::{
         acp_sessions,
         bears::{db as bears_db, BearAgentRole},
         conversation_persistence,
+        memory::{create_proposal, tools as sqlite_memory},
+        memory_proposals::CreateMemoryProposal,
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
-        memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
         reflection_conductor,
         runtime_conversations::{
@@ -113,77 +114,121 @@ pub(crate) async fn run_pair_reflection_summary(
         trigger,
         &message_summaries,
     );
-    let request = MemfsWriteRoleMemoryEntryRequest {
-        kind: "summary".to_string(),
-        title: pair_reflection::summary_title_for_session(&session.acp_session_id),
-        body,
-        tags: vec!["pair-reflection".to_string(), "session-summary".to_string()],
-        refs: None,
-        lifecycle: Some(serde_json::json!({
-            "scope": "role-local",
-            "retention": "durable",
-            "promotion": "maybe",
-            "status": "active"
-        })),
-        source: Some(serde_json::json!({
-            "human": { "user_id": session.user_id, "authenticated_by": "acp_token" },
-            "session": {
-                "acp_session_id": session.acp_session_id,
-                "conversation_id": conversation_id,
-                "trigger": trigger
-            },
-            "reflection_run_id": run.id,
-        })),
-        author: None,
-        conversation_id: conversation_id.map(str::to_string),
-        session_id: Some(session.acp_session_id.clone()),
-        acp_session_id: Some(session.acp_session_id.clone()),
-        conversation_selection: Some(session.conversation_id.clone()),
-        runtime_target: conversation_id.map(str::to_string),
-        role_agent_id: None,
-        agent_role: Some(pair_reflection::pair_reflection_role().as_str().to_string()),
-        request_id: None,
-    };
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| {
-            CustomError::System(format!("MemFS pair reflection client build failed: {e}"))
-        })?;
-    let write_response = write_memfs_role_memory_entry(
-        &http,
-        &state.config.letta_memfs_service_url,
-        session.bear_id,
-        BearAgentRole::Pair.as_str(),
-        &request,
-    )
-    .await?;
-    let Some(write_response) = write_response else {
-        pair_reflection::complete_run(
-            &state.sqlx_pool,
-            CompletePairReflectionRun {
-                id: run.id,
-                status: "skipped",
-                summary_path: None,
-                summary_commit: None,
-                diagnostic: serde_json::json!({"reason": "MemFS sidecar not configured"}),
-            },
+    let title = pair_reflection::summary_title_for_session(&session.acp_session_id);
+    let (summary_path, summary_commit) = if state.config.uses_native_agent_runtime() {
+        let artifact_id = format!("pair-reflection-{}", run.id);
+        let logical_path = format!("pair/summaries/{artifact_id}.md");
+        let written = sqlite_memory::sqlite_write_at_path(
+            &state.memory_stores,
+            state.config.as_ref(),
+            session.bear_id,
+            &logical_path,
+            BearAgentRole::Pair.as_str(),
+            &title,
+            &body,
+            serde_json::json!({
+                "kind": "summary",
+                "tags": ["pair-reflection", "session-summary"],
+                "source": {
+                    "human": { "user_id": session.user_id, "authenticated_by": "acp_token" },
+                    "session": {
+                        "acp_session_id": session.acp_session_id,
+                        "conversation_id": conversation_id,
+                        "trigger": trigger
+                    },
+                    "reflection_run_id": run.id,
+                },
+            }),
         )
         .await?;
-        return Ok(());
+        let path = written
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&logical_path)
+            .to_string();
+        let memory_id = written
+            .get("entry_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        (path, memory_id)
+    } else {
+        let request = MemfsWriteRoleMemoryEntryRequest {
+            kind: "summary".to_string(),
+            title: title.clone(),
+            body,
+            tags: vec!["pair-reflection".to_string(), "session-summary".to_string()],
+            refs: None,
+            lifecycle: Some(serde_json::json!({
+                "scope": "role-local",
+                "retention": "durable",
+                "promotion": "maybe",
+                "status": "active"
+            })),
+            source: Some(serde_json::json!({
+                "human": { "user_id": session.user_id, "authenticated_by": "acp_token" },
+                "session": {
+                    "acp_session_id": session.acp_session_id,
+                    "conversation_id": conversation_id,
+                    "trigger": trigger
+                },
+                "reflection_run_id": run.id,
+            })),
+            author: None,
+            conversation_id: conversation_id.map(str::to_string),
+            session_id: Some(session.acp_session_id.clone()),
+            acp_session_id: Some(session.acp_session_id.clone()),
+            conversation_selection: Some(session.conversation_id.clone()),
+            runtime_target: conversation_id.map(str::to_string),
+            role_agent_id: None,
+            agent_role: Some(pair_reflection::pair_reflection_role().as_str().to_string()),
+            request_id: None,
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| {
+                CustomError::System(format!("MemFS pair reflection client build failed: {e}"))
+            })?;
+        let write_response = write_memfs_role_memory_entry(
+            &http,
+            &state.config.letta_memfs_service_url,
+            session.bear_id,
+            BearAgentRole::Pair.as_str(),
+            &request,
+        )
+        .await?;
+        let Some(write_response) = write_response else {
+            pair_reflection::complete_run(
+                &state.sqlx_pool,
+                CompletePairReflectionRun {
+                    id: run.id,
+                    status: "skipped",
+                    summary_path: None,
+                    summary_commit: None,
+                    diagnostic: serde_json::json!({"reason": "MemFS sidecar not configured"}),
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+        (
+            write_response.path,
+            write_response.canonical_tip,
+        )
     };
     let completed_run = pair_reflection::complete_run(
         &state.sqlx_pool,
         CompletePairReflectionRun {
             id: run.id,
             status: "completed",
-            summary_path: Some(&write_response.path),
-            summary_commit: write_response.canonical_tip.as_deref(),
+            summary_path: Some(summary_path.as_str()),
+            summary_commit: summary_commit.as_deref(),
             diagnostic: serde_json::json!({
                 "phase": "pair_reflection_completed",
-                "path": write_response.path,
-                "commit": write_response.canonical_tip,
+                "path": summary_path,
+                "commit": summary_commit,
+                "storage": if state.config.uses_native_agent_runtime() { "sqlite" } else { "memfs" },
             }),
         },
     )
@@ -194,13 +239,15 @@ pub(crate) async fn run_pair_reflection_summary(
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-    let proposal = memory_proposals::create(
+    let proposal = create_proposal(
         &state.sqlx_pool,
+        state.config.as_ref(),
+        &state.memory_stores,
         CreateMemoryProposal {
             bear_id: session.bear_id,
             source_role: BearAgentRole::Pair,
             source_agent_id: pair_agent_id.clone(),
-            source_paths: vec![write_response.path.clone()],
+            source_paths: vec![summary_path.clone()],
             source_refs: serde_json::json!({
                 "acp_session_id": session.acp_session_id,
                 "conversation_id": conversation_id,
@@ -214,8 +261,8 @@ pub(crate) async fn run_pair_reflection_summary(
             proposed_content: None,
             proposed_patch: None,
             refs: serde_json::json!({
-                "summary_path": write_response.path,
-                "summary_commit": write_response.canonical_tip,
+                "summary_path": summary_path,
+                "summary_commit": summary_commit,
                 "reflection_run_id": completed_run.id,
             }),
             sensitivity: "normal",

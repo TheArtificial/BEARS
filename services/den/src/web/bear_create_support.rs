@@ -9,8 +9,12 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     core::{
         bears::{
-            context_profile_to_json, db as bears_db, db::BearParams,
-            templates::first_bear_template, Bear, BearAgentRole,
+            context_composition::{
+                BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
+                DEFAULT_ROLE_CONTRACT_VERSION,
+            },
+            context_profile_from_json, context_profile_to_json, db as bears_db, db::BearParams,
+            default_role_contracts_for_bear, templates::first_bear_template, Bear, BearAgentRole,
         },
         letta::{LettaModelOption, LettaToolOption},
     },
@@ -329,7 +333,7 @@ pub async fn bear_configuration_page_context(
     }
 }
 
-#[derive(Validate, Serialize, Deserialize, Debug, Default)]
+#[derive(Validate, Serialize, Deserialize, Debug, Default, Clone)]
 pub struct NewBearForm {
     #[validate(length(min = 1, max = 120))]
     pub slug: String,
@@ -463,6 +467,33 @@ pub async fn bear_edit_page_context(
     _bear: &Bear,
     form: &NewBearForm,
 ) -> minijinja::Value {
+    admin_bear_edit_page_context(state, form).await
+}
+
+/// Operator admin edit-bear form: Bifrost catalog when native, Letta fields when Letta-backed.
+pub async fn admin_bear_edit_page_context(
+    state: &AppState,
+    form: &NewBearForm,
+) -> minijinja::Value {
+    let native_runtime = state.config.uses_native_agent_runtime();
+    if native_runtime {
+        let (model_catalog_configured, model_options, models_fetch_error) =
+            model_catalog_select_context(state).await;
+        let model_trim = form.default_model.trim();
+        let model_handle = (!model_trim.is_empty()).then_some(model_trim);
+        let model_options = if model_catalog_configured {
+            ensure_stored_model_in_options_for_handle(model_handle, model_options)
+        } else {
+            model_options
+        };
+        return context! {
+            native_runtime,
+            model_catalog_configured,
+            model_options,
+            models_fetch_error,
+        };
+    }
+
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
         letta_model_select_context(state).await;
     let model_trim = form.default_model.trim();
@@ -484,9 +515,8 @@ pub async fn bear_edit_page_context(
         letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
-    let _ = _bear;
-
     context! {
+        native_runtime,
         letta_configured,
         letta_model_options,
         letta_models_fetch_error,
@@ -495,6 +525,136 @@ pub async fn bear_edit_page_context(
         letta_tools_fetch_error,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
     }
+}
+
+#[derive(Validate, Serialize, Deserialize, Debug, Clone, Default)]
+pub struct AdminBearPromptForm {
+    #[validate(length(max = 100_000))]
+    pub system_prompt: String,
+    #[validate(length(max = 20_000))]
+    pub user_steering: String,
+    #[validate(length(max = 20_000))]
+    pub bear_context: String,
+    #[validate(length(max = 20_000))]
+    pub role_chat: String,
+    #[validate(length(max = 20_000))]
+    pub role_pair: String,
+    #[validate(length(max = 20_000))]
+    pub role_curate: String,
+    #[validate(length(max = 20_000))]
+    pub role_work: String,
+    #[validate(length(max = 20_000))]
+    pub role_watch: String,
+}
+
+impl AdminBearPromptForm {
+    pub fn from_bear(bear: &Bear) -> Result<(Self, bool), CustomError> {
+        let context_profile_enabled = bear.context_profile.is_some();
+        if let Some(profile) = context_profile_from_json(&bear.context_profile)? {
+            Ok((
+                Self {
+                    system_prompt: bear.system_prompt.clone(),
+                    user_steering: profile.user_steering,
+                    bear_context: profile.bear_context,
+                    role_chat: profile.role_contracts.chat,
+                    role_pair: profile.role_contracts.pair,
+                    role_curate: profile.role_contracts.curate,
+                    role_work: profile.role_contracts.work,
+                    role_watch: profile.role_contracts.watch,
+                },
+                context_profile_enabled,
+            ))
+        } else {
+            Ok((
+                Self {
+                    system_prompt: bear.system_prompt.clone(),
+                    ..Self::default()
+                },
+                false,
+            ))
+        }
+    }
+
+    pub fn context_profile_for_bear(
+        &self,
+        bear: &Bear,
+        context_profile_enabled: bool,
+    ) -> Result<Option<Json<serde_json::Value>>, CustomError> {
+        if !context_profile_enabled {
+            return Ok(None);
+        }
+        let existing = context_profile_from_json(&bear.context_profile)?;
+        let profile = BearContextProfile {
+            composition_version: existing
+                .as_ref()
+                .map(|p| p.composition_version)
+                .unwrap_or(CONTEXT_PROFILE_VERSION),
+            template_id: existing.as_ref().and_then(|p| p.template_id.clone()),
+            template_version: existing.as_ref().and_then(|p| p.template_version.clone()),
+            role_contract_version: existing
+                .as_ref()
+                .and_then(|p| p.role_contract_version.clone())
+                .or_else(|| Some(DEFAULT_ROLE_CONTRACT_VERSION.to_string())),
+            role_contracts: RoleContracts {
+                chat: self.role_chat.trim().to_string(),
+                pair: self.role_pair.trim().to_string(),
+                curate: self.role_curate.trim().to_string(),
+                work: self.role_work.trim().to_string(),
+                watch: self.role_watch.trim().to_string(),
+            },
+            user_steering: self.user_steering.trim().to_string(),
+            bear_context: self.bear_context.trim().to_string(),
+            starter_prompts: existing
+                .as_ref()
+                .map(|p| p.starter_prompts.clone())
+                .unwrap_or_default(),
+            first_task: existing.as_ref().and_then(|p| p.first_task.clone()),
+        };
+        let contracts = &profile.role_contracts;
+        if contracts.chat.trim().is_empty() {
+            return Err(CustomError::ValidationError(
+                "Chat role prompt is required.".to_string(),
+            ));
+        }
+        if contracts.pair.trim().is_empty() {
+            return Err(CustomError::ValidationError(
+                "Pair role prompt is required.".to_string(),
+            ));
+        }
+        if contracts.watch.trim().is_empty()
+        {
+            return Err(CustomError::ValidationError(
+                "All role prompts are required for role-aware bears.".to_string(),
+            ));
+        }
+        context_profile_to_json(&profile).map(Some)
+    }
+
+    pub fn resolved_system_prompt(
+        &self,
+        bear_name: &str,
+        context_profile: &Option<Json<serde_json::Value>>,
+    ) -> Result<String, CustomError> {
+        if let Some(profile) = context_profile {
+            composed_system_prompt_for_profile_json(bear_name, profile)
+        } else if self.system_prompt.trim().is_empty() {
+            Err(CustomError::ValidationError(
+                "System prompt is required.".to_string(),
+            ))
+        } else {
+            Ok(self.system_prompt.trim().to_string())
+        }
+    }
+}
+
+#[derive(Validate, Serialize, Deserialize, Debug, Default, Clone)]
+pub struct AdminNewBearForm {
+    #[serde(flatten)]
+    pub bear: NewBearForm,
+    #[serde(default)]
+    pub grant_user_id: String,
+    #[serde(default)]
+    pub grant_role: String,
 }
 
 pub fn composed_system_prompt_for_profile_json(

@@ -484,6 +484,7 @@ async fn execute_memory_curate_run(
     let output = memory_curate_executor::execute_memory_curate_proposals(
         pool,
         config,
+        _stores,
         bear_id,
         Some(trigger),
         proposal_ids,

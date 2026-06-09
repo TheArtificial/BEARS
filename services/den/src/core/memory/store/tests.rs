@@ -4,7 +4,9 @@ mod tests {
 
     use crate::config::Config;
     use crate::core::memory::{
-        store::{LogicalMemoryPath, MemoryStoreManager},
+        store::{
+            append_memory_link, list_memory_links_for_source, LogicalMemoryPath, MemoryStoreManager,
+        },
         tools as sqlite_tools,
     };
 
@@ -44,5 +46,32 @@ mod tests {
             .contains("Body"));
         let logical = LogicalMemoryPath::from_logical_path(path);
         assert_eq!(logical.scope_role.as_deref(), Some("pair"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_memory_links_round_trip() {
+        let mut config = Config::test_stub();
+        config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
+        config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-links-{}", Uuid::new_v4());
+        let stores = MemoryStoreManager::new(&config);
+        let bear_id = Uuid::new_v4();
+        let store = stores.store_for_bear(bear_id).await.expect("store");
+        let src_id = "src-memory-1";
+        let link_id = append_memory_link(
+            &store,
+            src_id,
+            "memory_record",
+            "dst-memory-2",
+            "promotion",
+        )
+        .await
+        .expect("append link");
+        assert!(!link_id.is_empty());
+        let links = list_memory_links_for_source(&store, src_id, 10)
+            .await
+            .expect("list links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].dst_ref, "dst-memory-2");
+        assert_eq!(links[0].link_type, "promotion");
     }
 }

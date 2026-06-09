@@ -102,7 +102,11 @@ pub async fn grant_action(
     if validation_errors.is_empty() {
         let bid = bear_id.expect("checked");
         let role = form.role.trim();
-        let role_opt = if role.is_empty() { None } else { Some(role) };
+        let role_opt = match role {
+            "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),
+            "admin" => Some(bears_db::BEAR_ROLE_ADMIN),
+            other => Some(other),
+        };
         bears_db::grant_membership(state.sqlx_pool(), form.user_id, bid, role_opt).await?;
         Ok(Redirect::to("/admin/membership/").into_response())
     } else {

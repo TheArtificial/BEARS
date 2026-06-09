@@ -32,7 +32,14 @@ async fn admin_home(
 ) -> Result<Response, CustomError> {
     let users = user::db::get_users(&state.sqlx_pool).await?;
 
-    let (letta_status, letta_detail) = if !state.letta.is_enabled() {
+    let native_runtime = state.config.uses_native_agent_runtime();
+
+    let (letta_status, letta_detail) = if native_runtime {
+        (
+            "native",
+            "AGENT_RUNTIME=native — Letta health checks are skipped.".to_string(),
+        )
+    } else if !state.letta.is_enabled() {
         (
             "not_configured",
             "Set LETTA_BASE_URL (and LETTA_API_KEY if required) for provisioning and chat."
@@ -48,7 +55,9 @@ async fn admin_home(
         }
     };
 
-    let (codepool_status, codepool_detail) = if !state.codepool.is_enabled() {
+    let (codepool_status, codepool_detail) = if native_runtime {
+        ("native", "Not used under native runtime.".to_string())
+    } else if !state.codepool.is_enabled() {
         (
             "not_configured",
             "Set CODEPOOL_BASE_URL for Letta Code SDK streaming (required when RUN_WEB=true)."
@@ -67,6 +76,7 @@ async fn admin_home(
         auth_session,
         context! {
             users => users,
+            native_runtime,
             letta_status => letta_status,
             letta_detail => letta_detail,
             codepool_status => codepool_status,

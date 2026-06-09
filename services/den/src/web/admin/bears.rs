@@ -20,6 +20,7 @@ use crate::{
         bears::{db as bears_db, db::BearParams, provision, sync, BearAgent, BearAgentRole},
         letta::{AgentSummary, LettaAgentListItem},
         memory_manager_head::fetch_memfs_role_view_health,
+        user::db as user_db,
         web_policy,
     },
     errors::CustomError,
@@ -27,9 +28,10 @@ use crate::{
 };
 
 use crate::web::bear_create_support::{
-    admin_bear_new_form_context, bear_edit_page_context, ensure_stored_model_in_options_for_handle,
-    model_catalog_select_context, validate_default_model_for_catalog,
-    validate_default_model_for_letta, NewBearForm,
+    admin_bear_edit_page_context, admin_bear_new_form_context,
+    ensure_stored_model_in_options_for_handle, model_catalog_select_context,
+    validate_default_model_for_catalog, validate_default_model_for_letta, AdminBearPromptForm,
+    AdminNewBearForm, NewBearForm,
 };
 
 pub fn router() -> Router<AppState> {
@@ -45,6 +47,15 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
+        .route_with_tsr(
+            "/bears/{id}/edit/prompt",
+            get(edit_prompt_view).post(edit_prompt_action),
+        )
+        .route_with_tsr("/bears/{id}/members/grant", post(grant_member_action))
+        .route_with_tsr(
+            "/bears/{id}/members/{user_id}/revoke",
+            post(revoke_member_action),
+        )
         .route_with_tsr("/bears/{id}/web-sources", post(add_web_source_action))
         .route_with_tsr(
             "/bears/{id}/web-sources/{source_id}/delete",
@@ -151,7 +162,68 @@ struct BearAgentHealthRow {
     memfs_view_diagnostic: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct BearMemberAdminRow {
+    user_id: i32,
+    username: String,
+    display_name: String,
+    role: Option<String>,
+    role_label: String,
+}
+
+fn membership_role_label(role: Option<&str>) -> String {
+    match role.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("admin") => "Admin — can manage bear settings and members".to_string(),
+        Some("member") | None => "Member — can use the bear".to_string(),
+        Some(other) => format!("Custom ({other})"),
+    }
+}
+
 impl BearAgentHealthRow {
+    fn native(agent: &BearAgent, role: BearAgentRole) -> Self {
+        let binding = agent
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let (health_status, health_label, health_detail) = match agent.provisioning_status.as_str()
+        {
+            "ready" => ("ok", "Ready", None),
+            "failed" => (
+                "error",
+                "Failed",
+                agent.last_provisioning_error.clone(),
+            ),
+            "drifted" => (
+                "error",
+                "Drifted",
+                Some("Runtime config changed; re-provision to refresh.".to_string()),
+            ),
+            other => ("unknown", other, agent.last_provisioning_error.clone()),
+        };
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            branch: role.as_str().to_string(),
+            letta_agent_id: binding,
+            provisioning_status: agent.provisioning_status.clone(),
+            last_provisioned_version: agent.last_provisioned_version,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            health_status: health_status.to_string(),
+            health_label: health_label.to_string(),
+            health_detail,
+            letta_name: None,
+            letta_model: None,
+            letta_agent_type: None,
+            letta_tool_count: None,
+            letta_memory_block_count: None,
+            memfs_view_state: None,
+            memfs_view_quarantined: false,
+            memfs_view_diagnostic: None,
+        }
+    }
+
     fn not_configured(agent: &BearAgent, role: BearAgentRole) -> Self {
         Self {
             role: role.as_str().to_string(),
@@ -470,6 +542,16 @@ async fn bear_agent_health_rows(
 ) -> Result<Vec<BearAgentHealthRow>, CustomError> {
     bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear_id).await?;
     let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear_id).await?;
+    if state.config.uses_native_agent_runtime() {
+        return Ok(agents
+            .into_iter()
+            .map(|agent| {
+                let role = agent.parsed_role().unwrap_or(BearAgentRole::Chat);
+                BearAgentHealthRow::native(&agent, role)
+            })
+            .collect());
+    }
+
     let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
@@ -532,6 +614,19 @@ async fn bear_detail_response(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
+    let member_rows: Vec<BearMemberAdminRow> = bears_db::list_members_for_bear(state.sqlx_pool(), id)
+        .await?
+        .into_iter()
+        .map(|m| BearMemberAdminRow {
+            role_label: membership_role_label(m.role.as_deref()),
+            user_id: m.user_id,
+            username: m.username,
+            display_name: m.display_name,
+            role: m.role,
+        })
+        .collect();
+    let users = user_db::get_users(state.sqlx_pool()).await?;
+    let native_runtime = state.config.uses_native_agent_runtime();
 
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let letta_configured = state.letta.is_enabled();
@@ -548,14 +643,12 @@ async fn bear_detail_response(
         .filter(|s| !s.is_empty());
 
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
-        if letta_configured {
-            if let Some(agent_id) = chat_agent_id.as_deref() {
-                match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => (Some(AgentSummary::from_letta_agent_state(&v)), None),
-                    Err(e) => (None, Some(e.to_string())),
-                }
-            } else {
-                (None, None)
+        if native_runtime || !letta_configured {
+            (None, None)
+        } else if let Some(agent_id) = chat_agent_id.as_deref() {
+            match state.letta.fetch_agent(agent_id).await {
+                Ok(v) => (Some(AgentSummary::from_letta_agent_state(&v)), None),
+                Err(e) => (None, Some(e.to_string())),
             }
         } else {
             (None, None)
@@ -589,6 +682,10 @@ async fn bear_detail_response(
         context! {
             bear,
             member_count,
+            members => member_rows,
+            users,
+            native_runtime,
+            context_profile_enabled => bear.context_profile.is_some(),
             letta_api_base,
             letta_configured,
             chat_agent_id,
@@ -639,25 +736,30 @@ async fn list_view(
     Query(query): Query<BearsListQuery>,
 ) -> Result<Response, CustomError> {
     let bears = bears_db::list_bears(state.sqlx_pool()).await?;
-    let memfs_message = match query.memfs.as_deref() {
-        Some("ok") => Some(format!(
-            "MemFS sidecar role view registration complete: {} view(s) registered/refreshed.",
-            query.views.unwrap_or(0)
-        )),
-        Some("error") => Some(format!(
-            "MemFS sidecar role view registration failed: {}",
-            query
-                .error
-                .clone()
-                .unwrap_or_else(|| "unknown error".to_string())
-        )),
-        _ => None,
+    let native_runtime = state.config.uses_native_agent_runtime();
+    let memfs_message = if native_runtime {
+        None
+    } else {
+        match query.memfs.as_deref() {
+            Some("ok") => Some(format!(
+                "MemFS sidecar role view registration complete: {} view(s) registered/refreshed.",
+                query.views.unwrap_or(0)
+            )),
+            Some("error") => Some(format!(
+                "MemFS sidecar role view registration failed: {}",
+                query
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            )),
+            _ => None,
+        }
     };
     web::render_template(
         &state,
         "admin/bears/list.html",
         auth_session,
-        context! { bears, memfs_message },
+        context! { bears, memfs_message, native_runtime },
     )
     .await
 }
@@ -682,14 +784,17 @@ async fn new_view(
     auth_session: AuthSession,
     Query(_query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, CustomError> {
-    let form = NewBearForm::default();
-    let page = admin_bear_new_form_context(&state, &form).await;
+    let form = AdminNewBearForm::default();
+    let users = user_db::get_users(state.sqlx_pool()).await?;
+    let page = admin_bear_new_form_context(&state, &form.bear).await;
     web::render_template(
         &state,
         "admin/bears/new.html",
         auth_session,
         context! {
-            form,
+            form => form.bear,
+            admin_form => form,
+            users,
             ..page
         },
     )
@@ -753,8 +858,9 @@ async fn unlinked_letta_agents_view(
 pub async fn new_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Form(form): Form<NewBearForm>,
+    Form(admin_form): Form<AdminNewBearForm>,
 ) -> Result<Response, CustomError> {
+    let form = admin_form.bear.clone();
     let catalog_fetch = {
         let (configured, options, _) = model_catalog_select_context(&state).await;
         if !configured {
@@ -820,6 +926,7 @@ pub async fn new_action(
         .await
         {
             tracing::warn!(%id, "Bear provision failed: {e}");
+            let users = user_db::get_users(state.sqlx_pool()).await?;
             let page = admin_bear_new_form_context(&state, &form).await;
             return web::render_template(
                 &state,
@@ -827,6 +934,8 @@ pub async fn new_action(
                 auth_session,
                 context! {
                     form => form,
+                    admin_form => admin_form,
+                    users,
                     provision_error => e.to_string(),
                     ..page
                 },
@@ -834,8 +943,25 @@ pub async fn new_action(
             .await;
         }
 
+        if let Ok(user_id) = admin_form.grant_user_id.trim().parse::<i32>() {
+            if user_id > 0
+                && user_db::get_user_by_id(state.sqlx_pool(), user_id)
+                    .await?
+                    .is_some()
+            {
+                let role = admin_form.grant_role.trim();
+                let role_opt = match role {
+                    "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),
+                    "admin" => Some(bears_db::BEAR_ROLE_ADMIN),
+                    other => Some(other),
+                };
+                bears_db::grant_membership(state.sqlx_pool(), user_id, id, role_opt).await?;
+            }
+        }
+
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
+        let users = user_db::get_users(state.sqlx_pool()).await?;
         let page = admin_bear_new_form_context(&state, &form).await;
         web::render_template(
             &state,
@@ -844,6 +970,8 @@ pub async fn new_action(
             context! {
                 errors => validation_errors,
                 form => form,
+                admin_form => admin_form,
+                users,
                 ..page
             },
         )
@@ -860,7 +988,7 @@ async fn edit_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     let form = NewBearForm::from(&bear);
-    let page = bear_edit_page_context(&state, &bear, &form).await;
+    let page = admin_bear_edit_page_context(&state, &form).await;
     web::render_template(
         &state,
         "admin/bears/edit.html",
@@ -868,6 +996,7 @@ async fn edit_view(
         context! {
             bear,
             form,
+            context_profile_enabled => bear.context_profile.is_some(),
             ..page
         },
     )
@@ -883,8 +1012,18 @@ async fn edit_action(
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let native_runtime = state.config.uses_native_agent_runtime();
 
-    let letta_fetch = if state.letta.is_enabled() {
+    let model_fetch = if native_runtime {
+        let (configured, options, _) = model_catalog_select_context(&state).await;
+        if !configured {
+            None
+        } else {
+            let model_trim = form.default_model.trim();
+            let h = (!model_trim.is_empty()).then_some(model_trim);
+            Some(Ok(ensure_stored_model_in_options_for_handle(h, options)))
+        }
+    } else if state.letta.is_enabled() {
         Some(state.letta.list_llm_models().await.map(|opts| {
             let model_trim = form.default_model.trim();
             let h = (!model_trim.is_empty()).then_some(model_trim);
@@ -906,7 +1045,9 @@ async fn edit_action(
         .filter(|s| !s.is_empty())
         .collect();
 
-    let letta_agent_type_db: Option<String> = {
+    let letta_agent_type_db: Option<String> = if native_runtime {
+        bear.letta_agent_type.clone()
+    } else {
         let t = form.letta_agent_type.trim();
         if t.is_empty() {
             None
@@ -916,7 +1057,11 @@ async fn edit_action(
     };
 
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+    if native_runtime {
+        validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
+    } else {
+        validate_default_model_for_letta(&model_fetch, default_model_trim, &mut validation_errors);
+    }
 
     let default_model_opt = if default_model_trim.is_empty() {
         None
@@ -932,6 +1077,11 @@ async fn edit_action(
     }
 
     if validation_errors.is_empty() {
+        let system_prompt = if bear.context_profile.is_some() {
+            bear.system_prompt.as_str()
+        } else {
+            form.system_prompt.trim()
+        };
         bears_db::update_bear(
             state.sqlx_pool(),
             id,
@@ -939,15 +1089,51 @@ async fn edit_action(
                 slug: form.slug.trim(),
                 name: form.name.trim(),
                 description: form.description.trim(),
-                system_prompt: form.system_prompt.trim(),
+                system_prompt,
                 default_model: default_model_opt,
                 tools_enabled: None::<Json<serde_json::Value>>,
                 letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: Json(letta_tool_ids.clone()),
-                context_profile: None,
+                letta_tool_ids: if native_runtime {
+                    Json(bear.letta_tool_ids.0.clone())
+                } else {
+                    Json(letta_tool_ids.clone())
+                },
+                context_profile: bear.context_profile.clone(),
             },
         )
         .await?;
+
+        if native_runtime {
+            if let Err(e) = provision::provision_bear_if_configured(
+                state.sqlx_pool(),
+                state.config.as_ref(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await
+            {
+                tracing::warn!(%id, "Native runtime refresh after bear edit failed: {e}");
+                let bear = bears_db::get_bear(state.sqlx_pool(), id)
+                    .await?
+                    .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+                let page = admin_bear_edit_page_context(&state, &form).await;
+                return web::render_template(
+                    &state,
+                    "admin/bears/edit.html",
+                    auth_session,
+                    context! {
+                        errors => ValidationErrors::new(),
+                        form => form,
+                        bear,
+                        provision_error => e.to_string(),
+                        ..page
+                    },
+                )
+                .await;
+            }
+            return Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response());
+        }
 
         let sync_summary = sync::sync_all_bear_roles_to_letta(
             state.sqlx_pool(),
@@ -961,7 +1147,7 @@ async fn edit_action(
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            let page = bear_edit_page_context(&state, &bear, &form).await;
+            let page = admin_bear_edit_page_context(&state, &form).await;
             let empty_errors = ValidationErrors::new();
             let skipped = sync_summary.skipped_roles().len();
             return web::render_template(
@@ -986,7 +1172,7 @@ async fn edit_action(
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
-        let page = bear_edit_page_context(&state, &bear, &form).await;
+        let page = admin_bear_edit_page_context(&state, &form).await;
         web::render_template(
             &state,
             "admin/bears/edit.html",
@@ -999,6 +1185,189 @@ async fn edit_action(
             },
         )
         .await
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GrantMemberForm {
+    user_id: i32,
+    role: String,
+}
+
+async fn edit_prompt_view(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = bears_db::get_bear(state.sqlx_pool(), id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let (form, context_profile_enabled) = AdminBearPromptForm::from_bear(&bear)?;
+    web::render_template(
+        &state,
+        "admin/bears/edit_prompt.html",
+        auth_session,
+        context! {
+            bear,
+            form,
+            context_profile_enabled,
+            native_runtime => state.config.uses_native_agent_runtime(),
+        },
+    )
+    .await
+}
+
+async fn edit_prompt_action(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<AdminBearPromptForm>,
+) -> Result<Response, CustomError> {
+    let bear = bears_db::get_bear(state.sqlx_pool(), id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let context_profile_enabled = bear.context_profile.is_some();
+
+    let mut validation_errors = ValidationErrors::new();
+    if let Err(e) = form.validate() {
+        validation_errors = e;
+    }
+
+    let context_profile = match form.context_profile_for_bear(&bear, context_profile_enabled) {
+        Ok(profile) => profile,
+        Err(CustomError::ValidationError(_)) => {
+            validation_errors.add(
+                "system_prompt",
+                ValidationError::new("Check role prompts and shared context fields."),
+            );
+            None
+        }
+        Err(err) => return Err(err),
+    };
+
+    let system_prompt = match form.resolved_system_prompt(bear.name.trim(), &context_profile) {
+        Ok(prompt) => prompt,
+        Err(CustomError::ValidationError(_)) => {
+            validation_errors.add(
+                "system_prompt",
+                ValidationError::new("System prompt is required."),
+            );
+            String::new()
+        }
+        Err(err) => return Err(err),
+    };
+
+    if validation_errors.is_empty() {
+        bears_db::update_bear(
+            state.sqlx_pool(),
+            id,
+            BearParams {
+                slug: bear.slug.as_str(),
+                name: bear.name.as_str(),
+                description: bear.description.as_str(),
+                system_prompt: system_prompt.trim(),
+                default_model: bear.default_model.as_deref(),
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: bear.letta_agent_type.as_deref(),
+                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                context_profile: context_profile.clone(),
+            },
+        )
+        .await?;
+
+        if state.config.uses_native_agent_runtime() {
+            provision::provision_bear_if_configured(
+                state.sqlx_pool(),
+                state.config.as_ref(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await?;
+        } else if state.letta.is_enabled() {
+            sync::sync_all_bear_roles_to_letta(
+                state.sqlx_pool(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await?;
+        }
+
+        Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
+    } else {
+        web::render_template(
+            &state,
+            "admin/bears/edit_prompt.html",
+            auth_session,
+            context! {
+                errors => validation_errors,
+                form => form,
+                bear,
+                context_profile_enabled,
+                native_runtime => state.config.uses_native_agent_runtime(),
+            },
+        )
+        .await
+    }
+}
+
+async fn grant_member_action(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<GrantMemberForm>,
+) -> Result<Response, CustomError> {
+    if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+    if user_db::get_user_by_id(state.sqlx_pool(), form.user_id)
+        .await?
+        .is_none()
+    {
+        return bear_detail_response(
+            &state,
+            auth_session,
+            id,
+            Some("User not found.".to_string()),
+        )
+        .await;
+    }
+    let role = form.role.trim();
+    let role_opt = match role {
+        "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),
+        "admin" => Some(bears_db::BEAR_ROLE_ADMIN),
+        other => Some(other),
+    };
+    bears_db::grant_membership(state.sqlx_pool(), form.user_id, id, role_opt).await?;
+    Ok(Redirect::to(&format!(
+        "/admin/bears/{id}?message={}",
+        urlencoding::encode("Access granted.")
+    ))
+    .into_response())
+}
+
+async fn revoke_member_action(
+    Path((id, user_id)): Path<(Uuid, i32)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    match bears_db::revoke_membership(state.sqlx_pool(), user_id, id).await {
+        Ok(()) => Ok(Redirect::to(&format!(
+            "/admin/bears/{id}?message={}",
+            urlencoding::encode("Access removed.")
+        ))
+        .into_response()),
+        Err(CustomError::NotFound(_)) => {
+            bear_detail_response(
+                &state,
+                auth_session,
+                id,
+                Some("Membership not found.".to_string()),
+            )
+            .await
+        }
+        Err(err) => Err(err),
     }
 }
 

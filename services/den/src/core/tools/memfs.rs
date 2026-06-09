@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use serde_json::{json, Value};
+
 use crate::{
     core::memory_manager_head::{
         fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
@@ -10,6 +12,41 @@ use crate::{
     },
     errors::CustomError,
 };
+
+pub(crate) fn is_memfs_client_tool_name(name: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "memfs" | "memory_tree" | "memory_apply_patch" | "core_memory_append" | "core_memory_replace"
+    ) || normalized.starts_with("memfs_") || normalized.starts_with("den_memfs")
+}
+
+pub(crate) fn native_runtime_memfs_unavailable_payload(tool_name: &str) -> Value {
+    json!({
+        "ok": false,
+        "available": false,
+        "storage": "sqlite",
+        "tool": tool_name,
+        "message": "MemFS tools are unavailable under AGENT_RUNTIME=native. Use Den memory tools (memory_write_entry, memory_browse, memory_read, memory_search, memory_status) instead.",
+    })
+}
+
+pub(crate) fn filter_client_tools_for_native_runtime(client_tools: Option<&Value>) -> Option<Value> {
+    let Some(items) = client_tools.and_then(|v| v.as_array()) else {
+        return client_tools.cloned();
+    };
+    let filtered: Vec<Value> = items
+        .iter()
+        .filter(|item| {
+            item.get("name")
+                .and_then(|v| v.as_str())
+                .map(|name| !is_memfs_client_tool_name(name))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect();
+    Some(Value::Array(filtered))
+}
 
 pub(crate) fn memfs_http_client(context: &str) -> Result<reqwest::Client, CustomError> {
     reqwest::Client::builder()

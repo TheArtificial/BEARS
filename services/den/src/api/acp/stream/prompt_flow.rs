@@ -389,10 +389,13 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         ApiError::new(status, code, message)
     })?;
     let merged_client_tool_descriptors = tools_enabled.then(|| {
-        super::super::merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
-            &body.client_context,
-            Some(&resolved_policy),
-        ))
+        super::super::merge_acp_pair_tool_descriptors(
+            acp_client_tool_descriptors_for_client_context(
+                &body.client_context,
+                Some(&resolved_policy),
+            ),
+            state.config.uses_native_agent_runtime(),
+        )
     });
     let auto_title_tool_advertised = merged_client_tool_descriptors
         .as_ref()
