@@ -34,20 +34,30 @@ pub(crate) async fn run_pair_reflection_summary(
         })
         .or_else(|| {
             let raw = session.conversation_id.trim();
-            raw.starts_with("conv-").then_some(raw)
+            if raw.starts_with("conv-")
+                || crate::core::acp_runtime::is_native_runtime_conversation_id(raw)
+            {
+                Some(raw)
+            } else {
+                None
+            }
         });
-    let messages_value = if state.letta.is_enabled() {
+    let messages_value = if state.config.uses_native_agent_runtime() {
+        None
+    } else if state.letta.is_enabled() {
         if let Some(conversation_id) = conversation_id {
-            crate::core::acp_turn_runner::LettaRuntimeCancellationBackend::new(state.letta.as_ref())
-                .list_messages(RuntimeConversationMessagesRequest {
-                    conversation_id: conversation_id.to_string(),
-                    binding_id: None,
-                    limit: 20,
-                    before: None,
-                    ascending: false,
-                })
-                .await
-                .ok()
+            crate::core::acp_turn_runner_letta::LettaRuntimeCancellationBackend::new(
+                state.letta.as_ref(),
+            )
+            .list_messages(RuntimeConversationMessagesRequest {
+                conversation_id: conversation_id.to_string(),
+                binding_id: None,
+                limit: 20,
+                before: None,
+                ascending: false,
+            })
+            .await
+            .ok()
         } else {
             None
         }

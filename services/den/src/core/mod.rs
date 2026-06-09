@@ -13,6 +13,7 @@ pub mod acp_tool_turns;
 pub mod acp_tools;
 pub mod acp_turn_controller;
 pub mod acp_turn_runner;
+pub(crate) mod acp_turn_runner_letta;
 pub mod acp_turn_runner_test {
     #[cfg(test)]
     pub mod stream {

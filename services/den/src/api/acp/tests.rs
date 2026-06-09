@@ -57,7 +57,9 @@ use crate::core::prompt_memory_blocks::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
             },
-            acp_turn_runner::runtime_byte_stream_to_event_stream,
+            acp_turn_runner_letta::{
+                runtime_byte_stream_to_event_stream, ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+            },
             letta_runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
                 runtime_stream_event_from_letta_json,
@@ -81,7 +83,6 @@ use crate::core::prompt_memory_blocks::{
             acp_turn_controller::{
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
-            acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             letta::PendingApprovalDenialMode,
             role_runtime::{RoleRuntime, RoleTurnScope},
         },

@@ -315,28 +315,6 @@ pub trait RuntimeConversationBackend {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait AcpTurnRunner {
-    async fn preflight_hygiene(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation: Option<&RuntimeConversationRef>,
-        reason: &str,
-    ) -> Result<(), CustomError>;
-
-    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError>;
-
-    async fn continue_turn(
-        &self,
-        request: ContinueTurnRequest,
-    ) -> Result<ContinueTurnResult, CustomError>;
-
-    async fn cancel_turn(
-        &self,
-        request: CancelTurnRequest,
-    ) -> Result<CancelTurnResult, CustomError>;
-}
-
-#[allow(async_fn_in_trait)]
 pub trait RuntimeCancellationBackend {
     async fn cancel_turn(&self, request: CancelTurnRequest)
     -> Result<CancelTurnResult, CustomError>;
@@ -345,28 +323,6 @@ pub trait RuntimeCancellationBackend {
         &self,
         request: RuntimeCleanupRequest,
     ) -> Result<RuntimeCleanupResult, CustomError>;
-}
-
-#[allow(async_fn_in_trait)]
-pub trait RuntimeTurnBackend {
-    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError>;
-
-    async fn continue_turn(
-        &self,
-        request: ContinueTurnRequest,
-    ) -> Result<ContinueTurnResult, CustomError>;
-
-    async fn start_turn_stream(
-        &self,
-        request: StartTurnRequest,
-    ) -> Result<RuntimeByteStream, CustomError>;
-
-    async fn continue_turn_stream(
-        &self,
-        request: ContinueTurnRequest,
-    ) -> Result<RuntimeByteStream, CustomError>;
-
-    fn event_parser(&self) -> RuntimeEventParser;
 }
 
 #[allow(async_fn_in_trait)]

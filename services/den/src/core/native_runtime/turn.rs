@@ -9,11 +9,14 @@ use crate::{
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_messages_for_bear, run_agent_step_stream,
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
-            SessionTrackingStream, StrategyProfile,
+            SessionTrackingStream,
         },
         bears::BearAgentRole,
         llm::{ChatMessage, LlmClient},
-        native_runtime::tools::merge_den_and_client_tools,
+        native_runtime::{
+            profile::NativeCapabilityProfile,
+            tools::merge_den_and_client_tools,
+        },
         runtime_contracts::{
             ContinueTurnRequest, RuntimeContinuation, RuntimeConversationBackend,
             RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
@@ -94,8 +97,8 @@ fn wrap_session_stream(
 
 async fn build_session(
     state: &ApiState,
+    profile: NativeCapabilityProfile,
     bear_id: Uuid,
-    role: BearAgentRole,
     conversation_id: &str,
     acp_session_id: &str,
     human_message: Option<&str>,
@@ -104,21 +107,21 @@ async fn build_session(
     workspace_roots: Option<&[String]>,
     user_id: Option<i32>,
     client_context: Option<&serde_json::Value>,
-    include_prompt_memory: bool,
     client_tools: Option<&serde_json::Value>,
     stream_tokens: bool,
-    max_steps: u32,
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, CustomError> {
     let llm = LlmClient::new(state.config.as_ref());
     let bear = crate::core::bears::db::get_bear(&state.sqlx_pool, bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let include_prompt_memory =
+        profile.include_prompt_memory && runtime_context.is_none();
     let messages = assemble_native_turn_messages_for_bear(
         AssembleTurnContext {
             pool: &state.sqlx_pool,
             bear_id,
-            role,
+            role: profile.role,
             conversation_id,
             turn_runtime_context: runtime_context,
             human_message,
@@ -132,7 +135,7 @@ async fn build_session(
         &bear,
     )
     .await?;
-    let tools = merge_den_and_client_tools(state.config.as_ref(), role, client_tools)?;
+    let tools = merge_den_and_client_tools(state.config.as_ref(), profile.role, client_tools)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
     let model = llm.resolve_model(bear.default_model.as_deref());
     let session = AgentLoopSession {
@@ -143,8 +146,8 @@ async fn build_session(
         tools,
         model,
         step: 0,
-        max_steps,
-        strategy: StrategyProfile::plain_react(),
+        max_steps: profile.max_steps,
+        strategy: profile.strategy,
         stream_tokens,
     };
     SESSION_STORE.insert(session.clone());
@@ -154,26 +157,29 @@ async fn build_session(
 pub async fn start_native_acp_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {
+    start_native_role_turn_event_stream(request, BearAgentRole::Pair).await
+}
+
+pub async fn start_native_role_turn_event_stream(
+    request: AcpTurnStartRequest<'_>,
+    role: BearAgentRole,
+) -> Result<RuntimeEventStream, CustomError> {
     if !request.state.config.uses_native_agent_runtime() {
         return Err(CustomError::System(
             "native runtime requested but AGENT_RUNTIME is not native".to_string(),
         ));
     }
+    let profile = NativeCapabilityProfile::for_role(role);
     let runtime_conversations = NativeRuntimeConversationBackend::new();
     let materialized =
         materialize_acp_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
     let acp_session_id = request.session_id;
-    let role = BearAgentRole::Pair;
-    let max_steps = 8;
-    let workspace_roots = request
-        .cwd
-        .map(|cwd| vec![cwd.to_string()]);
-    let include_prompt_memory = request.runtime_context.is_none();
+    let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
     let session = build_session(
         request.state,
+        profile,
         request.bear_id,
-        role,
         &conversation_id,
         acp_session_id,
         Some(request.prompt),
@@ -182,10 +188,8 @@ pub async fn start_native_acp_turn_event_stream(
         workspace_roots.as_deref(),
         Some(request.user_id),
         None,
-        include_prompt_memory,
         request.client_tools.as_ref(),
         request.stream_tokens,
-        max_steps,
         Vec::new(),
     )
     .await?;

@@ -21,10 +21,10 @@ pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 /// Which agent turn backend Den uses for role runtimes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeMode {
-    /// Letta HTTP process (transitional default).
-    Letta,
     /// Den-native in-process agent loop ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
     Native,
+    /// Letta HTTP process (legacy escape hatch only).
+    Letta,
 }
 
 impl AgentRuntimeMode {
