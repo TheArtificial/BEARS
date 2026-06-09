@@ -197,7 +197,7 @@ Transcript history records what happened. Prompt blocks express editable standin
 
 Durable memory is broader Bear knowledge. Prompt blocks are the smaller subset intentionally compiled into active runtime context.
 
-**Key memory projection** (native runtime) is a separate, read-only proactive slice of **SQLite canonical memory** — not prompt memory blocks. See [Den-Native Runtime: Key memory projection](den-native-runtime.md#layer-2--key-memory-projection-sqlite).
+**Key memory projection** (native runtime) is a separate, read-only proactive slice of **SQLite canonical memory** — not prompt memory blocks. v1 selection, budgets, and anchor-required work-surface gating: [Den-Native Runtime: v1 selection policy](den-native-runtime.md#v1-selection-policy-locked).
 
 ### Versus archival retrieval
 

@@ -51,7 +51,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 - New `core/agent_loop/`: prompt -> Bifrost stream -> assistant text + tool calls -> execute tools -> append results -> loop until `stop`/`max_steps`/cancel.
 - Factor the loop so the step primitive is reusable and the run is parameterized by a `strategy_profile`; v1 ships the plain ReAct profile (all knobs off) plus the seam to read a profile. The policy selector and optional passes land in Phase 7.
-- Context assembler builds model input from **`bear_compiled_configs` system prompt** + **key memory projection** (SQLite) + Den transcript + prompt-memory blocks + compaction — fully Den-owned. See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
+- Context assembler builds model input from **`bear_compiled_configs` system prompt** + **key memory projection** (SQLite; [v1 policy locked](../architecture/den-native-runtime.md#v1-selection-policy-locked)) + Den transcript + prompt-memory blocks + compaction — fully Den-owned. See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
 - Persist each step to canonical transcript; Den-native approvals store (new table) + pause/resume integrated with the tool-turn coordinator.
 
 ### Phase 4 — Wire native loop under existing ACP orchestration for `pair`

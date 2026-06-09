@@ -117,7 +117,7 @@ Recompile triggers match provisioning today: bear create/update, managed-block b
 
 Letta previously injected **persona/human-style blocks** every turn from provider-owned agent state. Under ADR-0031 that durable knowledge lives in **per-Bear SQLite**, but the model still needs a **bounded, proactive subset** in Turn Context — not the whole memory bank, and not only what tools retrieve mid-turn.
 
-**Key memory projection** is Den’s deliberate selection of SQLite `memory_records` (and linked anchor summaries) to prepend or append after the compiled system prompt, subject to a token/record budget.
+**Key memory projection** is Den’s deliberate selection of SQLite `memory_records` (and linked anchor summaries) to append after the compiled system prompt in a dedicated `# Projected memory` section, subject to a character/record budget.
 
 This is distinct from:
 
@@ -129,16 +129,16 @@ This is distinct from:
 | **`memory_search` / `memory_read` tools** | On-demand retrieval when projection is insufficient |
 | **Derived semantic index** | Optional recall assist; not source of truth |
 
-#### Selection policy (target — subset TBD in implementation)
+#### v1 selection policy (locked)
 
-Projection should follow the **work-surface-first** precedence in [`memory-model.md`](memory-model.md), stay role-scoped, and remain small enough for every turn.
+Projection follows the **work-surface-first** precedence in [`memory-model.md`](memory-model.md), stays role-scoped, and remains small enough for every turn. Implementation lives in the context assembler (`core/agent_loop/`), reading through the memory store manager — not ad hoc in gateways.
 
-**Candidate tiers** (ordered; stop when budget is exhausted):
+**Tiers** (ordered; stop when the global character budget is exhausted):
 
-1. **Shared identity anchors** — promoted `core/` records the Bear treats as always-relevant persona: charter-adjacent summaries, durable user preferences, stable operating principles (kinds/visibility TBD; likely `scope_type=shared`, high-priority kinds, non-superseded latest).
-2. **Active work-surface anchors** — when the conversation/thread has a resolved or confirmed primary work surface: canonical anchors for that surface (e.g. logical-path `core/work_surfaces/<slug>/…` overview, architecture, decisions) plus surface-attached shared notes.
-3. **Role-local highlights** — small slice of `scope_type=role_local` records for the active role on the active surface (recent N by sequence, or explicit “pinned for context” visibility when modeled).
-4. **Situation/session briefing** — optional short briefing records when present (trusted interaction context, not transcript).
+1. **Shared identity anchors** — latest-head `scope_type=shared` records at Bear-global anchor paths, in order: `core/bear-overview.md`, `core/bear-glossary.md`, `core/shared-conventions.md`. Include only `visibility=normal` in v1.
+2. **Active work-surface anchors** — latest-head shared records at canonical surface paths for the primary work surface (see work-surface gating below): `core/work_surfaces/<slug>/index.md`, `overview.md`, `glossary.md`, `architecture.md`, `decisions.md`, `conventions.md`.
+3. **Role-local highlights** — latest-head `scope_type=role_local` records for the active role; prefer rows with `work_surface_ref` matching the primary slug when tier 2 is active, otherwise recent Bear-global role-local rows by `sequence_no`.
+4. **Situation/session briefing** — optional short trusted briefing records when modeled (not transcript); at most one record in v1.
 
 **Explicitly excluded from proactive projection** (tools or curate review only):
 
@@ -146,17 +146,75 @@ Projection should follow the **work-surface-first** precedence in [`memory-model
 - full role branches (`pair/` raw history for `work`, etc.),
 - promotion/audit graphs and reflection-run machinery,
 - Docket/task state (Postgres control plane),
-- conversation transcript (separate message list).
+- conversation transcript (separate message list),
+- superseded record bodies and per-path history chains.
 
-**Open design choices** (to settle during implementation):
+#### v1 budgets
 
-- budget defaults per role (chars/tokens/record count),
-- whether projection keys off conversation work-surface binding, session workspace roots, or both,
-- supersede chains (project latest only vs short history),
-- stable section headings in the system prompt vs a dedicated `# Projected memory` block,
-- caching per `(bear, role, conversation, surface, sequence_high_water)` to avoid re-querying every step in a multi-tool turn.
+Budgets are in **characters** (Den has no model tokenizer). Per-tier quotas apply inside a per-role global cap:
 
-Implementation lives in the context assembler (`core/agent_loop/`), reading through the memory store manager — not ad hoc in gateways.
+| Profile | Global char cap |
+|---------|-----------------|
+| `pair`, `chat`, `work` | 8 000 |
+| `curate` | 6 000 |
+| `watch` | 4 000 |
+
+| Tier | Max records | Per-record cap | Tier soft cap |
+|------|-------------|----------------|---------------|
+| 1 Shared identity | 4 | 1 500 | 3 000 |
+| 2 Work-surface anchors | 6 | 1 200 | 3 500 |
+| 3 Role-local highlights | 4 | 800 | 2 000 |
+| 4 Situation briefing | 1 | 1 000 | 1 000 |
+
+Assembly stops when the global cap is reached. Emit a `key_memory_projection` diagnostic (included paths/ids, omitted-by-budget, omitted-because-no-surface) alongside prompt-memory diagnostics where practical.
+
+#### v1 supersede policy
+
+**Latest head only** — no short history in proactive projection.
+
+For each `logical_path`, or when `logical_path` is null each `(scope_type, scope_role, work_surface_ref, kind)` group, include at most one row: the current head (highest `sequence_no` among rows not superseded by a newer row). Chained history remains tool-mediated via `memory_read` / `memory_search`.
+
+#### v1 work-surface gating
+
+Primary slug selection uses the same session signals as tools today (`work_surface_candidate_slug`: `runtime_target`, then `conversation_selection`, then `workspace_roots`).
+
+| `session_info.work_surface.status` | Tier 2 behavior |
+|-----------------------------------|-----------------|
+| `unresolved`, `ambiguous` | **Skip** tier 2 |
+| `candidate` | Include tier 2 **only if** SQLite has at least one canonical anchor for the candidate slug (`core/work_surfaces/<slug>/index.md` or `overview.md`) |
+| `resolved`, `confirmed` | Include tier 2 for that slug (full tier 2 quota) |
+
+**Anchor-required for candidates:** a normalized workspace slug alone is not enough; tier 2 requires proof in canonical memory. This avoids projecting the wrong surface from weak session hints.
+
+**Deferred (v1.1):** when conversation-persisted `primary_work_surface` lands ([work-surface resolution plan](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)), projection prefers **conversation binding → session slug → workspace roots**, with the same anchor-required rule for `candidate`.
+
+#### v1 rendering
+
+Keep compiled prompts hash-stable. Append projection as a separate block after `bear_compiled_configs.rendered_prompts_json[role]`:
+
+```text
+<compiled role prompt>
+
+# Projected memory
+## Shared anchors
+…
+## Work surface: <slug>    (omit section if tier 2 skipped)
+…
+## Role highlights (<role>)
+…
+## Situation                  (omit if empty)
+…
+```
+
+Layer 3 supplements (prompt memory blocks, compaction, channel reminders) follow this block — see [prompt-memory contract](den-prompt-memory-block-contract.md).
+
+#### v1 caching
+
+Cache projection **per agent-loop turn** (one user prompt, multiple tool steps). Reuse across ReAct steps 1…N within the same `AgentLoopSession`.
+
+**Cache key:** `(bear_id, role, conversation_id, primary_surface_slug | None, sqlite_sequence_high_water, compiled_config_hash)` where `sqlite_sequence_high_water` is `MAX(sequence_no)` at build time.
+
+**Invalidate when:** a new human message starts a turn, `sequence_high_water` advances, the primary surface slug changes, or the compiled config hash changes. Do not cache across conversations or Den restarts in v1.
 
 ### Layer 3 — Runtime supplements (per turn)
 

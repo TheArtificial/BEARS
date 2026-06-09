@@ -104,7 +104,7 @@ Turn Context is narrower than a role runtime, which is narrower than Bear Operat
 In the target Bear Den implementation (native runtime), Turn Context is assembled in layers:
 
 1. **Compiled system prompt** — from `bear_compiled_configs.rendered_prompts_json[role]` (managed blocks + `context_profile`). See [Den-Native Runtime: Turn context assembly](den-native-runtime.md#turn-context-assembly).
-2. **Key memory projection** — bounded proactive slice of per-Bear SQLite canonical memory (identity anchors, active work-surface anchors, role highlights). Not the full memory bank.
+2. **Key memory projection** — bounded proactive slice of per-Bear SQLite canonical memory (identity anchors, active work-surface anchors, role highlights). Not the full memory bank. v1 policy: [Den-Native Runtime: v1 selection policy](den-native-runtime.md#v1-selection-policy-locked) (work-surface tier requires canonical anchors even for `candidate` status).
 3. **Den baseline / role / steering / bear context** — these are *inputs* to compilation, not recomposed ad hoc at turn time.
 4. **Prompt memory blocks** — editable in-context state from Den Postgres ([prompt-memory contract](den-prompt-memory-block-contract.md)).
 5. **Runtime/thread context** — situational supplements: ACP reminders, plan mode, workboard, compaction envelope.
