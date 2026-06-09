@@ -54,5 +54,3 @@ ALTER TABLE bear_memory_proposals
 ALTER TABLE bear_memory_proposals
     ADD CONSTRAINT bear_memory_proposals_reviewer_role_check
     CHECK (reviewer_role IS NULL OR reviewer_role IN ('chat', 'pair', 'curate', 'work', 'watch'));
-
-COMMENT ON COLUMN bears.letta_agent_id IS 'Legacy transitional mirror of bear_agents role=chat; new code should use bear_agents.';
