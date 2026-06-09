@@ -218,12 +218,12 @@ struct ToolPolicy {
 const MODE_ASK: &str = "ask";
 const MODE_PLAN: &str = "plan";
 const MODE_WRITE: &str = "write";
-const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
-const BEARS_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
+const DEN_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
+const DEN_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
 const LOCAL_DEN_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn adapter_version() -> &'static str {
-    env!("BEARS_ACP_ADAPTER_VERSION")
+    env!("DEN_ACP_ADAPTER_VERSION")
 }
 
 impl ToolPolicy {
@@ -656,7 +656,7 @@ async fn send_session_info_update(
     .await
 }
 
-async fn send_bears_runtime_session_info_update(
+async fn send_DEN_runtime_session_info_update(
     session_id: &str,
     runtime: Option<Value>,
     context_budget: Option<Value>,
@@ -706,7 +706,7 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
         acp_plan_update_payload(session_id, entries)?,
     )
     .await?;
-    if env_bool("BEARS_ACP_DEBUG_UI") {
+    if env_bool("DEN_ACP_DEBUG_UI") {
         eprintln!(
             "bears-acp-adapter: debug ui sent ACP plan update session_id={} entry_count={}",
             session_id, entry_count
@@ -1232,8 +1232,8 @@ async fn run() -> Result<()> {
     eprintln!(
         "bears-acp-adapter: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
         adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
+        env!("DEN_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
         local_head_sha(),
         direct_tools_context()
     );
@@ -1348,12 +1348,12 @@ async fn run() -> Result<()> {
 
 impl BrowserBridgeConfig {
     fn from_args(mut args: impl Iterator<Item = String>) -> Result<Self> {
-        let mut bind = env::var("BEARS_HOST_BROWSER_MCP_BIND")
+        let mut bind = env::var("DEN_HOST_BROWSER_MCP_BIND")
             .unwrap_or_else(|_| "127.0.0.1:3766".to_string());
-        let mut token = env::var("BEARS_HOST_BROWSER_MCP_TOKEN").unwrap_or_default();
+        let mut token = env::var("DEN_HOST_BROWSER_MCP_TOKEN").unwrap_or_default();
         let mut path =
-            env::var("BEARS_HOST_BROWSER_MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
-        let mut allowed_origins = env::var("BEARS_HOST_BROWSER_MCP_ALLOWED_ORIGINS")
+            env::var("DEN_HOST_BROWSER_MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
+        let mut allowed_origins = env::var("DEN_HOST_BROWSER_MCP_ALLOWED_ORIGINS")
             .ok()
             .map(|value| {
                 value
@@ -1385,7 +1385,7 @@ impl BrowserBridgeConfig {
             bail!("browser-bridge requires a non-empty bind address; pass --bind <host:port>");
         }
         if token.is_empty() {
-            bail!("browser-bridge requires a bearer token; set BEARS_HOST_BROWSER_MCP_TOKEN or pass --token <token>");
+            bail!("browser-bridge requires a bearer token; set DEN_HOST_BROWSER_MCP_TOKEN or pass --token <token>");
         }
         path = normalize_browser_bridge_path(&path);
         allowed_origins.retain(|origin| !origin.trim().is_empty());
@@ -1405,7 +1405,7 @@ impl RuntimeConfig {
         let mut bear = env::var("BEAR_SLUG").unwrap_or_default();
         let mut token = env::var("DEN_TOKEN").unwrap_or_default();
         let mut token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
-        let mut client = env::var("BEARS_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
+        let mut client = env::var("DEN_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
         let mut check_config = false;
         let mut check_server = false;
         let mut doctor = false;
@@ -1529,7 +1529,7 @@ impl RuntimeConfig {
 
     fn configuration_error_message(&self) -> String {
         let mut message = String::from(
-            "bears-acp-adapter: configuration is incomplete, so prompts cannot be sent to BEARS yet. The adapter will stay running so the ACP client can display this message instead of reporting that the server shut down unexpectedly.\n\nFix the following:",
+            "Bear Den ACP adapter: configuration is incomplete, so prompts cannot be sent to Den yet:",
         );
         for diagnostic in &self.diagnostics {
             message.push_str("\n  - ");
@@ -1590,7 +1590,7 @@ fn print_version_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
         adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_GIT_SHA"),
         local_head_sha(),
         direct_tools_context(),
         chrome_capability_status_line()
@@ -1621,7 +1621,7 @@ fn normalize_browser_bridge_path(path: &str) -> String {
 
 fn print_browser_bridge_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter browser-bridge\n\nUsage: bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>] [--allow-origin <origin>]...\n\nOptions:\n  --bind <host:port>      Bind address for the host browser MCP bridge HTTP server\n  --path <path>           MCP HTTP path, default /mcp\n  --token <token>         Required bearer token for Authorization: Bearer <token>\n  --allow-origin <url>    Allowed Origin value for browser requests; repeatable\n  --help                  Show this help\n\nEnvironment fallbacks:\n  BEARS_HOST_BROWSER_MCP_BIND\n  BEARS_HOST_BROWSER_MCP_PATH\n  BEARS_HOST_BROWSER_MCP_TOKEN\n  BEARS_HOST_BROWSER_MCP_ALLOWED_ORIGINS  comma-separated list",
+        "bears-acp-adapter browser-bridge\n\nUsage: bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>] [--allow-origin <origin>]...\n\nOptions:\n  --bind <host:port>      Bind address for the host browser MCP bridge HTTP server\n  --path <path>           MCP HTTP path, default /mcp\n  --token <token>         Required bearer token for Authorization: Bearer <token>\n  --allow-origin <url>    Allowed Origin value for browser requests; repeatable\n  --help                  Show this help\n\nEnvironment fallbacks:\n  DEN_HOST_BROWSER_MCP_BIND\n  DEN_HOST_BROWSER_MCP_PATH\n  DEN_HOST_BROWSER_MCP_TOKEN\n  DEN_HOST_BROWSER_MCP_ALLOWED_ORIGINS  comma-separated list",
     );
 }
 
@@ -1630,10 +1630,10 @@ fn print_help_to_stderr() {
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
-Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
+Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n  DEN_ACP_UPDATE_CHANNEL\n  DEN_ACP_UPDATE_MANIFEST_URL\n\n\
 DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
     );
 }
@@ -2472,8 +2472,8 @@ async fn handle_request(
 
 fn adapter_contract_context() -> Value {
     json!({
-        "name": BEARS_ACP_ADAPTER_CONTRACT_NAME,
-        "version": BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+        "name": DEN_ACP_ADAPTER_CONTRACT_NAME,
+        "version": DEN_ACP_ADAPTER_CONTRACT_VERSION,
     })
 }
 
@@ -2486,8 +2486,8 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
     json!({
         "name": "bears-acp-adapter",
         "version": adapter_version(),
-        "git_sha": env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        "built_at_utc": env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
+        "git_sha": env!("DEN_ACP_ADAPTER_GIT_SHA"),
+        "built_at_utc": env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
         "api_contract": adapter_contract_context(),
         "direct_tools": {
             "fs_read_text_file": { "supported": true, "version": 1 },
@@ -5086,10 +5086,10 @@ async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>)
     format!(
         "BEARS ACP version\n\nAdapter: version={} git_sha={} built_at_utc={} contract={} v{}\nAdapter metadata:\n{}\n\nHost browser bridge env:\n{}\n\nDen: {}",
         adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
-        BEARS_ACP_ADAPTER_CONTRACT_NAME,
-        BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+        env!("DEN_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
+        DEN_ACP_ADAPTER_CONTRACT_NAME,
+        DEN_ACP_ADAPTER_CONTRACT_VERSION,
         serde_json::to_string_pretty(&adapter).unwrap_or_else(|_| adapter.to_string()),
         serde_json::to_string_pretty(&host_bridge_env)
             .unwrap_or_else(|_| host_bridge_env.to_string()),
@@ -5098,13 +5098,13 @@ async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>)
 }
 
 fn debug_ui_report() -> String {
-    let enabled = env_bool("BEARS_ACP_DEBUG_UI");
+    let enabled = env_bool("DEN_ACP_DEBUG_UI");
     let stream_tokens =
-        env::var("BEARS_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
+        env::var("DEN_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
     let chunk_chars =
-        env::var("BEARS_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
+        env::var("DEN_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
     format!(
-        "BEARS ACP debug UI\n\n- BEARS_ACP_DEBUG_UI: {}\n- BEARS_ACP_STREAM_TOKENS: {}\n- BEARS_ACP_TEXT_CHUNK_CHARS: {}",
+        "BEARS ACP debug UI\n\n- DEN_ACP_DEBUG_UI: {}\n- DEN_ACP_STREAM_TOKENS: {}\n- DEN_ACP_TEXT_CHUNK_CHARS: {}",
         if enabled { "enabled" } else { "disabled" },
         stream_tokens,
         chunk_chars,
@@ -5144,10 +5144,10 @@ async fn acp_doctor_report(
     format!(
         "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
         adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
-        BEARS_ACP_ADAPTER_CONTRACT_NAME,
-        BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+        env!("DEN_ACP_ADAPTER_GIT_SHA"),
+        env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
+        DEN_ACP_ADAPTER_CONTRACT_NAME,
+        DEN_ACP_ADAPTER_CONTRACT_VERSION,
         api_url,
         bear,
         den_status,
@@ -5184,8 +5184,8 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     eprintln!("BEARS ACP Adapter Doctor\n");
     eprintln!("✓ Adapter binary runs");
     eprintln!("  version: {}", adapter_version());
-    eprintln!("  build_git_sha: {}", env!("BEARS_ACP_ADAPTER_GIT_SHA"));
-    eprintln!("  built_at_utc: {}", env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"));
+    eprintln!("  build_git_sha: {}", env!("DEN_ACP_ADAPTER_GIT_SHA"));
+    eprintln!("  built_at_utc: {}", env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"));
     eprintln!("  local_head_sha: {}", local_head_sha());
     eprintln!("  os_arch: {} {}", env::consts::OS, env::consts::ARCH);
     if let Ok(exe) = env::current_exe() {
@@ -5236,7 +5236,7 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     }
 
     if runtime.client.trim().is_empty() {
-        eprintln!("• Client label is empty; ACP protocol still works, but set BEARS_ACP_CLIENT if you want labeled requests");
+        eprintln!("• Client label is empty; ACP protocol still works, but set DEN_ACP_CLIENT if you want labeled requests");
     } else {
         eprintln!("✓ Client label: {}", runtime.client);
     }
@@ -7442,7 +7442,7 @@ async fn handle_den_event(
                 .cloned()
                 .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
                 .or_else(|| event.get("context_budget").cloned());
-            send_bears_runtime_session_info_update(session_id, runtime, context_budget).await?;
+            send_DEN_runtime_session_info_update(session_id, runtime, context_budget).await?;
             Ok(false)
         }
         "plan_update" => {
@@ -7459,7 +7459,7 @@ async fn handle_den_event(
             }
             let entries = plan_entries_from_plan_update_event(event);
             if entries.is_empty() {
-                if env_bool("BEARS_ACP_DEBUG_UI") {
+                if env_bool("DEN_ACP_DEBUG_UI") {
                     eprintln!(
                         "bears-acp-adapter: received empty plan update for session_id={}; not sending ACP plan UI update",
                         session_id
@@ -7470,7 +7470,7 @@ async fn handle_den_event(
                 {
                     send_plan_update(session_id, entries).await?;
                 }
-            } else if env_bool("BEARS_ACP_DEBUG_UI") {
+            } else if env_bool("DEN_ACP_DEBUG_UI") {
                 eprintln!(
                     "bears-acp-adapter: skipped unchanged plan update for session_id={}",
                     session_id
@@ -11837,7 +11837,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_fetches_and_truncates_http_response() {
-        std::env::set_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS", "1");
+        std::env::set_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS", "1");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -11867,13 +11867,13 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(result["status"], 200);
         assert_eq!(result["body"], "hello");
         assert_eq!(result["truncated"], true);
-        std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
+        std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
     }
 
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_rejects_unsafe_urls() {
-        std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
+        std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
         let localhost = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": "http://localhost:3000" }),
@@ -12108,15 +12108,15 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn session_context_from_params_adds_host_browser_bridge_from_env() {
-        let previous_url = std::env::var("BEARS_HOST_BROWSER_MCP_URL").ok();
-        let previous_token = std::env::var("BEARS_HOST_BROWSER_MCP_TOKEN").ok();
-        let previous_name = std::env::var("BEARS_HOST_BROWSER_MCP_SERVER_NAME").ok();
+        let previous_url = std::env::var("DEN_HOST_BROWSER_MCP_URL").ok();
+        let previous_token = std::env::var("DEN_HOST_BROWSER_MCP_TOKEN").ok();
+        let previous_name = std::env::var("DEN_HOST_BROWSER_MCP_SERVER_NAME").ok();
         std::env::set_var(
-            "BEARS_HOST_BROWSER_MCP_URL",
+            "DEN_HOST_BROWSER_MCP_URL",
             "http://host.docker.internal:3766/mcp",
         );
-        std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", "secret-token");
-        std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
+        std::env::set_var("DEN_HOST_BROWSER_MCP_TOKEN", "secret-token");
+        std::env::set_var("DEN_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
 
         let context = session_context_from_params(&json!({
             "cwd": "/workspace",
@@ -12133,19 +12133,19 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(context.raw["host_browser_bridge"]["configured"], true);
 
         if let Some(previous) = previous_url {
-            std::env::set_var("BEARS_HOST_BROWSER_MCP_URL", previous);
+            std::env::set_var("DEN_HOST_BROWSER_MCP_URL", previous);
         } else {
-            std::env::remove_var("BEARS_HOST_BROWSER_MCP_URL");
+            std::env::remove_var("DEN_HOST_BROWSER_MCP_URL");
         }
         if let Some(previous) = previous_token {
-            std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", previous);
+            std::env::set_var("DEN_HOST_BROWSER_MCP_TOKEN", previous);
         } else {
-            std::env::remove_var("BEARS_HOST_BROWSER_MCP_TOKEN");
+            std::env::remove_var("DEN_HOST_BROWSER_MCP_TOKEN");
         }
         if let Some(previous) = previous_name {
-            std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", previous);
+            std::env::set_var("DEN_HOST_BROWSER_MCP_SERVER_NAME", previous);
         } else {
-            std::env::remove_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME");
+            std::env::remove_var("DEN_HOST_BROWSER_MCP_SERVER_NAME");
         }
     }
 
@@ -12172,28 +12172,28 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn detect_local_chrome_executable_prefers_explicit_env_override() {
-        let previous_chrome = std::env::var("BEARS_CHROME_EXECUTABLE").ok();
-        let previous_browser = std::env::var("BEARS_BROWSER_EXECUTABLE").ok();
+        let previous_chrome = std::env::var("DEN_CHROME_EXECUTABLE").ok();
+        let previous_browser = std::env::var("DEN_BROWSER_EXECUTABLE").ok();
         let temp = env::temp_dir().join(format!(
             "bears-acp-adapter-chrome-override-{}",
             std::process::id()
         ));
         fs::write(&temp, "").unwrap();
-        std::env::set_var("BEARS_CHROME_EXECUTABLE", &temp);
-        std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
+        std::env::set_var("DEN_CHROME_EXECUTABLE", &temp);
+        std::env::remove_var("DEN_BROWSER_EXECUTABLE");
 
         let detected = crate::tools::chrome::detect_local_chrome_executable();
         assert_eq!(detected.as_deref(), Some(temp.as_path()));
 
         if let Some(previous) = previous_chrome {
-            std::env::set_var("BEARS_CHROME_EXECUTABLE", previous);
+            std::env::set_var("DEN_CHROME_EXECUTABLE", previous);
         } else {
-            std::env::remove_var("BEARS_CHROME_EXECUTABLE");
+            std::env::remove_var("DEN_CHROME_EXECUTABLE");
         }
         if let Some(previous) = previous_browser {
-            std::env::set_var("BEARS_BROWSER_EXECUTABLE", previous);
+            std::env::set_var("DEN_BROWSER_EXECUTABLE", previous);
         } else {
-            std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
+            std::env::remove_var("DEN_BROWSER_EXECUTABLE");
         }
         let _ = fs::remove_file(&temp);
     }

@@ -47,4 +47,4 @@ if compose_with_env exec -T bears-den sh -lc 'case "${RUN_API:-false}" in true|1
     API_URL="http://bears-den:3001"
 fi
 
-compose_with_env exec -T "$RUNNER_SERVICE" sh -lc "python -m pip install --quiet pytest requests && cd '$RUNNER_DIR' && BEARS_DEN_URL=http://bears-den:3000 BEARS_API_URL='$API_URL' BEARS_CODEPOOL_URL=http://bears-codepool:3030 BEARS_MEMFS_MANAGER_URL=http://bears-memfs-manager:8285 BEARS_LETTA_URL=http://bears-letta:8283 AGENT_RUNTIME='${AGENT_RUNTIME}' LETTA_SERVER_PASS='${LETTA_SERVER_PASS}' python -m pytest tests/smoke/ -v"
+compose_with_env exec -T "$RUNNER_SERVICE" sh -lc "python -m pip install --quiet pytest requests && cd '$RUNNER_DIR' && DEN_URL=http://bears-den:3000 BEARS_API_URL='$API_URL' BEARS_CODEPOOL_URL=http://bears-codepool:3030 BEARS_MEMFS_MANAGER_URL=http://bears-memfs-manager:8285 BEARS_LETTA_URL=http://bears-letta:8283 AGENT_RUNTIME='${AGENT_RUNTIME}' LETTA_SERVER_PASS='${LETTA_SERVER_PASS}' python -m pytest tests/smoke/ -v"

@@ -81,7 +81,7 @@ Validate the installed adapter:
 /usr/local/bin/bears-acp-adapter doctor
 ```
 
-`doctor` needs `BEARS_DEN_API_URL`, `BEARS_BEAR_SLUG`, and either `BEARS_DEN_TOKEN` or `BEARS_DEN_TOKEN_ENV` set in the same environment used by the ACP client for a complete pass. Without those values, it prints the missing setup items and exits non-zero.
+`doctor` needs `DEN_API_URL`, `BEAR_SLUG`, and either `DEN_TOKEN` or `DEN_TOKEN_ENV` set in the same environment used by the ACP client for a complete pass. Without those values, it prints the missing setup items and exits non-zero.
 
 ## Public update manifests
 
