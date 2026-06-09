@@ -101,13 +101,15 @@ It may include:
 
 Turn Context is narrower than a role runtime, which is narrower than Bear Operating Environment.
 
-In the current Bear Den implementation, the stable prompt is composed by Den from these high-level parts, in order:
+In the target Bear Den implementation (native runtime), Turn Context is assembled in layers:
 
-1. **Den baseline** — shared Bear safety and control-plane guidance. It establishes that the agent is operating as the Bear through a constrained environment, must preserve role and policy boundaries, must not claim unavailable tools or authority, should ask before destructive or externally visible actions, and should not intentionally remember secrets or credentials.
-2. **Role instructions** — role-specific instructions for `chat`, `pair`, `review`, `work`, or `watch`. Older implementation docs may still refer to these as Space-specific instructions or role contracts.
-3. **User steering** — operator/user-provided steering for how this Bear should behave.
-4. **Bear context** — durable Bear-specific context such as identity, purpose, preferences, and scope.
-5. **Runtime/thread context** — optional situational context for a particular chat, ACP session, task run, event, or thread.
+1. **Compiled system prompt** — from `bear_compiled_configs.rendered_prompts_json[role]` (managed blocks + `context_profile`). See [Den-Native Runtime: Turn context assembly](den-native-runtime.md#turn-context-assembly).
+2. **Key memory projection** — bounded proactive slice of per-Bear SQLite canonical memory (identity anchors, active work-surface anchors, role highlights). Not the full memory bank.
+3. **Den baseline / role / steering / bear context** — these are *inputs* to compilation, not recomposed ad hoc at turn time.
+4. **Prompt memory blocks** — editable in-context state from Den Postgres ([prompt-memory contract](den-prompt-memory-block-contract.md)).
+5. **Runtime/thread context** — situational supplements: ACP reminders, plan mode, workboard, compaction envelope.
+
+Older docs may still describe inline `compose_role_context` at turn time; the target is **compiled prompt + projection + supplements**.
 
 Additional runtime-specific context may be added per turn. For example, a `pair` ACP turn may include a Den-injected system reminder describing available local client tools, Den server tools, workspace roots, authenticated human identity, memory boundaries, plan-mode state, visible workboard state, work-surface hints, and tool-loop behavior.
 

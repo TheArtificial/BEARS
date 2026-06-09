@@ -34,11 +34,11 @@ flowchart TB
     GW[ACP + Web HTTP gateways]
     ORCH[Turn orchestrator: tool-turn coordinator, cancel registry, turn phase machine]
     LOOP[Native agent loop: step primitive + strategy policy]
-    CTX[Context assembler: transcript + prompt-memory + compaction]
+    CTX[Context assembler: compiled prompt + key memory projection + prompt-memory + compaction]
     MEM[Memory layer: sqlx, single-writer, sequence allocator]
     TOOLS[Tool executor]
     LLM[Bifrost streaming client]
-    PG[(Den Postgres: conversations, messages, approvals, registry, Docket jobs/tasks, reflection queue)]
+    PG[(Den Postgres: conversations, messages, approvals, registry, bear_compiled_configs, prompt_memory_blocks, Docket jobs/tasks, reflection queue)]
     GW --> ORCH --> LOOP
     LOOP --> CTX
     LOOP --> LLM
@@ -91,6 +91,93 @@ The Postgres queue row references the SQLite run id; once a run completes, Postg
 
 **Cross-store discipline:** control plane references cognition by id only. There is no content sync seam between Postgres and SQLite.
 
+## Turn context assembly
+
+Every native turn builds **Turn Context** by projecting the Bear Operating Environment into a role-appropriate slice. The assembler is Den-owned end-to-end; there is no provider-side prompt or memory injection.
+
+### Layer 1 — Compiled system prompt (`bear_compiled_configs`)
+
+For Bears with a managed `context_profile`, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[role]`** — the same materialized prompt Letta provisioning already uses via `role_prompt_text`.
+
+Compilation merges:
+
+- published **`system_blocks`** (Den-global, versioned fragments such as `den_baseline`, `space_instruction.*`),
+- per-Bear **`bear_block_bindings`** (`inherit` vs `custom` overrides),
+- Bear-local **`context_profile`** fields (`user_steering`, `bear_context`, and role-contract fallbacks).
+
+The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-role `rendered_prompt_hashes_json` for drift checks on `bear_profile_bindings`.
+
+**Target invariant:** the native agent loop **must** read compiled prompts from `bear_compiled_configs`. It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
+
+Legacy Bears without `context_profile` continue to use `bears.system_prompt` until migrated.
+
+Recompile triggers match provisioning today: bear create/update, managed-block binding changes, and reconcile when `context_profile` is present.
+
+### Layer 2 — Key memory projection (SQLite)
+
+Letta previously injected **persona/human-style blocks** every turn from provider-owned agent state. Under ADR-0031 that durable knowledge lives in **per-Bear SQLite**, but the model still needs a **bounded, proactive subset** in Turn Context — not the whole memory bank, and not only what tools retrieve mid-turn.
+
+**Key memory projection** is Den’s deliberate selection of SQLite `memory_records` (and linked anchor summaries) to prepend or append after the compiled system prompt, subject to a token/record budget.
+
+This is distinct from:
+
+| Mechanism | Role |
+|-----------|------|
+| **Compiled system prompt** | Identity, role contract, operator steering — from `bear_compiled_configs` |
+| **Prompt memory blocks** | Editable in-context state in Den Postgres — session/work-surface/role scoped ([prompt-memory contract](den-prompt-memory-block-contract.md)) |
+| **Key memory projection** | Read-only proactive slice of **canonical SQLite memory** |
+| **`memory_search` / `memory_read` tools** | On-demand retrieval when projection is insufficient |
+| **Derived semantic index** | Optional recall assist; not source of truth |
+
+#### Selection policy (target — subset TBD in implementation)
+
+Projection should follow the **work-surface-first** precedence in [`memory-model.md`](memory-model.md), stay role-scoped, and remain small enough for every turn.
+
+**Candidate tiers** (ordered; stop when budget is exhausted):
+
+1. **Shared identity anchors** — promoted `core/` records the Bear treats as always-relevant persona: charter-adjacent summaries, durable user preferences, stable operating principles (kinds/visibility TBD; likely `scope_type=shared`, high-priority kinds, non-superseded latest).
+2. **Active work-surface anchors** — when the conversation/thread has a resolved or confirmed primary work surface: canonical anchors for that surface (e.g. logical-path `core/work_surfaces/<slug>/…` overview, architecture, decisions) plus surface-attached shared notes.
+3. **Role-local highlights** — small slice of `scope_type=role_local` records for the active role on the active surface (recent N by sequence, or explicit “pinned for context” visibility when modeled).
+4. **Situation/session briefing** — optional short briefing records when present (trusted interaction context, not transcript).
+
+**Explicitly excluded from proactive projection** (tools or curate review only):
+
+- raw unpromoted proposals and pending observations,
+- full role branches (`pair/` raw history for `work`, etc.),
+- promotion/audit graphs and reflection-run machinery,
+- Docket/task state (Postgres control plane),
+- conversation transcript (separate message list).
+
+**Open design choices** (to settle during implementation):
+
+- budget defaults per role (chars/tokens/record count),
+- whether projection keys off conversation work-surface binding, session workspace roots, or both,
+- supersede chains (project latest only vs short history),
+- stable section headings in the system prompt vs a dedicated `# Projected memory` block,
+- caching per `(bear, role, conversation, surface, sequence_high_water)` to avoid re-querying every step in a multi-tool turn.
+
+Implementation lives in the context assembler (`core/agent_loop/`), reading through the memory store manager — not ad hoc in gateways.
+
+### Layer 3 — Runtime supplements (per turn)
+
+After compiled prompt + key memory projection, the assembler appends **turn-local** Den-owned supplements when applicable:
+
+- **ACP / channel runtime context** — plan mode, workboard, trusted-session mode, tool-surface reminders (today’s `<system-reminder>` envelope for `pair`),
+- **prompt memory blocks** — selected from `prompt_memory_blocks` for `(bear, role, session, work_surfaces)`,
+- **compaction envelope** — Den-owned transcript bounding artifacts.
+
+Order target:
+
+```text
+system:  [compiled role prompt]
+       + [key memory projection]
+       + [runtime supplements: prompt-memory, compaction, channel reminders]
+messages: [canonical transcript] + [current user/tool step]
+tools:    [merged Den + client descriptors]
+```
+
+See also [`agent-and-bear-environments.md`](agent-and-bear-environments.md) (Environment Projection → Turn Context).
+
 ## Memory model under SQLite
 
 Per ADR-0031, canonical memory is append-only records, not a markdown file tree:
@@ -122,8 +209,13 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ## Role model and provisioning
 
-- A per-role "agent" becomes a **Den-owned runtime profile**: a compiled system prompt + model + tool roster + memory scope + approval policy + sandbox flag. There is no external agent create/patch/recompile/drift.
+- A per-role "agent" becomes a **Den-owned runtime profile**: **`bear_compiled_configs` system prompt** + **key memory projection policy** + model + tool roster + memory scope + approval policy + sandbox flag. There is no external agent create/patch/recompile/drift.
+- Reconcile compares `bear_profile_bindings.config_hash` to the current compiled prompt hash; native runtimes re-read compiled prompts on each turn rather than caching stale text in an external agent.
 - `bears.letta_agent_id` is deprecated; role identity is a Den-native binding. Letta provisioning, drift detection, and Letta tool-catalog resolution are removed. The model catalog comes from Bifrost's model list.
+
+### Current gap (implementation)
+
+Phase 3–4 native wiring exists but **does not yet meet this target**: the loop composes prompts inline instead of loading `bear_compiled_configs`, and SQLite memory is tool-mediated only (no key memory projection). Closing this gap is required for Letta parity on personality and grounding.
 
 ## What this supersedes
 

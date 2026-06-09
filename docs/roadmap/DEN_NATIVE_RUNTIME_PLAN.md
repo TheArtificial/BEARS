@@ -51,7 +51,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 - New `core/agent_loop/`: prompt -> Bifrost stream -> assistant text + tool calls -> execute tools -> append results -> loop until `stop`/`max_steps`/cancel.
 - Factor the loop so the step primitive is reusable and the run is parameterized by a `strategy_profile`; v1 ships the plain ReAct profile (all knobs off) plus the seam to read a profile. The policy selector and optional passes land in Phase 7.
-- Context assembler builds model input from Den transcript + SQLite prompt-memory + compaction store — fully Den-owned.
+- Context assembler builds model input from **`bear_compiled_configs` system prompt** + **key memory projection** (SQLite) + Den transcript + prompt-memory blocks + compaction — fully Den-owned. See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
 - Persist each step to canonical transcript; Den-native approvals store (new table) + pause/resume integrated with the tool-turn coordinator.
 
 ### Phase 4 — Wire native loop under existing ACP orchestration for `pair`
@@ -92,7 +92,7 @@ Largest phase; needs a design spike first.
 ## Risks and sequencing notes
 
 - **Tool-calling fidelity:** provider/Bifrost tool-call streaming differs from Letta's framing; Phase 1 parser + Phase 4 golden traces de-risk this.
-- **Context/compaction parity:** Den must reproduce in-context management Letta did implicitly (Phase 3 context assembler).
+- **Context/compaction parity:** Den must reproduce in-context management Letta did implicitly (Phase 3 context assembler), including **`bear_compiled_configs` for system prompts** and **key memory projection** for proactive SQLite grounding — see [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
 - **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; data migration of existing MemFS content is deferred to Phase 8.
 - **Cross-store discipline:** Den Postgres (control plane) and per-Bear SQLite (cognition) must not grow a sync seam; control plane references cognition by id only.
 - **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it.

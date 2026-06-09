@@ -59,6 +59,8 @@ Recommended retrieval precedence:
 7. local workspace artifacts or external docs as needed,
 8. general world knowledge.
 
+Under the native runtime, tiers **1–5** (and parts of 6) map to [**key memory projection**](den-native-runtime.md#layer-2--key-memory-projection-sqlite) in Turn Context — a bounded proactive slice assembled each turn. Tiers **6–8** remain on-demand via tools, workspace inspection, or model prior. See [Turn context assembly](den-native-runtime.md#turn-context-assembly).
+
 This keeps agents from answering with plausible but irrelevant Bear-wide knowledge when the user is really asking about one specific engaged work setting.
 
 Resolution states should be explicit:
