@@ -251,48 +251,53 @@ def validate_config_shape() -> None:
     info("checking required secrets and URI-shaped environment variables")
 
     require_non_empty("JWT_SECRET")
-    require_non_empty("LETTA_SERVER_PASS")
-    info("JWT_SECRET and LETTA_SERVER_PASS are set")
+    info("JWT_SECRET is set")
 
     validate_database_url(reachable=False)
-    if uses_native_agent_runtime():
-        info("AGENT_RUNTIME=native — skipping LETTA_PG_URI checks")
-    else:
-        validate_letta_pg_uri(reachable=False)
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
 
-    letta_base = (
-        os.environ.get("LETTA_BASE_URL", "").strip() or "http://bears-letta:8283"
-    )
-    validate_http_url("LETTA_BASE_URL", letta_base)
-    info(f"LETTA_BASE_URL OK ({letta_base})")
-
-    memfs = (
-        os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip()
-        or "http://bears-memfs-manager:8285"
-    )
-    validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
-    info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
-
-    memfs_org = os.environ.get(
-        "MEMFS_DEFAULT_ORG", "org-00000000-0000-4000-8000-000000000000"
-    ).strip()
-    if memfs_org == "org-default":
-        fail(
-            "MEMFS_DEFAULT_ORG must not use the old placeholder 'org-default'; set it to Letta's org id or leave it unset for the default self-hosted org."
+    if uses_native_agent_runtime():
+        info(
+            "AGENT_RUNTIME=native — skipping Letta, Codepool, MemFS, and LETTA_PG_URI checks"
         )
-    if not memfs_org.startswith("org-"):
-        fail("MEMFS_DEFAULT_ORG must look like a Letta org id (prefix 'org-')")
-    info(f"MEMFS_DEFAULT_ORG OK ({memfs_org})")
+    else:
+        require_non_empty("LETTA_SERVER_PASS")
+        info("LETTA_SERVER_PASS is set")
+        validate_letta_pg_uri(reachable=False)
 
-    codepool_base = (
-        os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bears-codepool:3030"
-    )
-    validate_http_url("CODEPOOL_BASE_URL", codepool_base)
-    info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
+        letta_base = (
+            os.environ.get("LETTA_BASE_URL", "").strip() or "http://bears-letta:8283"
+        )
+        validate_http_url("LETTA_BASE_URL", letta_base)
+        info(f"LETTA_BASE_URL OK ({letta_base})")
+
+        memfs = (
+            os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip()
+            or "http://bears-memfs-manager:8285"
+        )
+        validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
+        info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
+
+        memfs_org = os.environ.get(
+            "MEMFS_DEFAULT_ORG", "org-00000000-0000-4000-8000-000000000000"
+        ).strip()
+        if memfs_org == "org-default":
+            fail(
+                "MEMFS_DEFAULT_ORG must not use the old placeholder 'org-default'; set it to Letta's org id or leave it unset for the default self-hosted org."
+            )
+        if not memfs_org.startswith("org-"):
+            fail("MEMFS_DEFAULT_ORG must look like a Letta org id (prefix 'org-')")
+        info(f"MEMFS_DEFAULT_ORG OK ({memfs_org})")
+
+        codepool_base = (
+            os.environ.get("CODEPOOL_BASE_URL", "").strip()
+            or "http://bears-codepool:3030"
+        )
+        validate_http_url("CODEPOOL_BASE_URL", codepool_base)
+        info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
 
     web = require_non_empty("WEB_SERVER_URL")
     validate_http_url("WEB_SERVER_URL", web)
