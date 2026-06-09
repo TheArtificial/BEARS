@@ -136,6 +136,7 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 ## Related documents
 
 - Migration plan and phasing: [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- Bear package format (portable export/import): [`../guides/bear-package.md`](../guides/bear-package.md)
 - Memory model (Bear-facing): [`memory-model.md`](memory-model.md)
 - Historical Letta dependency inventory: [`letta-dependency-matrix.md`](letta-dependency-matrix.md)
 - Data backfill/rollback: [`../roadmap/den-migration-backfill-and-rollback-plan.md`](../roadmap/den-migration-backfill-and-rollback-plan.md)

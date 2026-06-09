@@ -339,6 +339,10 @@ This ADR does not define:
 - skills storage beyond retaining git for human-authored artifacts,
 - or whether narrow future coordination primitives may use another backing store.
 
+## Portability
+
+Per-Bear SQLite is the natural unit for **Bear cognition export**: a package bundles `memory.sqlite` (this schema) with a YAML **`manifest.yaml`** for identity, role profiles, and version fields — not Den Postgres conversation or Docket state. See [`../guides/bear-package.md`](../guides/bear-package.md) for include/exclude boundaries, import rules, and export tiers.
+
 ## Follow-up work
 
 - define per-Bear SQLite database lifecycle and ownership,
