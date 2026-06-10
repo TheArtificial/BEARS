@@ -319,6 +319,67 @@ fn descriptor(
     }
 }
 
+fn display_target_summary(keys: &[&str], args: &Value) -> Option<String> {
+    let object = args.as_object()?;
+    let mut values = Vec::new();
+    for key in keys {
+        if let Some(value) = object.get(*key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                values.push(trimmed.to_string());
+            }
+        }
+    }
+    match values.len() {
+        0 => None,
+        1 => values.into_iter().next(),
+        _ => Some(values.join(" → ")),
+    }
+}
+
+pub fn den_tool_display_json_for_provider(
+    provider_name: &str,
+    args: &Value,
+) -> Option<Value> {
+    let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
+    let display = den_tool_display(descriptor.name, descriptor.label);
+    let target = display_target_summary(display.target_arg_keys, args);
+    Some(json!({
+        "label": display.label,
+        "title": target.as_ref()
+            .map(|target| format!("{} {}", display.progress_verb, target))
+            .unwrap_or_else(|| display.label.to_string()),
+        "subtitle": target,
+        "category": display.category,
+        "status": "requested",
+        "progress": display.progress_verb,
+        "complete": display.complete_verb,
+        "approval_summary": display.approval_summary,
+    }))
+}
+
+pub fn den_tool_policy_json_for_provider(provider_name: &str) -> Option<Value> {
+    let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
+    Some(json!({
+        "execution_target": descriptor.execution_target,
+        "scope_basis": descriptor.scope,
+        "risk": if descriptor.approval_policy == "never" {
+            "read_only"
+        } else {
+            "mutating"
+        },
+        "approval_required": false,
+        "canonical_tool": descriptor.name,
+        "provider_tool": descriptor.provider_name,
+    }))
+}
+
+pub fn den_tool_completion_status_text(provider_name: &str) -> Option<String> {
+    let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
+    let display = den_tool_display(descriptor.name, descriptor.label);
+    Some(format!("{}.", display.complete_verb))
+}
+
 pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDisplayDescriptor {
     match name {
         DEN_CONVERSATION_SET_TITLE => AcpToolDisplayDescriptor {

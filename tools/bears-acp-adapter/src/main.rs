@@ -6429,6 +6429,51 @@ async fn handle_tool_request_event(
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
+    if is_den_server_tool_request(event) {
+        let preparing = friendly_tool_status(tool_name, event, "preparing");
+        send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolCallUpdatePayload {
+                status: "pending",
+                text: &preparing,
+                event: Some(event),
+                raw_output: None,
+                extra_content: Vec::new(),
+            },
+        )
+        .await?;
+        let running = friendly_tool_status(tool_name, event, "running");
+        send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolCallUpdatePayload {
+                status: "in_progress",
+                text: &running,
+                event: Some(event),
+                raw_output: None,
+                extra_content: Vec::new(),
+            },
+        )
+        .await?;
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ExecutionStarted,
+            )
+            .await;
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ExecutionStarted,
+        );
+        return Ok(());
+    }
     let preparing = friendly_tool_status(tool_name, event, "preparing");
     send_tool_call_update(
         session_id,
@@ -7905,6 +7950,7 @@ impl ToolDisplay {
         }
         if let Some(progress) = event_display
             .get("progress")
+            .or_else(|| event_display.get("progress_verb"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -7934,6 +7980,14 @@ impl ToolDisplay {
         display.arguments_summary = event_display.get("arguments_summary").cloned();
         display
     }
+}
+
+fn is_den_server_tool_request(event: &Value) -> bool {
+    event
+        .get("policy")
+        .and_then(|policy| policy.get("execution_target"))
+        .and_then(Value::as_str)
+        == Some("den")
 }
 
 fn tool_display(tool_name: &str) -> ToolDisplay {
@@ -8417,9 +8471,13 @@ async fn send_tool_call_update(
         content.push(ToolCallContent::from(trimmed_text.to_string()));
     }
     content.extend(extra_content);
-    let title = event
-        .map(|event| tool_call_title(tool_name, event))
-        .unwrap_or_else(|| display.title.clone());
+    let title = if event.is_some_and(|event| event.get("display").is_some()) {
+        display.title.clone()
+    } else {
+        event
+            .map(|event| tool_call_title(tool_name, event))
+            .unwrap_or_else(|| display.title.clone())
+    };
     let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
@@ -10073,6 +10131,34 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(tool_display("fs_list_directory").title, "List directory");
         assert_eq!(tool_display("fs_search_files").title, "Search files");
         assert_eq!(tool_display("fs_edit_file").title, "Edit file");
+    }
+
+    #[test]
+    fn den_memory_tool_display_uses_den_labels() {
+        let event = json!({
+            "display": {
+                "label": "Read memory file",
+                "title": "Reading memory pair/notes/example.md",
+                "progress": "Reading memory",
+                "category": "memory"
+            },
+            "args": { "path": "pair/notes/example.md" }
+        });
+        let display = ToolDisplay::from_event("memory_read", &event);
+        assert_eq!(display.title, "Reading memory pair/notes/example.md");
+        assert_eq!(display.verb, "Reading memory");
+        assert_eq!(display.category.as_deref(), Some("memory"));
+    }
+
+    #[test]
+    fn den_server_tool_requests_are_detected() {
+        let event = json!({
+            "policy": { "execution_target": "den" },
+            "tool_name": "memory_read"
+        });
+        assert!(is_den_server_tool_request(&event));
+        let local = json!({ "policy": { "execution_target": "adapter" } });
+        assert!(!is_den_server_tool_request(&local));
     }
 
     #[test]

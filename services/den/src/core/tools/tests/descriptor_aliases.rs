@@ -150,3 +150,32 @@ fn all_descriptors_are_known_tools() {
         );
     }
 }
+
+#[test]
+fn den_tool_display_json_includes_memory_titles() {
+    use crate::core::tools::descriptor::{
+        den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
+    };
+
+    let read = den_tool_display_json_for_provider(
+        "memory_read",
+        &serde_json::json!({ "path": "pair/notes/example.md" }),
+    )
+    .expect("memory_read display");
+    assert_eq!(read["title"], "Reading memory pair/notes/example.md");
+    assert_eq!(read["progress"], "Reading memory");
+
+    let write = den_tool_display_json_for_provider(
+        "memory_write_entry",
+        &serde_json::json!({ "title": "Saved fact", "path": "pair/notes/mem_1.md" }),
+    )
+    .expect("memory_write_entry display");
+    assert!(write["title"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("Writing memory entry"));
+    assert_eq!(write["progress"], "Writing memory entry");
+
+    let policy = den_tool_policy_json_for_provider("memory_read").expect("memory_read policy");
+    assert_eq!(policy["execution_target"], "den");
+}

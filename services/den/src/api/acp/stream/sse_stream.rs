@@ -31,6 +31,7 @@ use crate::{
         runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
         bifrost::BifrostClient,
         letta::normalize_display_status_text,
+        tools::descriptor::den_tool_completion_status_text,
     },
     errors::CustomError,
 };
@@ -632,7 +633,13 @@ impl Stream for AcpRuntimeSseStream {
                                     tool_result.content.as_deref().map(str::len).unwrap_or(0),
                                 )
                             } else {
-                                format!("Local tool {} completed", settlement.display_tool_name)
+                                den_tool_completion_status_text(&settlement.display_tool_name)
+                                    .unwrap_or_else(|| {
+                                        format!(
+                                            "Local tool {} completed",
+                                            settlement.display_tool_name
+                                        )
+                                    })
                             },
                         );
                         for event in this.text_chunker.flush_all() {

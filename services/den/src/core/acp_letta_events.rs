@@ -7,11 +7,12 @@ use uuid::Uuid;
 use crate::core::{
     acp_tool_turns::AcpToolResultRequest,
     acp_tools::{
-        acp_diag_phase, acp_tool_policy_json_for_provider, supported_provider_tool_names,
-        AcpToolName,
+        acp_diag_phase, acp_tool_display_for_provider, acp_tool_policy_json_for_provider,
+        supported_provider_tool_names, AcpToolName,
     },
     tools::descriptor::{
         builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
+        den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
     },
     work_plans::{WorkPlanItemStatus, WorkPlanProjection},
 };
@@ -884,11 +885,8 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             result_tx: _,
             result_rx: _,
         } => {
-            let display = builtin_den_tool_descriptor_for_provider_name(&tool_name)
-                .map(|descriptor| descriptor.display)
-                .unwrap_or_else(|| {
-                    crate::core::acp_tools::acp_tool_display_for_provider(&tool_name, &args)
-                });
+            let display = den_tool_display_json_for_provider(&tool_name, &args)
+                .unwrap_or_else(|| acp_tool_display_for_provider(&tool_name, &args));
             serde_json::json!({
                 "type": "tool_request",
                 "request_id": request_id,
@@ -904,7 +902,8 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                     "required": approval_required,
                     "reason": approval_reason,
                 },
-                "policy": acp_tool_policy_json_for_provider(&tool_name),
+                "policy": den_tool_policy_json_for_provider(&tool_name)
+                    .unwrap_or_else(|| acp_tool_policy_json_for_provider(&tool_name)),
                 "diagnostic": {
                     "component": "den.acp",
                     "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
