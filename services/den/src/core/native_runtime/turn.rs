@@ -7,7 +7,7 @@ use crate::{
     core::{
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
-            agent_loop_session_key, assemble_native_turn_messages_for_bear, run_agent_step_stream,
+            agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
             SessionTrackingStream,
         },
@@ -105,6 +105,8 @@ async fn build_session(
     runtime_context: Option<&str>,
     session_id: Option<&str>,
     workspace_roots: Option<&[String]>,
+    runtime_target: Option<&str>,
+    conversation_selection: Option<&str>,
     user_id: Option<i32>,
     client_context: Option<&serde_json::Value>,
     client_tools: Option<&serde_json::Value>,
@@ -117,9 +119,10 @@ async fn build_session(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     let include_prompt_memory =
         profile.include_prompt_memory && runtime_context.is_none();
-    let messages = assemble_native_turn_messages_for_bear(
+    let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
             pool: &state.sqlx_pool,
+            stores: &state.memory_stores,
             bear_id,
             role: profile.role,
             conversation_id,
@@ -128,13 +131,21 @@ async fn build_session(
             tool_messages: &tool_messages,
             session_id,
             workspace_roots,
+            runtime_target,
+            conversation_selection,
             user_id,
             client_context,
             include_prompt_memory,
+            key_memory_cache: None,
         },
         &bear,
     )
     .await?;
+    let key_memory_projection_cache_key = assembled
+        .key_memory_projection
+        .as_ref()
+        .map(|projection| projection.cache_key.clone());
+    let messages = assembled.messages;
     let tools = merge_den_and_client_tools(state.config.as_ref(), profile.role, client_tools)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
     let model = llm.resolve_model(bear.default_model.as_deref());
@@ -149,6 +160,7 @@ async fn build_session(
         max_steps: profile.max_steps,
         strategy: profile.strategy,
         stream_tokens,
+        key_memory_projection_cache_key,
     };
     SESSION_STORE.insert(session.clone());
     Ok(session)
@@ -186,6 +198,8 @@ pub async fn start_native_role_turn_event_stream(
         request.runtime_context,
         Some(acp_session_id),
         workspace_roots.as_deref(),
+        Some(request.upstream_target),
+        Some(request.conversation_selection),
         Some(request.user_id),
         None,
         request.client_tools.as_ref(),

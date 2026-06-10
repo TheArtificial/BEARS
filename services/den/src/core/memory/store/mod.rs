@@ -18,7 +18,11 @@ pub use observations::{
 };
 pub use promotions::{append_memory_promotion, promote_to_shared_core};
 pub use proposals::{create_memory_proposal, list_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal};
-pub use records::{append_memory_record, list_records_for_logical_path, MemoryRecordRow, BearMemoryStore};
+pub use records::{
+    append_memory_record, has_work_surface_canonical_anchor, head_record_for_logical_path,
+    list_records_for_logical_path, list_role_local_head_records, memory_sequence_high_water,
+    MemoryRecordRow, BearMemoryStore,
+};
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,
 };

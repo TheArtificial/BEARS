@@ -6,7 +6,7 @@ use std::{
 use uuid::Uuid;
 
 use crate::core::{
-    agent_loop::StrategyProfile,
+    agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
     llm::{ChatMessage, LlmToolDefinition},
 };
 
@@ -22,6 +22,7 @@ pub struct AgentLoopSession {
     pub max_steps: u32,
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
+    pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
 }
 
 #[derive(Clone, Default)]

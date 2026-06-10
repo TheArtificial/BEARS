@@ -205,7 +205,20 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::TurnCompleted { .. },
             )))) => {
-                if !self.tool_calls.is_empty() || !self.assistant_text.trim().is_empty() {
+                if !self.tool_calls.is_empty() {
+                    // Tool-call finishes must not emit TurnCompleted: ACP parks for adapter-local
+                    // tool results and continues via /tool-results (same class of bug as
+                    // openai_stream synthetic TurnCompleted).
+                    self.persist_assistant_tool_step();
+                    self.finished = true;
+                    tracing::debug!(
+                        acp_session_id = %self.acp_session_id,
+                        tool_call_count = self.tool_calls.len(),
+                        "native runtime suppressing TurnCompleted while tool calls are outstanding"
+                    );
+                    return Poll::Ready(None);
+                }
+                if !self.assistant_text.trim().is_empty() {
                     self.persist_assistant_tool_step();
                 }
                 self.finished = true;
@@ -214,6 +227,16 @@ impl Stream for SessionTrackingStream {
                 ))))
             }
             Poll::Ready(other) => {
+                if matches!(other, None) && !self.tool_calls.is_empty() {
+                    self.persist_assistant_tool_step();
+                    self.finished = true;
+                    tracing::debug!(
+                        acp_session_id = %self.acp_session_id,
+                        tool_call_count = self.tool_calls.len(),
+                        "native runtime ended LLM stream with outstanding tool calls; deferring TurnCompleted"
+                    );
+                    return Poll::Ready(None);
+                }
                 if matches!(
                     other,
                     Some(Ok(RuntimeStreamEvent::Semantic(

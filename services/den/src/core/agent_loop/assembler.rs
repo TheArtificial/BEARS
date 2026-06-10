@@ -1,9 +1,14 @@
+use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
     core::{
-        bears::{context_composition::compose_role_context, db as bears_db, model::BearProfile, Bear},
+        bears::{
+            db as bears_db, model::BearProfile, provision::role_prompt_text, Bear,
+        },
+        memory::MemoryStoreManager,
+        tools::work_surface::WorkSurfaceSessionHints,
         llm::ChatMessage,
     },
     errors::CustomError,
@@ -11,6 +16,10 @@ use crate::{
 
 use super::{
     context::load_transcript_messages,
+    key_memory_projection::{
+        project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
+        KeyMemoryProjectionInput, KeyMemoryProjectionResult,
+    },
     runtime_context::{
         assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
     },
@@ -19,6 +28,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
+    pub stores: &'a MemoryStoreManager,
     pub bear_id: Uuid,
     pub role: BearProfile,
     pub conversation_id: &'a str,
@@ -27,9 +37,12 @@ pub struct AssembleTurnContext<'a> {
     pub tool_messages: &'a [ChatMessage],
     pub session_id: Option<&'a str>,
     pub workspace_roots: Option<&'a [String]>,
+    pub runtime_target: Option<&'a str>,
+    pub conversation_selection: Option<&'a str>,
     pub user_id: Option<i32>,
     pub client_context: Option<&'a serde_json::Value>,
     pub include_prompt_memory: bool,
+    pub key_memory_cache: Option<&'a KeyMemoryProjectionCacheKey>,
 }
 
 impl<'a> AssembleTurnContext<'a> {
@@ -41,23 +54,111 @@ impl<'a> AssembleTurnContext<'a> {
                 .map(runtime_context_already_includes_den_owned_blocks)
                 .unwrap_or(false)
     }
+
+    fn session_hints(&self) -> WorkSurfaceSessionHints {
+        WorkSurfaceSessionHints {
+            runtime_target: self.runtime_target.map(str::to_string),
+            conversation_selection: self.conversation_selection.map(str::to_string),
+            workspace_roots: self
+                .workspace_roots
+                .map(|items| items.to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn work_surface_status_override(&self) -> Option<&str> {
+        self.client_context
+            .and_then(|ctx| ctx.pointer("/work_surface/status"))
+            .and_then(Value::as_str)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AssembledNativeTurn {
+    pub messages: Vec<ChatMessage>,
+    pub key_memory_projection: Option<KeyMemoryProjectionResult>,
 }
 
 pub async fn assemble_native_turn_messages(
     ctx: AssembleTurnContext<'_>,
 ) -> Result<Vec<ChatMessage>, CustomError> {
+    Ok(assemble_native_turn(ctx).await?.messages)
+}
+
+pub async fn assemble_native_turn(
+    ctx: AssembleTurnContext<'_>,
+) -> Result<AssembledNativeTurn, CustomError> {
     let bear = bears_db::get_bear(ctx.pool, ctx.bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    assemble_native_turn_messages_for_bear(ctx, &bear).await
+    assemble_native_turn_for_bear(ctx, &bear).await
 }
 
 pub async fn assemble_native_turn_messages_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
 ) -> Result<Vec<ChatMessage>, CustomError> {
-    let composed = compose_role_context(bear, ctx.role, None)?;
-    let mut system_text = composed.composed_prompt;
+    Ok(assemble_native_turn_for_bear(ctx, bear).await?.messages)
+}
+
+pub async fn assemble_native_turn_for_bear(
+    ctx: AssembleTurnContext<'_>,
+    bear: &Bear,
+) -> Result<AssembledNativeTurn, CustomError> {
+    let compiled_prompt = role_prompt_text(ctx.pool, bear, ctx.role).await?;
+    let projection = match project_key_memory(KeyMemoryProjectionInput {
+        pool: ctx.pool,
+        stores: ctx.stores,
+        bear,
+        role: ctx.role,
+        conversation_id: ctx.conversation_id,
+        session_hints: ctx.session_hints(),
+        work_surface_status_override: ctx.work_surface_status_override(),
+    })
+    .await
+    {
+        Ok(projection) => projection,
+        Err(err) => {
+            tracing::warn!(
+                bear_id = %ctx.bear_id,
+                role = %ctx.role.as_str(),
+                conversation_id = %ctx.conversation_id,
+                error = %err,
+                "key memory projection failed; continuing without projected memory"
+            );
+            KeyMemoryProjectionResult {
+                rendered_text: String::new(),
+                diagnostic: serde_json::json!({
+                    "source": "key_memory_projection",
+                    "status": "error",
+                    "error": err.to_string(),
+                }),
+                cache_key: KeyMemoryProjectionCacheKey {
+                    bear_id: ctx.bear_id,
+                    role: ctx.role,
+                    conversation_id: ctx.conversation_id.to_string(),
+                    primary_surface_slug: None,
+                    sequence_high_water: 0,
+                    compiled_config_token: String::new(),
+                },
+            }
+        }
+    };
+    if let Some(expected) = ctx.key_memory_cache {
+        if &projection.cache_key != expected {
+            tracing::debug!(
+                bear_id = %ctx.bear_id,
+                conversation_id = %ctx.conversation_id,
+                "key memory projection cache key changed during turn assembly"
+            );
+        }
+    }
+
+    let mut system_text = compiled_prompt;
+    if let Some(block) = render_key_memory_projection_block(&projection) {
+        system_text.push_str("\n\n");
+        system_text.push_str(&block);
+    }
     if let Some(runtime) = ctx
         .turn_runtime_context
         .map(str::trim)
@@ -86,6 +187,7 @@ pub async fn assemble_native_turn_messages_for_bear(
             system_text.push_str(&supplement);
         }
     }
+
     let mut messages = vec![ChatMessage {
         role: "system".to_string(),
         content: Some(system_text),
@@ -104,5 +206,8 @@ pub async fn assemble_native_turn_messages_for_bear(
         });
     }
     messages.extend(ctx.tool_messages.iter().cloned());
-    Ok(messages)
+    Ok(AssembledNativeTurn {
+        messages,
+        key_memory_projection: Some(projection),
+    })
 }

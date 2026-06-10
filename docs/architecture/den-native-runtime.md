@@ -273,7 +273,7 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring exists but **does not yet meet this target**: the loop composes prompts inline instead of loading `bear_compiled_configs`, and SQLite memory is tool-mediated only (no key memory projection). Closing this gap is required for Letta parity on personality and grounding.
+Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `role_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
 
 ## What this supersedes
 

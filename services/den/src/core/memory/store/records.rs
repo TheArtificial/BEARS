@@ -133,6 +133,115 @@ pub async fn append_memory_record(
         .await
 }
 
+pub async fn memory_sequence_high_water(store: &BearMemoryStore) -> Result<i64, CustomError> {
+    let row = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MAX(sequence_no) FROM memory_records WHERE bear_id = ?",
+    )
+    .bind(store.bear_id.to_string())
+    .fetch_one(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("memory sequence high water failed: {e}")))?;
+    Ok(row.unwrap_or(0))
+}
+
+pub async fn head_record_for_logical_path(
+    store: &BearMemoryStore,
+    logical_path: &str,
+) -> Result<Option<MemoryRecordRow>, CustomError> {
+    let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
+        r#"
+        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+               logical_path, work_surface_ref, metadata_json, created_at
+        FROM memory_records
+        WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
+          AND NOT EXISTS (
+            SELECT 1 FROM memory_records newer
+            WHERE newer.bear_id = memory_records.bear_id
+              AND newer.supersedes_memory_id = memory_records.memory_id
+          )
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(store.bear_id.to_string())
+    .bind(logical_path)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(|e| CustomError::System(format!("head memory_record lookup failed: {e}")))?;
+    Ok(row.map(MemoryRecordSqlRow::into_row))
+}
+
+pub async fn has_work_surface_canonical_anchor(
+    store: &BearMemoryStore,
+    slug: &str,
+) -> Result<bool, CustomError> {
+    for path in [
+        format!("core/work_surfaces/{slug}/index.md"),
+        format!("core/work_surfaces/{slug}/overview.md"),
+    ] {
+        if head_record_for_logical_path(store, &path).await?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub async fn list_role_local_head_records(
+    store: &BearMemoryStore,
+    role: &str,
+    work_surface_ref: Option<&str>,
+    limit: i64,
+) -> Result<Vec<MemoryRecordRow>, CustomError> {
+    let rows = if let Some(surface) = work_surface_ref {
+        sqlx::query_as::<_, MemoryRecordSqlRow>(
+            r#"
+            SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+                   logical_path, work_surface_ref, metadata_json, created_at
+            FROM memory_records
+            WHERE bear_id = ? AND scope_type = 'role_local' AND scope_role = ?
+              AND visibility = 'normal' AND work_surface_ref = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM memory_records newer
+                WHERE newer.bear_id = memory_records.bear_id
+                  AND newer.supersedes_memory_id = memory_records.memory_id
+              )
+            ORDER BY sequence_no DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(store.bear_id.to_string())
+        .bind(role)
+        .bind(surface)
+        .bind(limit)
+        .fetch_all(store.pool())
+        .await
+    } else {
+        sqlx::query_as::<_, MemoryRecordSqlRow>(
+            r#"
+            SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+                   logical_path, work_surface_ref, metadata_json, created_at
+            FROM memory_records
+            WHERE bear_id = ? AND scope_type = 'role_local' AND scope_role = ?
+              AND visibility = 'normal' AND work_surface_ref IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM memory_records newer
+                WHERE newer.bear_id = memory_records.bear_id
+                  AND newer.supersedes_memory_id = memory_records.memory_id
+              )
+            ORDER BY sequence_no DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(store.bear_id.to_string())
+        .bind(role)
+        .bind(limit)
+        .fetch_all(store.pool())
+        .await
+    }
+    .map_err(|e| CustomError::System(format!("list role_local memory_records failed: {e}")))?;
+    Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
+}
+
 pub async fn list_records_for_logical_path(
     store: &BearMemoryStore,
     logical_path: &str,

@@ -11,7 +11,7 @@ use super::records::BearMemoryStore;
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
 /// Owns per-Bear SQLite pools (single writer per bear DB).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MemoryStoreManager {
     data_dir: PathBuf,
     pools: Arc<Mutex<HashMap<Uuid, SqlitePool>>>,

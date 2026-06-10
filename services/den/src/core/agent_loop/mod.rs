@@ -3,6 +3,9 @@
 mod approvals;
 mod assembler;
 mod context;
+mod key_memory_projection;
+#[cfg(test)]
+mod key_memory_projection_tests;
 mod policy;
 mod runtime_context;
 mod session_store;
@@ -16,8 +19,10 @@ pub use approvals::{
     create_native_approval, decide_native_approval, NativeApprovalDecision, NativeApprovalRow,
 };
 pub use assembler::{
-    assemble_native_turn_messages, assemble_native_turn_messages_for_bear, AssembleTurnContext,
+    assemble_native_turn, assemble_native_turn_for_bear, assemble_native_turn_messages,
+    assemble_native_turn_messages_for_bear, AssembledNativeTurn, AssembleTurnContext,
 };
+pub use key_memory_projection::{project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult};
 pub use context::assemble_agent_messages;
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
 pub use session_stream::SessionTrackingStream;

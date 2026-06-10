@@ -113,12 +113,80 @@ pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomE
     Ok(collapsed)
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WorkSurfaceSessionHints {
+    pub runtime_target: Option<String>,
+    pub conversation_selection: Option<String>,
+    pub workspace_roots: Vec<String>,
+}
+
+impl WorkSurfaceSessionHints {
+    pub(crate) fn from_invocation(context: &DenToolInvocationContext) -> Self {
+        Self {
+            runtime_target: context.runtime_target.clone(),
+            conversation_selection: context.conversation_selection.clone(),
+            workspace_roots: context.workspace_roots.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkSurfaceProjectionStatus {
+    Unresolved,
+    Ambiguous,
+    Candidate,
+    Resolved,
+    Confirmed,
+}
+
+impl WorkSurfaceProjectionStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Unresolved => "unresolved",
+            Self::Ambiguous => "ambiguous",
+            Self::Candidate => "candidate",
+            Self::Resolved => "resolved",
+            Self::Confirmed => "confirmed",
+        }
+    }
+
+    pub(crate) fn tier2_allowed_without_anchor_proof(self) -> bool {
+        matches!(self, Self::Resolved | Self::Confirmed)
+    }
+}
+
+pub(crate) fn work_surface_projection_status(
+    hints: &WorkSurfaceSessionHints,
+    override_status: Option<&str>,
+) -> WorkSurfaceProjectionStatus {
+    if let Some(raw) = override_status.map(str::trim).filter(|s| !s.is_empty()) {
+        return match raw {
+            "confirmed" => WorkSurfaceProjectionStatus::Confirmed,
+            "resolved" => WorkSurfaceProjectionStatus::Resolved,
+            "ambiguous" => WorkSurfaceProjectionStatus::Ambiguous,
+            "candidate" => WorkSurfaceProjectionStatus::Candidate,
+            _ => WorkSurfaceProjectionStatus::Unresolved,
+        };
+    }
+    if work_surface_candidate_slug_from_hints(hints).is_some() {
+        WorkSurfaceProjectionStatus::Candidate
+    } else {
+        WorkSurfaceProjectionStatus::Unresolved
+    }
+}
+
 pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) -> Option<String> {
+    work_surface_candidate_slug_from_hints(&WorkSurfaceSessionHints::from_invocation(context))
+}
+
+pub(crate) fn work_surface_candidate_slug_from_hints(
+    hints: &WorkSurfaceSessionHints,
+) -> Option<String> {
     let mut raw_candidates = Vec::new();
-    if let Some(value) = context.runtime_target.as_deref().and_then(clean_optional) {
+    if let Some(value) = hints.runtime_target.as_deref().and_then(clean_optional) {
         raw_candidates.push(value);
     }
-    if let Some(value) = context
+    if let Some(value) = hints
         .conversation_selection
         .as_deref()
         .and_then(clean_optional)
@@ -126,7 +194,7 @@ pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) ->
         raw_candidates.push(value);
     }
     raw_candidates.extend(
-        context
+        hints
             .workspace_roots
             .iter()
             .filter_map(|value| clean_optional(value)),
