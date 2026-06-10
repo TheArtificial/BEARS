@@ -91,6 +91,14 @@ pub async fn run_agent_step_stream(
     session: &AgentLoopSession,
 ) -> Result<RuntimeEventStream, CustomError> {
     let messages = repair_tool_call_message_chain(session.messages.clone());
+    tracing::info!(
+        session_key = %session.session_key,
+        model = %session.model,
+        message_count = messages.len(),
+        tool_count = session.tools.len(),
+        step = session.step,
+        "native agent step starting LLM stream"
+    );
     let request = ChatCompletionRequest {
         model: session.model.clone(),
         messages,

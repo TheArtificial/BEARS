@@ -88,6 +88,9 @@ pub fn openai_byte_stream_to_event_stream(
                         queued_events.push_back(Ok(event));
                     }
                     if !saw_terminal_or_pause {
+                        tracing::warn!(
+                            "OpenAI SSE stream ended with no frames; synthesizing TurnCompleted"
+                        );
                         queued_events.push_back(Ok(RuntimeStreamEvent::Semantic(
                             RuntimeSemanticEvent::TurnCompleted { turn: None },
                         )));

@@ -188,6 +188,13 @@ impl AcpRuntimeSseStream {
     }
 
     fn enqueue_adapter_event(&mut self, event: AcpGatewayEvent, substantive: bool) {
+        if matches!(event, AcpGatewayEvent::TurnComplete { .. })
+            && !self.diagnostics.saw_substantive_output
+        {
+            // Upstream ended without assistant text or tool activity. Stream-end handling
+            // emits empty_mapped_turn instead of accepting a bare terminal.
+            return;
+        }
         if matches!(event, AcpGatewayEvent::TurnComplete { .. }) {
             self.turn_controller.on_stream_end();
             let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
@@ -1093,7 +1100,7 @@ impl Stream for AcpRuntimeSseStream {
                     }
                     this.log_summary_once();
                     Poll::Ready(None)
-                } else {
+                } else if this.diagnostics.saw_substantive_output {
                     for event in this.text_chunker.flush_all() {
                         this.push_adapter_event(event);
                     }
@@ -1122,6 +1129,32 @@ impl Stream for AcpRuntimeSseStream {
                     {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
+                    }
+                    this.log_summary_once();
+                    Poll::Ready(None)
+                } else {
+                    tracing::warn!(
+                        request_id = %this.context.request_id,
+                        acp_session_id = %this.context.acp_session_id,
+                        upstream_frames = this.diagnostics.upstream_frames,
+                        native_event_types = ?this.diagnostics.native_event_types,
+                        "ACP stream ended without substantive output; emitting failed turn_result"
+                    );
+                    this.turn_controller.on_stream_error();
+                    let role_result = this.context.role_runtime.turn_result(
+                        TurnResultStatus::Failed,
+                        TurnResultReason::RuntimeCleanup,
+                        this.context.request_id,
+                        this.context.turn_scope.clone(),
+                        false,
+                        this.diagnostics.diagnostic_json_with_turn_controller(
+                            &this.context,
+                            Some(&this.turn_controller),
+                        ),
+                    );
+                    this.push_terminal_result_when_ready(role_result);
+                    if !this.pending.is_empty() {
+                        return self.poll_next(cx);
                     }
                     this.log_summary_once();
                     Poll::Ready(None)

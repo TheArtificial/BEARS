@@ -6107,7 +6107,17 @@ async fn handle_sse_frame(
             turn_token,
         )
         .await?;
-        if ty == "turn_result" || ty == "turn_complete" || ty == "done" {
+        if ty == "turn_result" {
+            if let Some(value) = event.get("status").and_then(Value::as_str) {
+                outcome.terminal_outcome = Some(value.to_string());
+                if matches!(value, "failed" | "cancelled" | "needs_new_session") {
+                    outcome.saw_error = true;
+                    diagnostics.saw_error = true;
+                }
+            } else if let Some(value) = event.get("outcome").and_then(Value::as_str) {
+                outcome.terminal_outcome = Some(value.to_string());
+            }
+        } else if ty == "turn_complete" || ty == "done" {
             if let Some(value) = event.get("outcome").and_then(Value::as_str) {
                 outcome.terminal_outcome = Some(value.to_string());
             }
