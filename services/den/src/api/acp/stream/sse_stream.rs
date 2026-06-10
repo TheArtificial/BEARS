@@ -184,6 +184,10 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::api::acp) fn push_adapter_event(&mut self, event: AcpGatewayEvent) {
+        self.enqueue_adapter_event(event, true);
+    }
+
+    fn enqueue_adapter_event(&mut self, event: AcpGatewayEvent, substantive: bool) {
         if matches!(event, AcpGatewayEvent::TurnComplete { .. }) {
             self.turn_controller.on_stream_end();
             let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
@@ -212,7 +216,7 @@ impl AcpRuntimeSseStream {
         if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
             self.session_info_event_sent = true;
         }
-        self.diagnostics.observe_mapped_event(&event);
+        self.diagnostics.observe_mapped_event(&event, substantive);
         self.pending.push_back(acp_event_to_adapter_sse(event));
     }
 
@@ -326,9 +330,12 @@ impl AcpRuntimeSseStream {
 
     fn push_turn_status_update(&mut self) {
         if let Some(update) = self.turn_controller.take_status_update() {
-            self.push_adapter_event(AcpGatewayEvent::StatusText {
-                text: update.text.to_string(),
-            });
+            self.enqueue_adapter_event(
+                AcpGatewayEvent::StatusText {
+                    text: update.text.to_string(),
+                },
+                false,
+            );
         }
     }
 
@@ -738,7 +745,7 @@ impl Stream for AcpRuntimeSseStream {
                                     .and_then(|m| m.into_inner().ok())
                                     .unwrap_or_default();
                                 for event in &queued_events {
-                                    diagnostics.observe_mapped_event(event);
+                                    diagnostics.observe_mapped_event(event, true);
                                 }
                                 (Ok((queued_events, None, None)), diagnostics)
                             })));

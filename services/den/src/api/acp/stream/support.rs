@@ -51,6 +51,9 @@ pub(in crate::api::acp) struct AcpStreamDiagnostics {
     pub(in crate::api::acp) unmapped_event_samples: Vec<String>,
     pub(in crate::api::acp) run_ids: Vec<String>,
     pub(in crate::api::acp) saw_visible_output: bool,
+    /// True when the turn produced assistant text, a tool request, or runtime status/progress.
+    /// Turn-controller chrome (planning/waiting status) and terminal markers do not count.
+    pub(in crate::api::acp) saw_substantive_output: bool,
     pub(in crate::api::acp) saw_error: bool,
     pub(in crate::api::acp) saw_turn_complete: bool,
     pub(in crate::api::acp) saw_tool_return_ack: bool,
@@ -102,6 +105,7 @@ impl AcpStreamDiagnostics {
             }
         }
         self.saw_visible_output |= other.saw_visible_output;
+        self.saw_substantive_output |= other.saw_substantive_output;
         self.saw_error |= other.saw_error;
         self.saw_turn_complete |= other.saw_turn_complete;
         self.saw_tool_return_ack |= other.saw_tool_return_ack;
@@ -123,18 +127,21 @@ impl AcpStreamDiagnostics {
                 crate::core::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },
             ) => {
                 self.saw_visible_output = true;
+                self.saw_substantive_output = true;
                 "assistant_text_delta"
             }
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
                 crate::core::runtime_provider::RuntimeSemanticEvent::StatusText { .. },
             ) => {
                 self.saw_visible_output = true;
+                self.saw_substantive_output = true;
                 "status_text"
             }
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
                 crate::core::runtime_provider::RuntimeSemanticEvent::RunProgress { .. },
             ) => {
                 self.saw_visible_output = true;
+                self.saw_substantive_output = true;
                 "run_progress"
             }
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
@@ -151,6 +158,7 @@ impl AcpStreamDiagnostics {
                     ..
                 },
             ) => {
+                self.saw_substantive_output = true;
                 let count = self.tool_request_counts.entry(tool_call_id.clone()).or_insert(0);
                 *count += 1;
                 "tool_call_requested"
@@ -257,12 +265,37 @@ impl AcpStreamDiagnostics {
         true
     }
 
-    pub(in crate::api::acp) fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
+    pub(in crate::api::acp) fn observe_mapped_event(
+        &mut self,
+        event: &AcpGatewayEvent,
+        substantive: bool,
+    ) {
         self.mapped_events += 1;
         Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
         self.saw_visible_output |= acp_event_has_visible_output(event);
+        if substantive {
+            self.saw_substantive_output |= Self::acp_event_is_substantive_output(event);
+        }
         self.saw_error |= matches!(event, AcpGatewayEvent::Error { .. });
         self.saw_turn_complete |= matches!(event, AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. });
+    }
+
+    fn acp_event_is_substantive_output(event: &AcpGatewayEvent) -> bool {
+        match event {
+            AcpGatewayEvent::AssistantTextDelta { text } | AcpGatewayEvent::StatusText { text } => {
+                !text.is_empty()
+            }
+            AcpGatewayEvent::ToolRequest { .. } | AcpGatewayEvent::Error { .. } => true,
+            AcpGatewayEvent::TurnComplete { .. }
+            | AcpGatewayEvent::TurnResult { .. }
+            | AcpGatewayEvent::PermissionRequest { .. }
+            | AcpGatewayEvent::PlanApprovalFallback { .. }
+            | AcpGatewayEvent::PlanUpdate { .. }
+            | AcpGatewayEvent::PlanUpdateJson { .. }
+            | AcpGatewayEvent::ModeUpdate { .. }
+            | AcpGatewayEvent::ConversationResolved { .. }
+            | AcpGatewayEvent::SessionInfoUpdate { .. } => false,
+        }
     }
 
     pub(in crate::api::acp) fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
@@ -276,7 +309,12 @@ impl AcpStreamDiagnostics {
     }
 
     pub(in crate::api::acp) fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
-        if self.emitted_empty_turn_error || self.saw_visible_output || self.saw_error || self.saw_tool_return_ack || self.emitted_runtime_cleanup {
+        if self.emitted_empty_turn_error
+            || self.saw_substantive_output
+            || self.saw_error
+            || self.saw_tool_return_ack
+            || self.emitted_runtime_cleanup
+        {
             return None;
         }
         self.emitted_empty_turn_error = true;
@@ -317,6 +355,7 @@ impl AcpStreamDiagnostics {
             "untranslated_event_classes": self.untranslated_event_classes,
             "run_ids": self.run_ids,
             "saw_visible_output": self.saw_visible_output,
+            "saw_substantive_output": self.saw_substantive_output,
             "saw_error": self.saw_error,
             "saw_turn_complete": self.saw_turn_complete,
             "saw_tool_return_ack": self.saw_tool_return_ack,
@@ -356,6 +395,7 @@ impl AcpStreamDiagnostics {
             mapped_events = self.mapped_events,
             unmapped_events = self.unmapped_events,
             saw_visible_output = self.saw_visible_output,
+            saw_substantive_output = self.saw_substantive_output,
             saw_error = self.saw_error,
             saw_turn_complete = self.saw_turn_complete,
             saw_tool_return_ack = self.saw_tool_return_ack,
