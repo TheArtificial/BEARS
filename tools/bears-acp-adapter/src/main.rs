@@ -4409,6 +4409,10 @@ async fn handle_prompt_with_retry(
         .with_context(|| den_request_context(&url))?;
 
     let status = response.status();
+    eprintln!(
+        "bears-acp-adapter: session/prompt Den response session_id={} status={}",
+        session_id, status
+    );
     if !status.is_success() {
         let text = response.text().await.unwrap_or_else(|_| "".to_string());
         let message = den_status_error_message(status, text.trim());
