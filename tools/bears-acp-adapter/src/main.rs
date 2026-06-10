@@ -588,6 +588,27 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
     .await
 }
 
+async fn refresh_slash_commands_for_session(session_id: &str) {
+    if let Err(err) = send_available_commands_update(session_id).await {
+        eprintln!(
+            "bears-acp-adapter: failed to refresh slash commands session_id={session_id} error={err:#}"
+        );
+    }
+}
+
+async fn refresh_slash_commands_for_all_sessions(shared_state: &AdapterSharedState) {
+    let session_ids: Vec<String> = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect();
+    for session_id in session_ids {
+        refresh_slash_commands_for_session(&session_id).await;
+    }
+}
+
 fn spawn_adapter_environment_publish(
     config: Config,
     session_id: String,
@@ -1764,6 +1785,7 @@ async fn handle_request(
                             .await?
                     }
                     Err(err) => {
+                        refresh_slash_commands_for_all_sessions(shared_state).await;
                         write_response(id, Err(authenticate_json_rpc_error(&err, runtime))).await?;
                     }
                 }
@@ -2089,6 +2111,7 @@ async fn handle_request(
                     return Ok(());
                 };
                 if let Err(err) = validate_den_code_token(http, config).await {
+                    refresh_slash_commands_for_all_sessions(shared_state).await;
                     write_response(
                         id,
                         Err(auth_check_json_rpc_error(
@@ -2263,6 +2286,13 @@ async fn handle_request(
                 };
 
                 if let Err(err) = validate_den_code_token(http, config).await {
+                    if let Some(session_id) =
+                        request.params.get("sessionId").and_then(Value::as_str)
+                    {
+                        refresh_slash_commands_for_session(session_id).await;
+                    } else {
+                        refresh_slash_commands_for_all_sessions(shared_state).await;
+                    }
                     write_response(
                         id,
                         Err(auth_check_json_rpc_error(
@@ -2727,10 +2757,21 @@ async fn handle_authenticate(
         return Err(anyhow!("unsupported BEARS auth method: {method_id}"));
     }
     let config = runtime_config_from_current_env(runtime)?;
-    validate_den_code_token(http, &config).await?;
-    runtime.config = Some(config);
-    runtime.diagnostics.clear();
-    Ok(())
+    match validate_den_code_token(http, &config).await {
+        Ok(()) => {
+            runtime.config = Some(config);
+            runtime.diagnostics.clear();
+            Ok(())
+        }
+        Err(err) if looks_like_den_connectivity_error(&err) => {
+            runtime.config = Some(config);
+            runtime.diagnostics = vec![format!(
+                "Den is unreachable ({err:#}). Adapter-local slash commands such as /doctor are still available; normal prompts will fail until connectivity is restored."
+            )];
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
@@ -8697,7 +8738,7 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
     if looks_like_den_connectivity_error(err) {
         return den_connectivity_error(Some(json!({
             "message": format!("Could not reach the BEARS Den server while checking the Code token: {message}"),
-            "hint": "Check that DEN_API_URL is correct and that the Den API server is online/reachable. This does not necessarily mean your token is invalid.",
+            "hint": "Check that DEN_API_URL is correct and that the Den API server is online/reachable. This does not necessarily mean your token is invalid. If a session is open, /doctor still works for adapter-local diagnostics.",
         })));
     }
     let mut data = json!({
@@ -10159,6 +10200,14 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(is_den_server_tool_request(&event));
         let local = json!({ "policy": { "execution_target": "adapter" } });
         assert!(!is_den_server_tool_request(&local));
+    }
+
+    #[test]
+    fn doctor_slash_command_is_always_advertised() {
+        let commands = local_slash_available_commands();
+        assert!(commands.iter().any(|command| command.name == "doctor"));
+        let descriptor = local_slash_descriptor_for_name("doctor").expect("doctor descriptor");
+        assert!(!descriptor.den_required);
     }
 
     #[test]
