@@ -204,7 +204,12 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
     } else if !direct_projected_events.is_empty() {
         Ok((direct_projected_events, None, None))
     } else {
-        diagnostics.observe_unmapped_event(&value);
+        let is_requires_approval_terminator = value.get("message_type").and_then(|v| v.as_str())
+            == Some("stop_reason")
+            && value.get("stop_reason").and_then(|v| v.as_str()) == Some("requires_approval");
+        if !is_requires_approval_terminator {
+            diagnostics.observe_unmapped_event(&value);
+        }
         Ok((Vec::new(), None, None))
     }
 }

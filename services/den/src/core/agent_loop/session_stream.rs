@@ -39,6 +39,7 @@ pub struct SessionTrackingStream {
     assistant_synced_to_session: bool,
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
+    pending_pause_after_tool: Option<RuntimeSemanticEvent>,
 }
 
 impl SessionTrackingStream {
@@ -69,6 +70,7 @@ impl SessionTrackingStream {
             assistant_synced_to_session: false,
             pending_approval: None,
             pending_tool_event: None,
+            pending_pause_after_tool: None,
         }
     }
 
@@ -178,11 +180,34 @@ impl Stream for SessionTrackingStream {
             return Poll::Ready(None);
         }
 
+        if let Some(pause) = self.pending_pause_after_tool.take() {
+            return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
+        }
+
         if let Some(fut) = self.pending_approval.as_mut() {
             match fut.as_mut().poll(cx) {
                 Poll::Ready(Some(pause)) => {
                     self.pending_approval = None;
                     self.persist_assistant_tool_step();
+                    if let RuntimeSemanticEvent::RunPaused {
+                        resume_token: Some(approval_id),
+                        ..
+                    } = &pause
+                    {
+                        if let Some(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::ToolCallRequested {
+                                approval_request_id,
+                                ..
+                            },
+                        )) = self.pending_tool_event.as_mut()
+                        {
+                            *approval_request_id = Some(approval_id.clone());
+                        }
+                    }
+                    if let Some(event) = self.pending_tool_event.take() {
+                        self.pending_pause_after_tool = Some(pause);
+                        return Poll::Ready(Some(Ok(event)));
+                    }
                     self.finished = true;
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
                 }

@@ -147,7 +147,7 @@ impl AcpStreamDiagnostics {
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
                 crate::core::runtime_provider::RuntimeSemanticEvent::RunPaused { reason, .. },
             ) => {
-                if reason == "awaiting_approval" {
+                if reason == "awaiting_approval" || reason == "requires_approval" {
                     self.saw_requires_approval_stop = true;
                 }
                 "run_paused"

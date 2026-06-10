@@ -96,3 +96,49 @@ async fn semantic_turn_completed_emits_single_turn_complete() {
         AcpGatewayEvent::TurnComplete { ref outcome } if outcome == "ok"
     ));
 }
+
+#[tokio::test]
+async fn requires_approval_stop_after_tool_request_is_not_unmapped() {
+    let context = test_mapping_context();
+    let mut diagnostics = AcpStreamDiagnostics::default();
+    let tool_event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+        tool_call_id: "call-approval-1".to_string(),
+        tool_name: "fs_read_text_file".to_string(),
+        title: Some("Read text file".to_string()),
+        kind: Some("read".to_string()),
+        arguments: serde_json::json!({"path":"/workspace/README.md"}),
+        approval_request_id: Some("approval-native-1".to_string()),
+        approval_required: true,
+        approval_reason: Some("workspace read".to_string()),
+        run_id: None,
+    });
+
+    let (events, _, _) = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+        tool_event,
+        context.clone(),
+        &mut diagnostics,
+    )
+    .await
+    .expect("tool mapping should succeed");
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], AcpGatewayEvent::ToolRequest { .. }));
+    assert!(diagnostics.unmapped_event_samples.is_empty());
+
+    let pause_event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {
+        reason: "requires_approval".to_string(),
+        resume_token: Some("approval-native-1".to_string()),
+        expires_at: None,
+    });
+    let (events, _, _) = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+        pause_event,
+        context,
+        &mut diagnostics,
+    )
+    .await
+    .expect("pause mapping should succeed");
+
+    assert!(events.is_empty());
+    assert!(diagnostics.unmapped_event_samples.is_empty());
+    assert!(diagnostics.saw_requires_approval_stop);
+}
