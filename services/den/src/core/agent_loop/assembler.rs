@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    context::load_transcript_messages,
+    context::{load_transcript_messages, repair_tool_call_message_chain},
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
         KeyMemoryProjectionInput, KeyMemoryProjectionResult,
@@ -207,7 +207,7 @@ pub async fn assemble_native_turn_for_bear(
     }
     messages.extend(ctx.tool_messages.iter().cloned());
     Ok(AssembledNativeTurn {
-        messages,
+        messages: repair_tool_call_message_chain(messages),
         key_memory_projection: Some(projection),
     })
 }

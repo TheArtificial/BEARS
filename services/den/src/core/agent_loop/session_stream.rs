@@ -36,6 +36,7 @@ pub struct SessionTrackingStream {
     acp_session_id: String,
     request_id: Option<String>,
     finished: bool,
+    assistant_synced_to_session: bool,
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
 }
@@ -65,14 +66,14 @@ impl SessionTrackingStream {
             acp_session_id,
             request_id,
             finished: false,
+            assistant_synced_to_session: false,
             pending_approval: None,
             pending_tool_event: None,
         }
     }
 
-    fn persist_assistant_tool_step(&self) {
-        let calls: Vec<ChatToolCall> = self
-            .tool_calls
+    fn accumulated_tool_calls(&self) -> Vec<ChatToolCall> {
+        self.tool_calls
             .iter()
             .map(|(id, (name, args))| ChatToolCall {
                 id: id.clone(),
@@ -82,7 +83,37 @@ impl SessionTrackingStream {
                     arguments: args.clone(),
                 },
             })
-            .collect();
+            .collect()
+    }
+
+    fn assistant_content(&self) -> Option<String> {
+        if self.assistant_text.is_empty() {
+            None
+        } else {
+            Some(self.assistant_text.clone())
+        }
+    }
+
+    fn sync_assistant_tool_step_to_session(&mut self) {
+        if self.tool_calls.is_empty() {
+            return;
+        }
+        let calls = self.accumulated_tool_calls();
+        let content = self.assistant_content();
+        let already_synced = self.assistant_synced_to_session;
+        self.store.update(&self.session_key, |session| {
+            upsert_assistant_tool_step_in_messages(
+                &mut session.messages,
+                content.clone(),
+                &calls,
+                already_synced,
+            );
+        });
+        self.assistant_synced_to_session = true;
+    }
+
+    fn persist_assistant_tool_step(&self) {
+        let calls = self.accumulated_tool_calls();
         spawn_persist_native_agent_step(
             self.pool.clone(),
             self.bear_id,
@@ -93,25 +124,50 @@ impl SessionTrackingStream {
             self.assistant_text.clone(),
             &calls,
         );
-        if self.tool_calls.is_empty() {
+        if !self.tool_calls.is_empty() {
+            self.store.update(&self.session_key, |session| {
+                session.step += 1;
+            });
             return;
         }
-        let content = if self.assistant_text.is_empty() {
-            None
-        } else {
-            Some(self.assistant_text.clone())
-        };
+        if self.assistant_text.trim().is_empty() {
+            return;
+        }
         self.store.update(&self.session_key, |session| {
             session.messages.push(crate::core::llm::ChatMessage {
                 role: "assistant".to_string(),
-                content,
+                content: self.assistant_content(),
                 tool_call_id: None,
                 name: None,
-                tool_calls: Some(calls.clone()),
+                tool_calls: None,
             });
             session.step += 1;
         });
     }
+}
+
+fn upsert_assistant_tool_step_in_messages(
+    messages: &mut Vec<crate::core::llm::ChatMessage>,
+    content: Option<String>,
+    calls: &[ChatToolCall],
+    already_synced: bool,
+) {
+    let assistant = crate::core::llm::ChatMessage {
+        role: "assistant".to_string(),
+        content,
+        tool_call_id: None,
+        name: None,
+        tool_calls: Some(calls.to_vec()),
+    };
+    if already_synced {
+        if let Some(last) = messages.last_mut() {
+            if last.role == "assistant" && last.tool_calls.is_some() {
+                *last = assistant;
+                return;
+            }
+        }
+    }
+    messages.push(assistant);
 }
 
 impl Stream for SessionTrackingStream {
@@ -145,6 +201,9 @@ impl Stream for SessionTrackingStream {
                 RuntimeSemanticEvent::AssistantTextDelta { text },
             )))) => {
                 self.assistant_text.push_str(&text);
+                if self.assistant_synced_to_session && !self.tool_calls.is_empty() {
+                    self.sync_assistant_tool_step_to_session();
+                }
                 Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                     RuntimeSemanticEvent::AssistantTextDelta { text },
                 ))))
@@ -161,6 +220,7 @@ impl Stream for SessionTrackingStream {
                     tool_call_id.clone(),
                     (tool_name.clone(), arguments.to_string()),
                 );
+                self.sync_assistant_tool_step_to_session();
                 let approval_required = provider_tool_requires_approval(&tool_name);
                 let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id: tool_call_id.clone(),
@@ -249,5 +309,75 @@ impl Stream for SessionTrackingStream {
             }
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::llm::{ChatMessage, ChatToolCall, ChatToolCallFunction};
+
+    fn sample_tool_call(id: &str) -> ChatToolCall {
+        ChatToolCall {
+            id: id.to_string(),
+            call_type: "function".to_string(),
+            function: ChatToolCallFunction {
+                name: "memory_read".to_string(),
+                arguments: "{}".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn upsert_assistant_tool_step_pushes_then_merges_tool_calls() {
+        let mut messages = Vec::new();
+        upsert_assistant_tool_step_in_messages(
+            &mut messages,
+            None,
+            &[sample_tool_call("call_1")],
+            false,
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(1));
+
+        upsert_assistant_tool_step_in_messages(
+            &mut messages,
+            Some("checking".to_string()),
+            &[sample_tool_call("call_1"), sample_tool_call("call_2")],
+            true,
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content.as_deref(), Some("checking"));
+        assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn assistant_tool_step_sync_precedes_tool_result_in_message_chain() {
+        let mut messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Some("hi".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }];
+        upsert_assistant_tool_step_in_messages(
+            &mut messages,
+            None,
+            &[sample_tool_call("call_1")],
+            false,
+        );
+        messages.push(ChatMessage {
+            role: "tool".to_string(),
+            content: Some("ok".to_string()),
+            tool_call_id: Some("call_1".to_string()),
+            name: None,
+            tool_calls: None,
+        });
+
+        let repaired =
+            crate::core::agent_loop::context::repair_tool_call_message_chain(messages);
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(repaired[1].role, "assistant");
+        assert_eq!(repaired[2].role, "tool");
     }
 }
