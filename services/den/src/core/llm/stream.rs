@@ -157,6 +157,12 @@ impl OpenAiStreamAccumulator {
         }
     }
 
+    /// True after a non-tool-call terminal `finish_reason` (e.g. `stop`) so the byte
+    /// stream adapter can detach without waiting for upstream TCP close.
+    pub fn should_detach_upstream(&self) -> bool {
+        self.finish_reason.is_some() && !self.saw_tool_calls
+    }
+
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
         if self.saw_tool_calls && self.finish_reason.is_none() {
             return self.terminal_events_for_finish("tool_calls");

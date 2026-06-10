@@ -63,6 +63,9 @@ pub fn openai_byte_stream_to_event_stream(
                         Err(err) => queued_events.push_back(Err(err)),
                     }
                 }
+                if accumulator.should_detach_upstream() {
+                    finished = true;
+                }
             }
             Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
             Poll::Ready(None) => {
