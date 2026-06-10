@@ -19,6 +19,9 @@ use crate::{
     core::{
         bears::{db as bears_db, db::BearParams, provision, sync, BearProfileBinding, BearProfile},
         letta::{AgentSummary, LettaAgentListItem},
+        memory::{
+            admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
+        },
         memory_manager_head::fetch_memfs_role_view_health,
         user::db as user_db,
         web_policy,
@@ -34,8 +37,10 @@ use crate::web::bear_create_support::{
     AdminNewBearForm, NewBearForm,
 };
 
+use super::bear_domains;
+
 pub fn router() -> Router<AppState> {
-    Router::new()
+    bear_domains::router().merge(Router::new())
         .route_with_tsr("/bears/", get(list_view))
         .route_with_tsr(
             "/bears/unlinked-letta-agents",
@@ -75,7 +80,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Serialize)]
-struct BearWebSourceRow {
+pub(super) struct BearWebSourceRow {
     id: Uuid,
     scope_kind: String,
     scope_value: String,
@@ -86,7 +91,7 @@ struct BearWebSourceRow {
 }
 
 #[derive(Debug, Serialize)]
-struct BearWebApprovalRow {
+pub(super) struct BearWebApprovalRow {
     id: Uuid,
     scope_kind: String,
     scope_value: String,
@@ -97,7 +102,7 @@ struct BearWebApprovalRow {
 }
 
 #[derive(Debug, Serialize)]
-struct BearWebFetchRow {
+pub(super) struct BearWebFetchRow {
     url: String,
     final_url: Option<String>,
     host: String,
@@ -127,7 +132,7 @@ struct AddWebApprovalForm {
 }
 
 #[derive(Debug, Serialize)]
-struct BearPlanModeRow {
+pub(super) struct BearPlanModeRow {
     id: Uuid,
     user_id: i32,
     username: Option<String>,
@@ -141,7 +146,7 @@ struct BearPlanModeRow {
 }
 
 #[derive(Debug, Serialize)]
-struct BearProfileBindingHealthRow {
+pub(super) struct BearProfileBindingHealthRow {
     profile: String,
     binding_id: String,
     runtime_family: String,
@@ -164,15 +169,15 @@ struct BearProfileBindingHealthRow {
 }
 
 #[derive(Debug, Serialize)]
-struct BearMemberAdminRow {
-    user_id: i32,
-    username: String,
-    display_name: String,
-    role: Option<String>,
-    role_label: String,
+pub(super) struct BearMemberAdminRow {
+    pub(super) user_id: i32,
+    pub(super) username: String,
+    pub(super) display_name: String,
+    pub(super) role: Option<String>,
+    pub(super) role_label: String,
 }
 
-fn membership_role_label(role: Option<&str>) -> String {
+pub(super) fn membership_role_label(role: Option<&str>) -> String {
     match role.map(str::trim).filter(|s| !s.is_empty()) {
         Some("admin") => "Admin — can manage bear settings and members".to_string(),
         Some("member") | None => "Member — can use the bear".to_string(),
@@ -326,7 +331,7 @@ impl BearProfileBindingHealthRow {
     }
 }
 
-async fn bear_web_sources(
+pub(super) async fn bear_web_sources(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebSourceRow>, CustomError> {
@@ -368,7 +373,7 @@ async fn bear_web_sources(
         .collect())
 }
 
-async fn bear_web_approvals(
+pub(super) async fn bear_web_approvals(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebApprovalRow>, CustomError> {
@@ -435,7 +440,7 @@ async fn bear_web_approvals(
         .collect())
 }
 
-async fn bear_web_fetches(
+pub(super) async fn bear_web_fetches(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebFetchRow>, CustomError> {
@@ -479,7 +484,7 @@ async fn bear_web_fetches(
         .collect())
 }
 
-async fn bear_plan_mode_rows(
+pub(super) async fn bear_plan_mode_rows(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearPlanModeRow>, CustomError> {
@@ -541,7 +546,7 @@ async fn bear_plan_mode_rows(
         .collect())
 }
 
-async fn bear_agent_health_rows(
+pub(super) async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
     letta_configured: bool,
@@ -612,102 +617,61 @@ async fn bear_detail_response(
     state: &AppState,
     auth_session: AuthSession,
     id: Uuid,
-    letta_retry_message: Option<String>,
+    message: Option<String>,
 ) -> Result<Response, CustomError> {
-    let web_message = letta_retry_message;
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
-    let member_rows: Vec<BearMemberAdminRow> = bears_db::list_members_for_bear(state.sqlx_pool(), id)
-        .await?
-        .into_iter()
-        .map(|m| BearMemberAdminRow {
-            role_label: membership_role_label(m.role.as_deref()),
-            user_id: m.user_id,
-            username: m.username,
-            display_name: m.display_name,
-            role: m.role,
-        })
-        .collect();
-    let users = user_db::get_users(state.sqlx_pool()).await?;
     let native_runtime = state.config.uses_native_agent_runtime();
-
-    let letta_api_base = state.config.letta_base_url.trim().to_string();
     let letta_configured = state.letta.is_enabled();
-
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
-    let web_sources = bear_web_sources(state.sqlx_pool(), id).await?;
-    let web_approvals = bear_web_approvals(state.sqlx_pool(), id).await?;
-    let web_fetches = bear_web_fetches(state.sqlx_pool(), id).await?;
-    let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), id).await?;
+    let roles_ready = agent_health_rows
+        .iter()
+        .filter(|row| row.health_status == "ok")
+        .count();
+    let roles_error = agent_health_rows
+        .iter()
+        .filter(|row| row.health_status == "error")
+        .count();
 
-    let chat_agent_id = bears_db::profile_binding_id(state.sqlx_pool(), bear.id, BearProfile::Chat)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
-        if native_runtime || !letta_configured {
-            (None, None)
-        } else if let Some(agent_id) = chat_agent_id.as_deref() {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => (Some(AgentSummary::from_letta_agent_state(&v)), None),
-                Err(e) => (None, Some(e.to_string())),
+    let memory_stats: Option<BearMemoryAdminStats> = {
+        let manager = MemoryStoreManager::new(state.config.as_ref());
+        match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
+            Ok(stats) => Some(stats),
+            Err(err) => {
+                tracing::warn!(%id, "admin hub memory stats unavailable: {err}");
+                None
             }
-        } else {
-            (None, None)
-        };
-
-    let tools_json_display = bear
-        .tools_enabled
-        .as_ref()
-        .and_then(|j| serde_json::to_string_pretty(&j.0).ok())
-        .filter(|s| !s.trim().is_empty());
-
-    let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
-        None
-    } else {
-        Some(bear.letta_tool_ids.0.join(", "))
+        }
     };
 
-    let letta_memory_blocks_label = letta_agent_summary
-        .as_ref()
-        .and_then(|s| s.memory_block_count)
-        .map(|n| n.to_string());
-    let letta_tools_count_label = letta_agent_summary
-        .as_ref()
-        .and_then(|s| s.tool_count)
-        .map(|n| n.to_string());
+    let conversation_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1",
+    )
+    .bind(id)
+    .fetch_one(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
 
     web::render_template(
         state,
-        "admin/bears/detail.html",
+        "admin/bears/hub.html",
         auth_session,
         context! {
             bear,
+            message,
             member_count,
-            members => member_rows,
-            users,
             native_runtime,
             context_profile_enabled => bear.context_profile.is_some(),
-            letta_api_base,
             letta_configured,
-            chat_agent_id,
             agent_health_rows,
-            web_sources,
-            web_approvals,
-            web_fetches,
-            plan_mode_rows,
-            letta_agent_summary,
-            letta_agent_fetch_error,
-            letta_retry_message => web_message.clone(),
-            web_message,
-            tools_json_display,
-            letta_tool_ids_display,
-            letta_memory_blocks_label,
-            letta_tools_count_label,
+            roles_ready,
+            roles_error,
+            memory_stats,
+            conversation_count,
+            bear_nav_active => "hub",
         },
     )
     .await
@@ -1321,7 +1285,7 @@ async fn edit_prompt_action(
 async fn grant_member_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
     Form(form): Form<GrantMemberForm>,
 ) -> Result<Response, CustomError> {
     if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
@@ -1331,13 +1295,11 @@ async fn grant_member_action(
         .await?
         .is_none()
     {
-        return bear_detail_response(
-            &state,
-            auth_session,
-            id,
-            Some("User not found.".to_string()),
-        )
-        .await;
+        return Ok(Redirect::to(&format!(
+            "/admin/bears/{id}/access?message={}",
+            urlencoding::encode("User not found.")
+        ))
+        .into_response());
     }
     let role = form.role.trim();
     let role_opt = match role {
@@ -1347,7 +1309,7 @@ async fn grant_member_action(
     };
     bears_db::grant_membership(state.sqlx_pool(), form.user_id, id, role_opt).await?;
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}?message={}",
+        "/admin/bears/{id}/access?message={}",
         urlencoding::encode("Access granted.")
     ))
     .into_response())
@@ -1356,23 +1318,19 @@ async fn grant_member_action(
 async fn revoke_member_action(
     Path((id, user_id)): Path<(Uuid, i32)>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     match bears_db::revoke_membership(state.sqlx_pool(), user_id, id).await {
         Ok(()) => Ok(Redirect::to(&format!(
-            "/admin/bears/{id}?message={}",
+            "/admin/bears/{id}/access?message={}",
             urlencoding::encode("Access removed.")
         ))
         .into_response()),
-        Err(CustomError::NotFound(_)) => {
-            bear_detail_response(
-                &state,
-                auth_session,
-                id,
-                Some("Membership not found.".to_string()),
-            )
-            .await
-        }
+        Err(CustomError::NotFound(_)) => Ok(Redirect::to(&format!(
+            "/admin/bears/{id}/access?message={}",
+            urlencoding::encode("Membership not found.")
+        ))
+        .into_response()),
         Err(err) => Err(err),
     }
 }
@@ -1380,7 +1338,7 @@ async fn revoke_member_action(
 async fn add_web_source_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
     Form(form): Form<AddWebSourceForm>,
 ) -> Result<Response, CustomError> {
     let scope_kind = form.scope_kind.trim();
@@ -1388,18 +1346,20 @@ async fn add_web_source_action(
     if !matches!(scope_kind, "host" | "url")
         || !matches!(policy, "preferred" | "allowed" | "blocked")
     {
-        return bear_detail_response(
-            &state,
-            auth_session,
-            id,
-            Some("Invalid web source policy form.".to_string()),
-        )
-        .await;
+        return Ok(Redirect::to(&format!(
+            "/admin/bears/{id}/policy?message={}",
+            urlencoding::encode("Invalid web source policy form.")
+        ))
+        .into_response());
     }
     let scope_value = match web_policy::normalize_web_scope_value(scope_kind, &form.scope_value) {
         Ok(scope_value) => scope_value,
         Err(err) => {
-            return bear_detail_response(&state, auth_session, id, Some(err.to_string())).await
+            return Ok(Redirect::to(&format!(
+                "/admin/bears/{id}/policy?message={}",
+                urlencoding::encode(&err.to_string())
+            ))
+            .into_response());
         }
     };
     sqlx::query(
@@ -1422,7 +1382,7 @@ async fn add_web_source_action(
     .execute(state.sqlx_pool())
     .await?;
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}?message={}",
+        "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web source saved.")
     ))
     .into_response())
@@ -1438,7 +1398,7 @@ async fn delete_web_source_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}?message={}",
+        "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web source deleted.")
     ))
     .into_response())
@@ -1447,23 +1407,25 @@ async fn delete_web_source_action(
 async fn add_web_approval_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
     Form(form): Form<AddWebApprovalForm>,
 ) -> Result<Response, CustomError> {
     let scope_kind = form.scope_kind.trim();
     if !matches!(scope_kind, "host" | "url") {
-        return bear_detail_response(
-            &state,
-            auth_session,
-            id,
-            Some("Invalid web approval scope.".to_string()),
-        )
-        .await;
+        return Ok(Redirect::to(&format!(
+            "/admin/bears/{id}/policy?message={}",
+            urlencoding::encode("Invalid web approval scope.")
+        ))
+        .into_response());
     }
     let scope_value = match web_policy::normalize_web_scope_value(scope_kind, &form.scope_value) {
         Ok(scope_value) => scope_value,
         Err(err) => {
-            return bear_detail_response(&state, auth_session, id, Some(err.to_string())).await
+            return Ok(Redirect::to(&format!(
+                "/admin/bears/{id}/policy?message={}",
+                urlencoding::encode(&err.to_string())
+            ))
+            .into_response());
         }
     };
     web_policy::record_web_approval(
@@ -1477,7 +1439,7 @@ async fn add_web_approval_action(
     )
     .await?;
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}?message={}",
+        "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web approval added.")
     ))
     .into_response())
@@ -1493,7 +1455,7 @@ async fn revoke_web_approval_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}?message={}",
+        "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web approval revoked.")
     ))
     .into_response())
@@ -1502,7 +1464,7 @@ async fn revoke_web_approval_action(
 async fn provision_missing_roles_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     let message = match provision::provision_missing_bear_roles(
         state.sqlx_pool(),
@@ -1517,13 +1479,17 @@ async fn provision_missing_roles_action(
         Err(err) => format!("Provisioning missing role agents failed: {err}"),
     };
 
-    bear_detail_response(&state, auth_session, id, Some(message)).await
+    Ok(Redirect::to(&format!(
+        "/admin/bears/{id}/roles?message={}",
+        urlencoding::encode(&message)
+    ))
+    .into_response())
 }
 
 async fn retry_letta_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-    auth_session: AuthSession,
+    _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
         return Err(CustomError::NotFound("bear not found".to_string()));
@@ -1575,7 +1541,11 @@ async fn retry_letta_action(
         }
     };
 
-    bear_detail_response(&state, auth_session, id, Some(letta_retry_message)).await
+    Ok(Redirect::to(&format!(
+        "/admin/bears/{id}/advanced?message={}",
+        urlencoding::encode(&letta_retry_message)
+    ))
+    .into_response())
 }
 
 #[cfg(test)]

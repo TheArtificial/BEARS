@@ -1,9 +1,10 @@
+use serde::Serialize;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ConversationRecord {
     pub id: Uuid,
     pub bear_id: Uuid,
@@ -97,6 +98,48 @@ pub async fn ensure_conversation_for_external_id(
             .try_get("updated_at")
             .map_err(|err| CustomError::Database(format!("decode conversation updated_at: {err}")))?,
     })
+}
+
+pub async fn get_conversation_by_id(
+    pool: &PgPool,
+    conversation_id: Uuid,
+) -> Result<Option<ConversationRecord>, CustomError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        FROM conversations
+        WHERE id = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("get conversation by id: {err}")))?;
+
+    row.map(|row| {
+        Ok(ConversationRecord {
+            id: row.try_get("id").map_err(|err| {
+                CustomError::Database(format!("decode conversation id: {err}"))
+            })?,
+            bear_id: row.try_get("bear_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation bear_id: {err}"))
+            })?,
+            external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation external_conversation_id: {err}"))
+            })?,
+            source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
+                CustomError::Database(format!("decode conversation source_acp_session_id: {err}"))
+            })?,
+            current_title: row.try_get("current_title").map_err(|err| {
+                CustomError::Database(format!("decode conversation current_title: {err}"))
+            })?,
+            updated_at: row
+                .try_get("updated_at")
+                .map_err(|err| CustomError::Database(format!("decode conversation updated_at: {err}")))?,
+        })
+    })
+    .transpose()
 }
 
 pub async fn get_conversation_for_external_id(

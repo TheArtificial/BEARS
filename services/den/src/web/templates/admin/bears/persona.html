@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Persona · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Persona · {{ bear.name }}</h2>
+
+<p>
+  <a href="/admin/bears/{{ bear.id }}/edit/prompt">Edit prompts</a>
+</p>
+
+<h3>Prompt mode</h3>
+{% if context_profile_enabled %}
+<p>Role-aware prompts (chat, pair, curate, work, watch).{% if template_id %} Template: <code>{{ template_id | e }}</code>{% endif %}</p>
+{% else %}
+<p>Legacy single system prompt.</p>
+<pre style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ bear.system_prompt }}</pre>
+{% endif %}
+
+{% if compiled_roles and compiled_roles | length > 0 %}
+<h3>Compiled role prompts</h3>
+<table>
+  <thead><tr><th>Role</th><th>Chars</th><th>Preview</th></tr></thead>
+  <tbody>
+  {% for row in compiled_roles %}
+    <tr>
+      <td><strong>{{ row.role | e }}</strong></td>
+      <td>{{ row.char_count }}</td>
+      <td><pre style="white-space: pre-wrap; max-height: 8rem; overflow: auto; margin:0;">{{ row.prompt_preview | e }}</pre></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% elif compiled %}
+<p class="form-hint">Compiled config exists but no rendered prompts were decoded.</p>
+{% else %}
+<p><em>No compiled persona snapshot yet.</em></p>
+{% endif %}
+
+{% if block_bindings and block_bindings | length > 0 %}
+<h3>Block bindings</h3>
+<table>
+  <thead><tr><th>Block key</th><th>Mode</th><th>Custom</th></tr></thead>
+  <tbody>
+  {% for b in block_bindings %}
+    <tr>
+      <td><code>{{ b.block_key | e }}</code></td>
+      <td>{{ b.mode | e }}</td>
+      <td>{% if b.custom_content %}yes{% else %}<em>none</em>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+</div>
+{% endblock %}

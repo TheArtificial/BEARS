@@ -1,0 +1,102 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Policy · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Policy · {{ bear.name }}</h2>
+
+{% if message %}
+<p><strong>{{ message | e }}</strong></p>
+{% endif %}
+
+<h3>Web sources</h3>
+<form method="post" action="/admin/bears/{{ bear.id }}/web-sources" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
+  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
+  <label>Value<br><input type="text" name="scope_value" placeholder="docs.rs" size="36" required></label>
+  <label>Policy<br><select name="policy"><option value="preferred">preferred</option><option value="allowed">allowed</option><option value="blocked">blocked</option></select></label>
+  <button type="submit">Save source</button>
+</form>
+{% if web_sources and web_sources | length > 0 %}
+<table>
+  <thead><tr><th>Policy</th><th>Scope</th><th>Label</th><th></th></tr></thead>
+  <tbody>
+  {% for source in web_sources %}
+    <tr>
+      <td><code>{{ source.policy | e }}</code></td>
+      <td><code>{{ source.scope_kind | e }}</code> / <code>{{ source.scope_value | e }}</code></td>
+      <td>{% if source.label %}{{ source.label | e }}{% else %}<em>none</em>{% endif %}</td>
+      <td><form method="post" action="/admin/bears/{{ bear.id }}/web-sources/{{ source.id }}/delete"><button type="submit">Delete</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No web sources configured.</em></p>
+{% endif %}
+
+<h3>Web approvals</h3>
+<form method="post" action="/admin/bears/{{ bear.id }}/web-approvals" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
+  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
+  <label>Value<br><input type="text" name="scope_value" placeholder="example.com" size="36" required></label>
+  <button type="submit">Record approval</button>
+</form>
+{% if web_approvals and web_approvals | length > 0 %}
+<table>
+  <thead><tr><th>Scope</th><th>Source</th><th>By</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for a in web_approvals %}
+    <tr>
+      <td><code>{{ a.scope_kind | e }}</code> / <code>{{ a.scope_value | e }}</code></td>
+      <td>{{ a.source | e }}</td>
+      <td>{% if a.approved_by_user_label %}{{ a.approved_by_user_label | e }}{% else %}<em>unknown</em>{% endif %}</td>
+      <td>{{ a.created_at }}</td>
+      <td><form method="post" action="/admin/bears/{{ bear.id }}/web-approvals/{{ a.id }}/revoke"><button type="submit">Revoke</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No active web approvals.</em></p>
+{% endif %}
+
+<h3>Recent web fetches</h3>
+{% if web_fetches and web_fetches | length > 0 %}
+<table>
+  <thead><tr><th>Host</th><th>URL</th><th>Status</th><th>When</th></tr></thead>
+  <tbody>
+  {% for f in web_fetches %}
+    <tr>
+      <td>{{ f.host | e }}</td>
+      <td><code>{{ f.url | e }}</code></td>
+      <td>{% if f.http_status %}{{ f.http_status }}{% else %}<em>n/a</em>{% endif %}</td>
+      <td>{{ f.fetched_at }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No recent fetches logged.</em></p>
+{% endif %}
+
+<h3>Plan mode sessions</h3>
+{% if plan_mode_rows and plan_mode_rows | length > 0 %}
+<table>
+  <thead><tr><th>User</th><th>Session</th><th>State</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for p in plan_mode_rows %}
+    <tr>
+      <td>{% if p.username %}{{ p.username | e }}{% else %}user {{ p.user_id }}{% endif %}</td>
+      <td><code>{{ p.acp_session_id | e }}</code></td>
+      <td>{{ p.state | e }}</td>
+      <td>{{ p.updated_at }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No plan mode sessions.</em></p>
+{% endif %}
+</div>
+{% endblock %}

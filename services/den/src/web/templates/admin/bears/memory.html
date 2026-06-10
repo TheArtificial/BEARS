@@ -1,0 +1,88 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Memory · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Memory · {{ bear.name }}</h2>
+
+{% if stats %}
+<h3>Store stats</h3>
+<dl>
+  <dt>Database</dt>
+  <dd><code>{{ stats.db_path | e }}</code>{% if stats.db_exists %} ({{ stats.db_size_bytes }} bytes){% else %} <em>missing</em>{% endif %}</dd>
+  <dt>Records</dt>
+  <dd>{{ stats.record_count }} total ({{ stats.shared_count }} shared, {{ stats.role_local_count }} role-local)</dd>
+  <dt>Paths</dt>
+  <dd>{{ stats.distinct_paths }}</dd>
+  <dt>Sequence high water</dt>
+  <dd>{{ stats.sequence_high_water }}</dd>
+  <dt>Pending</dt>
+  <dd>{{ stats.pending_proposals }} proposals, {{ stats.pending_observations }} observations</dd>
+</dl>
+{% else %}
+<p><em>Memory stats unavailable for this bear.</em></p>
+{% endif %}
+
+<h3>Browse by path</h3>
+<form method="get" action="/admin/bears/{{ bear.id }}/memory" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:end;">
+  <label>Path<br>
+    <input type="text" name="path" value="{% if selected_path %}{{ selected_path | e }}{% endif %}" size="48" list="memory-paths" placeholder="pair/some/path">
+  </label>
+  <datalist id="memory-paths">
+    {% for p in paths %}
+    <option value="{{ p | e }}">
+    {% endfor %}
+  </datalist>
+  <button type="submit">Load</button>
+</form>
+
+{% if path_content %}
+<h4>Path content</h4>
+{% if path_content.content %}
+<pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ path_content.content | e }}</pre>
+{% else %}
+<pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ path_content | tojson }}</pre>
+{% endif %}
+{% endif %}
+
+<h3>Recent records</h3>
+{% if recent and recent | length > 0 %}
+<table>
+  <thead><tr><th>ID</th><th>Seq</th><th>Scope</th><th>Path</th><th>Kind</th><th></th></tr></thead>
+  <tbody>
+  {% for r in recent %}
+    <tr>
+      <td><code>{{ r.memory_id | e }}</code></td>
+      <td>{{ r.sequence_no }}</td>
+      <td>{{ r.scope_type }} {% if r.scope_role %}({{ r.scope_role | e }}){% endif %}</td>
+      <td>{% if r.logical_path %}<code>{{ r.logical_path | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{{ r.kind | e }}</td>
+      <td><a href="/admin/bears/{{ bear.id }}/memory/records/{{ r.memory_id | e }}">View</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No memory records yet.</em></p>
+{% endif %}
+
+{% if proposals and proposals | length > 0 %}
+<h3>Pending proposals</h3>
+<table>
+  <thead><tr><th>ID</th><th>Seq</th><th>Status</th><th>Created</th></tr></thead>
+  <tbody>
+  {% for p in proposals %}
+    <tr>
+      <td><code>{{ p.proposal_id | e }}</code></td>
+      <td>{{ p.sequence_no }}</td>
+      <td>{{ p.status | e }}</td>
+      <td>{{ p.created_at }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+</div>
+{% endblock %}

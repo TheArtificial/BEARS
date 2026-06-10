@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use time::OffsetDateTime;
@@ -7,7 +8,7 @@ use crate::errors::CustomError;
 
 use super::logical_path::{LogicalMemoryPath, MemoryScopeType};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MemoryRecordRow {
     pub memory_id: String,
     pub sequence_no: i64,

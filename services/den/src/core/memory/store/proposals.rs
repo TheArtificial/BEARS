@@ -6,7 +6,7 @@ use crate::errors::CustomError;
 
 use super::records::BearMemoryStore;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SqliteMemoryProposal {
     pub proposal_id: String,
     pub sequence_no: i64,
