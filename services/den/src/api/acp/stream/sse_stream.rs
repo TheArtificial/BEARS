@@ -296,6 +296,14 @@ impl AcpRuntimeSseStream {
         for event in initial_events {
             pending.push_back(acp_event_to_adapter_sse(event));
         }
+        let mut turn_controller = AcpTurnController::new();
+        turn_controller.set_client_label(context.client.clone());
+        turn_controller.on_stream_started();
+        if let Some(update) = turn_controller.take_status_update() {
+            pending.push_back(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText {
+                text: update.text.to_string(),
+            }));
+        }
         Self {
             inner: Box::pin(inner),
             pending,
@@ -312,11 +320,15 @@ impl AcpRuntimeSseStream {
             parked_adapter_result_rx: None,
             cancel_rx: None,
             cancel_handle: None,
-            turn_controller: {
-                let mut controller = AcpTurnController::new();
-                controller.on_stream_started();
-                controller
-            },
+            turn_controller,
+        }
+    }
+
+    fn push_turn_status_update(&mut self) {
+        if let Some(update) = self.turn_controller.take_status_update() {
+            self.push_adapter_event(AcpGatewayEvent::StatusText {
+                text: update.text.to_string(),
+            });
         }
     }
 
@@ -518,6 +530,7 @@ impl Stream for AcpRuntimeSseStream {
                                     effect.tool_name.clone(),
                                     effect.route.into(),
                                 );
+                                this.push_turn_status_update();
                             }
                             for event in events {
                                 for event in this.text_chunker.push(event) {
@@ -585,6 +598,7 @@ impl Stream for AcpRuntimeSseStream {
                             if settlement.timed_out {
                                 this.turn_controller.on_tool_timeout(done_id);
                             }
+                            this.push_turn_status_update();
                         }
                         if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result) {
                             this.push_adapter_event(plan_event);

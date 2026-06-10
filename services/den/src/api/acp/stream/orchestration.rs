@@ -9,7 +9,7 @@ use uuid::Uuid;
 /// How long to eagerly drive a freshly-started ACP turn before returning the response, so a
 /// tool obligation is registered up front. Bounds the wait when the turn parks on a tool
 /// result or slow upstream; the remainder of the turn is driven lazily by the response body.
-const ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS: u64 = 50;
+const ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS: u64 = 3000;
 
 use crate::{
     api::{

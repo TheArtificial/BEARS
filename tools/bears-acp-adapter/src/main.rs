@@ -4494,10 +4494,10 @@ async fn handle_prompt_with_retry(
                 terminal_user_message = outcome.terminal_user_message;
             }
             upstream_errors.extend(outcome.upstream_errors);
-            if saw_done && !saw_tool_activity {
+            if saw_done {
                 eprintln!(
-                    "bears-acp-adapter: session/prompt terminal Den event received; ending read loop early session_id={}",
-                    session_id
+                    "bears-acp-adapter: session/prompt terminal Den event received; ending read loop early session_id={} saw_tool_activity={}",
+                    session_id, saw_tool_activity
                 );
                 break;
             }

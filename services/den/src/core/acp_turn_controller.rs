@@ -99,8 +99,8 @@ pub struct AcpTurnStatusSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTurnStatusUpdate {
-    pub key: &'static str,
-    pub text: &'static str,
+    pub key: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -285,7 +285,9 @@ pub struct AcpTurnController {
     emitted_terminal: Option<AcpTerminalOutcome>,
     orphaned_requires_approval: bool,
     late_results_ignored: usize,
-    last_status_key: Option<&'static str>,
+    last_status_key: Option<String>,
+    client_label: Option<String>,
+    last_settled_tool_name: Option<String>,
 }
 
 impl Default for AcpTurnController {
@@ -304,6 +306,15 @@ impl AcpTurnController {
             orphaned_requires_approval: false,
             late_results_ignored: 0,
             last_status_key: None,
+            client_label: None,
+            last_settled_tool_name: None,
+        }
+    }
+
+    pub fn set_client_label(&mut self, client: impl Into<String>) {
+        let label = client.into();
+        if !label.trim().is_empty() {
+            self.client_label = Some(label);
         }
     }
 
@@ -362,54 +373,95 @@ impl AcpTurnController {
 
     pub fn take_status_update(&mut self) -> Option<AcpTurnStatusUpdate> {
         let update = self.current_status_update()?;
-        if self.last_status_key == Some(update.key) {
+        if self.last_status_key.as_deref() == Some(update.key.as_str()) {
             return None;
         }
-        self.last_status_key = Some(update.key);
+        self.last_status_key = Some(update.key.clone());
         Some(update)
     }
 
     fn current_status_update(&self) -> Option<AcpTurnStatusUpdate> {
         if self.orphaned_requires_approval && self.phase != AcpTurnPhase::Terminal {
             return Some(AcpTurnStatusUpdate {
-                key: "recovering_stale_approval",
-                text: "Recovering stale model approval…",
+                key: "recovering_stale_approval".to_string(),
+                text: "Recovering stale model approval…".to_string(),
             });
         }
         match self.phase {
             AcpTurnPhase::Created => None,
-            AcpTurnPhase::Streaming => Some(AcpTurnStatusUpdate {
-                key: "thinking",
-                text: "Thinking…",
-            }),
-            AcpTurnPhase::WaitingForObligations => {
-                let snapshot = self.status_snapshot();
-                if snapshot.pending_adapter_tools > 0 {
-                    Some(AcpTurnStatusUpdate {
-                        key: "waiting_for_local_tool",
-                        text: "Waiting for local tool result…",
-                    })
-                } else if snapshot.pending_den_tools > 0 {
-                    Some(AcpTurnStatusUpdate {
-                        key: "running_den_tool",
-                        text: "Running Den server tool…",
-                    })
-                } else {
-                    Some(AcpTurnStatusUpdate {
-                        key: "waiting_for_obligations",
-                        text: "Waiting for turn obligations…",
-                    })
-                }
-            }
-            AcpTurnPhase::ContinuingAfterTool => Some(AcpTurnStatusUpdate {
-                key: "continuing_after_tool",
-                text: "Continuing after tool result…",
-            }),
+            AcpTurnPhase::Streaming => Some(self.planning_status()),
+            AcpTurnPhase::WaitingForObligations => Some(self.waiting_for_obligations_status()),
+            AcpTurnPhase::ContinuingAfterTool => Some(self.continuing_after_tool_status()),
             AcpTurnPhase::Cancelling => Some(AcpTurnStatusUpdate {
-                key: "cancelling",
-                text: "Cancelling turn…",
+                key: "cancelling".to_string(),
+                text: "Cancelling turn…".to_string(),
             }),
             AcpTurnPhase::Terminal => None,
+        }
+    }
+
+    fn planning_status(&self) -> AcpTurnStatusUpdate {
+        let client = self
+            .client_label
+            .as_deref()
+            .map(client_display_name)
+            .unwrap_or("your editor");
+        AcpTurnStatusUpdate {
+            key: "planning".to_string(),
+            text: format!(
+                "Planning next step — may call Den memory tools or {client} workspace tools…"
+            ),
+        }
+    }
+
+    fn waiting_for_obligations_status(&self) -> AcpTurnStatusUpdate {
+        let open: Vec<_> = self
+            .obligations
+            .values()
+            .filter(|obligation| obligation.status.is_open())
+            .collect();
+        let client = self
+            .client_label
+            .as_deref()
+            .map(client_display_name)
+            .unwrap_or("your editor");
+        let extra = if open.len() > 1 {
+            format!(" (+{} more)", open.len() - 1)
+        } else {
+            String::new()
+        };
+        if let Some(first) = open.first() {
+            let label = humanize_tool_name(&first.tool_name);
+            return match first.route {
+                AcpToolExecutionRoute::AdapterLocal => AcpTurnStatusUpdate {
+                    key: format!("waiting_local:{}", first.tool_name),
+                    text: format!("Waiting for {label} in {client}{extra}…"),
+                },
+                AcpToolExecutionRoute::DenServer => AcpTurnStatusUpdate {
+                    key: format!("running_den:{}", first.tool_name),
+                    text: format!("Running {label} on Den{extra}…"),
+                },
+                AcpToolExecutionRoute::Unsupported => AcpTurnStatusUpdate {
+                    key: format!("unsupported_tool:{}", first.tool_name),
+                    text: format!("Tool not available: {label}{extra}…"),
+                },
+            };
+        }
+        AcpTurnStatusUpdate {
+            key: "waiting_for_obligations".to_string(),
+            text: "Waiting for turn obligations…".to_string(),
+        }
+    }
+
+    fn continuing_after_tool_status(&self) -> AcpTurnStatusUpdate {
+        let tool_name = self
+            .last_settled_tool_name
+            .as_deref()
+            .unwrap_or("tool");
+        let label = humanize_tool_name(tool_name);
+        AcpTurnStatusUpdate {
+            key: format!("continuing_after:{tool_name}"),
+            text: format!("Continuing after {label}…"),
         }
     }
 
@@ -571,6 +623,9 @@ impl AcpTurnController {
         } else {
             AcpObligationStatus::Failed
         };
+        if ok {
+            self.last_settled_tool_name = Some(obligation.tool_name.clone());
+        }
         self.advance_after_obligation_change();
         AcpToolResultDisposition::Accepted
     }
@@ -580,6 +635,31 @@ impl AcpTurnController {
             self.phase = AcpTurnPhase::ContinuingAfterTool;
         }
     }
+}
+
+fn client_display_name(client: &str) -> &'static str {
+    match client.trim().to_ascii_lowercase().as_str() {
+        "zed" => "Zed",
+        "cursor" => "Cursor",
+        "vscode" | "code" => "VS Code",
+        "" => "your editor",
+        _ => "your editor",
+    }
+}
+
+fn humanize_tool_name(tool_name: &str) -> String {
+    if let Some(tool) = crate::core::acp_tools::AcpToolName::from_provider_alias(tool_name) {
+        return crate::core::acp_tools::acp_tool_display(tool).label.to_string();
+    }
+    if let Some(rest) = tool_name.strip_prefix("mcp__") {
+        let parts: Vec<&str> = rest.split("__").collect();
+        if parts.len() >= 2 {
+            let server = parts[0].replace('_', " ");
+            let action = parts[1..].join(" ").replace('_', " ");
+            return format!("{server}: {action}");
+        }
+    }
+    tool_name.replace('_', " ")
 }
 
 #[cfg(test)]
@@ -927,28 +1007,30 @@ mod tests {
         assert_eq!(turn.take_status_update(), None);
 
         turn.on_stream_started();
-        assert_eq!(turn.take_status_update().expect("thinking").key, "thinking");
+        let planning = turn.take_status_update().expect("planning");
+        assert_eq!(planning.key, "planning");
+        assert!(planning.text.contains("Planning next step"));
         assert_eq!(turn.take_status_update(), None);
 
+        turn.set_client_label("zed");
         turn.on_tool_request(
             "call_1",
             "fs_read_text_file",
             AcpToolExecutionRoute::AdapterLocal,
         );
-        assert_eq!(
-            turn.take_status_update().expect("waiting").key,
-            "waiting_for_local_tool"
-        );
+        let waiting = turn.take_status_update().expect("waiting");
+        assert_eq!(waiting.key, "waiting_local:fs_read_text_file");
+        assert!(waiting.text.contains("Zed"));
+        assert!(waiting.text.contains("Read file"));
         assert_eq!(turn.take_status_update(), None);
 
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
             AcpToolResultDisposition::Accepted
         );
-        assert_eq!(
-            turn.take_status_update().expect("continuing").key,
-            "continuing_after_tool"
-        );
+        let continuing = turn.take_status_update().expect("continuing");
+        assert_eq!(continuing.key, "continuing_after:fs_read_text_file");
+        assert!(continuing.text.contains("Read file"));
         assert_eq!(turn.take_status_update(), None);
     }
 }
