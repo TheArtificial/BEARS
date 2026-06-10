@@ -3,8 +3,10 @@
 //! Emits [`crate::core::runtime_contracts::RuntimeStreamEvent`] directly — no Letta JSON intermediate.
 
 mod client;
+mod idle_byte_stream;
 mod stream;
 
+pub(crate) use idle_byte_stream::byte_stream_with_idle_timeout;
 pub use client::{
     ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, LlmClient,
     LlmToolDefinition,

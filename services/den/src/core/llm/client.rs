@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{Stream, StreamExt};
 use reqwest::Response;
@@ -152,21 +152,52 @@ impl LlmClient {
             ));
         }
         let url = format!("{}/chat/completions", self.base_url);
-        let mut req = self.http.post(url).json(&request.to_body());
+        tracing::info!(
+            model = %request.model,
+            message_count = request.messages.len(),
+            tool_count = request.tools.len(),
+            stream = request.stream,
+            llm_url = %url,
+            "LLM chat/completions request starting"
+        );
+        let started = Instant::now();
+        let mut req = self.http.post(&url).json(&request.to_body());
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
         let resp = req
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("LLM chat/completions request failed: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!(
+                    model = %request.model,
+                    duration_ms = started.elapsed().as_millis(),
+                    error = %e,
+                    "LLM chat/completions request failed"
+                );
+                CustomError::System(format!("LLM chat/completions request failed: {e}"))
+            })?;
+        let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                model = %request.model,
+                http_status,
+                duration_ms = started.elapsed().as_millis(),
+                response_body_len = text.len(),
+                "LLM chat/completions returned error status"
+            );
             return Err(CustomError::System(format!(
                 "LLM chat/completions HTTP {status}: {text}"
             )));
         }
+        tracing::info!(
+            model = %request.model,
+            http_status,
+            duration_ms = started.elapsed().as_millis(),
+            "LLM chat/completions response received"
+        );
         Ok(resp)
     }
 

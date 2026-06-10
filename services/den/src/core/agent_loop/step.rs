@@ -1,18 +1,25 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use futures::Stream;
+use tokio::time::timeout;
 
 use crate::{
     core::{
         agent_loop::{context::repair_tool_call_message_chain, AgentLoopSession},
-        llm::{ChatCompletionRequest, LlmClient},
+        llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
         native_runtime::openai_byte_stream_to_event_stream,
         runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
     },
     errors::CustomError,
 };
+
+/// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.
+const NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max silence between upstream SSE byte chunks after the handshake.
+const NATIVE_LLM_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 enum LazyAgentStepState {
     Init {
@@ -26,10 +33,64 @@ struct LazyAgentStepStream {
 }
 
 impl LazyAgentStepStream {
-    fn new(llm: LlmClient, request: ChatCompletionRequest) -> Self {
+    fn new(llm: LlmClient, request: ChatCompletionRequest, session_key: String) -> Self {
+        let model = request.model.clone();
+        let message_count = request.messages.len();
+        let tool_count = request.tools.len();
         let fut = Box::pin(async move {
-            let byte_stream = llm.chat_completions_byte_stream(&request).await?;
-            Ok(openai_byte_stream_to_event_stream(byte_stream))
+            let started = Instant::now();
+            tracing::info!(
+                session_key = %session_key,
+                model = %model,
+                message_count,
+                tool_count,
+                handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                "LLM chat/completions handshake starting"
+            );
+            let handshake = timeout(
+                NATIVE_LLM_HANDSHAKE_TIMEOUT,
+                llm.chat_completions_byte_stream(&request),
+            )
+            .await;
+            match handshake {
+                Err(_) => {
+                    tracing::warn!(
+                        session_key = %session_key,
+                        model = %model,
+                        duration_ms = started.elapsed().as_millis(),
+                        handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                        "LLM chat/completions handshake timed out"
+                    );
+                    return Err(CustomError::System(format!(
+                        "LLM chat/completions handshake timed out after {}s",
+                        NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
+                    )));
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        session_key = %session_key,
+                        model = %model,
+                        duration_ms = started.elapsed().as_millis(),
+                        error = %err,
+                        "LLM chat/completions handshake failed"
+                    );
+                    return Err(err);
+                }
+                Ok(Ok(byte_stream)) => {
+                    tracing::info!(
+                        session_key = %session_key,
+                        model = %model,
+                        duration_ms = started.elapsed().as_millis(),
+                        idle_timeout_secs = NATIVE_LLM_STREAM_IDLE_TIMEOUT.as_secs(),
+                        "LLM chat/completions handshake connected"
+                    );
+                    let byte_stream = byte_stream_with_idle_timeout(
+                        byte_stream,
+                        NATIVE_LLM_STREAM_IDLE_TIMEOUT,
+                    );
+                    Ok(openai_byte_stream_to_event_stream(byte_stream))
+                }
+            }
         });
         Self {
             state: Some(LazyAgentStepState::Init { fut }),
@@ -108,5 +169,9 @@ pub async fn run_agent_step_stream(
         temperature: None,
         max_tokens: None,
     };
-    Ok(Box::pin(LazyAgentStepStream::new(llm.clone(), request)))
+    Ok(Box::pin(LazyAgentStepStream::new(
+        llm.clone(),
+        request,
+        session.session_key.clone(),
+    )))
 }
