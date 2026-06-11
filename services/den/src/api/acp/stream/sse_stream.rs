@@ -66,7 +66,8 @@ pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     pub(in crate::api::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
     pub(in crate::api::acp) turn_controller: AcpTurnController,
-    pub(in crate::api::acp) last_user_visible_status_at: Instant,
+    /// Last time any SSE frame was queued for the adapter (assistant text, tools, status, etc.).
+    pub(in crate::api::acp) last_adapter_update_at: Instant,
     pub(in crate::api::acp) status_heartbeat_interval: Duration,
     status_heartbeat_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
 }
@@ -231,24 +232,19 @@ impl AcpRuntimeSseStream {
         if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
             self.session_info_event_sent = true;
         }
-        if matches!(
-            event,
-            AcpGatewayEvent::StatusText { .. } | AcpGatewayEvent::AssistantTextDelta { .. }
-        ) {
-            self.touch_user_visible_status();
-        }
         self.diagnostics.observe_mapped_event(&event, substantive);
         self.pending.push_back(acp_event_to_adapter_sse(event));
+        self.record_adapter_update_emitted();
     }
 
-    fn touch_user_visible_status(&mut self) {
-        self.last_user_visible_status_at = Instant::now();
+    fn record_adapter_update_emitted(&mut self) {
+        self.last_adapter_update_at = Instant::now();
         self.status_heartbeat_sleep = None;
     }
 
     fn should_emit_status_heartbeat(&self) -> bool {
         self.turn_controller.phase() != AcpTurnPhase::Terminal
-            && self.last_user_visible_status_at.elapsed() >= self.status_heartbeat_interval
+            && self.last_adapter_update_at.elapsed() >= self.status_heartbeat_interval
     }
 
     fn emit_status_heartbeat(&mut self) {
@@ -272,7 +268,7 @@ impl AcpRuntimeSseStream {
         if self.status_heartbeat_sleep.is_none() {
             let remaining = self
                 .status_heartbeat_interval
-                .saturating_sub(self.last_user_visible_status_at.elapsed());
+                .saturating_sub(self.last_adapter_update_at.elapsed());
             self.status_heartbeat_sleep = Some(Box::pin(tokio::time::sleep(remaining)));
         }
     }
@@ -379,8 +375,10 @@ impl AcpRuntimeSseStream {
         active_turn_guard: RoleTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();
+        let mut last_adapter_update_at = Instant::now();
         for event in initial_events {
             pending.push_back(acp_event_to_adapter_sse(event));
+            last_adapter_update_at = Instant::now();
         }
         let mut turn_controller = AcpTurnController::new();
         turn_controller.set_client_label(context.client.clone());
@@ -402,18 +400,10 @@ impl AcpRuntimeSseStream {
             cancel_rx: None,
             cancel_handle: None,
             turn_controller,
-            last_user_visible_status_at: Instant::now(),
+            last_adapter_update_at,
             status_heartbeat_interval: ACP_STATUS_HEARTBEAT_INTERVAL,
             status_heartbeat_sleep: None,
         };
-        if let Some(update) = stream.turn_controller.take_status_update() {
-            stream.enqueue_adapter_event(
-                AcpGatewayEvent::StatusText {
-                    text: update.text.to_string(),
-                },
-                false,
-            );
-        }
         stream
     }
 

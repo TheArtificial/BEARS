@@ -7473,7 +7473,7 @@ async fn handle_den_event(
         }
         "status_text" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if classify_thought_status(text) == ThoughtStatusDisposition::KeepThought {
+            if !text.is_empty() {
                 send_agent_thought_chunk_for_turn(
                     shared_state,
                     session_id,
@@ -8648,50 +8648,6 @@ fn normalize_thought_chunk_text(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{text}.\n"))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ThoughtStatusDisposition {
-    Suppress,
-    KeepThought,
-}
-
-fn classify_thought_status(text: &str) -> ThoughtStatusDisposition {
-    let normalized = text.trim();
-    if normalized.is_empty() {
-        return ThoughtStatusDisposition::Suppress;
-    }
-
-    let lower = normalized.to_ascii_lowercase();
-
-    if lower.contains("stale approval")
-        || lower.contains("retrying your prompt")
-        || lower.contains("recovery failed")
-        || lower.contains("please start a new acp session")
-        || lower.contains("waiting for approval")
-        || lower.contains("please approve or deny")
-    {
-        return ThoughtStatusDisposition::KeepThought;
-    }
-
-    if lower.starts_with("preparing")
-        || lower.starts_with("running")
-        || lower.starts_with("waiting")
-        || lower.starts_with("completed")
-        || lower.starts_with("posting")
-        || lower.starts_with("posted")
-        || lower.starts_with("executing")
-        || lower.starts_with("calling tool")
-        || lower.starts_with("invoking tool")
-        || lower.starts_with("tool ")
-        || lower.contains("permission request")
-        || lower.contains("tool result")
-        || lower.contains("local tool")
-    {
-        return ThoughtStatusDisposition::Suppress;
-    }
-
-    ThoughtStatusDisposition::Suppress
-}
-
 async fn write_notification(method: &str, params: Value) -> Result<()> {
     JsonRpcTransport::default().notify(method, params).await
 }
@@ -9857,34 +9813,6 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(
             outcome.terminal_user_message.as_deref(),
             Some("Check Codepool/Letta logs and retry if appropriate.")
-        );
-    }
-
-    #[test]
-    fn classify_thought_status_suppresses_routine_tool_progress() {
-        assert_eq!(
-            classify_thought_status("Preparing tool execution"),
-            ThoughtStatusDisposition::Suppress
-        );
-        assert_eq!(
-            classify_thought_status("Running ripgrep in workspace"),
-            ThoughtStatusDisposition::Suppress
-        );
-        assert_eq!(
-            classify_thought_status("Posted tool result to Den"),
-            ThoughtStatusDisposition::Suppress
-        );
-    }
-
-    #[test]
-    fn classify_thought_status_keeps_recovery_notices() {
-        assert_eq!(
-            classify_thought_status("Please approve or deny the pending request"),
-            ThoughtStatusDisposition::KeepThought
-        );
-        assert_eq!(
-            classify_thought_status("Waiting for approval before continuing"),
-            ThoughtStatusDisposition::KeepThought
         );
     }
 

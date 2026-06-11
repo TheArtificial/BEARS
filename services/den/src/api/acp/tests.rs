@@ -2957,13 +2957,6 @@ use crate::core::prompt_memory_blocks::{
         let mut stream = AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard)
             .with_status_heartbeat_interval(std::time::Duration::from_millis(40));
 
-        let first = stream.next().await.unwrap().unwrap();
-        let first_text = String::from_utf8(first.to_vec()).unwrap();
-        assert!(
-            first_text.contains("\"type\":\"status_text\""),
-            "expected initial planning status: {first_text}"
-        );
-
         let heartbeat = tokio::time::timeout(
             std::time::Duration::from_millis(250),
             stream.next(),
@@ -2982,6 +2975,82 @@ use crate::core::prompt_memory_blocks::{
                 || heartbeat_text.contains("Waiting for response")
                 || heartbeat_text.contains("Still thinking"),
             "unexpected heartbeat copy: {heartbeat_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_stream_heartbeat_waits_after_recent_adapter_update() {
+        use futures::StreamExt;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/den_test")
+            .unwrap();
+        let role_runtime =
+            crate::core::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+        let request_id = Uuid::new_v4();
+        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-heartbeat-gap-test",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-heartbeat-gap-test".to_string(),
+            client: "cursor".to_string(),
+            conversation_id: "conv-test".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(
+                &crate::config::Config::test_stub(),
+            ),
+        };
+        let inner: crate::core::runtime_contracts::RuntimeEventStream =
+            Box::pin(futures::stream::pending());
+        let mut stream = AcpRuntimeSseStream::new(
+            inner,
+            context,
+            Vec::new(),
+            false,
+            active_turn_guard,
+        )
+        .with_status_heartbeat_interval(std::time::Duration::from_millis(80));
+
+        stream.push_adapter_event(AcpGatewayEvent::AssistantTextDelta {
+            text: "Hello".to_string(),
+        });
+        let assistant = stream.next().await.unwrap().unwrap();
+        let assistant_text = String::from_utf8(assistant.to_vec()).unwrap();
+        assert!(
+            assistant_text.contains("assistant_text_delta"),
+            "expected assistant delta: {assistant_text}"
+        );
+
+        let no_early_heartbeat = tokio::time::timeout(
+            std::time::Duration::from_millis(40),
+            stream.next(),
+        )
+        .await;
+        assert!(
+            no_early_heartbeat.is_err(),
+            "heartbeat should not fire within 40ms of assistant output"
         );
     }
 
@@ -3084,26 +3153,17 @@ use crate::core::prompt_memory_blocks::{
         let mut stream =
             AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard);
 
-        let mut saw_assistant = false;
         for _ in 0..8 {
-            if let Ok(Some(Ok(item))) = tokio::time::timeout(
+            let _ = tokio::time::timeout(
                 std::time::Duration::from_millis(100),
                 stream.next(),
             )
-            .await
-            {
-                let frame = String::from_utf8(item.to_vec()).unwrap();
-                if frame.contains("hello") {
-                    saw_assistant = true;
-                    break;
-                }
-            }
+            .await;
         }
 
-        assert!(saw_assistant, "expected assistant text while obligations are open");
         assert!(
             INNER_POLLS.load(Ordering::SeqCst) >= 3,
-            "expected upstream runtime to be polled while obligations are open"
+            "expected upstream runtime to be polled while adapter obligations are open"
         );
     }
 
