@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         bears::{
-            db as bears_db, model::BearProfile, provision::role_prompt_text, Bear,
+            db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
         },
         memory::MemoryStoreManager,
         tools::work_surface::WorkSurfaceSessionHints,
@@ -43,6 +43,7 @@ pub struct AssembleTurnContext<'a> {
     pub client_context: Option<&'a serde_json::Value>,
     pub include_prompt_memory: bool,
     pub key_memory_cache: Option<&'a KeyMemoryProjectionCacheKey>,
+    pub native_runtime: bool,
 }
 
 impl<'a> AssembleTurnContext<'a> {
@@ -105,7 +106,7 @@ pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, CustomError> {
-    let compiled_prompt = role_prompt_text(ctx.pool, bear, ctx.role).await?;
+    let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.role).await?;
     let projection = match project_key_memory(KeyMemoryProjectionInput {
         pool: ctx.pool,
         stores: ctx.stores,
@@ -114,6 +115,7 @@ pub async fn assemble_native_turn_for_bear(
         conversation_id: ctx.conversation_id,
         session_hints: ctx.session_hints(),
         work_surface_status_override: ctx.work_surface_status_override(),
+        native_runtime: ctx.native_runtime,
     })
     .await
     {

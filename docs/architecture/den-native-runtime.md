@@ -97,7 +97,7 @@ Every native turn builds **Turn Context** by projecting the Bear Operating Envir
 
 ### Layer 1 — Compiled system prompt (`bear_compiled_configs`)
 
-For Bears with a managed `context_profile`, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[role]`** — the same materialized prompt Letta provisioning already uses via `role_prompt_text`.
+For Bears with a managed `context_profile`, the **system message base** comes from **`bear_compiled_configs.rendered_prompts_json[profile]`** — the same materialized prompt Letta provisioning already uses via `profile_prompt_text`.
 
 Compilation merges:
 
@@ -273,7 +273,7 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `role_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
+Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
 
 ## What this supersedes
 

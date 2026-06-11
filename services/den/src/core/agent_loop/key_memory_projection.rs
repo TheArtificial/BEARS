@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::role_config_hash, Bear},
+        bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash, Bear},
         memory::{
             has_work_surface_canonical_anchor, head_record_for_logical_path,
             list_role_local_head_records, memory_sequence_high_water, MemoryRecordRow, MemoryStoreManager,
@@ -54,6 +54,7 @@ pub struct KeyMemoryProjectionInput<'a> {
     pub conversation_id: &'a str,
     pub session_hints: WorkSurfaceSessionHints,
     pub work_surface_status_override: Option<&'a str>,
+    pub native_runtime: bool,
 }
 
 struct TierBudget {
@@ -154,6 +155,7 @@ pub(crate) async fn compiled_prompt_cache_token(
     pool: &PgPool,
     bear: &Bear,
     role: BearProfile,
+    native_runtime: bool,
 ) -> Result<String, CustomError> {
     if bear.context_profile.is_none() {
         return Ok(format!("legacy:{}:{}", bear.id, bear.provisioning_version));
@@ -161,7 +163,7 @@ pub(crate) async fn compiled_prompt_cache_token(
     if let Some(compiled) = get_compiled_bear_config(pool, bear.id).await? {
         return Ok(compiled.config_hash);
     }
-    let hash = role_config_hash(pool, bear, role).await?;
+    let hash = profile_config_hash(pool, bear, role, native_runtime).await?;
     Ok(hash
         .get("compiled_config_hash")
         .and_then(Value::as_str)
@@ -173,7 +175,8 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     let store = input.stores.store_for_bear(input.bear.id).await?;
     let sequence_high_water = memory_sequence_high_water(&store).await?;
     let compiled_config_token =
-        compiled_prompt_cache_token(input.pool, input.bear, input.role).await?;
+        compiled_prompt_cache_token(input.pool, input.bear, input.role, input.native_runtime)
+            .await?;
     let status = work_surface_projection_status(
         &input.session_hints,
         input.work_surface_status_override,

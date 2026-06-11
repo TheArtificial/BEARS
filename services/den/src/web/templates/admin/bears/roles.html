@@ -35,8 +35,8 @@
 {% else %}
 <p class="form-hint">Role rows from <code>bear_profile_bindings</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
 {% if letta_configured %}
-<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="margin: 0 0 1rem 0;">
-  <button type="submit">Provision missing role agents</button>
+<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="margin: 0 0 1rem 0;">
+  <button type="submit">Provision missing profiles</button>
 </form>
 {% elif not letta_configured %}
 <p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>

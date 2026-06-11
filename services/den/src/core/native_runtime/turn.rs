@@ -220,6 +220,7 @@ async fn build_session(
             client_context,
             include_prompt_memory,
             key_memory_cache: None,
+            native_runtime: true,
         },
         &bear,
     )
@@ -252,10 +253,10 @@ async fn build_session(
 pub async fn start_native_acp_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {
-    start_native_role_turn_event_stream(request, BearProfile::Pair).await
+    start_native_profile_turn_event_stream(request, BearProfile::Pair).await
 }
 
-pub async fn start_native_role_turn_event_stream(
+pub async fn start_native_profile_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
     role: BearProfile,
 ) -> Result<RuntimeEventStream, CustomError> {
@@ -317,7 +318,7 @@ pub async fn start_native_role_turn_event_stream(
     Ok(stream)
 }
 
-pub async fn continue_native_role_turn_event_stream(
+pub async fn continue_native_profile_turn_event_stream(
     request: AcpTurnContinueRequest<'_>,
     _role: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {

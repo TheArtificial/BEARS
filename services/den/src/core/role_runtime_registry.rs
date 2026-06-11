@@ -1,4 +1,4 @@
-//! Den-native role runtime profiles ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
+//! Den-native profile runtime registry ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
 
 use std::str::FromStr;
 

@@ -1,4 +1,4 @@
-//! Push Den bear registry fields to Letta-backed role runtimes, then recompile them so Letta
+//! Push Den bear registry fields to Letta-backed profile runtimes, then recompile them so Letta
 //! refreshes compiled system prompts.
 
 use serde::Serialize;
@@ -9,7 +9,7 @@ use crate::core::{
     bears::{
         db as bears_db,
         model::{Bear, BearProfileBinding, BearProfile},
-        provision::{desired_role_tool_ids, role_agent_name, role_config_hash, role_prompt_text},
+        provision::{desired_profile_tool_ids, letta_agent_name_for_profile, profile_config_hash, profile_prompt_text},
         runtime_plan::default_runtime_plan,
     },
     bifrost::BifrostClient,
@@ -113,7 +113,7 @@ async fn sync_one_role(
         .filter(|s| !s.is_empty())
         .unwrap_or("letta_v1_agent");
 
-    let desired_tool_ids = desired_role_tool_ids(bear, role);
+    let desired_tool_ids = desired_profile_tool_ids(bear, role);
     let tool_ids = match letta.filtered_tool_ids(&desired_tool_ids).await {
         Ok(ids) => ids,
         Err(err) => {
@@ -148,7 +148,7 @@ async fn sync_one_role(
         None
     };
 
-    let prompt = match role_prompt_text(pool, bear, role).await {
+    let prompt = match profile_prompt_text(pool, bear, role).await {
         Ok(prompt) => prompt,
         Err(err) => {
             let msg = format!("role prompt rendering failed: {err}");
@@ -162,7 +162,7 @@ async fn sync_one_role(
             };
         }
     };
-    let role_name = role_agent_name(bear, role);
+    let role_name = letta_agent_name_for_profile(bear, role);
 
     if let Err(err) = letta
         .patch_agent(crate::core::letta::LettaPatchAgentParams {
@@ -200,7 +200,7 @@ async fn sync_one_role(
         };
     }
 
-    let config_hash = match role_config_hash(pool, bear, role).await {
+    let config_hash = match profile_config_hash(pool, bear, role, false).await {
         Ok(config_hash) => config_hash,
         Err(err) => {
             let msg = format!("failed to compute role config hash after sync: {err}");
@@ -242,9 +242,9 @@ async fn sync_one_role(
     }
 }
 
-/// Sync all provisioned Bear role runtimes to Letta. Missing runtime bindings are skipped
-/// and reported; a failure for one role does not prevent other roles from syncing.
-pub async fn sync_all_bear_roles_to_letta(
+/// Sync all provisioned Bear profile runtimes to Letta. Missing runtime bindings are skipped
+/// and reported; a failure for one profile does not prevent other profiles from syncing.
+pub async fn sync_all_bear_profiles_to_letta(
     pool: &PgPool,
     letta: &LettaClient,
     bifrost: &BifrostClient,
@@ -294,15 +294,26 @@ pub async fn sync_all_bear_roles_to_letta(
     Ok(BearSyncSummary { bear_id, outcomes })
 }
 
-/// Backward-compatible wrapper used by older call sites. Prefer [`sync_all_bear_roles_to_letta`]
-/// for new code so per-role failures can be surfaced precisely.
+/// Backward-compatible wrapper used by older call sites. Prefer [`sync_all_bear_profiles_to_letta`]
+/// for new code so per-profile failures can be surfaced precisely.
+pub async fn sync_all_bear_roles_to_letta(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear_id: Uuid,
+) -> Result<BearSyncSummary, CustomError> {
+    sync_all_bear_profiles_to_letta(pool, letta, bifrost, bear_id).await
+}
+
+/// Backward-compatible wrapper used by older call sites. Prefer [`sync_all_bear_profiles_to_letta`]
+/// for new code so per-profile failures can be surfaced precisely.
 pub async fn sync_bear_to_letta(
     pool: &PgPool,
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
-    let summary = sync_all_bear_roles_to_letta(pool, letta, bifrost, bear_id).await?;
+    let summary = sync_all_bear_profiles_to_letta(pool, letta, bifrost, bear_id).await?;
     if let Some(message) = summary.diagnostic_message() {
         return Err(CustomError::System(message));
     }

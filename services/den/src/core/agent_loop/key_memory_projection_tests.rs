@@ -70,6 +70,7 @@ async fn projects_shared_identity_anchors_without_work_surface() {
         conversation_id: "den-conv-test",
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
+        native_runtime: true,
     })
     .await
     .expect("project");
@@ -102,6 +103,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         conversation_id: "den-conv-test",
         session_hints: hints.clone(),
         work_surface_status_override: Some("candidate"),
+        native_runtime: true,
     })
     .await
     .expect("project");
@@ -136,6 +138,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         conversation_id: "den-conv-test",
         session_hints: hints,
         work_surface_status_override: Some("candidate"),
+        native_runtime: true,
     })
     .await
     .expect("project");
@@ -176,6 +179,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
             ..Default::default()
         },
         work_surface_status_override: Some("resolved"),
+        native_runtime: true,
     })
     .await
     .expect("project");

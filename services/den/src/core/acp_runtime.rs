@@ -8,6 +8,7 @@ use crate::{
         conversation_persistence,
         letta::{load_agent_conversations, LettaClient},
         native_runtime::NativeRuntimeConversationBackend,
+        role_runtime_registry::DenNativeProfileRegistry,
         runtime_contracts::{
             EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
             RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
@@ -18,7 +19,7 @@ use crate::{
 
 pub fn acp_missing_pair_binding_message(bear_slug: &str) -> String {
     format!(
-        "ACP requires this Bear to have a provisioned `pair` role runtime binding, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing role agents`, then retry."
+        "ACP requires this Bear to have a provisioned `pair` profile runtime binding, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing profiles`, then retry."
     )
 }
 
@@ -28,13 +29,15 @@ pub async fn require_pair_runtime_binding(
     letta: &LettaClient,
     bear: &Bear,
 ) -> Result<RoleRuntimeBinding, CustomError> {
+    let registry = DenNativeProfileRegistry::new(pool, config);
+    if let Some(binding) = registry.resolve_binding(bear.id, BearProfile::Pair).await? {
+        if !binding.binding_id.trim().is_empty() {
+            return Ok(binding);
+        }
+    }
     if config.uses_native_agent_runtime() {
-        let binding_id = bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
-            .await?
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("den-native:{}:pair", bear.id));
         return Ok(RoleRuntimeBinding {
-            binding_id,
+            binding_id: format!("den-native:{}:pair", bear.id),
             compatibility_backend: Some("runtime:native".to_string()),
         });
     }
@@ -43,15 +46,9 @@ pub async fn require_pair_runtime_binding(
             "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
         ));
     }
-    bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|binding_id| RoleRuntimeBinding {
-            binding_id,
-            compatibility_backend: Some("runtime:letta".to_string()),
-        })
-        .ok_or_else(|| CustomError::ValidationError(acp_missing_pair_binding_message(&bear.slug)))
+    Err(CustomError::ValidationError(acp_missing_pair_binding_message(
+        &bear.slug,
+    )))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

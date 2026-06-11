@@ -42,8 +42,8 @@
 <form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="display:inline;">
   <button type="submit">Retry Letta provisioning</button>
 </form>
-<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="display:inline; margin-left: 0.5rem;">
-  <button type="submit">Provision missing role agents</button>
+<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="display:inline; margin-left: 0.5rem;">
+  <button type="submit">Provision missing profiles</button>
 </form>
 {% elif not native_runtime %}
 <p><em>Letta is not configured.</em></p>

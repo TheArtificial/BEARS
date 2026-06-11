@@ -899,7 +899,7 @@ async fn chat_send_inner(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
             CustomError::System(
-                "This bear is not provisioned in Letta yet (missing chat role agent).".to_string(),
+                "This bear is not provisioned in Letta yet (missing chat profile runtime).".to_string(),
             )
         })?;
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;

@@ -71,14 +71,22 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Prompt resolution skips re-materialization when a session already has a durable `den-conv-*` id.
 - Shared stale-approval denial constant moved off the Letta runner; dead `LettaAcpConversationRuntime` removed.
 - Native stale-runtime cleanup stays in-process (`run_ids` empty); `AGENT_RUNTIME=letta` logs a Phase 8 deprecation warning at startup.
-- Role turn entry points (`start_native_role_turn_event_stream`, `continue_native_role_turn_event_stream`) exported for future `curate`/`watch` LLM wiring.
+- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) exported for future `curate`/`watch` LLM wiring over one Den loop.
 - Deferred to Phase 6–8: delete `acp_turn_runner_letta.rs`, `LettaClient`, compose services, full trait removal.
 
-### Phase 6 — Den-native role registry (replace provisioning)
+### Phase 6 — Den-native profile registry (replace provisioning)
 
-- Make a per-role agent a Den-owned runtime profile (compiled system prompt + model + tool roster + memory scope). No external agent create.
+- Make each operating profile a Den-owned runtime profile (compiled system prompt + model + tool roster + memory scope). No external agent create.
 - `bears.letta_agent_id` -> deprecated/nullable; introduce a Den-native binding id.
 - Delete Letta `create_agent`/`patch_agent`/`recompile_agent`/drift and `filtered_tool_ids` (Den owns tool descriptors). Model catalog stays from Bifrost.
+
+**Progress (`off-letta`):**
+
+- `reconcile_bear_native` / `provision_missing_bear_profiles_native` refresh `den-native:{bear_id}:{profile}` bindings from compiled prompts + `config_hash` (no Letta HTTP).
+- `reconcile_bear_if_configured` branches on `AGENT_RUNTIME`; admin create/edit/prompt flows use native reconcile instead of Letta sync.
+- `DenNativeProfileRegistry` wired into `require_pair_runtime_binding`; native `profile_config_hash` omits Letta tool rosters.
+- Operator UI and provisioning APIs use **profile** vocabulary for the five operating profiles; membership **roles** (`user_bear.role`) unchanged.
+- Deferred: delete Letta provision/sync modules, drift UI removal, web chat harness (Phase 7), `LettaClient` teardown (Phase 8).
 
 ### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `talk`/`work`
 

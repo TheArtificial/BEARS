@@ -1,11 +1,11 @@
 {% extends "admin/base.html" %} {% block title %}Letta agents without a bear{%
 endblock %} {% block admin_content %}
 <div class="box">
-    <h3>Letta agents not linked to a bear role</h3>
+    <h3>Letta agents not linked to a bear profile</h3>
     <p>
         These Letta agent ids are not referenced by Den’s role registry
         (<code>bear_profile_bindings.letta_agent_id</code>). The legacy attach flow has
-        been retired; create/provision Bears through Den so role agents are
+        been retired; create/provision Bears through Den so profile runtimes are
         registered explicitly.
     </p>
     {% if letta_list_error %}

@@ -287,8 +287,18 @@ async fn first_bear_post(
         }
     }
 
-    if state.letta.is_enabled() {
-        let sync_summary = sync::sync_all_bear_roles_to_letta(
+    if state.config.uses_native_agent_runtime() {
+        if let Err(err) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            id,
+        )
+        .await
+        {
+            tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after first-bear onboarding failed");
+        }
+    } else if state.letta.is_enabled() {
+        let sync_summary = sync::sync_all_bear_profiles_to_letta(
             state.sqlx_pool(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
@@ -296,7 +306,7 @@ async fn first_bear_post(
         )
         .await?;
         if let Some(message) = sync_summary.diagnostic_message() {
-            tracing::warn!(bear_id = %id, message = %message, "Letta role sync after first-bear onboarding had failures");
+            tracing::warn!(bear_id = %id, message = %message, "Letta profile sync after first-bear onboarding had failures");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;

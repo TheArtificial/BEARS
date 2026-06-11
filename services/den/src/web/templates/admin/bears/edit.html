@@ -9,7 +9,7 @@
 {% if native_runtime %}
 <p>Update slug, name, description, and default model. Prompts are edited separately.</p>
 {% else %}
-<p>Changes are saved in Den and synced to Letta role agents when linked.</p>
+<p>Changes are saved in Den and synced to Letta profile runtimes when linked.</p>
 {% endif %}
 {% if letta_sync_error %}<p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>{% endif %}
 {% if provision_error %}<p class="form-errors"><strong>Runtime refresh failed</strong>: {{ provision_error | e }}</p>{% endif %}

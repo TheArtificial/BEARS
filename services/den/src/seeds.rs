@@ -13,7 +13,7 @@ use crate::{
         acp_tokens,
         bears::{
             db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
-            provision::{self, provision_missing_bear_roles},
+            provision::{self, provision_missing_bear_profiles},
             runtime_plan::default_runtime_plan,
         },
         bifrost::BifrostClient,
@@ -109,7 +109,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
         .await
         .context("ensure smoke ACP token")?;
     if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id, &config).await {
-        tracing::warn!(error = %err, "smoke seed could not provision role runtimes; continuing with database fixtures only");
+        tracing::warn!(error = %err, "smoke seed could not provision profile runtimes; continuing with database fixtures only");
     }
 
     Ok(SeedReport {
@@ -228,9 +228,9 @@ async fn ensure_smoke_role_runtimes(
     if !letta.is_enabled() {
         return Ok(());
     }
-    provision_missing_bear_roles(pool, &letta, &bifrost, bear_id)
+    provision_missing_bear_profiles(pool, config, &letta, &bifrost, bear_id)
         .await
-        .context("provision missing smoke bear role runtimes")?;
+        .context("provision missing smoke bear profile runtimes")?;
     Ok(())
 }
 

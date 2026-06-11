@@ -1080,7 +1080,7 @@ async fn build_role_detail_view(
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
     let agent = bears_db::get_bear_profile_binding(state.sqlx_pool(), bear.id, role)
         .await?
-        .ok_or_else(|| CustomError::NotFound("role agent not found".to_string()))?;
+        .ok_or_else(|| CustomError::NotFound("profile runtime binding not found".to_string()))?;
 
     let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut role_row = BearRoleViewRow::from_agent(agent.clone(), role);
@@ -1467,8 +1467,18 @@ async fn new_bear_post(
             }
         }
 
-        if state.web_letta_data.is_enabled() {
-            let sync_summary = sync::sync_all_bear_roles_to_letta(
+        if state.config.uses_native_agent_runtime() {
+            if let Err(err) = provision::reconcile_bear_native(
+                state.sqlx_pool(),
+                state.config.as_ref(),
+                id,
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
+            }
+        } else if state.web_letta_data.is_enabled() {
+            let sync_summary = sync::sync_all_bear_profiles_to_letta(
                 state.sqlx_pool(),
                 state.letta.as_ref(),
                 state.bifrost.as_ref(),
@@ -1485,7 +1495,7 @@ async fn new_bear_post(
                     context! {
                         form => form,
                         letta_sync_error => format!(
-                            "Bear was saved and provisioned, but one or more role agents rejected syncing fields: {message}"
+                            "Bear was saved and provisioned, but one or more profile runtimes rejected syncing fields: {message}"
                         ),
                         ..page
                     },
@@ -1822,7 +1832,7 @@ async fn bear_resync_letta_post(
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    let sync_summary = sync::sync_all_bear_roles_to_letta(
+    let sync_summary = sync::sync_all_bear_profiles_to_letta(
         state.sqlx_pool(),
         state.letta.as_ref(),
         state.bifrost.as_ref(),

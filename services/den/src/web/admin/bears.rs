@@ -72,8 +72,12 @@ pub fn router() -> Router<AppState> {
             post(revoke_web_approval_action),
         )
         .route_with_tsr(
+            "/bears/{id}/provision-missing-profiles",
+            post(provision_missing_profiles_action),
+        )
+        .route_with_tsr(
             "/bears/{id}/provision-missing-roles",
-            post(provision_missing_roles_action),
+            post(provision_missing_profiles_action),
         )
         .route_with_tsr("/bears/{id}/retry-letta", post(retry_letta_action))
         .route_with_tsr("/bears/{id}", get(detail_view))
@@ -1105,7 +1109,7 @@ async fn edit_action(
             return Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response());
         }
 
-        let sync_summary = sync::sync_all_bear_roles_to_letta(
+        let sync_summary = sync::sync_all_bear_profiles_to_letta(
             state.sqlx_pool(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
@@ -1129,7 +1133,7 @@ async fn edit_action(
                     form => form,
                     bear,
                     letta_sync_error => format!(
-                        "Bear was saved in Den. {}. {} role(s) synced; {} unprovisioned role(s) skipped. Use the Bear detail page to inspect per-role health and provision missing roles.",
+                        "Bear was saved in Den. {}. {} profile(s) synced; {} unprovisioned profile(s) skipped. Use the Bear detail page to inspect per-profile health and provision missing profiles.",
                         message,
                         sync_summary.synced_count(),
                         skipped
@@ -1255,7 +1259,7 @@ async fn edit_prompt_action(
             )
             .await?;
         } else if state.letta.is_enabled() {
-            sync::sync_all_bear_roles_to_letta(
+            sync::sync_all_bear_profiles_to_letta(
                 state.sqlx_pool(),
                 state.letta.as_ref(),
                 state.bifrost.as_ref(),
@@ -1461,22 +1465,37 @@ async fn revoke_web_approval_action(
     .into_response())
 }
 
-async fn provision_missing_roles_action(
+async fn provision_missing_profiles_action(
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
     _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let message = match provision::provision_missing_bear_roles(
-        state.sqlx_pool(),
-        state.letta.as_ref(),
-        state.bifrost.as_ref(),
-        id,
-    )
-    .await
-    {
-        Ok(0) => "No missing role agents to provision.".to_string(),
-        Ok(n) => format!("Provisioned {n} missing role agent(s)."),
-        Err(err) => format!("Provisioning missing role agents failed: {err}"),
+    let message = if state.config.uses_native_agent_runtime() {
+        match provision::provision_missing_bear_profiles_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            id,
+        )
+        .await
+        {
+            Ok(0) => "No missing native profile bindings to provision.".to_string(),
+            Ok(n) => format!("Provisioned {n} missing native profile binding(s)."),
+            Err(err) => format!("Provisioning native profile bindings failed: {err}"),
+        }
+    } else {
+        match provision::provision_missing_bear_profiles(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            state.letta.as_ref(),
+            state.bifrost.as_ref(),
+            id,
+        )
+        .await
+        {
+            Ok(0) => "No missing profile runtimes to provision.".to_string(),
+            Ok(n) => format!("Provisioned {n} missing profile runtime(s)."),
+            Err(err) => format!("Provisioning missing profile runtimes failed: {err}"),
+        }
     };
 
     Ok(Redirect::to(&format!(
@@ -1491,6 +1510,27 @@ async fn retry_letta_action(
     State(state): State<AppState>,
     _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
+    if state.config.uses_native_agent_runtime() {
+        let message = match provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            id,
+        )
+        .await
+        {
+            Ok(summary) => format!(
+                "Native profile binding reconcile finished. {} profile(s) synced.",
+                summary.synced_count()
+            ),
+            Err(err) => format!("Native profile binding reconcile failed: {err}"),
+        };
+        return Ok(Redirect::to(&format!(
+            "/admin/bears/{id}/advanced?message={}",
+            urlencoding::encode(&message)
+        ))
+        .into_response());
+    }
+
     if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
         return Err(CustomError::NotFound("bear not found".to_string()));
     }
@@ -1507,7 +1547,7 @@ async fn retry_letta_action(
     let letta_retry_message = if !state.letta.is_enabled() {
         "Letta is not configured (set LETTA_BASE_URL).".to_string()
     } else if has_any_role_agent {
-        "This bear already has one or more role agents. Use 'Provision missing role agents' to fill only empty roles.".to_string()
+        "This bear already has one or more profile runtimes. Use 'Provision missing profiles' to fill only empty profiles.".to_string()
     } else {
         match provision::provision_bear_if_configured(
             state.sqlx_pool(),
@@ -1528,12 +1568,12 @@ async fn retry_letta_action(
                 .await
                 {
                     Ok(summary) => format!(
-                        "Role agent provisioning finished. {} role(s) synced; {} unprovisioned role(s) skipped.",
+                        "Profile runtime provisioning finished. {} profile(s) synced; {} unprovisioned profile(s) skipped.",
                         summary.synced_count(),
                         summary.skipped_profiles().len()
                     ),
                     Err(e) => format!(
-                        "Role agent provisioning finished, but follow-up role sync failed: {e}"
+                        "Profile runtime provisioning finished, but follow-up profile sync failed: {e}"
                     ),
                 }
             }

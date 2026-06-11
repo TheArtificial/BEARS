@@ -18,7 +18,7 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 /// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
 pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 
-/// Which agent turn backend Den uses for role runtimes.
+/// Which agent turn backend Den uses for profile runtimes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeMode {
     /// Den-native in-process agent loop ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).

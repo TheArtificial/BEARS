@@ -8,6 +8,10 @@ pub mod letta_drift;
 pub mod managed_blocks;
 pub mod model;
 pub mod provision;
+#[cfg(test)]
+mod provision_native_tests {
+    include!("provision_native_tests.rs");
+}
 pub mod rollout;
 pub mod runtime_plan;
 pub mod sync;

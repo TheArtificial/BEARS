@@ -8,7 +8,7 @@
         >
     </p>
     <p class="form-hint">
-        Runtime memory blocks are Letta-native state attached to role agents.
+        Runtime memory blocks are Letta-native state attached to profile runtimes.
         They are separate from Bear MemFS memory files. Long term, this count
         should be 0 for most Bears.
     </p>
@@ -25,7 +25,7 @@
         </p>
         {% if row.error %}
         <p class="form-errors">
-            Could not load role agent from Letta: {{ row.error | e }}
+            Could not load profile runtime from Letta: {{ row.error | e }}
         </p>
         {% elif row.diagnostics and row.diagnostics.blocks and
         row.diagnostics.blocks | length > 0 %}
@@ -66,7 +66,7 @@
         {% endif %}
     </section>
     {% else %}
-    <p class="form-hint">No role agents found for this Bear.</p>
+    <p class="form-hint">No profile runtimes found for this Bear.</p>
     {% endfor %}
 </section>
 {% endblock %}
