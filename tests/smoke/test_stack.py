@@ -75,6 +75,8 @@ def request_with_retries(method, url, **kwargs):
 
 
 def test_memfs_manager_health():
+    if uses_native_agent_runtime():
+        return
     response = request_with_retries("GET", f"{MEMFS_MANAGER}/health", timeout=5)
     assert response.status_code == 200
 
@@ -85,6 +87,8 @@ def test_den_reachable():
 
 
 def test_pool_health():
+    if uses_native_agent_runtime():
+        return
     response = request_with_retries("GET", f"{CODEPOOL}/health", timeout=5)
     assert response.status_code == 200
 

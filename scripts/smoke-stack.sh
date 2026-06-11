@@ -7,42 +7,35 @@ ROOT="/workspace"
 . "${ROOT}/scripts/load-env.sh"
 
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
-export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
-export LETTA_API_KEY="${LETTA_API_KEY:-${LETTA_SERVER_PASS}}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export WEB_SERVER_URL="${WEB_SERVER_URL:-http://localhost:3000}"
 export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-false}"
 export DATABASE_URL="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
-export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgres:5432/letta}"
-export LETTA_BASE_URL="${LETTA_BASE_URL:-http://bears-letta:8283}"
 export BIFROST_BASE_URL="${BIFROST_BASE_URL:-http://bears-bifrost:8080}"
-export LETTA_MEMFS_SERVICE_URL="${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}"
+export LLM_API_URL="${LLM_API_URL:-http://bears-bifrost:8080/v1}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
 export DEN_PULL_POLICY="${DEN_PULL_POLICY:-never}"
-export CODEPOOL_IMAGE="${CODEPOOL_IMAGE:-bears-codepool-dev:latest}"
-export CODEPOOL_PULL_POLICY="${CODEPOOL_PULL_POLICY:-never}"
+
+if [ "${AGENT_RUNTIME}" != "native" ]; then
+  printf 'smoke-stack.sh requires AGENT_RUNTIME=native; Letta/Codepool/MemFS are not in docker-compose.yaml\n' >&2
+  exit 1
+fi
 
 export COMPOSE_ENV_FILES=(
   "JWT_SECRET=${JWT_SECRET}"
-  "LETTA_SERVER_PASS=${LETTA_SERVER_PASS}"
-  "LETTA_API_KEY=${LETTA_API_KEY}"
   "OPENAI_API_KEY=${OPENAI_API_KEY}"
   "WEB_SERVER_URL=${WEB_SERVER_URL}"
   "SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE}"
   "DATABASE_URL=${DATABASE_URL}"
-  "LETTA_PG_URI=${LETTA_PG_URI}"
-  "LETTA_BASE_URL=${LETTA_BASE_URL}"
   "BIFROST_BASE_URL=${BIFROST_BASE_URL}"
-  "LETTA_MEMFS_SERVICE_URL=${LETTA_MEMFS_SERVICE_URL}"
+  "LLM_API_URL=${LLM_API_URL}"
   "AGENT_RUNTIME=${AGENT_RUNTIME}"
   "BIFROST_IMAGE=${BIFROST_IMAGE}"
   "DEN_IMAGE=${DEN_IMAGE}"
   "DEN_PULL_POLICY=${DEN_PULL_POLICY}"
-  "CODEPOOL_IMAGE=${CODEPOOL_IMAGE}"
-  "CODEPOOL_PULL_POLICY=${CODEPOOL_PULL_POLICY}"
 )
 
 compose_with_env() {
@@ -90,7 +83,7 @@ smoke_pair_binding_ready() {
       INNER JOIN bear_profile_bindings ba ON ba.bear_id = b.id
       WHERE b.slug = 'test-bear'
         AND ba.profile = 'pair'
-        AND btrim(COALESCE(ba.letta_agent_id, '')) <> ''
+        AND btrim(COALESCE(ba.binding_id, '')) LIKE 'den-native:%'
     );
   " 2>/dev/null || true)"
   [ "${result}" = "t" ]
@@ -123,35 +116,14 @@ docker build -t "${BIFROST_IMAGE}" "${ROOT}/services/bifrost"
 echo "Building local Den image (${DEN_IMAGE})..."
 docker build --build-arg SQLX_OFFLINE=true -t "${DEN_IMAGE}" "${ROOT}/services/den"
 
-echo "Building local Codepool image (${CODEPOOL_IMAGE})..."
-docker build -t "${CODEPOOL_IMAGE}" "${ROOT}/services/codepool"
+echo "Starting bundled Postgres..."
+compose_with_env up -d bears-postgres
+wait_postgres_service bears-postgres bears den
 
-echo "Starting bundled Postgres services..."
-if [ "${AGENT_RUNTIME}" = "native" ]; then
-  compose_with_env up -d bears-postgres
-  wait_postgres_service bears-postgres bears den
-else
-  compose_with_env up -d bears-postgres bears-letta-postgres
-  wait_postgres_service bears-postgres bears den
-  wait_postgres_service bears-letta-postgres bears letta
-fi
-
-echo "Starting source-aware BEARS stack (AGENT_RUNTIME=${AGENT_RUNTIME})..."
-if [ "${AGENT_RUNTIME}" = "native" ]; then
-  compose_with_env up -d --force-recreate bears-bifrost bears-redis bears-memfs-manager bears-den bears-codepool
-  wait_compose_service_ready bears-bifrost
-  wait_compose_service_ready bears-redis
-  wait_compose_service_ready bears-memfs-manager
-  wait_compose_service_ready bears-codepool
-  wait_compose_service_ready bears-den
-else
-  compose_with_env up -d --force-recreate bears-memfs-manager bears-den bears-codepool
-  wait_compose_service_ready bears-memfs-manager
-  wait_compose_service_ready bears-bifrost
-  wait_compose_service_ready bears-letta
-  wait_compose_service_ready bears-codepool
-  wait_compose_service_ready bears-den
-fi
+echo "Starting native BEARS stack (bifrost + den)..."
+compose_with_env up -d --force-recreate bears-bifrost bears-den
+wait_compose_service_ready bears-bifrost
+wait_compose_service_ready bears-den
 
 apply_smoke_seed_until_pair_ready
 
