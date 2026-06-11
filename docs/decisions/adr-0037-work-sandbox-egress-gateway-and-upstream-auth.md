@@ -21,15 +21,15 @@ Design discussions settled several product constraints:
 
 - **`chat` never gets a sandbox.** When execution armature is required, `chat` delegates to a **`work`** run (typically via Docket). The chat channel streams phase events so UX is better than a blocking “please wait.”
 - **`pair` defaults to client armature** (ACP client tools, local workspace). Server-hosted checkout for mobile/web is the same sandbox machinery with different profile policy — deferred to Phase 7.1.
-- **Cold start is acceptable in v1.** No warm pool required at launch; **telemetry from day one** on sandbox acquire, git materialize, and first exec.
+- **No warm pool in v1** — a working hypothesis that cold start is tolerable; **telemetry from day one** will validate or falsify that (see §11).
 - **Git upstreams are Den-managed** at bear level (origins UI, auth to GitHub / GitLab / Gitea). Legacy `memfs_repo_path` is not the long-term checkout source of truth.
-- **Upstream auth is inherently multi-actor.** A single token per sandbox is wrong for UX and security. The desired default on GitHub: the **Bear service identity commits**, the **requesting human opens the PR** — without exposing multiple real tokens inside the sandbox.
-- **Arbitrary repos must work without Bear-specific scaffold.** Users configure a remote origin and auth in Den; the runner shallow-clones and discovers tooling from whatever the repo already contains. No required `mise.toml`, repo manifest, or local checkout on the operator machine.
+- **Upstream auth is inherently multi-actor.** A single token per sandbox is wrong for UX and security. The desired default on GitHub when a human is in the loop: the **Bear service identity commits**, the **requesting human opens the PR** — without exposing multiple real tokens inside the workspace.
+- **Arbitrary repos must work without Bear-specific scaffold.** Users configure a remote origin and auth in Den; the runner clones and discovers tooling from whatever the repo already contains. No required `mise.toml`, repo manifest, or local checkout on the operator machine.
 
 **External references:**
 
 - **[DAM](https://github.com/dam-agents/dam)** — paired gateway pods, credential injection at egress, Connections scoped by owner. Bears adopts the structural pattern on Docker Compose, adapted to Bear profiles, Docket runs, and bear-level service identities.
-- **[Locki](https://github.com/janpokorny/locki)** — Incus system containers inside a VM boundary, git/gh **command bridge** with allowlisted operations, parallel sandboxes without port/tag collisions, optional repo-level image hints. Locki targets **local dev**: harness runs inside the sandbox, worktrees live on the host, and it explicitly defers exfiltration protection to DAM. Bears takes Locki’s **isolation and git-policy** ideas, not its local-worktree or harness-in-box workflow.
+- **[Locki](https://github.com/janpokorny/locki)** — system containers inside a VM boundary, git/gh **command bridge** with allowlisted operations, parallel sandboxes without port/tag collisions, optional repo-level image hints. Locki targets **local dev**: harness runs inside the sandbox, worktrees live on the host, and it explicitly defers exfiltration protection to DAM. Bears takes Locki’s **parallel isolation and bridge UX** ideas, not its local-worktree or harness-in-box workflow.
 
 ## Decision
 
@@ -47,14 +47,14 @@ Design discussions settled several product constraints:
 
 Add a compose service **`bears-sandbox-runner`** (name may be shortened in compose labels) that owns **execution substrate**, not control-plane policy.
 
-The runner exposes a **`SandboxBackend`** abstraction. Den’s `SandboxManager` calls a stable RPC surface; the backend chooses how to isolate:
+The runner exposes a **`SandboxBackend`** abstraction. Den’s `SandboxManager` calls a stable RPC surface; the backend chooses how to isolate. **The durable decision is the abstraction and RPC contract**, not a pre-selected second implementation.
 
-| Backend | Phase | Role |
-|---------|-------|------|
-| **`docker_workspace`** | **7 (v1)** | Paired workspace + egress gateway containers on an isolated Docker network. Sufficient for clone, build, test, and shell/fs on typical repos. |
-| **`incus_system`** | **7.2+** | Incus (or equivalent) **system container** per session — full init, nested containers, local k8s/k3s, systemd. For repos that need “a machine,” not an app container. |
+| Backend | Status | Role |
+|---------|--------|------|
+| **`docker_workspace`** | **Phase 7 (v1)** | Paired workspace + egress gateway containers on an isolated Docker network. Default for `minimal` sandbox profile. |
+| **Future backends** | **After v1 telemetry** | Candidates when `full_os` surfaces or ops data justify stronger isolation — e.g. Incus system containers, VM boundaries (Locki’s Lima thesis). Technology choice is **not** committed in this ADR. |
 
-**Why two backends:** [Locki’s Incus thesis](https://github.com/janpokorny/locki) is correct that thin OCI app containers break down on multi-service stacks, in-sandbox Docker, and Kubernetes verification. Bears does not adopt Locki’s Lima+local-worktree stack, but **Incus as an optional runner backend** preserves support for arbitrary real-world repos without forcing every run through Docker-in-Docker in v1.
+[Locki’s thesis](https://github.com/janpokorny/locki) that thin app containers struggle with nested Docker/k8s/systemd is accepted as **motivation for a second backend**, not as a mandate to ship Incus in 7.2+. Backend selection follows the same telemetry discipline as warm pools.
 
 **Runner responsibilities (all backends):**
 
@@ -67,7 +67,7 @@ The runner exposes a **`SandboxBackend`** abstraction. Den’s `SandboxManager` 
 
 - Decide **when** to acquire/release sessions (aligned with Docket run lifecycle and turn `CancellationToken`)
 - Select **`sandbox_profile`** for the work surface / run (see §5)
-- Resolve **work surface → origin** and build **`RunAuthContext`** (see §8)
+- Resolve **work surface → origin** and build **`RunAuthContext`** (see §9)
 - Push **gateway policy** (egress rules, injection map, git-bridge rules, HITL hooks) per session
 - Store **Connections**, secrets, bear service identities, and operator UI
 - Stream **delegation/phase events** to `chat` and run detail surfaces
@@ -78,33 +78,37 @@ The runner exposes a **`SandboxBackend`** abstraction. Den’s `SandboxManager` 
 
 ### 3. Paired workspace + egress gateway (structural boundary)
 
-Each sandbox session comprises **two isolation peers** on a dedicated network (implemented as Docker containers in v1; Incus instance + gateway sidecar in 7.2+):
+Each sandbox session comprises **two isolation peers** on a dedicated network (Docker containers in v1):
 
 1. **Workspace instance** — writable run tree, local git/fs/shell; **no route to TCP 80/443 except the paired gateway**
-2. **Egress gateway** — sole path to upstream HTTPS; **credential injection on the wire**; **git/gh command bridge** (§4); optional **ext_authz** callback to Den for HITL
+2. **Egress gateway** — sole path to upstream HTTPS; **credential injection on the wire**; optional **git/gh command bridge** (§4, defense-in-depth); optional **ext_authz** callback to Den for HITL
 
-The workspace instance must not receive real upstream tokens in environment variables. Placeholders (e.g. `{{GITHUB_BEAR_PUSH}}`) may appear in git config, but injection happens only in the gateway — matching DAM [ADR-038](https://github.com/dam-agents/dam/blob/main/docs/adrs/038-paired-gateway-pod.md) (paired boundary, not cooperative `HTTPS_PROXY` inside a shared network namespace).
+**Security guarantee (primary):** the workspace instance must not receive real upstream tokens. Injection happens only in the gateway on the wire — matching DAM [ADR-038](https://github.com/dam-agents/dam/blob/main/docs/adrs/038-paired-gateway-pod.md) (paired boundary, not cooperative `HTTPS_PROXY` inside a shared network namespace). This credential boundary is the structural control Bears relies on.
 
-Den must not execute arbitrary user/agent code in the `bears-den` process for `work` turns. The **native agent loop stays outside** the sandbox; only tool execution (shell, fs, bridged git/gh) runs inside — unlike Locki, which runs the harness in the sandbox.
+**Isolation guarantee (v1, weaker):** Phase 7 uses Docker bridge networking between workspace and gateway. That contains casual misconfiguration and keeps secrets off the workspace filesystem, but it is **not** a strong boundary against a determined agent executing arbitrary shell (container escape, same-host reachability remain in scope). Stronger isolation is a **backend upgrade**, not something v1 Compose networking claims to provide (see Consequences).
 
-### 4. Git/gh command bridge (Locki-inspired, Den-policy-driven)
+Den must not execute arbitrary user/agent code in the `bears-den` process for `work` turns. The **native agent loop stays outside** the workspace; only tool execution (shell, fs, bridged git/gh) runs inside — unlike Locki, which runs the harness in the sandbox.
 
-Relying on `HTTPS_PROXY` or a generic credential helper alone is insufficient. Adopt Locki’s **command bridge** pattern, implemented at the **egress gateway** (and/or as workspace shims that RPC to it):
+### 4. Git/gh command bridge (defense-in-depth, not the security guarantee)
+
+The paired gateway (§3) is the real control. Additionally, adopt Locki’s **command bridge** pattern for routing, audit, and coarse policy — implemented at the **egress gateway** (and/or as workspace shims that RPC to it):
 
 - `git` and `gh` inside the workspace are **shims** forwarding to the gateway
-- The gateway validates each invocation against an **allowlisted grammar** of subcommands and flags (Locki publishes a similar filter in its sandbox `AGENTS.md`)
-- Policy is applied from **`RunAuthContext`** (§8), not from repo layout:
-  - **Branch namespace** — pushes only to configured prefixes (e.g. `bear/{bear_slug}/{run_id}`), not Locki’s `#locki-<id>` suffix (same idea, Bears naming)
+- The gateway may validate invocations against an **allowlisted grammar** of subcommands and flags (Locki publishes a similar filter in its sandbox `AGENTS.md`)
+- Policy is applied from **`RunAuthContext`** (§9), not from repo layout:
+  - **Branch namespace** — pushes only to configured prefixes (e.g. `bear/{bear_slug}/{run_id}`)
   - **Operation class** — `read`, `push`, `pr_create` map to actor + credential injection
   - **Scope** — current origin/repo only unless work surface grants broader access
 
-Prefer **Den-brokered tools** (e.g. `github.open_pull_request`) for PR creation when HITL and audit matter; the bridge covers harness-agnostic `git`/`gh` usage for arbitrary repos.
+**Limits of grammar allowlists:** `git -c …`, aliases, hooks, `GIT_*` env vars, and `gh api` with arbitrary paths are notoriously leaky against an adversarial agent. The bridge is **defense-in-depth and observability**, not a substitute for the credential boundary. Prefer **Den-brokered tools** (e.g. `github.open_pull_request`) for sensitive, auditable operations; restrict or omit `gh api` in v1 bridge rules where possible.
 
-Direct unbridged `git push` over HTTPS from the workspace without passing the bridge is **forbidden** in v1.
+Direct unbridged `git push` over HTTPS from the workspace without passing the gateway is **forbidden** in v1.
 
 ### 5. Arbitrary repos, origins, and sandbox profiles
 
-**Access model (more general than Locki for cloud users):** Locki assumes the operator `cd`s to a **local** git repo and gets a host worktree. Bears assumes the operator configures a **remote origin** in Den; the runner **shallow-clones** into the session workspace. No local checkout required; no repo-specific Bear config required to start.
+**Access model (more general than Locki for cloud users):** Locki assumes the operator `cd`s to a **local** git repo and gets a host worktree. Bears assumes the operator configures a **remote origin** in Den; the runner **clones** into the session workspace. No local checkout required; no repo-specific Bear config required to start.
+
+**Clone depth** is configurable per origin or work surface (`clone_depth`: shallow default, full history, or explicit depth). Default shallow clone optimizes cold start; surfaces that need blame, bisect, merge-base, or tag discovery should set `full` or a sufficient depth.
 
 **Tooling discovery (opportunistic, not prescriptive):**
 
@@ -116,12 +120,13 @@ Direct unbridged `git push` over HTTPS from the workspace without passing the br
 
 ```text
 work_surface.sandbox_profile ∈ { minimal, full_os }   // default minimal
-work_surface.base_image_ref   // optional override
+work_surface.base_image_ref     // optional override
+work_surface.clone_depth        // shallow | full | N
 work_surface.resource_limits    // optional CPU/mem/disk
 ```
 
-- **`minimal`** — `docker_workspace` backend; fast cold start.
-- **`full_os`** — routes to `incus_system` when available (7.2+); for surfaces that routinely need in-sandbox Docker, compose, or k3s.
+- **`minimal`** — `docker_workspace` backend (v1).
+- **`full_os`** — requests a **stronger future backend** when available; technology TBD from telemetry (§2).
 
 **Sandbox briefing:** Den injects a short **environment appendix** into the `work` turn context (cf. [ADR-0028](adr-0028-environment-affordance-and-resource-boundaries.md)): workspace root, branch policy, how push/PR actors differ, run id for observability, and explicit guidance to **detect tooling from the repo — do not assume mise or any single package manager**.
 
@@ -132,8 +137,9 @@ Den exposes operator UI and APIs to configure **bear-level upstream origins**:
 - Provider kind: GitHub, GitLab, Gitea (extensible)
 - Canonical remote URL / org-repo identity
 - Default branch and branch namespace conventions (e.g. `bear/{bear_slug}/{run_id}`)
+- **`service_identity_id`** — which Bear service identity (§8) applies to this origin
 - Binding from **work surface slug** → **origin id**
-- Optional **sandbox profile** fields (§5)
+- Optional **sandbox profile** and **clone_depth** fields (§5)
 
 Auth attachments reference **Connections** (§7), not raw secrets in origin rows.
 
@@ -160,22 +166,33 @@ Connection.grants   → bear, work_surface, or run-scoped attachment
 | `operation-policy` | Which actor applies to `read`, `push`, `pr_create`, … |
 | `git-bridge-rule` | Allowlisted git/gh subcommand patterns for the command bridge (§4) |
 
-Secrets are stored in Den (encrypted at rest); gateway instances receive **short-lived lease material** or mount refs scoped to the session — never copied into the workspace instance.
+Secrets are stored in Den (encrypted at rest). Gateway instances receive **short-lived credential leases** minted by Den for the session lifetime. **Mount refs are discouraged**; if used for gateway-only material, they must be attached only to the gateway peer and **revoked on session teardown** — never mounted into the workspace instance. The workspace must not hold secret bytes in env, files, or mounts.
 
-### 8. Bear service identity (GitHub App and machine user)
+### 8. Bear service identities (GitHub App and machine user)
 
-Each Bear may have at most one **primary GitHub service identity** for autonomous git write, configured as either:
+A Bear may hold **multiple service identities**, keyed by upstream scope — not a single “primary” identity:
 
-| Mode | Intended deployment | Configuration |
-|------|---------------------|---------------|
-| **`github_app`** | Public / hosted Den | GitHub App installation on org/user; installation id + app credentials in Den; fine-grained repo access |
-| **`machine_user`** | Self-hosted Den | Dedicated GitHub user (bot account) + PAT or OAuth; documented seat/licensing expectations for operators |
+```text
+bear_service_identity {
+  bear_id
+  provider              // github | gitlab | …
+  org_scope             // e.g. GitHub org login, or app installation target id
+  identity_kind         // github_app | machine_user
+  display_name          // optional UX label
+}
+// UNIQUE (bear_id, provider, org_scope)
+```
 
-Both modes are **first-class** in schema and UI (`identity_kind` discriminant). Policy, gateway injection, and the git bridge treat them identically at the **`push`** operation class — only acquisition and admin UX differ.
+**Rationale:** real Bears work across multiple orgs, each with its own GitHub App installation or bot account. Origins (§6) bind to the identity that matches their upstream; `RunAuthContext` carries the resolved `bear_service_identity_id` for the run’s origin.
 
-Product copy should reflect the mode (“Installed GitHub App” vs “Bear GitHub account @bears-bruno”) without branching the execution model.
+| `identity_kind` | Intended deployment | Configuration |
+|-----------------|---------------------|---------------|
+| **`github_app`** | Public / hosted Den | GitHub App installation; installation id + app credentials in Den |
+| **`machine_user`** | Self-hosted Den | Dedicated GitHub user (bot account) + PAT or OAuth; seat/licensing docs for operators |
 
-**Requester identity** remains a separate Connection owned by `user_id` (human OAuth link). A single run may therefore draw on **two Connection owners** without merging tokens.
+Both kinds are first-class. Policy, gateway injection, and the git bridge treat them identically at the **`push`** operation class — only acquisition and admin UX differ.
+
+**Requester identity** remains a separate Connection owned by `user_id` (human OAuth link). A single run may draw on **multiple Connection owners** (bear identity + requester) without merging tokens.
 
 ### 9. `RunAuthContext` and operation-scoped injection
 
@@ -184,16 +201,17 @@ Every **`work`** run (including those spawned from `chat` delegation) carries a 
 ```text
 RunAuthContext {
   bear_id
-  run_id                      // Docket bear_job_run / task run
+  run_id
   work_surface_ref
-  requester_user_id           // nullable for purely autonomous work
+  requester_user_id           // null ⇒ autonomous run (see pr_create below)
   origin_id
-  bear_service_identity_id    // nullable until configured
-  sandbox_profile             // minimal | full_os
+  bear_service_identity_id    // from origin binding (§6, §8)
+  sandbox_profile
+  run_mode                    // interactive | autonomous
   operations: {
-    read:   ActorSelection
-    push:   ActorSelection
-    pr_create: ActorSelection
+    read:        ActorSelection
+    push:        ActorSelection
+    pr_create:   ActorSelection
   }
 }
 ```
@@ -204,29 +222,36 @@ RunAuthContext {
 ActorSelection ∈ {
   bear_service_identity,
   requester_user,
-  operator_connection,   // install-wide fallback
+  operator_connection,
   denied
 }
 ```
 
-**Default GitHub policy** (overridable per work surface in a later phase):
+**Default GitHub policy** — split by **`run_mode`** (derived from whether `requester_user_id` is set and whether dispatch came from `chat`):
 
-| Operation class | Default actor | Rationale |
-|-----------------|---------------|-----------|
-| **`read`** (clone/fetch) | First satisfied: bear app/install read → requester OAuth read → operator connection | Materialize workspace |
-| **`push`** (commit to `bear/*` or configured prefix) | **Bear service identity** | Stable author, auditable bot identity |
-| **`pr_create`** | **Requester user** (after HITL or pre-consent at dispatch) | Human accountability on review/merge |
-| **`merge`** | **Denied** in v1 | Explicit human action outside autonomous loop |
+| Operation class | Interactive (human in loop) | Autonomous (`work` / cron / Docket, no requester) |
+|-----------------|----------------------------|---------------------------------------------------|
+| **`read`** | First satisfied: origin’s bear identity → requester OAuth → operator connection | Same |
+| **`push`** | **Bear service identity** for origin | **Bear service identity** for origin |
+| **`pr_create`** | **Requester user** (HITL or dispatch consent) | **Bear service identity** → **draft PR** by default |
+| **`merge`** | **Denied** | **Denied** |
 
-If `push` cannot resolve (no bear service identity), dispatch **fails fast** with setup UX (“Connect Bear to GitHub”). If `pr_create` is missing, the run may complete through push and **pause** at PR time with a resumable “Connect GitHub to open PR” state — not a silent failure.
+**Autonomous `pr_create` fallback (closes the null-requester gap):** when `requester_user_id` is null and the run needs a PR, Den-brokered `github.open_pull_request` uses the **bear service identity** and creates a **draft PR** unless the work surface sets `pr_policy = branch_only` (push completes; Docket result includes branch URL, no PR step). Autonomous runs must **not** pause indefinitely waiting for a human OAuth link.
 
-The gateway selects credentials from **`RunAuthContext.operations`** using request metadata (host, HTTP method, path, operation class from Den-brokered tools or git-bridge callbacks). The agent loop and workspace do not choose tokens.
+**Interactive vs autonomous asymmetry:**
+
+| Missing credential | Behavior |
+|--------------------|----------|
+| **`push`** (no bear service identity for origin) | **Fail fast** at dispatch — setup UX (“Connect Bear to GitHub for org X”) |
+| **`pr_create`** (no requester OAuth) | **Interactive only:** pause resumably (“Connect GitHub to open PR”). **Autonomous:** use bear draft PR or `branch_only` per surface policy — never indefinite pause |
+
+The gateway selects credentials from **`RunAuthContext.operations`** using request metadata (host, method, path, operation class from Den-brokered tools or git-bridge callbacks). The agent loop and workspace do not choose tokens.
 
 ### 10. `chat` → `work` delegation and observability
 
 When `chat` requires execution:
 
-1. Den creates or resumes a Docket **`work`** run with `requester_user_id` from the chat session.
+1. Den creates or resumes a Docket **`work`** run with `requester_user_id` from the chat session and `run_mode = interactive`.
 2. `chat` returns immediately with a **correlation id** (`run_id`).
 3. Den emits **phase events** on the chat SSE/web channel and run detail UI, for example:
 
@@ -238,24 +263,29 @@ When `chat` requires execution:
    work.turn.started
    work.tool.*
    work.git.pushed        // author=bear identity, branch=…
-   work.github.pr.ready   // will_open_as=requester (awaiting approval)
+   work.github.pr.ready   // will_open_as=requester (interactive) or bear draft (autonomous)
    work.github.pr.opened
    work.turn.completed
    ```
 
-4. Cold-start timings are recorded on every session for later warm-pool and backend tuning.
+4. Timings are recorded on every session to inform warm-pool and backend decisions (§11).
 
-### 11. Phase scope
+### 11. Phase scope and telemetry gates
 
 | Phase | Deliverables |
 |-------|----------------|
-| **7** | `bears-sandbox-runner` with **`docker_workspace`** backend; paired gateway; git/gh command bridge; Den origins + Connections; bear service identity (app + machine user); `RunAuthContext`; opportunistic tooling detection; sandbox briefing; `work` + Docket; chat delegation + phase SSE; cold start + telemetry |
+| **7** | `bears-sandbox-runner` with **`docker_workspace`** backend only; paired gateway; git/gh bridge (defense-in-depth); Den origins + Connections; **multi** bear service identities; `RunAuthContext` with interactive/autonomous `pr_create`; opportunistic tooling detection; sandbox briefing; `work` + Docket; chat delegation + phase SSE; **telemetry** |
 | **7.1** | Hosted **`pair`** (conversation-scoped sessions, channel approvals) on same runner |
-| **7.2+** | **`incus_system`** backend for `full_os` work surfaces; bare mirror cache / warm pool if telemetry warrants; configurable per-surface policy; fork-style “run entirely as requester” for personal repos |
+| **Post-7 (data-driven)** | Second `SandboxBackend` if telemetry warrants; bare mirror / warm pool; per-surface policy knobs; fork-style “run entirely as requester” |
+
+**Telemetry gates (hypotheses, not settled facts):**
+
+- **Cold start tolerable?** — measure `ready_at - queued_at`; warm pool only if p95 exceeds product threshold.
+- **Docker sufficient?** — track escape-adjacent failures, nested-docker pain, `full_os` surface requests; second backend choice follows data, not this ADR.
 
 ### 12. Compose change
 
-Phase 7 implementation **requires** adding `bears-sandbox-runner` to `docker-compose.yaml`. That edit remains subject to explicit approval per repository rules when implementation lands. Incus/Lima dependencies for 7.2+ are runner-host concerns and need not appear in the default dev compose stack.
+Phase 7 implementation **requires** adding `bears-sandbox-runner` to `docker-compose.yaml`. That edit remains subject to explicit approval per repository rules when implementation lands. Stronger-isolation backend dependencies are runner-host concerns and need not appear in the default dev compose stack.
 
 ### 13. Explicit non-adoptions from Locki
 
@@ -267,42 +297,45 @@ To preserve arbitrary-repo and cloud-hosted use cases, Bears **does not** adopt:
 | Harness (Claude Code, etc.) inside sandbox | Den native loop outside; tools only inside |
 | Required `mise.toml` / mise-first startup | Opportunistic detection; mise optional in base image |
 | Open network; no credential gateway | Paired gateway + `RunAuthContext` (DAM model) |
-| Human commits from host IDE as primary flow | Autonomous `work` + bear push / requester PR |
+| Human commits from host IDE as primary flow | Autonomous `work` + bear push; interactive PR as requester |
 | `#locki-<id>` branch suffix | `bear/{slug}/{run_id}` (or configured prefix) |
+| Grammar allowlist as exfiltration defense | Credential boundary at gateway; bridge is auxiliary |
 
 ## Consequences
 
 ### Positive
 
-- Replaces Codepool’s long-lived harness with a **structurally enforced** isolation and credential boundary.
+- Replaces Codepool’s long-lived harness with a **structurally enforced credential boundary** (tokens never in workspace).
 - Supports hosted multi-tenant GitHub (**App**) and self-hosted (**machine user**) without diverging execution logic.
-- **Commit/PR split** matches team UX expectations while keeping tokens out of the workspace.
+- **Multi-org service identities** avoid a premature one-identity cap.
+- **Interactive commit / requester PR** and **autonomous commit / bear draft PR** are both defined.
 - **`chat` stays simple**; execution complexity lives under `work` with visible progress.
 - **Arbitrary remotes** work without local checkout or repo-specific Bear configuration.
-- **Git command bridge** gives Locki-grade git safety without Locki’s local-dev coupling.
-- Pluggable backends allow **v1 simplicity** (Docker) and a **credible path** to Incus for heavy repos.
-- Telemetry enables data-driven warm-pool and backend investment later.
+- Pluggable **`SandboxBackend`** avoids pre-committing Incus before v1 data.
+- Telemetry enables data-driven warm-pool and isolation investment.
 
-### Negative / tradeoffs
+### Negative / tradeoffs / security posture (v1)
 
+- **v1 runs untrusted agent shell with container-level isolation only.** Docker bridge networking is operationally convenient, not a strong security boundary. Prompt injection + arbitrary shell inside the workspace remains largely unmitigated ([lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/): untrusted repo content, upstream credentials via gateway, outbound communication). This is an explicit **MVP posture**, not “sufficient” isolation.
+- **Confidentiality is partial even with egress allowlists.** The agent legitimately needs **write** access to the upstream for `push`; encoded data in commits, branch names, or PR bodies can exfiltrate to allowlisted hosts. Allowlists and HITL on interactive `pr_create` reduce casual abuse; they do **not** prevent determined exfiltration through permitted write paths.
 - Two isolation peers per active run increases resource use vs a monolithic sandbox.
 - Gateway + multi-identity policy + git bridge is more moving parts than a single PAT in env.
 - GitHub App onboarding is heavier for self-hosters; machine user docs and warnings are required.
 - Path from legacy MemFS checkouts needs a migration story (Phase 8 or parallel backfill).
-- `incus_system` backend adds operational complexity (Incus on runner hosts) — deliberately deferred.
+- Git command grammar allowlists require ongoing maintenance and remain bypass-prone.
 
 ## Non-goals (Phase 7)
 
-- Warm workspace pool (v1 cold start only).
-- **`incus_system`** backend (Phase 7.2+).
+- Warm workspace pool (deferred pending telemetry).
+- Committing to a **specific** second isolation technology (Incus, VM, …) before v1 data.
 - Hosted **`pair`** (Phase 7.1).
 - Autonomous merge to protected branches.
-- Kubernetes NetworkPolicy / Istio (Docker Compose network isolation is sufficient for v1).
+- Claiming Docker Compose networking alone satisfies a **strong** isolation threat model.
 - Requiring **`mise.toml`** or any repo manifest for sandbox materialization.
 - Local host worktrees as the primary workspace model (optional future DX for self-host adjacency, not cloud default).
 - Running external coding harnesses inside the sandbox.
-- Replacing Den’s existing OAuth provider for **Den login** — upstream Connection OAuth is a separate concern, though it may reuse similar storage patterns.
-- Full CaMeL / quarantined-LLM architecture for prompt injection (acknowledged open problem; mitigate via egress allowlists, git bridge, and HITL on `pr_create` and sensitive operations).
+- Replacing Den’s existing OAuth provider for **Den login** — upstream Connection OAuth is a separate concern.
+- Full CaMeL / quarantined-LLM architecture for prompt injection — acknowledged open problem. Partial measures: credential boundary, coarse egress allowlists, HITL on sensitive interactive operations, audit logs. **No claim** that egress allowlists fully address exfiltration when write to upstream is allowed.
 
 ## References
 
