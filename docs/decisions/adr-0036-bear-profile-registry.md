@@ -36,4 +36,5 @@ Product language also settled on **`chat`** (not `talk`) and **`curate`** (not `
 
 - Breaking change for clients reading bear capability as `role` or tool context as `agent_role` / `role_agent_id`.
 - Letta provisioning continues behind `AGENT_RUNTIME=letta`; native path writes `binding_id` and leaves `letta_agent_id` NULL.
+- Phase 7 sandbox and upstream auth: [ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md).
 - Phase 7 may rename remaining `owner_role` / `source_role` columns on work-plan and memory-proposal tables for full consistency.

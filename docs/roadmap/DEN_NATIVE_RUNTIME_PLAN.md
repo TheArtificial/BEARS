@@ -88,15 +88,17 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Operator UI and provisioning APIs use **profile** vocabulary for the five operating profiles; membership **roles** (`user_bear.role`) unchanged.
 - Deferred: delete Letta provision/sync modules, drift UI removal, web chat harness (Phase 7), `LettaClient` teardown (Phase 8).
 
-### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `talk`/`work`
+### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `work`
 
-Largest phase; needs a design spike first.
+**Design:** [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md).
 
-- Spike/decision: code-execution sandbox model for `work` (recommended: Den-managed ephemeral workspace containers via the existing Docker socket access; one per active task/session, lifecycle-managed like turns). Decide whether `talk` needs a sandbox.
-- Reuse the native loop; add coding tools (fs edit, shell) bound to the sandbox; route `talk`/`work` memory writes through per-Bear SQLite, retiring the Letta Code git memory path.
-- Tasks for `work` come from **Docket** (Den Postgres, ADR-0034): Den dispatches a task to the native `work` loop running in the Bear's scoped memory context (the execution invariant), not via generic subagents. This replaces the MemFS intent/approved-task file pipeline for human-initiated jobs.
-- Land the minimal **strategy policy**: extend the ADR-0033 model-tasks policy to emit a `strategy_profile`, implement `reflect_on_fail?` (on `command`-criterion failure: SQLite reflection note + re-dispatch) and `fanout_n` (best-of-N via Docket child runs / subagents); `critique?` optional; `plan?` deferred to Docket/pair plan-mode.
-- Replace Codepool's warm-pool with Den-managed turn/sandbox lifecycle; web chat transport targets the native loop instead of `CodePoolClient`.
+- Add **`bears-sandbox-runner`** compose service: paired **workspace + egress gateway** containers per sandbox session; Den owns policy, runner owns materialized workspaces (cold start OK in v1; telemetry from day one).
+- **`chat` has no sandbox** — delegate to a Docket **`work`** run with phase SSE on the chat channel; **`pair` stays client-armature** (hosted pair → Phase 7.1).
+- Den **bear-level origins** UI/API (GitHub, GitLab, Gitea); **Connections** with `owner ∈ {user, bear}`; bear **service identity** as GitHub **App** (hosted) or **machine user** (self-hosted); **`RunAuthContext`** with operation-scoped gateway injection (default: bear push, requester PR).
+- Reuse the native loop; add coding tools (fs, shell) via runner RPC; route `work` memory through per-Bear SQLite, retiring the Letta Code git memory path.
+- Tasks for `work` come from **Docket** (ADR-0034): Den dispatches to the native `work` loop in the Bear's scoped memory context (execution invariant).
+- Land minimal **strategy policy** (`reflect_on_fail?`, `fanout_n`; `plan?` deferred).
+- Replace Codepool transport with native loop SSE; no warm pool in v1.
 
 ### Phase 8 — Teardown and data migration
 

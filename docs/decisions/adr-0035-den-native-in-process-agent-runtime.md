@@ -9,6 +9,7 @@
 - [ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) — per-Bear SQLite memory
 - [ADR-0033](adr-0033-model-tasks-layer.md) — model-tasks and strategy policy selection
 - [ADR-0034](adr-0034-jobs-and-tasks-work-management.md) — Docket jobs/tasks in Den Postgres
+- [ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — work sandbox, egress gateway, upstream auth (Phase 7)
 - [Den-Native Runtime architecture](../architecture/den-native-runtime.md)
 - [Migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
 

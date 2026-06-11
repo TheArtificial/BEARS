@@ -9,6 +9,7 @@ It rests on three decisions:
 - [ADR-0031 — SQLite-first canonical store for Bear memory](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)
 - [ADR-0033 — Model tasks layer](../decisions/adr-0033-model-tasks-layer.md)
 - [ADR-0034 — Jobs and tasks work-management (Docket)](../decisions/adr-0034-jobs-and-tasks-work-management.md)
+- [ADR-0037 — Work sandbox, egress gateway, and upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — Phase 7 execution isolation and multi-identity GitHub policy
 
 ## Why this exists (the direction change)
 
