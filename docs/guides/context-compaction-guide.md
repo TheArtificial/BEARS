@@ -8,7 +8,7 @@ It complements:
 - [Den Context Compaction Contract](../architecture/den-context-compaction-contract.md)
 - [Den Context Compaction Schema Direction](../architecture/den-context-compaction-schema.md)
 - [Den Context Compaction Implementation Plan](../roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md)
-- [Letta Migration Plan](./letta-migration-plan.md)
+- [Den-Native Runtime Plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
 
 ## Why compaction exists
 
@@ -204,11 +204,9 @@ For example, a summary might save tokens but accidentally drop:
 
 That would be a regression even if context usage improved.
 
-## Why this matters for migration
+## Why Den owns compaction
 
-In the Letta migration, context compaction is one of the places where Den must become a true runtime owner rather than just an adapter.
-
-Replacing Letta means Den must own:
+Context compaction is core Den runtime behavior—not an adapter or sidecar concern. Den must own:
 
 - transcript behavior,
 - prompt continuity behavior,
@@ -216,7 +214,7 @@ Replacing Letta means Den must own:
 - operator visibility,
 - and regression safety.
 
-Compaction is therefore part of the core migration surface, not a cosmetic optimization.
+Compaction is therefore part of the core runtime surface, not a cosmetic optimization.
 
 ## Why this matters for future storytelling
 

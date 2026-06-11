@@ -1,6 +1,10 @@
 # MemFS sidecar operator runbook
 
-This runbook covers recovery for the multi-role MemFS sidecar repo-view design described in [`adr/memfs-sidecar-repo-views.md`](adr/memfs-sidecar-repo-views.md).
+> **Archived (Letta era).** This runbook documents the removed MemFS sidecar. For the current runtime, see [Den-Native Runtime](../../architecture/den-native-runtime.md).
+
+> **Historical:** MemFS sidecar repo views were superseded by the Den-native runtime. The original ADR lives at [ADR-0013: MemFS Sidecar Repo Views](../../decisions/adr-0013-memfs-sidecar-repo-views.md).
+
+This runbook covers recovery for the multi-role MemFS sidecar repo-view design described in [ADR-0013: MemFS Sidecar Repo Views](../../decisions/adr-0013-memfs-sidecar-repo-views.md).
 
 ## Mental model
 

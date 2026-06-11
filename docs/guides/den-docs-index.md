@@ -2,14 +2,22 @@
 
 Index of agent- and contributor-oriented docs for **this project**.
 
+## Architecture
+
+| Topic | Document |
+|--------|-----------|
+| Den-native runtime (target) | [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
+| Memory model | [`../architecture/memory-model.md`](../architecture/memory-model.md) |
+| Den concepts overview | [`../architecture/den-concepts-overview.md`](../architecture/den-concepts-overview.md) |
+| Native runtime migration plan | [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) |
+
 ## Foundations
 
-- **[`concepts-overview.md`](concepts-overview.md)** — Layout: web vs API vs core, migrations, what ships in the slim template.
 - **[`development-principles.md`](development-principles.md)** — Values and defaults: dependencies, frontend minimalism, how much to grow the stack.
 
 ## Getting started
 
-- **[`quickstart.md`](quickstart.md)** — Local development: `.env`, migrations, `cargo run`, dev-only quirks (URL prefix, templates, mail).
+- **[`den-quickstart.md`](den-quickstart.md)** — Local development: `.env`, migrations, `cargo run`, dev-only quirks (URL prefix, templates, mail).
 
 ## Stack patterns
 
@@ -46,7 +54,8 @@ Index of agent- and contributor-oriented docs for **this project**.
 | Topic | Document |
 |--------|-----------|
 | Infra, env, logging | [`infrastructure-and-ops.md`](infrastructure-and-ops.md) |
-| Container / deploy notes (env table, Docker build-arg, migrations) | [`deploy.md`](deploy.md) |
+| Container / deploy notes (env table, Docker build-arg, migrations) | [`den-deploy.md`](den-deploy.md) |
+| Coolify compose stack | [`deployment/deployment.md`](deployment/deployment.md) |
 
 ## Renaming the starter
 
@@ -54,4 +63,4 @@ Index of agent- and contributor-oriented docs for **this project**.
 
 ## Plans (Bear Den / Den)
 
-Product roadmap and Phase 1 decisions: **[`docs/planning/`](../../docs/planning/)** in the monorepo. [../plans/README.md](../plans/README.md) links there from inside `services/den/`.
+Product roadmap and Phase 1 decisions: **[`../roadmap/`](../roadmap/)** in the monorepo. [`../../services/den/plans/README.md`](../../services/den/plans/README.md) links there from inside `services/den/`.

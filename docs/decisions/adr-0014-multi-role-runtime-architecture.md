@@ -301,4 +301,4 @@ The five agents are named for the activity they perform:
 - OWASP Top 10 for Agentic Applications (2026): <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/>
 - Anthropic, *Trustworthy agents in practice*: <https://www.anthropic.com/research/trustworthy-agents>
 - IBM, *Establishing Runtime Security for Agentic AI* (A2AS): <https://www.ibm.com/think/insights/agentic-ai-runtime-security>
-- Companion documents: [`../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md`](../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md), [`../tasks-schema.md`](../tasks-schema.md), [`../../../services/den/docs/bear-spec.md`](../../../services/den/docs/bear-spec.md)
+- Companion documents: [`../roadmap/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](../roadmap/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md), [`../tasks-schema.md`](../tasks-schema.md), [`../../../services/den/docs/bear-spec.md`](../../../services/den/docs/bear-spec.md)

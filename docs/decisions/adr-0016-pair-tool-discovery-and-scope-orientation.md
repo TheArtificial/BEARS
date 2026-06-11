@@ -92,7 +92,7 @@ Rejected. Agents need a reliable, discoverable entry point for current scope, ro
 
 ## Implementation plan
 
-See `docs/planning/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`.
+See `docs/roadmap/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`.
 
 Near-term slices:
 
@@ -106,10 +106,10 @@ Near-term slices:
 ## Related documents
 
 - `docs/decisions/adr-0028-environment-affordance-and-resource-boundaries.md`
-- `docs/planning/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`
-- `docs/planning/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
-- `docs/planning/PAIR_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`
-- `docs/planning/archives/CONTEXT_COMPOSITION_PLAN.md`
+- `docs/roadmap/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`
+- `docs/roadmap/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
+- `docs/roadmap/ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`
+- `docs/roadmap/archives/CONTEXT_COMPOSITION_PLAN.md`
 - `docs/concepts/MEMORY_MODEL.md`
 - `docs/architecture/adr/workflow-state-ontology.md`
 - `docs/architecture/adr/bear-workplaces.md`

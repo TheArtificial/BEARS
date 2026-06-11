@@ -320,5 +320,5 @@ Tradeoffs:
 - [Dynamic skills, reflection subagents, and bear configuration ADR](dynamic-skills-subagents.md)
 - [Routines automation ADR](routines-automation.md)
 - [Reflection system concept](../../concepts/REFLECTION_SYSTEM.md)
-- [Reflection system implementation plan](../../planning/REFLECTION_SYSTEM_PLAN.md)
-- [Curate memory governance plan](../../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Reflection system implementation plan](../roadmap/REFLECTION_SYSTEM_PLAN.md)
+- [Curate memory governance plan](../roadmap/CURATE_MEMORY_GOVERNANCE_PLAN.md)

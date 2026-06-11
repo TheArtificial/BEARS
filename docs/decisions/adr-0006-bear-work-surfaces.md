@@ -301,5 +301,5 @@ For near-term planning work:
 - [Planning in BEARS](../../concepts/PLANNING.md)
 - [Memory Model](../../concepts/MEMORY_MODEL.md)
 - [Bear Charter and Cabinet Missions](../../concepts/BEAR_CHARTER_AND_CABINET_MISSIONS.md)
-- [Task System Implementation Plan](../../planning/TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
-- [Role-Aware Tool Guidance Plan](../../planning/ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)
+- [Task System Implementation Plan](../roadmap/TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
+- [Role-Aware Tool Guidance Plan](../roadmap/archives/ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)

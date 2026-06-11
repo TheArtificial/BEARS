@@ -1,11 +1,14 @@
 # Quick start (local development)
 
+Native local development runs Den in-process with Bifrost for inference and per-Bear SQLite for memory. See [den-native-runtime.md](../architecture/den-native-runtime.md) for the runtime model.
+
 ## Run the app
 
 1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
-2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../services/codepool/README.md) service (for example `http://localhost:3030`) unless you run a **production** build, which defaults to **`http://bears-codepool:3030`** when unset (Docker stack). Den will not start the web server without a non-empty Codepool URL.
-4. Run:
+2. Set **`AGENT_RUNTIME=native`** (default) and **`LLM_API_URL`** to your Bifrost OpenAI-compatible endpoint (for example `http://localhost:8080/v1` or `http://bears-bifrost:8080/v1` inside the dev stack).
+3. Set **`BEAR_SQLITE_DATA_DIR`** to a writable directory for per-Bear SQLite files (for example `./data/bear-sqlite` locally, or `/var/lib/den/bear-sqlite` in Docker).
+4. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
+5. Run from `services/den/`:
 
    ```bash
    cargo run
@@ -17,7 +20,29 @@
 
    **Static assets (`src/web/assets/`):** In a **debug** `cargo run`, `memory-serve` registers routes when the binary is **compiled** and reads file bytes from **disk** at request time using those recorded paths. If you add or change files under `src/web/assets/` (for example Deep Chat under `assets/deep-chat/`), run a **fresh build** and **restart** the `den` process; a long-lived or stale process can otherwise return **404** for `/assets/...` even though the files exist in the tree. Release builds embed assets in the binary instead.
 
-You can use the devcontainer in this repo instead of a manual local Postgres setup if that matches your workflow.
+You can use the devcontainer in this repo instead of a manual local Postgres setup if that matches your workflow. The devcontainer attaches to the Docker stack network and exports defaults for `DATABASE_URL` and `LLM_API_URL` so Den can reach `bears-postgres` and `bears-bifrost`.
+
+## Docker stack (recommended for integration)
+
+From the repo root, start the native compose stack (Bifrost + Den; optional `bundled` Postgres):
+
+```bash
+docker compose --profile bundled up -d
+```
+
+Operational scripts (see also [AGENTS.md](../../AGENTS.md)):
+
+```bash
+./scripts/smoke.sh              # HTTP smoke tests against the running stack
+./scripts/restart.sh bears-den  # Recreate Den after code/image changes
+./scripts/logs.sh bears-den     # Tail Den logs
+```
+
+For a full build-from-source smoke pass:
+
+```bash
+./scripts/smoke-stack.sh
+```
 
 ## Development and smoke seeds
 
@@ -35,18 +60,12 @@ The initial `smoke` profile is idempotent and creates/reuses:
 | Password | `Never deploy seed passwords.` |
 | Bear slug | `test-bear` |
 
-The profile also verifies Alice’s email and grants her membership on `test-bear`, so `/bear/test-bear` can be used by smoke tests and manual UI checks. `minimal` currently aliases `smoke`.
+The profile also verifies Alice's email and grants her membership on `test-bear`, so `/bear/test-bear` can be used by smoke tests and manual UI checks. `minimal` currently aliases `smoke`.
 
-In the repo devcontainer, `/workspace/scripts/devcontainer-start.sh` builds local Bifrost, Den, and Codepool images, starts bundled Postgres services, runs `/workspace/scripts/seed-dev.sh smoke`, then attempts to start the rest of the stack with those local images. Startup builds, seeding, and full-stack startup are non-fatal: the container remains usable if any step fails. Check `.devcontainer/logs/startup.status` and `.devcontainer/logs/startup.log` for details, then rerun manually with:
+In the repo devcontainer, `/workspace/scripts/devcontainer-start.sh` builds local Bifrost and Den images, starts bundled Postgres when configured, runs `/workspace/scripts/seed-dev.sh smoke`, then attempts to start the rest of the stack with those local images. Startup builds, seeding, and full-stack startup are non-fatal: the container remains usable if any step fails. Check `.devcontainer/logs/startup.status` and `.devcontainer/logs/startup.log` for details, then rerun manually with:
 
 ```bash
 ./scripts/seed-dev.sh smoke
-```
-
-To run source-aware stack smoke tests end to end, use the root script:
-
-```bash
-./scripts/smoke-stack.sh
 ```
 
 ## Development-only link prefix

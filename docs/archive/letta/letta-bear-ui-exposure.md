@@ -1,10 +1,13 @@
 # Letta APIs: what the Den bear UI exposes vs not
 
+> **Archived (Letta era).** This guide documents the removed Letta-backed stack. For the current runtime, see [Den-Native Runtime](../../architecture/den-native-runtime.md).
+
+
 Den’s **operator bear forms** and **JSON admin create-bear** API sync a subset of [Letta agent](https://docs.letta.com/api/resources/agents/) settings. This page lists **Letta functionality that is not yet exposed** through those surfaces so operators know when to use the Letta UI, API, or future Den work.
 
-Confirm field names and enums against **your** self-hosted Letta image; see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
+Confirm field names and enums against **your** self-hosted Letta image; see [Den-Native Runtime](../../architecture/den-native-runtime.md).
 
-**Skills:** [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) for each bear are **not** edited through the Letta agent PATCH form; Den owns **catalog, per-bear attach, and materialization** to filesystem paths **Letta Code** reads ([DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) § Den-managed skills).
+**Skills:** [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) for each bear are **not** edited through the Letta agent PATCH form; Den owns **catalog, per-bear attach, and materialization** to filesystem paths **Letta Code** reads ([Den-Native Runtime](../../architecture/den-native-runtime.md) § Den-managed skills).
 
 ## Exposed via bears (Den registry → Letta)
 

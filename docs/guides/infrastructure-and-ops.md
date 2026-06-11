@@ -29,7 +29,7 @@ Session storage uses the same database (tower-sessions SQLx store); session migr
 
 ## Deployment
 
-- **Docker** — root `Dockerfile` produces one image; set env in the orchestrator (same as local). See [deploy.md](deploy.md).
+- **Docker** — root `Dockerfile` produces one image; set env in the orchestrator (same as local). See [den-deploy.md](den-deploy.md).
 
 ## Logging
 
@@ -48,14 +48,26 @@ When `ACP_GATEWAY_ENABLED=true`, the API also serves `POST /acp/bears/{slug}/ses
 
 ### Bear Den stack status (web)
 
-For a **single watch point** across the stack (databases, Codepool, Letta, Bifrost, low-cost env validation aligned with `services/preflight`, and optional **GHCR** comparison), use:
+For a **single watch point** across the native stack (Den Postgres, Bifrost health/metadata, low-cost env validation aligned with `services/preflight`, and optional **GHCR** comparison), use:
 
 - `GET /status` — human-readable HTML (stack checks + deployed vs registry hints when configured).
 - `GET /status.json` — JSON for scripts and monitors (**503** when any health check is in the `fail` state; `warn` and `skipped` do not fail the HTTP status).
 
-Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns.
+With **`AGENT_RUNTIME=native`** (default), Letta/Codepool/MemFS probes are reported as **skipped** — they are not part of the default compose stack.
 
-Optional env for richer probes: **`LETTA_PG_URI`** (Letta Postgres `SELECT 1`), **`BIFROST_BASE_URL`** (e.g. `http://bears-bifrost:8080` for `GET /health`), **`LLM_API_URL`** (shape-only check when set on Den). This is **not** a substitute for **`GET /health`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
+Default runtime probes include:
+
+| Check | What it validates |
+| ----- | ----------------- |
+| Den PostgreSQL | `SELECT 1` against `DATABASE_URL` |
+| Bifrost | `GET /health` and metadata URL from `BIFROST_BASE_URL` / `BIFROST_METADATA_URL` |
+| Config shape | `JWT_SECRET` when required, `DATABASE_URL` host/scheme, `WEB_SERVER_URL`, `LLM_API_URL` shape, `OPENAI_API_KEY` presence (warn if empty) |
+
+Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns for Den image drift checks.
+
+When derived recall is configured (`QDRANT_URL` and embedding settings per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), operators may add external monitors for Qdrant reachability; `/status` does not yet include a first-class Qdrant probe in the default native path.
+
+This page is **not** a substitute for **`GET /healthcheck`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
 
 ## Workers
 

@@ -24,7 +24,7 @@ For BEARS, skills are best understood not merely as arbitrary local files but as
 
 **Concept model change:** A **Bear** remains the primary user-facing assistant identity, but in BEARS that identity is implemented through coordinated role agents rather than a single all-purpose runtime. Bear configuration must therefore evolve to include both the Bear’s role-agent topology and any **predefined subagents**—for example **reflection** agents or other Letta subagent types the operator enables per Bear—so provisioning and GitOps remain reproducible.
 
-**Relationship to other ADRs and concepts:** [multi-user-memory.md](multi-user-memory.md) covers **blocks and conversations**; this ADR covers **skills lifecycle**, **storage/sync**, and **subagent** topology. It should be read alongside [semantic-bear-memory.md](semantic-bear-memory.md), [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md), and the concepts docs for [Capabilities and Skills](../../concepts/CAPABILITIES_AND_SKILLS.md) and [Memory model](../../concepts/MEMORY_MODEL.md). Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](../../planning/PLAN.md)).
+**Relationship to other ADRs and concepts:** [multi-user-memory.md](multi-user-memory.md) covers **blocks and conversations**; this ADR covers **skills lifecycle**, **storage/sync**, and **subagent** topology. It should be read alongside [semantic-bear-memory.md](semantic-bear-memory.md), [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md), and the concepts docs for [Capabilities and Skills](../../concepts/CAPABILITIES_AND_SKILLS.md) and [Memory model](../../concepts/MEMORY_MODEL.md). Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](../roadmap/PLAN.md)).
 
 ---
 
@@ -558,7 +558,7 @@ Do NOT invoke during active debugging or mid-task. Do NOT invoke on casual conve
 
 - **Runtime integration:** Harness materialization (`letta-code.yaml` or equivalent) should treat Letta-visible skill trees as synchronized projections of canonical Bear skill memory.
 
-- **Documentation:** [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md), [PLAN.md](../../planning/PLAN.md), and concepts docs should reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents** and **canonical skill memory** from **runtime skill trees**.
+- **Documentation:** [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md), [PLAN.md](../roadmap/PLAN.md), and concepts docs should reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents** and **canonical skill memory** from **runtime skill trees**.
 
 - **Remaining follow-up:** confirm exact self-hosted Letta subagent API fields and verify whether `SubagentStop` + `matcher: reflection` behaves as expected in the deployed build. These are implementation validation tasks, not unresolved architectural direction.
 

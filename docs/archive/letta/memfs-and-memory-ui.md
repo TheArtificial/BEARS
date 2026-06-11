@@ -1,5 +1,7 @@
 # MemFS, modern Letta agents, and memory UI
 
+> **Archived (Letta era).** This guide documents the removed MemFS/Letta memory sidecar. For the current runtime, see [Den-Native Runtime](../../architecture/den-native-runtime.md).
+
 This note preserves the architecture decisions from the retired MemFS implementation plans. The implementation now lives in the services themselves; this document records the invariants to keep future changes aligned.
 
 ## Naming

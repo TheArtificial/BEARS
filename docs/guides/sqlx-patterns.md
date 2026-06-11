@@ -458,7 +458,7 @@ cargo build
 
 ## Related Documentation
 
-- [`quickstart.md`](quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `cargo sqlx prepare`
+- [`den-quickstart.md`](den-quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `cargo sqlx prepare`
 - [infrastructure-and-ops.md](infrastructure-and-ops.md) — processes, `DATABASE_URL`, deployments
 - Migration safety — this document (section above)
 

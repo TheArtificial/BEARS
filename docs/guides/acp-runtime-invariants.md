@@ -1,10 +1,10 @@
-# ACP Runtime Invariants for Letta Migration
+# ACP Runtime Invariants
 
 ## Purpose
 
-This note captures the current ACP / `pair` runtime invariants that the Letta migration must preserve, especially as Den moves toward provider-neutral runtime abstractions and optional-worker deployment patterns.
+This note captures the ACP / `pair` profile runtime invariants that Den's native agent loop must preserve. It is intentionally focused on operational/runtime behavior rather than broader product architecture.
 
-It is intentionally focused on operational/runtime behavior rather than broader product architecture.
+For the concurrency and turn-ownership model, see [den-native-runtime.md](../architecture/den-native-runtime.md) § Concurrency model.
 
 ## Core invariants
 
@@ -15,17 +15,17 @@ For a given ACP session, only one active turn may own the runtime at a time.
 Implications:
 - a new prompt must not race with an already-running turn
 - tool continuations and permission responses must settle against the correct active turn
-- cancellation and cleanup must be scoped to the active turn rather than the entire Bear or role
+- cancellation and cleanup must be scoped to the active turn rather than the entire Bear or profile
 
-### 2. Request identity and run identity must remain explicit
+### 2. Request identity and turn identity must remain explicit
 
-The runtime currently tracks request ids and run ids so Den can:
+The runtime tracks request ids and turn/session correlation so Den can:
 - correlate stream events
 - route tool results back into the correct continuation
-- cancel the correct run without broad collateral damage
+- cancel the correct turn without broad collateral damage
 - expose runtime diagnostics for operators and recovery logic
 
-Any replacement runner must preserve explicit request/run identity handling.
+The native loop uses in-process turn tasks and Den Postgres conversation state instead of external run-ids, but explicit correlation remains required.
 
 ### 3. Tool continuation is a first-class runtime behavior
 
@@ -47,34 +47,33 @@ Approval-gated actions must:
 
 ### 5. Stale approval recovery must be safe and explicit
 
-The current ACP path includes stale-approval recovery behavior for interrupted or poisoned runs.
+The ACP path includes stale-approval recovery behavior for interrupted or poisoned turns.
 
-Migration must preserve:
+Migration and operations must preserve:
 - ability to detect unresolved stale approval state
 - ability to deny/close stale approvals safely where policy allows
 - clear distinction between stale-request cleanup and a true user/policy denial
 
 ### 6. Cancellation must be precise
 
-Cancellation must stop the correct in-flight run or turn without causing broader agent-wide or session-wide unintended side effects.
+Cancellation must stop the correct in-flight turn without causing broader agent-wide or session-wide unintended side effects.
 
-This is especially important under concurrency and retry conditions.
+With the native loop, cancellation is a `CancellationToken` scoped to the active turn task — not an HTTP call to an external runner.
 
 ### 7. Diagnostics are part of the runtime contract
 
-The ACP path currently exposes runtime/session diagnostics including active-turn state and recovery context.
+The ACP path exposes runtime/session diagnostics including active-turn state and recovery context.
 
-A replacement runtime must preserve enough structured diagnostics to support:
+The native runtime must preserve enough structured diagnostics to support:
 - debugging
 - operator visibility
 - incident response
-- mixed-mode migration comparison
 
 ### 8. Ask / Plan / Write gating remains a control-plane invariant
 
-Although runtime providers may differ, the authoritative gating behavior belongs to Den policy.
+Although runtime implementations may evolve, the authoritative gating behavior belongs to Den policy.
 
-Migration must preserve that:
+The system must preserve that:
 - Den/ACP policy state is authoritative
 - runtime continuations respect current session mode and approval state
 - tool execution scope does not widen because of provider compatibility shortcuts
@@ -90,8 +89,8 @@ These should remain Den-authoritative regardless of worker topology:
 - session policy mode
 - approval recording
 - turn ownership / active-turn coordination
-- run cancellation authority
-- interaction/run persistence authority once migrated
+- turn cancellation authority
+- interaction/run persistence authority
 
 ### Worker-split concerns to design for early
 
@@ -100,26 +99,25 @@ If pieces of the runtime move into optional workers or projectors later, the sys
 - idempotent event processing
 - avoiding duplicate tool fulfillment
 - avoiding duplicate approval fulfillment
-- deterministic correlation between persisted runs and streamed events
+- deterministic correlation between persisted turns and streamed events
 
-### Safe migration interpretation
+### Safe deployment interpretation
 
-Optional workers should control **where capabilities run**, not redefine the Bear or role model.
+Optional workers should control **where capabilities run**, not redefine the Bear or profile model.
 
 Good pattern:
-- Den binary with ACP API enabled
-- Den binary with Letta compatibility runtime enabled
-- Den binary with native runtime worker enabled later
+- Den binary with ACP API enabled (`RUN_API=true`, `ACP_GATEWAY_ENABLED=true`)
+- Den binary with in-process native agent loop (`AGENT_RUNTIME=native`)
 - Den binary with projector/backfill workers enabled only where needed
 
 Bad pattern:
-- implicit role semantics depending on deployment toggles alone
+- implicit profile semantics depending on deployment toggles alone
 
-## Migration parity checklist
+## Parity checklist
 
-Later phases should explicitly verify parity for:
+When changing the runtime implementation, explicitly verify parity for:
 - active-turn exclusivity
-- request/run identity continuity
+- request/turn identity continuity
 - tool continuation correctness
 - approval pause/resume correctness
 - stale approval recovery correctness

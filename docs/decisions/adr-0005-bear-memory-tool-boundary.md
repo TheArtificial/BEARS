@@ -223,4 +223,4 @@ This ADR does not decide:
 - [dynamic-skills-subagents.md](dynamic-skills-subagents.md) — dynamic skills, reflection subagents, and bear-authored capability growth.
 - [routines-automation.md](routines-automation.md) — Den-managed routines and learning constraints.
 - [../MEMFS_AND_MEMORY_UI.md](../MEMFS_AND_MEMORY_UI.md) — MemFS Manager responsibilities and Den read-only memory UI behavior.
-- [../../planning/PLAN.md](../../planning/PLAN.md) — overall roadmap and Phase 1 memory model.
+- [../roadmap/PLAN.md](../roadmap/PLAN.md) — overall roadmap and Phase 1 memory model.
