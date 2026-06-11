@@ -2,7 +2,7 @@
 
 How to **export**, **transport**, and **import** a Bear's **cognition and configuration** without dragging Den control-plane state along. A portable package is what you move when cloning a Bear to another host, backing up durable knowledge, or sharing an approved skill/policy bundle — not a full Den snapshot.
 
-**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`den-native-runtime.md`](../architecture/den-native-runtime.md) (storage boundary), [`memory-model.md`](../architecture/memory-model.md), [`work-surfaces-and-conversations.md`](work-surfaces-and-conversations.md)
+**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`den-native-runtime.md`](../architecture/den-native-runtime.md) (storage boundary), [`memory-model.md`](../architecture/memory-model.md), [`bear-memory.md`](bear-memory.md), [`work-surfaces-and-conversations.md`](work-surfaces-and-conversations.md)
 
 ## What a portable Bear is (and is not)
 

@@ -38,6 +38,7 @@ Index of agent- and contributor-oriented docs for **this project**.
 | Roles, channels, trust | [`../architecture/bear-roles.md`](../architecture/bear-roles.md) |
 | Trust, armature, profiles | [`../architecture/interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md) |
 | Work surfaces ↔ conversations | [`work-surfaces-and-conversations.md`](work-surfaces-and-conversations.md) |
+| Bear memory (concise) | [`bear-memory.md`](bear-memory.md) |
 | Bear package (export/import) | [`bear-package.md`](bear-package.md) |
 
 ## Operations & deploy
