@@ -14,7 +14,8 @@ use crate::{
     errors::CustomError,
 };
 
-pub use crate::core::acp_turn_runner_letta::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON;
+/// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
+pub const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 
 pub struct AcpTurnStartRequest<'a> {
     pub state: &'a ApiState,
@@ -41,6 +42,7 @@ pub struct AcpStaleRuntimeCleanupParams {
     pub acp_session_id: String,
     pub bear_id: Uuid,
     pub pair_agent_id: String,
+    /// Letta HTTP run ids observed during the turn. Empty under native runtime (in-process cancel).
     pub run_ids: Vec<String>,
     pub reason: &'static str,
     pub request_id: Uuid,
@@ -80,6 +82,10 @@ pub struct AcpRuntimeMaterializationResult {
     pub created: bool,
 }
 
+/// Materialize a runtime conversation when the client selected a pending `new-*` id.
+///
+/// Native path: prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
+/// turn starts; this function then returns early without creating a second conversation.
 pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
     runtime_conversations: &B,
     request: &AcpTurnStartRequest<'_>,

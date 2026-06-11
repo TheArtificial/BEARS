@@ -130,6 +130,11 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
+    if !config.uses_native_agent_runtime() {
+        tracing::warn!(
+            "AGENT_RUNTIME=letta is deprecated and will be removed in Phase 8; use AGENT_RUNTIME=native"
+        );
+    }
     Ok(())
 }
 

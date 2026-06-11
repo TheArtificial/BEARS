@@ -217,3 +217,49 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
 
     Ok(())
 }
+
+#[sqlx::test]
+async fn native_conversation_backend_persists_den_conv_rows(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::core::{
+        bears::{db::create_bear, db::BearParams},
+        conversation_persistence::get_conversation_for_external_id,
+        native_runtime::NativeRuntimeConversationBackend,
+    };
+
+    let bear_id = create_bear(
+        &pool,
+        BearParams {
+            slug: "native-conv-backend",
+            name: "Native Conv Backend",
+            description: "test",
+            system_prompt: "test",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(vec![]),
+            context_profile: None,
+        },
+    )
+    .await?;
+    let backend = NativeRuntimeConversationBackend::with_pool(pool.clone());
+    let binding = RoleRuntimeBinding {
+        binding_id: format!("den-native:{bear_id}:pair"),
+        compatibility_backend: Some("runtime:native".to_string()),
+    };
+    let created = backend.create_conversation(&binding).await?;
+    assert!(created.id.starts_with("den-conv-"));
+    let canonical =
+        get_conversation_for_external_id(&pool, bear_id, &created.id)
+            .await?
+            .expect("native create_conversation should persist canonical row");
+    assert_eq!(
+        canonical.external_conversation_id.as_deref(),
+        Some(created.id.as_str())
+    );
+    backend
+        .verify_conversation_belongs_to_binding(&binding, &created.id)
+        .await?;
+    Ok(())
+}

@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
             SessionTrackingStream,
         },
         bears::BearProfile,
+        conversation_persistence,
         llm::{ChatMessage, LlmClient},
         native_runtime::{
             profile::NativeCapabilityProfile,
@@ -28,11 +30,23 @@ use crate::{
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
 
-pub struct NativeRuntimeConversationBackend;
+fn bear_id_from_native_binding(binding: &RoleRuntimeBinding) -> Option<Uuid> {
+    let rest = binding.binding_id.strip_prefix("den-native:")?;
+    let bear_id_str = rest.split(':').next()?;
+    Uuid::parse_str(bear_id_str).ok()
+}
+
+pub struct NativeRuntimeConversationBackend {
+    pool: Option<PgPool>,
+}
 
 impl NativeRuntimeConversationBackend {
     pub fn new() -> Self {
-        Self
+        Self { pool: None }
+    }
+
+    pub fn with_pool(pool: PgPool) -> Self {
+        Self { pool: Some(pool) }
     }
 }
 
@@ -43,30 +57,99 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         binding: &RoleRuntimeBinding,
     ) -> Result<RuntimeConversationRef, CustomError> {
         let id = format!("den-conv-{}", Uuid::new_v4().simple());
-        let _ = binding;
+        if let Some(pool) = &self.pool {
+            if let Some(bear_id) = bear_id_from_native_binding(binding) {
+                conversation_persistence::ensure_conversation_for_external_id(
+                    pool,
+                    bear_id,
+                    None,
+                    &id,
+                    None,
+                    None,
+                )
+                .await?;
+            }
+        }
         Ok(RuntimeConversationRef { id })
     }
 
     async fn verify_conversation_belongs_to_binding(
         &self,
-        _binding: &RoleRuntimeBinding,
-        _conversation_id: &str,
+        binding: &RoleRuntimeBinding,
+        conversation_id: &str,
     ) -> Result<(), CustomError> {
+        let Some(pool) = &self.pool else {
+            return Ok(());
+        };
+        let Some(bear_id) = bear_id_from_native_binding(binding) else {
+            return Ok(());
+        };
+        let found = conversation_persistence::get_conversation_for_external_id(
+            pool,
+            bear_id,
+            conversation_id,
+        )
+        .await?;
+        if found.is_none() {
+            return Err(CustomError::ValidationError(format!(
+                "conversation {conversation_id} does not belong to bear"
+            )));
+        }
         Ok(())
     }
 
     async fn load_history(
         &self,
-        _binding: &RoleRuntimeBinding,
+        binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
     ) -> Result<RuntimeHistoryPage, CustomError> {
+        let Some(pool) = &self.pool else {
+            return Ok(RuntimeHistoryPage {
+                records: Vec::new(),
+                raw_payload: None,
+            });
+        };
+        let Some(bear_id) = bear_id_from_native_binding(binding) else {
+            return Ok(RuntimeHistoryPage {
+                records: Vec::new(),
+                raw_payload: None,
+            });
+        };
+        let Some(canonical) = conversation_persistence::get_conversation_for_external_id(
+            pool,
+            bear_id,
+            &conversation.id,
+        )
+        .await?
+        else {
+            return Ok(RuntimeHistoryPage {
+                records: Vec::new(),
+                raw_payload: None,
+            });
+        };
+        let rows = conversation_persistence::list_messages_page(pool, canonical.id, None, 100)
+            .await?;
+        let records = rows
+            .into_iter()
+            .rev()
+            .filter_map(|row| {
+                if row.message_type != "visible_message" {
+                    return None;
+                }
+                let role = row.role?;
+                if role != "user" && role != "assistant" {
+                    return None;
+                }
+                Some(RuntimeHistoryRecord {
+                    message_id: row.provider_message_id,
+                    role,
+                    content: row.content_text,
+                    created_at: Some(row.created_at.to_string()),
+                })
+            })
+            .collect();
         Ok(RuntimeHistoryPage {
-            records: vec![RuntimeHistoryRecord {
-                message_id: None,
-                role: "system".to_string(),
-                content: format!("native conversation {}", conversation.id),
-                created_at: None,
-            }],
+            records,
             raw_payload: None,
         })
     }
@@ -182,7 +265,8 @@ pub async fn start_native_role_turn_event_stream(
         ));
     }
     let profile = NativeCapabilityProfile::for_role(role);
-    let runtime_conversations = NativeRuntimeConversationBackend::new();
+    let runtime_conversations =
+        NativeRuntimeConversationBackend::with_pool(request.state.sqlx_pool.clone());
     let materialized =
         materialize_acp_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
@@ -231,6 +315,13 @@ pub async fn start_native_role_turn_event_stream(
         stream_tokens: request.stream_tokens,
     };
     Ok(stream)
+}
+
+pub async fn continue_native_role_turn_event_stream(
+    request: AcpTurnContinueRequest<'_>,
+    _role: BearProfile,
+) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {
+    continue_native_acp_turn_event_stream(request).await
 }
 
 pub async fn continue_native_acp_turn_event_stream(
@@ -319,4 +410,28 @@ pub async fn continue_native_acp_turn_event_stream(
         continuation: request.continuation,
     };
     Ok((RuntimeStreamContinuation::Deferred, stream))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bear_id_from_native_binding_parses_den_native_format() {
+        let bear_id = Uuid::new_v4();
+        let binding = RoleRuntimeBinding {
+            binding_id: format!("den-native:{bear_id}:pair"),
+            compatibility_backend: Some("runtime:native".to_string()),
+        };
+        assert_eq!(bear_id_from_native_binding(&binding), Some(bear_id));
+    }
+
+    #[test]
+    fn bear_id_from_native_binding_rejects_non_native_bindings() {
+        let binding = RoleRuntimeBinding {
+            binding_id: "agent-letta-123".to_string(),
+            compatibility_backend: Some("runtime:letta".to_string()),
+        };
+        assert_eq!(bear_id_from_native_binding(&binding), None);
+    }
 }

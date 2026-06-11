@@ -65,6 +65,15 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Remove `RuntimeTurnBackend`/`LettaRuntimeTurnBackend`/`DenRuntimeAcpTurnRunner` and the contract traits once native is default. The loop becomes plain Den code; no pluggable runtime boundary.
 - Extend native runtime to `curate` and `watch` (already API-direct, no sandbox) via capability profiles.
 
+**Progress (`off-letta`):**
+
+- `NativeRuntimeConversationBackend` persists `den-conv-*` rows in Postgres and loads canonical visible history.
+- Prompt resolution skips re-materialization when a session already has a durable `den-conv-*` id.
+- Shared stale-approval denial constant moved off the Letta runner; dead `LettaAcpConversationRuntime` removed.
+- Native stale-runtime cleanup stays in-process (`run_ids` empty); `AGENT_RUNTIME=letta` logs a Phase 8 deprecation warning at startup.
+- Role turn entry points (`start_native_role_turn_event_stream`, `continue_native_role_turn_event_stream`) exported for future `curate`/`watch` LLM wiring.
+- Deferred to Phase 6–8: delete `acp_turn_runner_letta.rs`, `LettaClient`, compose services, full trait removal.
+
 ### Phase 6 — Den-native role registry (replace provisioning)
 
 - Make a per-role agent a Den-owned runtime profile (compiled system prompt + model + tool roster + memory scope). No external agent create.

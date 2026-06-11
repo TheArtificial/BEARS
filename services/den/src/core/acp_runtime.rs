@@ -9,9 +9,8 @@ use crate::{
         letta::{load_agent_conversations, LettaClient},
         native_runtime::NativeRuntimeConversationBackend,
         runtime_contracts::{
-            AcpConversationRuntime, EnsureConversationRequest, EnsureConversationResult,
-            RoleProfileRegistry, RoleRuntimeBinding, RuntimeConversationBackend,
-            RuntimeConversationRef, RuntimeHistoryRecord,
+            EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
+            RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
         },
     },
     errors::CustomError,
@@ -106,7 +105,12 @@ impl AcpConversationResolution {
             None
         };
         let should_materialize_runtime_conversation = session_selection.starts_with("new-")
-            && selection_source == AcpConversationSelectionSource::Explicit;
+            && selection_source == AcpConversationSelectionSource::Explicit
+            && existing_session
+                .and_then(|s| {
+                    normalized_durable_acp_conversation_id(s.resolved_conversation_id.as_deref())
+                })
+                .is_none();
         let upstream_target = if should_materialize_runtime_conversation {
             binding.binding_id.clone()
         } else {
@@ -572,7 +576,9 @@ pub struct AcpConversationService<'a> {
 impl<'a> AcpConversationService<'a> {
     pub fn new(pool: &'a PgPool, config: &Config, letta: &'a LettaClient) -> Self {
         let backend = if config.uses_native_agent_runtime() {
-            AcpRuntimeConversationBackend::Native(NativeRuntimeConversationBackend::new())
+            AcpRuntimeConversationBackend::Native(NativeRuntimeConversationBackend::with_pool(
+                pool.clone(),
+            ))
         } else {
             AcpRuntimeConversationBackend::Letta(LettaRuntimeConversationBackend::new(letta))
         };
@@ -627,49 +633,6 @@ impl<'a> AcpConversationService<'a> {
             &self.backend,
             binding,
             conversation_id,
-        )
-        .await
-    }
-}
-
-pub struct LettaAcpConversationRuntime<'a> {
-    pub letta: &'a LettaClient,
-}
-
-impl RoleProfileRegistry for LettaAcpConversationRuntime<'_> {
-    async fn resolve_compatibility_binding(
-        &self,
-        _bear_id: uuid::Uuid,
-        _role: &str,
-    ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
-        Ok(None)
-    }
-}
-
-impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
-    async fn ensure_session_conversation(
-        &self,
-        request: EnsureConversationRequest,
-    ) -> Result<EnsureConversationResult, CustomError> {
-        let (_resolution, result) = ensure_acp_session_conversation(
-            self.letta,
-            request,
-            None,
-            "new-acp-contract-default".to_string(),
-        )
-        .await?;
-        Ok(result)
-    }
-
-    async fn load_history(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation: &RuntimeConversationRef,
-    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
-        load_acp_history_with_backend(
-            &LettaRuntimeConversationBackend { letta: self.letta },
-            binding,
-            conversation,
         )
         .await
     }

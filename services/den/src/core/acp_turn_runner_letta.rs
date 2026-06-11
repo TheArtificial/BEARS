@@ -32,8 +32,6 @@ use crate::{
     errors::CustomError,
 };
 
-pub const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
-
 pub struct LettaRuntimeCancellationBackend<'a> {
     letta: &'a LettaClient,
 }
