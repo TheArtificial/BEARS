@@ -23,11 +23,11 @@ use crate::{
         acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
         archived_conversations,
         bears::{
-            compute_letta_drift_with_expected_tool_ids, db as bears_db,
+            db as bears_db,
             db::{
                 role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
             },
-            provision, sync, Bear, BearProfileBinding, BearProfile,
+            provision, Bear, BearProfileBinding, BearProfile,
         },
         letta::{AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
@@ -55,10 +55,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(bear_details_get))
-        .route_with_tsr(
-            "/bear/{slug}/details/resync-letta",
-            post(bear_resync_letta_post),
-        )
         .route_with_tsr("/bear/{slug}/details/edit", get(bear_edit_redirect_get))
         .route_with_tsr(
             "/bear/{slug}/details/edit/overview",
@@ -153,10 +149,6 @@ async fn viewer_can_manage_bear(
     viewer_is_bear_admin(pool, user.id, bear_id).await
 }
 
-#[derive(Debug, Deserialize)]
-struct BearDetailsQuery {
-    letta_resync: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct BearMemoryQuery {
@@ -1450,58 +1442,29 @@ async fn new_bear_post(
         )
         .await
         {
-            if state.web_letta_data.is_enabled() {
-                tracing::warn!(%id, "Letta provision failed: {e}");
-                let page = bear_new_form_context(&state, &form).await;
-                return render_template(
-                    &state,
-                    "bear/new.html",
-                    auth_session,
-                    context! {
-                        form => form,
-                        provision_error => e.to_string(),
-                        ..page
-                    },
-                )
-                .await;
-            }
+            tracing::warn!(%id, "Native profile provision failed: {e}");
+            let page = bear_new_form_context(&state, &form).await;
+            return render_template(
+                &state,
+                "bear/new.html",
+                auth_session,
+                context! {
+                    form => form,
+                    provision_error => e.to_string(),
+                    ..page
+                },
+            )
+            .await;
         }
 
-        if state.config.uses_native_agent_runtime() {
-            if let Err(err) = provision::reconcile_bear_native(
-                state.sqlx_pool(),
-                state.config.as_ref(),
-                id,
-            )
-            .await
-            {
-                tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
-            }
-        } else if state.web_letta_data.is_enabled() {
-            let sync_summary = sync::sync_all_bear_profiles_to_letta(
-                state.sqlx_pool(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
-            )
-            .await?;
-            if let Some(message) = sync_summary.diagnostic_message() {
-                tracing::warn!(bear_id = %id, message = %message, "Letta role sync after member bear create had failures");
-                let page = bear_new_form_context(&state, &form).await;
-                return render_template(
-                    &state,
-                    "bear/new.html",
-                    auth_session,
-                    context! {
-                        form => form,
-                        letta_sync_error => format!(
-                            "Bear was saved and provisioned, but one or more profile runtimes rejected syncing fields: {message}"
-                        ),
-                        ..page
-                    },
-                )
-                .await;
-            }
+        if let Err(err) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            id,
+        )
+        .await
+        {
+            tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
         }
 
         let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -1531,7 +1494,6 @@ async fn render_bear_details_page(
     bear: Bear,
     members: Vec<BearMemberRow>,
     can_manage_bear: bool,
-    letta_resync_query: Option<String>,
 ) -> Result<Response, CustomError> {
     let letta_configured = state.web_letta_data.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
@@ -1544,39 +1506,23 @@ async fn render_bear_details_page(
         role_details.push(build_role_detail_view(state, &bear, role).await?);
     }
 
-    let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
+    let (letta_agent_summary, letta_agent_fetch_error) = if letta_configured {
         if let Some(agent_id) = chat_agent_id.as_deref() {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => {
                     let summary = AgentSummary::from_letta_agent_state(&v);
-                    let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
-                    let expected_tool_ids = state
-                        .letta
-                        .filtered_tool_ids(&bear.letta_tool_ids.0)
-                        .await
-                        .unwrap_or_else(|e| {
-                            tracing::warn!(bear_id = %bear.id, "Could not filter Letta tools for drift comparison: {e}");
-                            bear.letta_tool_ids.0.clone()
-                        });
-                    let drift = compute_letta_drift_with_expected_tool_ids(
-                        &bear,
-                        Some(&summary),
-                        Some(&diagnostics),
-                        Some(&v),
-                        Some(&expected_tool_ids),
-                    );
-                    (Some(summary), None, drift)
+                    (Some(summary), None)
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    (None, Some(msg), None)
+                    (None, Some(msg))
                 }
             }
         } else {
-            (None, None, None)
+            (None, None)
         }
     } else {
-        (None, None, None)
+        (None, None)
     };
 
     let (conversation_rows, archived_conversation_count) = if letta_configured {
@@ -1675,12 +1621,6 @@ async fn render_bear_details_page(
         Some(bear.letta_tool_ids.0.join(", "))
     };
 
-    let letta_resync_notice = match letta_resync_query.as_deref() {
-        Some("ok") => Some("ok"),
-        Some("error") => Some("error"),
-        Some("drift") => Some("drift"),
-        _ => None,
-    };
     let acp_tool_details = acp_tool_detail_rows();
     let work_surface_rows = bear_work_surface_rows(&state.config, bear.id).await?;
     let web_sources = bear_web_sources(state.sqlx_pool(), bear.id).await?;
@@ -1754,11 +1694,9 @@ async fn render_bear_details_page(
             pair_composed_prompt,
             letta_agent_summary,
             letta_agent_fetch_error,
-            letta_drift,
             letta_tool_ids_display,
             conversation_rows,
             archived_conversation_count,
-            letta_resync_notice,
             acp_tool_details,
             mem_private_files,
             mem_private_error,
@@ -1778,7 +1716,6 @@ async fn render_bear_details_page(
 
 async fn bear_details_get(
     Path(slug): Path<String>,
-    Query(q): Query<BearDetailsQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -1801,85 +1738,8 @@ async fn bear_details_get(
         bear,
         members,
         can_manage_bear,
-        q.letta_resync,
     )
     .await
-}
-
-async fn bear_resync_letta_post(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    let user_id = user.id;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
-        ));
-    }
-
-    let target = format!("/bear/{}/details", bear.slug);
-    if !state.web_letta_data.is_enabled() {
-        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
-    }
-
-    let sync_summary = sync::sync_all_bear_profiles_to_letta(
-        state.sqlx_pool(),
-        state.letta.as_ref(),
-        state.bifrost.as_ref(),
-        bear.id,
-    )
-    .await?;
-    if let Some(message) = sync_summary.diagnostic_message() {
-        tracing::warn!(bear_id = %bear.id, message = %message, "Letta role resync from details had failures");
-        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
-    }
-
-    let Some(agent_id) = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await? else {
-        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
-    };
-
-    let still_drifted = match state.letta.fetch_agent(&agent_id).await {
-        Ok(v) => {
-            let summary = AgentSummary::from_letta_agent_state(&v);
-            let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
-            let expected_tool_ids = state
-                .letta
-                .filtered_tool_ids(&bear.letta_tool_ids.0)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(bear_id = %bear.id, "Could not filter Letta tools after resync: {e}");
-                    bear.letta_tool_ids.0.clone()
-                });
-            compute_letta_drift_with_expected_tool_ids(
-                &bear,
-                Some(&summary),
-                Some(&diagnostics),
-                Some(&v),
-                Some(&expected_tool_ids),
-            )
-            .is_some_and(|flags| flags.drift_any)
-        }
-        Err(e) => {
-            tracing::warn!(bear_id = %bear.id, "Could not verify Letta state after resync: {e}");
-            true
-        }
-    };
-
-    if still_drifted {
-        Ok(Redirect::to(&format!("{target}?letta_resync=drift")).into_response())
-    } else {
-        Ok(Redirect::to(&format!("{target}?letta_resync=ok")).into_response())
-    }
 }
 
 async fn bear_edit_redirect_get(
@@ -1986,15 +1846,14 @@ async fn bear_edit_overview_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(
+        if let Err(e) = provision::reconcile_bear_native(
             state.sqlx_pool(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
+            state.config.as_ref(),
             bear.id,
         )
         .await
         {
-            tracing::warn!(bear_id = %bear.id, "Letta sync after overview edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
@@ -2006,8 +1865,8 @@ async fn bear_edit_overview_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
-                    letta_sync_error => format!(
-                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                    provision_error => format!(
+                        "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
                 },
             )
@@ -2110,15 +1969,14 @@ async fn bear_edit_prompt_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(
+        if let Err(e) = provision::reconcile_bear_native(
             state.sqlx_pool(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
+            state.config.as_ref(),
             bear.id,
         )
         .await
         {
-            tracing::warn!(bear_id = %bear.id, "Letta sync after prompt edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after prompt edit failed: {e}");
             return render_template(
                 &state,
                 "bear/edit_prompt.html",
@@ -2127,8 +1985,8 @@ async fn bear_edit_prompt_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
-                    letta_sync_error => format!(
-                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                    provision_error => format!(
+                        "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
                 },
             )
@@ -2267,15 +2125,14 @@ async fn bear_edit_configuration_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(
+        if let Err(e) = provision::reconcile_bear_native(
             state.sqlx_pool(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
+            state.config.as_ref(),
             bear.id,
         )
         .await
         {
-            tracing::warn!(bear_id = %bear.id, "Letta sync after configuration edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Native profile reconcile after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
@@ -2288,8 +2145,8 @@ async fn bear_edit_configuration_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
-                    letta_sync_error => format!(
-                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                    provision_error => format!(
+                        "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
                     ..page
                 },

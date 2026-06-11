@@ -1,5 +1,10 @@
+use futures::StreamExt;
+
 use crate::{
-    core::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
+    core::runtime_contracts::{
+        RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
+        RuntimeStreamEvent,
+    },
     errors::CustomError,
 };
 
@@ -231,4 +236,79 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
             },
         ),
     }
+}
+
+/// Adapt a provider SSE byte stream into Den semantic runtime events (used by native projection).
+pub fn runtime_byte_stream_to_event_stream(
+    mut parsed: RuntimeByteStream,
+    parser: RuntimeEventParser,
+) -> RuntimeEventStream {
+    let mut buffer = Vec::new();
+    let mut queued_events: std::collections::VecDeque<
+        Result<RuntimeStreamEvent, CustomError>,
+    > = std::collections::VecDeque::new();
+    let mut finished = false;
+    let mut saw_terminal_or_pause = false;
+    let stream = futures::stream::poll_fn(move |cx| loop {
+        if let Some(item) = queued_events.pop_front() {
+            return std::task::Poll::Ready(Some(item));
+        }
+        if finished {
+            return std::task::Poll::Ready(None);
+        }
+        match parsed.as_mut().poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                buffer.extend_from_slice(&bytes);
+                while let Some(end) = find_sse_frame_end(&buffer) {
+                    let raw: Vec<u8> = buffer.drain(..end).collect();
+                    let frame_body = strip_trailing_sse_delimiter_owned(raw);
+                    match parse_sse_event_body_to_json(&frame_body) {
+                        Ok(Some(value)) => {
+                            if let Some(event) = (parser.parse_json_event)(&value) {
+                                if matches!(
+                                    &event,
+                                    RuntimeStreamEvent::Semantic(
+                                        RuntimeSemanticEvent::RunPaused { .. }
+                                            | RuntimeSemanticEvent::TurnCompleted { .. }
+                                            | RuntimeSemanticEvent::TurnFailed { .. }
+                                            | RuntimeSemanticEvent::TurnCancelled { .. }
+                                            | RuntimeSemanticEvent::Error { .. }
+                                    )
+                                ) {
+                                    saw_terminal_or_pause = true;
+                                }
+                                queued_events.push_back(Ok(event));
+                            } else {
+                                queued_events.push_back(Ok(
+                                    RuntimeStreamEvent::UntranslatedProviderEvent { value },
+                                ));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => queued_events.push_back(Err(err)),
+                    }
+                }
+            }
+            std::task::Poll::Ready(Some(Err(err))) => {
+                return std::task::Poll::Ready(Some(Err(err)));
+            }
+            std::task::Poll::Ready(None) => {
+                finished = true;
+                if buffer.is_empty() {
+                    if !saw_terminal_or_pause {
+                        queued_events.push_back(Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        )));
+                    }
+                } else {
+                    queued_events.push_back(Err(CustomError::System(format!(
+                        "continuation SSE stream ended with incomplete frame ({} bytes)",
+                        buffer.len()
+                    ))));
+                }
+            }
+            std::task::Poll::Pending => return std::task::Poll::Pending,
+        }
+    });
+    Box::pin(stream)
 }

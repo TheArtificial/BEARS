@@ -1,4 +1,4 @@
-//! ACP turn dispatch — native in-process loop is the default; Letta path is gated behind `AGENT_RUNTIME=letta`.
+//! ACP turn dispatch — native in-process loop only.
 
 use uuid::Uuid;
 
@@ -42,7 +42,7 @@ pub struct AcpStaleRuntimeCleanupParams {
     pub acp_session_id: String,
     pub bear_id: Uuid,
     pub pair_agent_id: String,
-    /// Letta HTTP run ids observed during the turn. Empty under native runtime (in-process cancel).
+    /// Empty under native runtime (in-process cancel).
     pub run_ids: Vec<String>,
     pub reason: &'static str,
     pub request_id: Uuid,
@@ -84,7 +84,7 @@ pub struct AcpRuntimeMaterializationResult {
 
 /// Materialize a runtime conversation when the client selected a pending `new-*` id.
 ///
-/// Native path: prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
+/// Prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
 /// turn starts; this function then returns early without creating a second conversation.
 pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
     runtime_conversations: &B,
@@ -136,19 +136,13 @@ pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversati
 pub async fn start_acp_turn_event_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {
-    if request.state.config.uses_native_agent_runtime() {
-        return crate::core::native_runtime::start_native_acp_turn_event_stream(request).await;
-    }
-    crate::core::acp_turn_runner_letta::start_letta_acp_turn_event_stream(request).await
+    crate::core::native_runtime::start_native_acp_turn_event_stream(request).await
 }
 
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {
-    if request.state.config.uses_native_agent_runtime() {
-        return crate::core::native_runtime::continue_native_acp_turn_event_stream(request).await;
-    }
-    crate::core::acp_turn_runner_letta::continue_letta_acp_turn_event_stream(request).await
+    crate::core::native_runtime::continue_native_acp_turn_event_stream(request).await
 }
 
 pub async fn acp_cleanup_stale_runtime_state(
@@ -165,29 +159,17 @@ pub async fn acp_cleanup_stale_runtime_state(
         request_id,
     } = params;
     let tool_turn_cleanup = tool_turns.cleanup_request_tool_turns(&acp_session_id, request_id);
-    if state.config.uses_native_agent_runtime() {
-        return serde_json::json!({
-            "ok": true,
-            "reason": reason,
-            "run_ids": run_ids,
-            "cancel_result": "native:in-process cleanup (no external run ids)",
-            "tool_turn_cleanup": {
-                "pending_removed": tool_turn_cleanup.pending_removed,
-                "settled_removed": tool_turn_cleanup.settled_removed,
-            },
-            "bear_id": bear_id,
-            "pair_agent_id": pair_agent_id,
-        });
-    }
-    crate::core::acp_turn_runner_letta::letta_cleanup_stale_runtime_state(
-        &state,
-        tool_turns,
-        acp_session_id,
-        bear_id,
-        pair_agent_id,
-        run_ids,
-        reason,
-        request_id,
-    )
-    .await
+    let _ = state;
+    serde_json::json!({
+        "ok": true,
+        "reason": reason,
+        "run_ids": run_ids,
+        "cancel_result": "native:in-process cleanup (no external run ids)",
+        "tool_turn_cleanup": {
+            "pending_removed": tool_turn_cleanup.pending_removed,
+            "settled_removed": tool_turn_cleanup.settled_removed,
+        },
+        "bear_id": bear_id,
+        "pair_agent_id": pair_agent_id,
+    })
 }

@@ -14,7 +14,7 @@ use crate::{
     auth_backend::AuthSession,
     core::bears::{
         db::{self as bears_db, BEAR_ROLE_ADMIN},
-        provision, sync,
+        provision,
         templates::FIRST_BEAR_TEMPLATES,
     },
     errors::CustomError,
@@ -275,46 +275,26 @@ async fn first_bear_post(
     )
     .await
     {
-        if state.letta.is_enabled() {
-            tracing::warn!(%id, "Letta provision failed during first-bear onboarding: {e}");
-            let bear = bears_db::get_bear(state.sqlx_pool(), id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            return Ok(
-                Redirect::to(&format!("/bear/{}/details?letta_resync=error", bear.slug))
-                    .into_response(),
-            );
-        }
+        tracing::warn!(%id, "Native profile provision failed during first-bear onboarding: {e}");
+        return render_first_bear_form(
+            &state,
+            auth_session,
+            form,
+            None,
+            Some(e.to_string()),
+            None,
+        )
+        .await;
     }
 
-    if state.config.uses_native_agent_runtime() {
-        if let Err(err) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
-        {
-            tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after first-bear onboarding failed");
-        }
-    } else if state.letta.is_enabled() {
-        let sync_summary = sync::sync_all_bear_profiles_to_letta(
-            state.sqlx_pool(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
-            id,
-        )
-        .await?;
-        if let Some(message) = sync_summary.diagnostic_message() {
-            tracing::warn!(bear_id = %id, message = %message, "Letta profile sync after first-bear onboarding had failures");
-            let bear = bears_db::get_bear(state.sqlx_pool(), id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            return Ok(
-                Redirect::to(&format!("/bear/{}/details?letta_resync=error", bear.slug))
-                    .into_response(),
-            );
-        }
+    if let Err(err) = provision::reconcile_bear_native(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        id,
+    )
+    .await
+    {
+        tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after first-bear onboarding failed");
     }
 
     let bear = bears_db::get_bear(state.sqlx_pool(), id)

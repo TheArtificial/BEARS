@@ -60,11 +60,9 @@ use crate::core::prompt_memory_blocks::{
             acp_turn_runner::{
                 ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             },
-            acp_turn_runner_letta::{
-                runtime_byte_stream_to_event_stream,
-            },
             letta_runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
+                runtime_byte_stream_to_event_stream,
                 runtime_stream_event_from_letta_json,
             },
             runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},

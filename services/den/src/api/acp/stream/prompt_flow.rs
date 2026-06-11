@@ -90,7 +90,6 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         match require_pair_runtime_binding(
             &state.sqlx_pool,
             state.config.as_ref(),
-            state.letta.as_ref(),
             &bear,
         )
         .await
@@ -131,7 +130,6 @@ pub(in crate::api::acp) async fn run_prompt_flow(
     let conversation_runtime = AcpConversationService::new(
         &state.sqlx_pool,
         state.config.as_ref(),
-        state.letta.as_ref(),
     );
     let (conversation_resolution, ensure_conversation_result) = conversation_runtime
         .ensure_prompt_conversation(

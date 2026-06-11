@@ -4,14 +4,13 @@ use crate::{
     config::Config,
     core::{
         acp_sessions,
-        bears::{db as bears_db, model::BearProfile, Bear},
+        bears::{model::BearProfile, Bear},
         conversation_persistence,
-        letta::{load_agent_conversations, LettaClient},
         native_runtime::NativeRuntimeConversationBackend,
         role_runtime_registry::DenNativeProfileRegistry,
         runtime_contracts::{
             EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
-            RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
+            RuntimeConversationBackend, RuntimeConversationRef,
         },
     },
     errors::CustomError,
@@ -26,7 +25,6 @@ pub fn acp_missing_pair_binding_message(bear_slug: &str) -> String {
 pub async fn require_pair_runtime_binding(
     pool: &PgPool,
     config: &Config,
-    letta: &LettaClient,
     bear: &Bear,
 ) -> Result<RoleRuntimeBinding, CustomError> {
     let registry = DenNativeProfileRegistry::new(pool, config);
@@ -35,20 +33,10 @@ pub async fn require_pair_runtime_binding(
             return Ok(binding);
         }
     }
-    if config.uses_native_agent_runtime() {
-        return Ok(RoleRuntimeBinding {
-            binding_id: format!("den-native:{}:pair", bear.id),
-            compatibility_backend: Some("runtime:native".to_string()),
-        });
-    }
-    if !letta.is_enabled() {
-        return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
-        ));
-    }
-    Err(CustomError::ValidationError(acp_missing_pair_binding_message(
-        &bear.slug,
-    )))
+    Ok(RoleRuntimeBinding {
+        binding_id: format!("den-native:{}:pair", bear.id),
+        compatibility_backend: Some("runtime:native".to_string()),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,22 +255,6 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
     ))
 }
 
-pub async fn ensure_acp_session_conversation(
-    letta: &LettaClient,
-    request: EnsureConversationRequest,
-    existing_session: Option<&acp_sessions::AcpSessionRow>,
-    generated_pending_id: String,
-) -> Result<(AcpConversationResolution, EnsureConversationResult), CustomError> {
-    let backend = LettaRuntimeConversationBackend { letta };
-    ensure_acp_session_conversation_with_backend(
-        &backend,
-        request,
-        existing_session,
-        generated_pending_id,
-    )
-    .await
-}
-
 pub fn canonical_acp_conversation_id_for_session(
     existing_session: Option<&acp_sessions::AcpSessionRow>,
     conversation_resolution: &AcpConversationResolution,
@@ -334,179 +306,6 @@ pub async fn verify_acp_conversation_belongs_to_binding_with_backend<B: RuntimeC
         .await
 }
 
-pub async fn verify_acp_conversation_belongs_to_binding(
-    letta: &LettaClient,
-    binding: &RoleRuntimeBinding,
-    conversation_id: &str,
-) -> Result<(), CustomError> {
-    let backend = LettaRuntimeConversationBackend { letta };
-    verify_acp_conversation_belongs_to_binding_with_backend(&backend, binding, conversation_id)
-        .await
-}
-
-pub async fn verify_acp_conversation_access(
-    pool: &PgPool,
-    bear_id: uuid::Uuid,
-    letta: &LettaClient,
-    binding: &RoleRuntimeBinding,
-    conversation_id: &str,
-) -> Result<(), CustomError> {
-    if conversation_id == "default" || conversation_id.starts_with("new-") {
-        return Ok(());
-    }
-    if !conversation_id.starts_with("conv-") && !is_native_runtime_conversation_id(conversation_id)
-    {
-        return Err(CustomError::ValidationError(format!(
-            "invalid conversation_id: {conversation_id}"
-        )));
-    }
-    if conversation_persistence::get_conversation_for_external_id(pool, bear_id, conversation_id)
-        .await?
-        .is_some()
-    {
-        return Ok(());
-    }
-    verify_acp_conversation_belongs_to_binding(letta, binding, conversation_id).await
-}
-
-fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| s.starts_with("conv-"))
-        .map(str::to_string)
-}
-
-pub struct LettaRuntimeConversationBackend<'a> {
-    pub letta: &'a LettaClient,
-}
-
-impl<'a> LettaRuntimeConversationBackend<'a> {
-    pub fn new(letta: &'a LettaClient) -> Self {
-        Self { letta }
-    }
-}
-
-#[allow(async_fn_in_trait)]
-impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
-    async fn create_conversation(
-        &self,
-        binding: &RoleRuntimeBinding,
-    ) -> Result<RuntimeConversationRef, CustomError> {
-        let created_response = self
-            .letta
-            .create_conversation_for_agent(&binding.binding_id)
-            .await?;
-        let conv_id = letta_conversation_id_from_create_response(&created_response).ok_or_else(|| {
-            CustomError::System(format!(
-                "Letta create conversation response did not contain a conv-* id: {created_response}"
-            ))
-        })?;
-        Ok(RuntimeConversationRef { id: conv_id })
-    }
-
-    async fn verify_conversation_belongs_to_binding(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation_id: &str,
-    ) -> Result<(), CustomError> {
-        if !self.letta.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
-        let snap = load_agent_conversations(self.letta, binding.binding_id.trim()).await;
-        let found = snap.all.iter().any(|row| row.id == conversation_id);
-        if found {
-            Ok(())
-        } else {
-            Err(CustomError::Authorization(
-                "conversation not found for this bear".to_string(),
-            ))
-        }
-    }
-
-    async fn load_history(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation: &RuntimeConversationRef,
-    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
-        let binding_for_conv = if conversation.id == "default" {
-            Some(binding.binding_id.as_str())
-        } else {
-            None
-        };
-        let body = self
-            .letta
-            .list_conversation_messages(&conversation.id, binding_for_conv, 100, None, true)
-            .await?;
-        let messages = if let Some(array) = body.as_array() {
-            array.clone()
-        } else if let Some(array) = body.get("messages").and_then(serde_json::Value::as_array) {
-            array.clone()
-        } else if let Some(array) = body.get("data").and_then(serde_json::Value::as_array) {
-            array.clone()
-        } else if let Some(array) = body.get("items").and_then(serde_json::Value::as_array) {
-            array.clone()
-        } else {
-            Vec::new()
-        };
-        let mut history = Vec::new();
-        for raw_message in messages {
-            let inner = raw_message.get("contents").unwrap_or(&raw_message);
-            let role = inner
-                .get("role")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| raw_message.get("role").and_then(serde_json::Value::as_str))
-                .or_else(|| {
-                    inner
-                        .get("message_type")
-                        .and_then(serde_json::Value::as_str)
-                        .map(|message_type| match message_type {
-                            "user_message" => "user",
-                            "assistant_message" => "assistant",
-                            _ => "system",
-                        })
-                })
-                .unwrap_or("system")
-                .to_string();
-            let content = inner
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .or_else(|| {
-                    inner
-                        .get("content")
-                        .and_then(|v| v.get("text"))
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or_default();
-            let message_id = raw_message
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| inner.get("id").and_then(serde_json::Value::as_str))
-                .map(str::to_string);
-            let created_at = raw_message
-                .get("date")
-                .or_else(|| raw_message.get("created_at"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string);
-            history.push(RuntimeHistoryRecord {
-                message_id,
-                role,
-                content,
-                created_at,
-            });
-        }
-        Ok(crate::core::runtime_contracts::RuntimeHistoryPage {
-            records: history,
-            raw_payload: Some(body),
-        })
-    }
-}
-
 pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     binding: &RoleRuntimeBinding,
@@ -515,71 +314,19 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend.load_history(binding, conversation).await
 }
 
-pub enum AcpRuntimeConversationBackend<'a> {
-    Letta(LettaRuntimeConversationBackend<'a>),
-    Native(NativeRuntimeConversationBackend),
-}
-
-#[allow(async_fn_in_trait)]
-impl RuntimeConversationBackend for AcpRuntimeConversationBackend<'_> {
-    async fn create_conversation(
-        &self,
-        binding: &RoleRuntimeBinding,
-    ) -> Result<RuntimeConversationRef, CustomError> {
-        match self {
-            Self::Letta(backend) => backend.create_conversation(binding).await,
-            Self::Native(backend) => backend.create_conversation(binding).await,
-        }
-    }
-
-    async fn verify_conversation_belongs_to_binding(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation_id: &str,
-    ) -> Result<(), CustomError> {
-        match self {
-            Self::Letta(backend) => {
-                backend
-                    .verify_conversation_belongs_to_binding(binding, conversation_id)
-                    .await
-            }
-            Self::Native(backend) => {
-                backend
-                    .verify_conversation_belongs_to_binding(binding, conversation_id)
-                    .await
-            }
-        }
-    }
-
-    async fn load_history(
-        &self,
-        binding: &RoleRuntimeBinding,
-        conversation: &RuntimeConversationRef,
-    ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
-        match self {
-            Self::Letta(backend) => backend.load_history(binding, conversation).await,
-            Self::Native(backend) => backend.load_history(binding, conversation).await,
-        }
-    }
-}
-
 /// Den-owned ACP conversation lifecycle entrypoint. Keeps session/bootstrap policy out of
 /// prompt handlers while routing backend-specific work through `RuntimeConversationBackend`.
 pub struct AcpConversationService<'a> {
     pool: &'a PgPool,
-    backend: AcpRuntimeConversationBackend<'a>,
+    backend: NativeRuntimeConversationBackend,
 }
 
 impl<'a> AcpConversationService<'a> {
-    pub fn new(pool: &'a PgPool, config: &Config, letta: &'a LettaClient) -> Self {
-        let backend = if config.uses_native_agent_runtime() {
-            AcpRuntimeConversationBackend::Native(NativeRuntimeConversationBackend::with_pool(
-                pool.clone(),
-            ))
-        } else {
-            AcpRuntimeConversationBackend::Letta(LettaRuntimeConversationBackend::new(letta))
-        };
-        Self { pool, backend }
+    pub fn new(pool: &'a PgPool, _config: &Config) -> Self {
+        Self {
+            pool,
+            backend: NativeRuntimeConversationBackend::with_pool(pool.clone()),
+        }
     }
 
     pub async fn ensure_prompt_conversation(

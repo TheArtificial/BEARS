@@ -295,8 +295,6 @@ pub trait AcpConversationRuntime {
 }
 
 /// ACP/native conversation materialization backend (create, verify, load_history).
-/// Distinct from `runtime_conversations::RuntimeLettaConversationQueryBackend`,
-/// which covers Letta HTTP list/query operations for operator UI and escape hatch.
 #[allow(async_fn_in_trait)]
 pub trait RuntimeConversationBackend {
     async fn create_conversation(
@@ -315,17 +313,6 @@ pub trait RuntimeConversationBackend {
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
     ) -> Result<RuntimeHistoryPage, CustomError>;
-}
-
-#[allow(async_fn_in_trait)]
-pub trait RuntimeCancellationBackend {
-    async fn cancel_turn(&self, request: CancelTurnRequest)
-    -> Result<CancelTurnResult, CustomError>;
-
-    async fn cleanup_stale_runtime(
-        &self,
-        request: RuntimeCleanupRequest,
-    ) -> Result<RuntimeCleanupResult, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

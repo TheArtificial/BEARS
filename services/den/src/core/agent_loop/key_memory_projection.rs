@@ -163,7 +163,7 @@ pub(crate) async fn compiled_prompt_cache_token(
     if let Some(compiled) = get_compiled_bear_config(pool, bear.id).await? {
         return Ok(compiled.config_hash);
     }
-    let hash = profile_config_hash(pool, bear, role, native_runtime).await?;
+    let hash = profile_config_hash(pool, bear, role).await?;
     Ok(hash
         .get("compiled_config_hash")
         .and_then(Value::as_str)

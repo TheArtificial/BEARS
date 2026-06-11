@@ -4,7 +4,6 @@
 pub mod context_composition;
 pub mod db;
 pub mod letta_code_harness;
-pub mod letta_drift;
 pub mod managed_blocks;
 pub mod model;
 pub mod provision;
@@ -21,9 +20,6 @@ pub use context_composition::{
     compose_role_context, context_profile_from_json, context_profile_to_json,
     default_role_contracts_for_bear, render_managed_role_prompt, BearContextProfile,
     ComposedRoleContext, RoleContracts,
-};
-pub use letta_drift::{
-    compute_letta_drift, compute_letta_drift_with_expected_tool_ids, LettaDriftFlags,
 };
 pub use managed_blocks::{
     compile_and_store_managed_config_for_bear, compile_managed_config_for_bear,

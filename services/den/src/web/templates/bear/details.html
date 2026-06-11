@@ -3,21 +3,6 @@ block subnav %}
 <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
 {% endblock %} {% block content %}
 <section class="den-bear-home">
-    {% if letta_resync_notice == 'ok' %}
-    <p class="form-hint">
-        <span class="success">Letta was updated from Den.</span>
-    </p>
-    {% elif letta_resync_notice == 'drift' %}
-    <p class="form-errors">
-        Den sent the update to Letta, but Letta still reports drift. Review
-        Advanced operations below.
-    </p>
-    {% elif letta_resync_notice == 'error' %}
-    <p class="form-errors">
-        Could not resync Letta. Check Advanced operations and service logs.
-    </p>
-    {% endif %}
-
     <section id="command-center" class="box full-width den-command-center">
         <div class="den-command-center-main">
             <h3 class="bear-overview-name">
@@ -449,16 +434,6 @@ block subnav %}
                 Could not load chat role from Letta: {{ letta_agent_fetch_error
                 | e }}
             </p>
-            {% endif %} {% if letta_drift and letta_drift.drift_any %}
-            <p class="form-errors"><strong>Letta is out of sync.</strong></p>
-            {% endif %} {% if can_manage_bear %}
-            <form
-                method="post"
-                action="/bear/{{ bear.slug | e }}/details/resync-letta"
-                class="den-bear-resync-form"
-            >
-                <p><button type="submit">Force Sync</button></p>
-            </form>
             {% endif %}
             <table>
                 <thead>

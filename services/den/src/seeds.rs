@@ -13,7 +13,7 @@ use crate::{
         acp_tokens,
         bears::{
             db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
-            provision::{self, provision_missing_bear_profiles},
+            provision::{self},
             runtime_plan::default_runtime_plan,
         },
         bifrost::BifrostClient,
@@ -220,18 +220,9 @@ async fn ensure_smoke_role_runtimes(
 ) -> Result<()> {
     let letta = LettaClient::new(config);
     let bifrost = BifrostClient::new(config);
-    if config.uses_native_agent_runtime() {
-        return provision::provision_bear_if_configured(pool, config, &letta, &bifrost, bear_id)
-            .await
-            .context("provision smoke bear native runtimes");
-    }
-    if !letta.is_enabled() {
-        return Ok(());
-    }
-    provision_missing_bear_profiles(pool, config, &letta, &bifrost, bear_id)
+    provision::provision_bear_if_configured(pool, config, &letta, &bifrost, bear_id)
         .await
-        .context("provision missing smoke bear profile runtimes")?;
-    Ok(())
+        .context("provision smoke bear native runtimes")
 }
 
 async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {

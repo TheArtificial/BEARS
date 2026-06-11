@@ -17,7 +17,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     core::{
-        bears::{db as bears_db, db::BearParams, provision, sync, BearProfileBinding, BearProfile},
+        bears::{db as bears_db, db::BearParams, provision, BearProfileBinding, BearProfile},
         letta::{AgentSummary, LettaAgentListItem},
         memory::{
             admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
@@ -1077,67 +1077,29 @@ async fn edit_action(
         )
         .await?;
 
-        if native_runtime {
-            if let Err(e) = provision::provision_bear_if_configured(
-                state.sqlx_pool(),
-                state.config.as_ref(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
-            )
-            .await
-            {
-                tracing::warn!(%id, "Native runtime refresh after bear edit failed: {e}");
-                let bear = bears_db::get_bear(state.sqlx_pool(), id)
-                    .await?
-                    .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-                let page = admin_bear_edit_page_context(&state, &form).await;
-                return web::render_template(
-                    &state,
-                    "admin/bears/edit.html",
-                    auth_session,
-                    context! {
-                        errors => ValidationErrors::new(),
-                        form => form,
-                        bear,
-                        provision_error => e.to_string(),
-                        ..page
-                    },
-                )
-                .await;
-            }
-            return Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response());
-        }
-
-        let sync_summary = sync::sync_all_bear_profiles_to_letta(
+        if let Err(e) = provision::provision_bear_if_configured(
             state.sqlx_pool(),
+            state.config.as_ref(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
             id,
         )
-        .await?;
-        if let Some(message) = sync_summary.diagnostic_message() {
-            tracing::warn!(%id, message = %message, "Letta role sync after bear edit had failures");
+        .await
+        {
+            tracing::warn!(%id, "Native profile refresh after bear edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
             let page = admin_bear_edit_page_context(&state, &form).await;
-            let empty_errors = ValidationErrors::new();
-            let skipped = sync_summary.skipped_profiles().len();
             return web::render_template(
                 &state,
                 "admin/bears/edit.html",
                 auth_session,
                 context! {
-                    errors => empty_errors,
+                    errors => ValidationErrors::new(),
                     form => form,
                     bear,
-                    letta_sync_error => format!(
-                        "Bear was saved in Den. {}. {} profile(s) synced; {} unprovisioned profile(s) skipped. Use the Bear detail page to inspect per-profile health and provision missing profiles.",
-                        message,
-                        sync_summary.synced_count(),
-                        skipped
-                    ),
+                    provision_error => e.to_string(),
                     ..page
                 },
             )
@@ -1249,24 +1211,14 @@ async fn edit_prompt_action(
         )
         .await?;
 
-        if state.config.uses_native_agent_runtime() {
-            provision::provision_bear_if_configured(
-                state.sqlx_pool(),
-                state.config.as_ref(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
-            )
-            .await?;
-        } else if state.letta.is_enabled() {
-            sync::sync_all_bear_profiles_to_letta(
-                state.sqlx_pool(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
-            )
-            .await?;
-        }
+        provision::provision_bear_if_configured(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            state.letta.as_ref(),
+            state.bifrost.as_ref(),
+            id,
+        )
+        .await?;
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
@@ -1470,32 +1422,16 @@ async fn provision_missing_profiles_action(
     State(state): State<AppState>,
     _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let message = if state.config.uses_native_agent_runtime() {
-        match provision::provision_missing_bear_profiles_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
-        {
-            Ok(0) => "No missing native profile bindings to provision.".to_string(),
-            Ok(n) => format!("Provisioned {n} missing native profile binding(s)."),
-            Err(err) => format!("Provisioning native profile bindings failed: {err}"),
-        }
-    } else {
-        match provision::provision_missing_bear_profiles(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
-            id,
-        )
-        .await
-        {
-            Ok(0) => "No missing profile runtimes to provision.".to_string(),
-            Ok(n) => format!("Provisioned {n} missing profile runtime(s)."),
-            Err(err) => format!("Provisioning missing profile runtimes failed: {err}"),
-        }
+    let message = match provision::provision_missing_bear_profiles(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        id,
+    )
+    .await
+    {
+        Ok(0) => "No missing native profile bindings to provision.".to_string(),
+        Ok(n) => format!("Provisioned {n} missing native profile binding(s)."),
+        Err(err) => format!("Provisioning native profile bindings failed: {err}"),
     };
 
     Ok(Redirect::to(&format!(
@@ -1510,80 +1446,22 @@ async fn retry_letta_action(
     State(state): State<AppState>,
     _auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    if state.config.uses_native_agent_runtime() {
-        let message = match provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
-        {
-            Ok(summary) => format!(
-                "Native profile binding reconcile finished. {} profile(s) synced.",
-                summary.synced_count()
-            ),
-            Err(err) => format!("Native profile binding reconcile failed: {err}"),
-        };
-        return Ok(Redirect::to(&format!(
-            "/admin/bears/{id}/advanced?message={}",
-            urlencoding::encode(&message)
-        ))
-        .into_response());
-    }
-
-    if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
-        return Err(CustomError::NotFound("bear not found".to_string()));
-    }
-
-    let existing_agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), id).await?;
-    let has_any_role_agent = existing_agents.iter().any(|agent| {
-        agent
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|s| !s.is_empty())
-    });
-
-    let letta_retry_message = if !state.letta.is_enabled() {
-        "Letta is not configured (set LETTA_BASE_URL).".to_string()
-    } else if has_any_role_agent {
-        "This bear already has one or more profile runtimes. Use 'Provision missing profiles' to fill only empty profiles.".to_string()
-    } else {
-        match provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
-            id,
-        )
-        .await
-        {
-            Ok(()) => {
-                match sync::sync_all_bear_roles_to_letta(
-                    state.sqlx_pool(),
-                    state.letta.as_ref(),
-                    state.bifrost.as_ref(),
-                    id,
-                )
-                .await
-                {
-                    Ok(summary) => format!(
-                        "Profile runtime provisioning finished. {} profile(s) synced; {} unprovisioned profile(s) skipped.",
-                        summary.synced_count(),
-                        summary.skipped_profiles().len()
-                    ),
-                    Err(e) => format!(
-                        "Profile runtime provisioning finished, but follow-up profile sync failed: {e}"
-                    ),
-                }
-            }
-            Err(e) => format!("Letta provisioning failed: {e}"),
-        }
+    let message = match provision::reconcile_bear_native(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        id,
+    )
+    .await
+    {
+        Ok(summary) => format!(
+            "Native profile binding reconcile finished. {} profile(s) synced.",
+            summary.synced_count()
+        ),
+        Err(err) => format!("Native profile binding reconcile failed: {err}"),
     };
-
     Ok(Redirect::to(&format!(
         "/admin/bears/{id}/advanced?message={}",
-        urlencoding::encode(&letta_retry_message)
+        urlencoding::encode(&message)
     ))
     .into_response())
 }

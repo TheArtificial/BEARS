@@ -181,32 +181,6 @@ pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {
     out
 }
 
-/// Letta HTTP query surface for listing conversations, messages, and approvals.
-/// Distinct from `runtime::contracts::RuntimeConversationBackend`, which covers
-/// ACP/native conversation materialization (create, verify, load_history).
-#[allow(async_fn_in_trait)]
-pub trait RuntimeLettaConversationQueryBackend {
-    async fn list_conversations(
-        &self,
-        request: RuntimeConversationListRequest,
-    ) -> Result<RuntimeConversationSnapshot, CustomError>;
-
-    async fn list_messages(
-        &self,
-        request: RuntimeConversationMessagesRequest,
-    ) -> Result<Value, CustomError>;
-
-    async fn pending_approvals(
-        &self,
-        request: RuntimeApprovalRequest,
-    ) -> Result<Vec<RuntimePendingApproval>, CustomError>;
-
-    async fn apply_approval_action(
-        &self,
-        request: RuntimeApprovalActionRequest,
-    ) -> Result<Vec<RuntimePendingApproval>, CustomError>;
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeSemanticGroupKind {
     UserTurn,
