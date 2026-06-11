@@ -92,7 +92,9 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 **Design:** [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md).
 
-- Add **`bears-sandbox-runner`** compose service: paired **workspace + egress gateway** containers per sandbox session; Den owns policy, runner owns materialized workspaces (cold start OK in v1; telemetry from day one).
+- Add **`bears-sandbox-runner`** compose service: **`docker_workspace`** backend (v1); paired **workspace + egress gateway**; **git/gh command bridge** at gateway (Locki-inspired, Den `RunAuthContext` policy); Den owns policy, runner owns materialized workspaces (cold start OK in v1; telemetry from day one).
+- **Pluggable backends:** `incus_system` for `full_os` work surfaces deferred to Phase 7.2+ (Incus thesis from Locki; no local-worktree or harness-in-box coupling).
+- **Arbitrary repos:** Den-managed remote origins + shallow clone; opportunistic toolchain detection — **no required `mise.toml`** or repo scaffold.
 - **`chat` has no sandbox** — delegate to a Docket **`work`** run with phase SSE on the chat channel; **`pair` stays client-armature** (hosted pair → Phase 7.1).
 - Den **bear-level origins** UI/API (GitHub, GitLab, Gitea); **Connections** with `owner ∈ {user, bear}`; bear **service identity** as GitHub **App** (hosted) or **machine user** (self-hosted); **`RunAuthContext`** with operation-scoped gateway injection (default: bear push, requester PR).
 - Reuse the native loop; add coding tools (fs, shell) via runner RPC; route `work` memory through per-Bear SQLite, retiring the Letta Code git memory path.
