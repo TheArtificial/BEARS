@@ -274,4 +274,16 @@ mod tests {
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"fs_read_text_file"));
     }
+
+    #[test]
+    fn curate_profile_includes_proposal_and_core_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(&config, BearProfile::Curate, None, None).unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"memory_list_proposals"));
+        assert!(names.contains(&"memory_read_proposal"));
+        assert!(names.contains(&"memory_apply_core_update"));
+        assert!(names.contains(&"memory_read"));
+        assert!(!names.contains(&"enter_plan_mode"));
+    }
 }

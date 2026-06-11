@@ -71,7 +71,10 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Prompt resolution skips re-materialization when a session already has a durable `den-conv-*` id.
 - Shared stale-approval denial constant moved off the Letta runner; dead `LettaAcpConversationRuntime` removed.
 - Native stale-runtime cleanup stays in-process (`run_ids` empty); `AGENT_RUNTIME=letta` logs a Phase 8 deprecation warning at startup.
-- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) exported for future `curate`/`watch` LLM wiring over one Den loop.
+- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) exported for `curate`/`watch` capability profiles over one Den loop.
+- Golden ACP trace tests cover OpenAI SSE → semantic events → Bearwire projection → adapter SSE (`bearwire_projection/golden_traces_tests.rs`).
+- Native curate briefing: rule-based `memory_curate_executor` runs first; when briefing items remain under native runtime, `run_native_profile_turn_collect_assistant_text` runs a Curate profile LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
+- `RuntimeLettaConversationQueryBackend` renamed in `runtime_conversations.rs` to disambiguate from ACP/native `RuntimeConversationBackend` in `runtime/contracts`.
 - Deferred to Phase 6–8: delete `acp_turn_runner_letta.rs`, `LettaClient`, compose services, full trait removal.
 
 ### Phase 6 — Den-native profile registry (replace provisioning)

@@ -10,7 +10,7 @@ use crate::{
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
         reflection_conductor,
         runtime_conversations::{
-            RuntimeConversationBackend, RuntimeConversationMessagesRequest,
+            RuntimeConversationMessagesRequest, RuntimeLettaConversationQueryBackend,
             summarize_runtime_messages,
         },
     },

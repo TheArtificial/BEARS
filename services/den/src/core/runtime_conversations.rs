@@ -181,8 +181,11 @@ pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {
     out
 }
 
+/// Letta HTTP query surface for listing conversations, messages, and approvals.
+/// Distinct from `runtime::contracts::RuntimeConversationBackend`, which covers
+/// ACP/native conversation materialization (create, verify, load_history).
 #[allow(async_fn_in_trait)]
-pub trait RuntimeConversationBackend {
+pub trait RuntimeLettaConversationQueryBackend {
     async fn list_conversations(
         &self,
         request: RuntimeConversationListRequest,

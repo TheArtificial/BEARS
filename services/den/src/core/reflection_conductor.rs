@@ -8,15 +8,21 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     core::{
+        bears::BearProfile,
         conversation_events::{
-            memory_curate_completed_projection, memory_curate_enqueued_projection,
-            memory_curate_failed_projection, memory_curate_started_projection, project_to_conversation,
-            ProjectionProvenance, ProjectionSource,
+            canonical_persistence_context, memory_curate_completed_projection,
+            memory_curate_enqueued_projection, memory_curate_failed_projection,
+            memory_curate_started_projection, project_to_conversation,
+            spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
         },
         memory::{
             record_reflection_outcome_complete, record_reflection_outcome_start, MemoryStoreManager,
         },
         memory_curate_executor::{self, MemoryCurateRunOutput},
+        native_runtime::{
+            compose_curate_briefing_prompt, run_native_profile_turn_collect_assistant_text,
+            NativeRuntimeDeps,
+        },
         reflection_conversations::{
             bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
             touch_memory_curate_conversation,
@@ -462,6 +468,10 @@ pub async fn run_next_memory_curate_once(
         .await;
     }
 
+    if config.uses_native_agent_runtime() && !output.briefing.is_empty() {
+        maybe_run_native_curate_briefing_turn(pool, config, stores, bear_id, &run, &output).await;
+    }
+
     let completed_run = mark_memory_curate_completed(
         pool,
         run.bear_id,
@@ -530,6 +540,90 @@ fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::V
         "outcomes": output.outcomes,
         "briefing": output.briefing,
     })
+}
+
+fn native_curate_llm_briefing_enabled() -> bool {
+    match std::env::var("NATIVE_CURATE_LLM_BRIEFING") {
+        Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
+        Err(_) => true,
+    }
+}
+
+async fn maybe_run_native_curate_briefing_turn(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    run: &ReflectionRunRow,
+    output: &MemoryCurateRunOutput,
+) {
+    if !native_curate_llm_briefing_enabled() || output.briefing.is_empty() {
+        return;
+    }
+    let Some(conversation_id) = run.conversation_id.as_deref() else {
+        tracing::warn!(
+            reflection_run_id = %run.id,
+            bear_id = %bear_id,
+            "skipping native curate briefing turn: memory_curate conversation not bound"
+        );
+        return;
+    };
+    let prompt = compose_curate_briefing_prompt(&output.briefing);
+    let session_id = format!("memory-curate-{}", run.id);
+    let deps = NativeRuntimeDeps {
+        pool,
+        config,
+        stores,
+    };
+    match run_native_profile_turn_collect_assistant_text(
+        &deps,
+        bear_id,
+        BearProfile::Curate,
+        conversation_id,
+        &session_id,
+        &prompt,
+    )
+    .await
+    {
+        Ok(text) if text.trim().is_empty() => {}
+        Ok(text) => {
+            project_curate_briefing_to_conversation(pool, bear_id, run, &text);
+        }
+        Err(error) => {
+            tracing::warn!(
+                reflection_run_id = %run.id,
+                bear_id = %bear_id,
+                error = %error,
+                "native curate briefing turn failed; rule-based outcomes retained"
+            );
+        }
+    }
+}
+
+fn project_curate_briefing_to_conversation(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run: &ReflectionRunRow,
+    text: &str,
+) {
+    let Some(conversation_id) = run.conversation_id.as_deref() else {
+        return;
+    };
+    let context = canonical_persistence_context(
+        pool.clone(),
+        bear_id,
+        None,
+        conversation_id.to_string(),
+        None,
+        None,
+        format!("bear:{}:lane:{}", bear_id, run.lane),
+        false,
+    );
+    spawn_persist_assistant_summary_message(
+        context,
+        text.to_string(),
+        Some(format!("curate-briefing-{}", run.id)),
+    );
 }
 
 pub async fn run_memory_curate_worker_loop(

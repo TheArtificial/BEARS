@@ -43,7 +43,7 @@ impl<'a> LettaRuntimeCancellationBackend<'a> {
 }
 
 #[allow(async_fn_in_trait)]
-impl crate::core::runtime_conversations::RuntimeConversationBackend
+impl crate::core::runtime_conversations::RuntimeLettaConversationQueryBackend
     for LettaRuntimeCancellationBackend<'_>
 {
     async fn list_conversations(

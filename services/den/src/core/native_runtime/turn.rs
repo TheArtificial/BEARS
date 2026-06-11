@@ -1,10 +1,11 @@
 use std::sync::LazyLock;
 
+use futures::StreamExt;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    api::service::ApiState,
+    config::Config,
     core::{
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
@@ -15,6 +16,7 @@ use crate::{
         bears::BearProfile,
         conversation_persistence,
         llm::{ChatMessage, LlmClient},
+        memory::MemoryStoreManager,
         native_runtime::{
             profile::NativeCapabilityProfile,
             tools::merge_den_and_client_tools,
@@ -22,13 +24,21 @@ use crate::{
         runtime_contracts::{
             ContinueTurnRequest, RuntimeContinuation, RuntimeConversationBackend,
             RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
-            RuntimeStreamContinuation, RoleRuntimeBinding, StartTurnRequest,
+            RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent,
+            RoleRuntimeBinding, StartTurnRequest,
         },
     },
     errors::CustomError,
 };
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
+
+/// Shared dependencies for internal native profile turns (no full `ApiState` required).
+pub struct NativeRuntimeDeps<'a> {
+    pub pool: &'a PgPool,
+    pub config: &'a Config,
+    pub stores: &'a MemoryStoreManager,
+}
 
 fn bear_id_from_native_binding(binding: &RoleRuntimeBinding) -> Option<Uuid> {
     let rest = binding.binding_id.strip_prefix("den-native:")?;
@@ -158,7 +168,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
 fn wrap_session_stream(
     stream: RuntimeEventStream,
     session: &AgentLoopSession,
-    state: &ApiState,
+    pool: PgPool,
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: &str,
@@ -169,7 +179,7 @@ fn wrap_session_stream(
         stream,
         session,
         SESSION_STORE.clone(),
-        state.sqlx_pool.clone(),
+        pool,
         bear_id,
         user_id,
         conversation_id.to_string(),
@@ -179,7 +189,7 @@ fn wrap_session_stream(
 }
 
 async fn build_session(
-    state: &ApiState,
+    deps: &NativeRuntimeDeps<'_>,
     profile: NativeCapabilityProfile,
     bear_id: Uuid,
     conversation_id: &str,
@@ -196,16 +206,16 @@ async fn build_session(
     stream_tokens: bool,
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, CustomError> {
-    let llm = LlmClient::new(state.config.as_ref());
-    let bear = crate::core::bears::db::get_bear(&state.sqlx_pool, bear_id)
+    let llm = LlmClient::new(deps.config);
+    let bear = crate::core::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     let include_prompt_memory =
         profile.include_prompt_memory && runtime_context.is_none();
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
-            pool: &state.sqlx_pool,
-            stores: &state.memory_stores,
+            pool: deps.pool,
+            stores: deps.stores,
             bear_id,
             profile: profile.profile,
             conversation_id,
@@ -231,7 +241,7 @@ async fn build_session(
         .map(|projection| projection.cache_key.clone());
     let messages = assembled.messages;
     let tools = merge_den_and_client_tools(
-        state.config.as_ref(),
+        deps.config,
         profile.profile,
         client_tools,
         human_message,
@@ -253,6 +263,53 @@ async fn build_session(
     };
     SESSION_STORE.insert(session.clone());
     Ok(session)
+}
+
+pub async fn run_native_profile_turn_collect_assistant_text(
+    deps: &NativeRuntimeDeps<'_>,
+    bear_id: Uuid,
+    role: BearProfile,
+    conversation_id: &str,
+    session_id: &str,
+    prompt: &str,
+) -> Result<String, CustomError> {
+    if !deps.config.uses_native_agent_runtime() {
+        return Err(CustomError::System(
+            "native runtime requested but AGENT_RUNTIME is not native".to_string(),
+        ));
+    }
+    let profile = NativeCapabilityProfile::for_profile(role);
+    let session = build_session(
+        deps,
+        profile,
+        bear_id,
+        conversation_id,
+        session_id,
+        Some(prompt),
+        None,
+        Some(session_id),
+        None,
+        Some(conversation_id),
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+    )
+    .await?;
+    let llm = LlmClient::new(deps.config);
+    let mut stream = run_agent_step_stream(&llm, &session).await?;
+    let mut text = String::new();
+    while let Some(item) = stream.next().await {
+        match item? {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta }) => {
+                text.push_str(&delta);
+            }
+            _ => {}
+        }
+    }
+    Ok(text)
 }
 
 pub async fn start_native_acp_turn_event_stream(
@@ -279,7 +336,11 @@ pub async fn start_native_profile_turn_event_stream(
     let acp_session_id = request.session_id;
     let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
     let session = build_session(
-        request.state,
+        &NativeRuntimeDeps {
+            pool: &request.state.sqlx_pool,
+            config: request.state.config.as_ref(),
+            stores: &request.state.memory_stores,
+        },
         profile,
         request.bear_id,
         &conversation_id,
@@ -302,7 +363,7 @@ pub async fn start_native_profile_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
-        request.state,
+        request.state.sqlx_pool.clone(),
         request.bear_id,
         Some(request.user_id),
         &conversation_id,
@@ -402,7 +463,7 @@ pub async fn continue_native_acp_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
-        request.state,
+        request.state.sqlx_pool.clone(),
         session.bear_id,
         None,
         &conversation_id,

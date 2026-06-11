@@ -294,6 +294,9 @@ pub trait AcpConversationRuntime {
     ) -> Result<RuntimeHistoryPage, CustomError>;
 }
 
+/// ACP/native conversation materialization backend (create, verify, load_history).
+/// Distinct from `runtime_conversations::RuntimeLettaConversationQueryBackend`,
+/// which covers Letta HTTP list/query operations for operator UI and escape hatch.
 #[allow(async_fn_in_trait)]
 pub trait RuntimeConversationBackend {
     async fn create_conversation(
