@@ -15,7 +15,9 @@ use crate::{
 };
 
 use super::{
-    context::{load_transcript_messages, repair_tool_call_message_chain},
+    context::{
+        load_transcript_messages, prune_messages_for_native_pair, repair_tool_call_message_chain,
+    },
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
         KeyMemoryProjectionInput, KeyMemoryProjectionResult,
@@ -208,8 +210,14 @@ pub async fn assemble_native_turn_for_bear(
         });
     }
     messages.extend(ctx.tool_messages.iter().cloned());
+    let messages = repair_tool_call_message_chain(messages);
+    let messages = if ctx.native_runtime && ctx.role == BearProfile::Pair {
+        prune_messages_for_native_pair(messages)
+    } else {
+        messages
+    };
     Ok(AssembledNativeTurn {
-        messages: repair_tool_call_message_chain(messages),
+        messages,
         key_memory_projection: Some(projection),
     })
 }

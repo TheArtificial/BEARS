@@ -2908,6 +2908,205 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(text, "Thinking");
     }
 
+    #[tokio::test]
+    async fn acp_stream_emits_status_heartbeat_during_upstream_wait() {
+        use futures::StreamExt;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/den_test")
+            .unwrap();
+        let role_runtime =
+            crate::core::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+        let request_id = Uuid::new_v4();
+        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-heartbeat-test",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-heartbeat-test".to_string(),
+            client: "cursor".to_string(),
+            conversation_id: "conv-test".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(
+                &crate::config::Config::test_stub(),
+            ),
+        };
+        let inner: crate::core::runtime_contracts::RuntimeEventStream =
+            Box::pin(futures::stream::pending());
+        let mut stream = AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard)
+            .with_status_heartbeat_interval(std::time::Duration::from_millis(40));
+
+        let first = stream.next().await.unwrap().unwrap();
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(
+            first_text.contains("\"type\":\"status_text\""),
+            "expected initial planning status: {first_text}"
+        );
+
+        let heartbeat = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            stream.next(),
+        )
+        .await
+        .expect("heartbeat should arrive within 250ms")
+        .expect("stream item")
+        .expect("frame bytes");
+        let heartbeat_text = String::from_utf8(heartbeat.to_vec()).unwrap();
+        assert!(
+            heartbeat_text.contains("\"type\":\"status_text\""),
+            "expected heartbeat status: {heartbeat_text}"
+        );
+        assert!(
+            heartbeat_text.contains("Connecting to model")
+                || heartbeat_text.contains("Waiting for response")
+                || heartbeat_text.contains("Still thinking"),
+            "unexpected heartbeat copy: {heartbeat_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_stream_polls_active_upstream_with_open_adapter_obligations() {
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Poll};
+
+        use futures::StreamExt;
+
+        static INNER_POLLS: AtomicUsize = AtomicUsize::new(0);
+
+        struct PendingThenAssistant {
+            polls: u8,
+            emitted: bool,
+        }
+        impl Stream for PendingThenAssistant {
+            type Item = Result<RuntimeStreamEvent, CustomError>;
+            fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                if self.emitted {
+                    return Poll::Ready(None);
+                }
+                self.polls += 1;
+                INNER_POLLS.fetch_add(1, Ordering::SeqCst);
+                if self.polls < 3 {
+                    Poll::Pending
+                } else {
+                    self.emitted = true;
+                    Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::AssistantTextDelta {
+                            text: "hello".to_string(),
+                        },
+                    ))))
+                }
+            }
+        }
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/den_test")
+            .unwrap();
+        let request_id = Uuid::new_v4();
+        let registry = AcpToolTurnCoordinator::new();
+        let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
+        registry
+            .register(AcpToolTurnRegistration {
+                user_id: 1,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: "acp-obligation-poll-test".to_string(),
+                request_id,
+                tool_call_id: "call_stale".to_string(),
+                tool_name: "fs_read".to_string(),
+                approval_request_id: None,
+                timeout_ms: 30_000,
+                result_tx,
+            })
+            .unwrap();
+        let role_runtime = crate::core::role_runtime::RoleRuntime::new(registry.clone());
+        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-obligation-poll-test",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-obligation-poll-test".to_string(),
+            client: "cursor".to_string(),
+            conversation_id: "conv-test".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+            prompt_memory_diagnostic: serde_json::json!({}),
+            memory_stores: crate::core::memory::MemoryStoreManager::new(
+                &crate::config::Config::test_stub(),
+            ),
+        };
+        let inner: crate::core::runtime_contracts::RuntimeEventStream = Box::pin(
+            PendingThenAssistant {
+                polls: 0,
+                emitted: false,
+            },
+        );
+        let mut stream =
+            AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard);
+
+        let mut saw_assistant = false;
+        for _ in 0..8 {
+            if let Ok(Some(Ok(item))) = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                stream.next(),
+            )
+            .await
+            {
+                let frame = String::from_utf8(item.to_vec()).unwrap();
+                if frame.contains("hello") {
+                    saw_assistant = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(saw_assistant, "expected assistant text while obligations are open");
+        assert!(
+            INNER_POLLS.load(Ordering::SeqCst) >= 3,
+            "expected upstream runtime to be polled while obligations are open"
+        );
+    }
+
     #[test]
     fn acp_text_chunker_caps_reasoning_output_per_turn() {
         let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 10);

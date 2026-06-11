@@ -3,10 +3,11 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{ready, Poll},
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Future, Stream};
 
 use crate::{
     api::{
@@ -38,6 +39,9 @@ use crate::{
 
 use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
 
+/// Maximum silence before emitting a phase-aware status heartbeat to the adapter.
+const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
+
 pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) inner: Pin<
         Box<
@@ -62,6 +66,9 @@ pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     pub(in crate::api::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
     pub(in crate::api::acp) turn_controller: AcpTurnController,
+    pub(in crate::api::acp) last_user_visible_status_at: Instant,
+    pub(in crate::api::acp) status_heartbeat_interval: Duration,
+    status_heartbeat_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 pub(in crate::api::acp) fn runtime_terminal_events(
@@ -224,8 +231,75 @@ impl AcpRuntimeSseStream {
         if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
             self.session_info_event_sent = true;
         }
+        if matches!(
+            event,
+            AcpGatewayEvent::StatusText { .. } | AcpGatewayEvent::AssistantTextDelta { .. }
+        ) {
+            self.touch_user_visible_status();
+        }
         self.diagnostics.observe_mapped_event(&event, substantive);
         self.pending.push_back(acp_event_to_adapter_sse(event));
+    }
+
+    fn touch_user_visible_status(&mut self) {
+        self.last_user_visible_status_at = Instant::now();
+        self.status_heartbeat_sleep = None;
+    }
+
+    fn should_emit_status_heartbeat(&self) -> bool {
+        self.turn_controller.phase() != AcpTurnPhase::Terminal
+            && self.last_user_visible_status_at.elapsed() >= self.status_heartbeat_interval
+    }
+
+    fn emit_status_heartbeat(&mut self) {
+        let update = self.turn_controller.heartbeat_status_update();
+        self.enqueue_adapter_event(
+            AcpGatewayEvent::StatusText {
+                text: update.text,
+            },
+            false,
+        );
+    }
+
+    fn ensure_status_heartbeat_scheduled(&mut self) {
+        if self.turn_controller.phase() == AcpTurnPhase::Terminal {
+            self.status_heartbeat_sleep = None;
+            return;
+        }
+        if self.should_emit_status_heartbeat() {
+            return;
+        }
+        if self.status_heartbeat_sleep.is_none() {
+            let remaining = self
+                .status_heartbeat_interval
+                .saturating_sub(self.last_user_visible_status_at.elapsed());
+            self.status_heartbeat_sleep = Some(Box::pin(tokio::time::sleep(remaining)));
+        }
+    }
+
+    fn poll_status_heartbeat(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<Bytes, std::io::Error>>> {
+        if self.turn_controller.phase() == AcpTurnPhase::Terminal {
+            return Poll::Pending;
+        }
+        if self.should_emit_status_heartbeat() {
+            self.emit_status_heartbeat();
+            if let Some(bytes) = self.pending.pop_front() {
+                return Poll::Ready(Some(Ok(bytes)));
+            }
+        }
+        if let Some(sleep) = self.status_heartbeat_sleep.as_mut() {
+            if sleep.as_mut().poll(cx).is_ready() {
+                self.status_heartbeat_sleep = None;
+                self.emit_status_heartbeat();
+                if let Some(bytes) = self.pending.pop_front() {
+                    return Poll::Ready(Some(Ok(bytes)));
+                }
+            }
+        }
+        Poll::Pending
     }
 
     pub(in crate::api::acp) fn persist_assistant_output_if_present(&mut self) {
@@ -311,12 +385,7 @@ impl AcpRuntimeSseStream {
         let mut turn_controller = AcpTurnController::new();
         turn_controller.set_client_label(context.client.clone());
         turn_controller.on_stream_started();
-        if let Some(update) = turn_controller.take_status_update() {
-            pending.push_back(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText {
-                text: update.text.to_string(),
-            }));
-        }
-        Self {
+        let mut stream = Self {
             inner: Box::pin(inner),
             pending,
             context,
@@ -333,7 +402,25 @@ impl AcpRuntimeSseStream {
             cancel_rx: None,
             cancel_handle: None,
             turn_controller,
+            last_user_visible_status_at: Instant::now(),
+            status_heartbeat_interval: ACP_STATUS_HEARTBEAT_INTERVAL,
+            status_heartbeat_sleep: None,
+        };
+        if let Some(update) = stream.turn_controller.take_status_update() {
+            stream.enqueue_adapter_event(
+                AcpGatewayEvent::StatusText {
+                    text: update.text.to_string(),
+                },
+                false,
+            );
         }
+        stream
+    }
+
+    #[cfg(test)]
+    pub(in crate::api::acp) fn with_status_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.status_heartbeat_interval = interval;
+        self
     }
 
     fn push_turn_status_update(&mut self) {
@@ -412,6 +499,11 @@ impl Stream for AcpRuntimeSseStream {
         let this = self.as_mut().get_mut();
         if let Some(bytes) = this.pending.pop_front() {
             return Poll::Ready(Some(Ok(bytes)));
+        }
+        match this.poll_status_heartbeat(cx) {
+            Poll::Ready(Some(item)) => return Poll::Ready(Some(item)),
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => {}
         }
 
         if this.waiting_adapter_tool_result.is_none() {
@@ -512,19 +604,6 @@ impl Stream for AcpRuntimeSseStream {
             }
         }
 
-        if this.persist_future.is_none()
-            && this.queued_tool_result_continuation.is_none()
-            && !this.outstanding_tool_obligations().is_empty()
-        {
-            tracing::debug!(
-                request_id = %this.context.request_id,
-                acp_session_id = %this.context.acp_session_id,
-                outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
-                "ACP stream waiting for local tool result before polling upstream terminal state"
-            );
-            return Poll::Pending;
-        }
-
         if let Some(fut) = this.persist_future.as_mut() {
             match fut {
                 AcpPendingFuture::Frame(fut) => {
@@ -586,6 +665,7 @@ impl Stream for AcpRuntimeSseStream {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
                     let Some(tool_result) = result else {
+                        this.ensure_status_heartbeat_scheduled();
                         return Poll::Pending;
                     };
                     let tool_result = *tool_result;
@@ -857,8 +937,8 @@ impl Stream for AcpRuntimeSseStream {
             return Poll::Ready(None);
         }
 
-        match ready!(this.inner.as_mut().poll_next(cx)) {
-            Some(Ok(event)) => {
+        match this.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(event))) => {
                 this.diagnostics.upstream_frames += 1;
                 let context = this.context.clone();
                 let mut diagnostics = std::mem::take(&mut this.diagnostics);
@@ -873,11 +953,18 @@ impl Stream for AcpRuntimeSseStream {
                 })));
                 self.poll_next(cx)
             }
-            None if !this.outstanding_tool_obligations().is_empty() || this.persist_future.is_some() => {
-                cx.waker().wake_by_ref();
-                std::task::Poll::Pending
+            Poll::Pending => {
+                this.ensure_status_heartbeat_scheduled();
+                Poll::Pending
             }
-            Some(Err(err)) => {
+            Poll::Ready(None) if !this.outstanding_tool_obligations().is_empty()
+                || this.persist_future.is_some() =>
+            {
+                this.ensure_status_heartbeat_scheduled();
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(Some(Err(err))) => {
                 let message = format!("Letta stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
@@ -917,11 +1004,13 @@ impl Stream for AcpRuntimeSseStream {
                     Poll::Ready(None)
                 }
             }
-            None => {
+            Poll::Ready(None) => {
                 if this.diagnostics.saw_requires_approval_stop
                     && !this.outstanding_tool_obligations().is_empty()
                 {
                     this.turn_controller.on_requires_approval_stop();
+                    this.ensure_status_heartbeat_scheduled();
+                    cx.waker().wake_by_ref();
                     Poll::Pending
                 } else if this.queued_tool_result_continuation.is_none()
                     && !this.outstanding_tool_obligations().is_empty()
@@ -932,6 +1021,8 @@ impl Stream for AcpRuntimeSseStream {
                         outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
                         "ACP upstream ended while local tool obligations are outstanding; waiting for results"
                     );
+                    this.ensure_status_heartbeat_scheduled();
+                    cx.waker().wake_by_ref();
                     Poll::Pending
                 } else if let Some(tool_result) = this.queued_tool_result_continuation.take() {
                     tracing::info!(
@@ -1134,6 +1225,7 @@ impl Stream for AcpRuntimeSseStream {
                             || this.waiting_adapter_tool_result.is_some()
                             || this.queued_tool_result_continuation.is_some())
                     {
+                        this.ensure_status_heartbeat_scheduled();
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }

@@ -230,7 +230,12 @@ async fn build_session(
         .as_ref()
         .map(|projection| projection.cache_key.clone());
     let messages = assembled.messages;
-    let tools = merge_den_and_client_tools(state.config.as_ref(), profile.role, client_tools)?;
+    let tools = merge_den_and_client_tools(
+        state.config.as_ref(),
+        profile.role,
+        client_tools,
+        human_message,
+    )?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
     let model = llm.resolve_model(bear.default_model.as_deref());
     let session = AgentLoopSession {

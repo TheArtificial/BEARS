@@ -3,19 +3,9 @@ use uuid::Uuid;
 
 use crate::{
     api::acp::AcpPromptRequest,
-    core::{
-        bears::BearProfile,
-        tools::{
-            constants::{
-                DEN_CONVERSATION_SET_TITLE, DEN_MEMORY_READ, DEN_MEMORY_REQUEST_REVIEW,
-                DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE,
-                DEN_MEMORY_WRITE_ENTRY, DEN_SITUATION_GET, DEN_WEB_FETCH,
-                DEN_WEB_SEARCH, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST,
-                DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
-            },
-            descriptor::builtin_den_tool_descriptors_for_role,
-            memfs::filter_client_tools_for_native_runtime,
-        },
+    core::tools::{
+        descriptor::builtin_den_tool_descriptors_for_pair_acp_surface,
+        memfs::filter_client_tools_for_native_runtime,
     },
     errors::CustomError,
 };
@@ -74,27 +64,8 @@ pub(crate) fn new_acp_conversation_id(client: &str) -> String {
 }
 
 pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair)
+    let descriptors = builtin_den_tool_descriptors_for_pair_acp_surface()
         .into_iter()
-        .filter(|descriptor| {
-            matches!(
-                descriptor.name,
-                DEN_CONVERSATION_SET_TITLE
-                    | DEN_WEB_FETCH
-                    | DEN_WEB_SEARCH
-                    | DEN_SITUATION_GET
-                    | DEN_MEMORY_WRITE_ENTRY
-                    | DEN_MEMORY_STATUS
-                    | DEN_MEMORY_TREE
-                    | DEN_MEMORY_READ
-                    | DEN_MEMORY_SEARCH
-                    | DEN_MEMORY_REQUEST_REVIEW
-                    | DEN_WORK_PLAN_LIST
-                    | DEN_WORK_PLAN_GET_STATUS
-                    | DEN_WORK_PLAN_UPDATE
-                    | DEN_WORK_PLAN_REQUEST_HANDOFF
-            )
-        })
         .map(|descriptor| {
             serde_json::json!({
                 "name": descriptor.provider_name,

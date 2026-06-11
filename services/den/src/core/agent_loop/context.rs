@@ -218,6 +218,25 @@ pub async fn load_transcript_messages(
     Ok(reconstruct_transcript_messages(rows))
 }
 
+/// Cap transcript tail sent to native pair LLM turns (system prefix + recent turns).
+pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    const MAX_TAIL_MESSAGES: usize = 28;
+    if messages.len() <= MAX_TAIL_MESSAGES {
+        return messages;
+    }
+    let system = messages
+        .first()
+        .filter(|message| message.role == "system")
+        .cloned();
+    let tail_start = messages.len().saturating_sub(MAX_TAIL_MESSAGES - 1);
+    let mut pruned = Vec::with_capacity(MAX_TAIL_MESSAGES);
+    if let Some(system_message) = system {
+        pruned.push(system_message);
+    }
+    pruned.extend(messages.into_iter().skip(tail_start));
+    repair_tool_call_message_chain(pruned)
+}
+
 pub async fn assemble_agent_messages(
     pool: &PgPool,
     bear_id: Uuid,
@@ -305,6 +324,37 @@ mod tests {
         assert_eq!(messages[2].role, "tool");
         assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_1"));
         assert_eq!(messages[3].role, "assistant");
+    }
+
+    #[test]
+    fn prune_messages_for_native_pair_keeps_system_and_recent_tail() {
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some("system".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }];
+        for index in 0..40 {
+            messages.push(ChatMessage {
+                role: if index % 2 == 0 {
+                    "user".to_string()
+                } else {
+                    "assistant".to_string()
+                },
+                content: Some(format!("message-{index}")),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        }
+        let pruned = prune_messages_for_native_pair(messages);
+        assert_eq!(pruned.first().map(|m| m.role.as_str()), Some("system"));
+        assert_eq!(pruned.len(), 28);
+        assert_eq!(
+            pruned.last().and_then(|m| m.content.as_deref()),
+            Some("message-39")
+        );
     }
 
     #[test]

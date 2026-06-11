@@ -185,6 +185,36 @@ pub fn builtin_den_tool_descriptors_for_role(role: BearProfile) -> Vec<DenToolDe
         .collect()
 }
 
+/// Den tools on the ACP pair surface (adapter environment + native pair LLM turns).
+/// Keeps session/memory/plan tools without session-admin or plan-mode control noise.
+pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
+    &[
+        DEN_CONVERSATION_SET_TITLE,
+        DEN_WEB_FETCH,
+        DEN_WEB_SEARCH,
+        DEN_SITUATION_GET,
+        DEN_MEMORY_WRITE_ENTRY,
+        DEN_MEMORY_STATUS,
+        DEN_MEMORY_TREE,
+        DEN_MEMORY_READ,
+        DEN_MEMORY_SEARCH,
+        DEN_MEMORY_REQUEST_REVIEW,
+        DEN_WORK_PLAN_LIST,
+        DEN_WORK_PLAN_GET_STATUS,
+        DEN_WORK_PLAN_UPDATE,
+        DEN_WORK_PLAN_REQUEST_HANDOFF,
+    ]
+}
+
+pub fn builtin_den_tool_descriptors_for_pair_acp_surface() -> Vec<DenToolDescriptor> {
+    let allowed: std::collections::HashSet<&str> =
+        pair_acp_surface_den_tool_names().iter().copied().collect();
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .filter(|descriptor| allowed.contains(descriptor.name))
+        .collect()
+}
+
 pub fn builtin_den_tool_descriptor_for_provider_name(provider_name: &str) -> Option<DenToolDescriptor> {
     builtin_den_tool_descriptors().into_iter().find(|descriptor| {
         descriptor.provider_name == provider_name

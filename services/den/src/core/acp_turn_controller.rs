@@ -288,6 +288,7 @@ pub struct AcpTurnController {
     last_status_key: Option<String>,
     client_label: Option<String>,
     last_settled_tool_name: Option<String>,
+    heartbeat_tick: u32,
 }
 
 impl Default for AcpTurnController {
@@ -308,6 +309,7 @@ impl AcpTurnController {
             last_status_key: None,
             client_label: None,
             last_settled_tool_name: None,
+            heartbeat_tick: 0,
         }
     }
 
@@ -378,6 +380,79 @@ impl AcpTurnController {
         }
         self.last_status_key = Some(update.key.clone());
         Some(update)
+    }
+
+    /// Phase-aware status for SSE heartbeats during quiet periods (LLM handshake, idle stream, tool waits).
+    /// Unlike [`Self::take_status_update`], heartbeats may repeat with rotated copy while the phase is unchanged.
+    pub fn heartbeat_status_update(&mut self) -> AcpTurnStatusUpdate {
+        self.heartbeat_tick = self.heartbeat_tick.wrapping_add(1);
+        let tick = self.heartbeat_tick;
+        if self.orphaned_requires_approval && self.phase != AcpTurnPhase::Terminal {
+            return AcpTurnStatusUpdate {
+                key: format!("heartbeat:recovering:{tick}"),
+                text: if tick % 2 == 0 {
+                    "Recovering stale model approval…".to_string()
+                } else {
+                    "Cleaning up interrupted approval state…".to_string()
+                },
+            };
+        }
+        match self.phase {
+            AcpTurnPhase::Created => AcpTurnStatusUpdate {
+                key: format!("heartbeat:starting:{tick}"),
+                text: "Starting turn…".to_string(),
+            },
+            AcpTurnPhase::Streaming => {
+                let variants = [
+                    "Connecting to model…",
+                    "Waiting for response…",
+                    "Still thinking…",
+                ];
+                AcpTurnStatusUpdate {
+                    key: format!("heartbeat:streaming:{tick}"),
+                    text: variants[(tick as usize) % variants.len()].to_string(),
+                }
+            }
+            AcpTurnPhase::WaitingForObligations => {
+                let base = self
+                    .waiting_for_obligations_status()
+                    .text
+                    .trim_end_matches('…')
+                    .to_string();
+                AcpTurnStatusUpdate {
+                    key: format!("heartbeat:waiting:{tick}"),
+                    text: if tick % 3 == 0 {
+                        format!("{base} (still waiting)…")
+                    } else {
+                        base
+                    },
+                }
+            }
+            AcpTurnPhase::ContinuingAfterTool => {
+                let tool_name = self
+                    .last_settled_tool_name
+                    .as_deref()
+                    .unwrap_or("tool");
+                let label = humanize_tool_name(tool_name);
+                let variants = [
+                    format!("Continuing after {label}…"),
+                    "Waiting for model…".to_string(),
+                    format!("Resuming after {label}…"),
+                ];
+                AcpTurnStatusUpdate {
+                    key: format!("heartbeat:continuing:{tick}"),
+                    text: variants[(tick as usize) % variants.len()].clone(),
+                }
+            }
+            AcpTurnPhase::Cancelling => AcpTurnStatusUpdate {
+                key: format!("heartbeat:cancelling:{tick}"),
+                text: "Cancelling turn…".to_string(),
+            },
+            AcpTurnPhase::Terminal => AcpTurnStatusUpdate {
+                key: format!("heartbeat:terminal:{tick}"),
+                text: "Finishing turn…".to_string(),
+            },
+        }
     }
 
     fn current_status_update(&self) -> Option<AcpTurnStatusUpdate> {
@@ -999,6 +1074,16 @@ mod tests {
         assert_eq!(snapshot.pending_den_tools, 0);
         assert_eq!(snapshot.terminal_status, Some(AcpTerminalStatus::Ok));
         assert_eq!(snapshot.terminal_reason, Some(AcpTerminalReason::EndTurn));
+    }
+
+    #[test]
+    fn acp_turn_heartbeat_status_rotates_while_streaming() {
+        let mut turn = AcpTurnController::new();
+        turn.on_stream_started();
+        let first = turn.heartbeat_status_update();
+        let second = turn.heartbeat_status_update();
+        assert_ne!(first.text, second.text);
+        assert!(first.text.contains("Connecting") || first.text.contains("Waiting"));
     }
 
     #[test]
