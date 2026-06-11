@@ -312,6 +312,59 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     Ok(text)
 }
 
+pub struct NativeWebChatTurnParams<'a> {
+    pub deps: &'a NativeRuntimeDeps<'a>,
+    pub bear_id: Uuid,
+    pub user_id: i32,
+    pub conversation_id: &'a str,
+    pub session_id: &'a str,
+    pub prompt: &'a str,
+    pub request_id: Uuid,
+}
+
+/// Browser web chat turn (`BearProfile::Chat`) over the native in-process loop.
+pub async fn start_native_web_chat_turn_event_stream(
+    params: NativeWebChatTurnParams<'_>,
+) -> Result<RuntimeEventStream, CustomError> {
+    if !params.deps.config.uses_native_agent_runtime() {
+        return Err(CustomError::System(
+            "native runtime requested but AGENT_RUNTIME is not native".to_string(),
+        ));
+    }
+    let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
+    let session = build_session(
+        params.deps,
+        profile,
+        params.bear_id,
+        params.conversation_id,
+        params.session_id,
+        Some(params.prompt),
+        None,
+        Some(params.session_id),
+        None,
+        Some(params.conversation_id),
+        Some(params.conversation_id),
+        Some(params.user_id),
+        None,
+        None,
+        true,
+        Vec::new(),
+    )
+    .await?;
+    let llm = LlmClient::new(params.deps.config);
+    let stream = run_agent_step_stream(&llm, &session).await?;
+    Ok(wrap_session_stream(
+        stream,
+        &session,
+        params.deps.pool.clone(),
+        params.bear_id,
+        Some(params.user_id),
+        params.conversation_id,
+        params.session_id,
+        Some(params.request_id.to_string()),
+    ))
+}
+
 pub async fn start_native_acp_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {

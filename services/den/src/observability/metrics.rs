@@ -8,6 +8,7 @@ static CHAT_SEND_FINISHED_EMPTY: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_FINISHED_PROXY_ERROR: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_RUNTIME_LEGACY: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_RUNTIME_BEAR_CHANNEL: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_RUNTIME_NATIVE: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 pub fn chat_send_started() {
@@ -39,6 +40,11 @@ pub fn chat_send_runtime_bear_channel() {
     CHAT_SEND_RUNTIME_BEAR_CHANNEL.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn chat_send_runtime_native() {
+    CHAT_SEND_RUNTIME_NATIVE.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Prometheus text exposition 0.0.4.
 pub fn render_prometheus_text() -> String {
     let mut s = String::with_capacity(512);
@@ -48,6 +54,7 @@ pub fn render_prometheus_text() -> String {
     let d = CHAT_SEND_FINISHED_PROXY_ERROR.load(Ordering::Relaxed);
     let e = CHAT_SEND_RUNTIME_LEGACY.load(Ordering::Relaxed);
     let f = CHAT_SEND_RUNTIME_BEAR_CHANNEL.load(Ordering::Relaxed);
+    let g = CHAT_SEND_RUNTIME_NATIVE.load(Ordering::Relaxed);
 
     writeln!(
         s,
@@ -100,6 +107,14 @@ pub fn render_prometheus_text() -> String {
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_runtime_bear_channel_total counter").unwrap();
     writeln!(s, "den_chat_send_runtime_bear_channel_total {f}").unwrap();
+
+    writeln!(
+        s,
+        "# HELP den_chat_send_runtime_native_total Chat send requests routed through the Den-native in-process loop."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_runtime_native_total counter").unwrap();
+    writeln!(s, "den_chat_send_runtime_native_total {g}").unwrap();
 
     s
 }

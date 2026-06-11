@@ -2,9 +2,11 @@
 //!
 //! `start_native_profile_turn_event_stream` / `continue_native_profile_turn_event_stream` are the
 //! capability-profile entry points for API-direct operating profiles (`pair`, `curate`; `watch`
-//! stays rule-based). Rule-based curate (`memory_curate_executor`) runs first; when briefing items
-//! remain under native runtime, `run_native_profile_turn_collect_assistant_text` can add an LLM
-//! briefing turn projected into the memory_curate conversation.
+//! stays rule-based). Browser web chat uses `start_native_web_chat_turn_event_stream` for
+//! `BearProfile::Chat` when `AGENT_RUNTIME=native`. Rule-based curate (`memory_curate_executor`)
+//! runs first; when briefing items remain under native runtime,
+//! `run_native_profile_turn_collect_assistant_text` can add an LLM briefing turn projected into the
+//! memory_curate conversation.
 
 mod openai_stream;
 #[cfg(test)]
@@ -21,5 +23,6 @@ pub use tools::merge_den_and_client_tools;
 pub use turn::{
     continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,
     run_native_profile_turn_collect_assistant_text, start_native_acp_turn_event_stream,
-    start_native_profile_turn_event_stream, NativeRuntimeConversationBackend, NativeRuntimeDeps,
+    start_native_profile_turn_event_stream, start_native_web_chat_turn_event_stream,
+    NativeRuntimeConversationBackend, NativeRuntimeDeps, NativeWebChatTurnParams,
 };

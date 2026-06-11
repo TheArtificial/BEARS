@@ -276,6 +276,10 @@ impl PendingConversationPersistence {
     }
 }
 
+pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes> {
+    Some(Bytes::from(format!("data: {}\n\n", event)))
+}
+
 fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Bytes> {
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let mapped = match ty {
@@ -321,7 +325,7 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
         }
         _ => return None,
     };
-    Some(Bytes::from(format!("data: {}\n\n", mapped)))
+    bear_channel_sse_bytes(&mapped)
 }
 
 pub(crate) fn map_bear_channel_sse_frame(frame: &[u8]) -> Vec<Bytes> {

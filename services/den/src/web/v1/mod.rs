@@ -32,7 +32,10 @@ use crate::{
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,
-    observability::chat_proxy_stream::BearChannelSseProxyStream,
+    observability::{
+        chat_proxy_stream::BearChannelSseProxyStream,
+        native_web_chat_stream::NativeWebChatUpstreamStream,
+    },
     web::AppState,
 };
 
@@ -857,6 +860,148 @@ async fn maybe_handle_direct_set_conversation_title(
     Ok(Some(response))
 }
 
+async fn resolve_chat_profile_binding_id(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    native_runtime: bool,
+) -> Result<String, CustomError> {
+    bears_db::profile_binding_id(pool, bear_id, BearProfile::Chat)
+        .await?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            CustomError::System(if native_runtime {
+                "This bear has no chat profile runtime binding. Ask an operator to provision missing profiles in Admin → Bears.".to_string()
+            } else {
+                "This bear is not provisioned in Letta yet (missing chat profile runtime)."
+                    .to_string()
+            })
+        })
+}
+
+fn chat_sse_response(
+    stream: BearChannelSseProxyStream,
+    request_id: Uuid,
+) -> Result<Response, CustomError> {
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from_stream(stream))
+        .map_err(|e| CustomError::System(format!("response build: {e}")))
+}
+
+async fn chat_send_native_inner(
+    state: AppState,
+    body: ChatSendRequest,
+    request_id: Uuid,
+    user_id: i32,
+    username: &str,
+    bear: crate::core::bears::Bear,
+    chat_binding_id: &str,
+    conv_id: String,
+) -> Result<Response, CustomError> {
+    if state.config.llm_api_url.trim().is_empty() {
+        return Err(CustomError::System(
+            "Chat is unavailable: LLM_API_URL is not set (required when AGENT_RUNTIME=native)."
+                .to_string(),
+        ));
+    }
+
+    let membership_role =
+        bears_db::membership_role_for_user(state.sqlx_pool(), user_id, body.bear_id)
+            .await?
+            .flatten();
+    let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
+    if let Some(response) = maybe_handle_direct_set_conversation_title(
+        &state,
+        ConversationTitleRequest {
+            bear: &bear,
+            chat_agent_id: chat_binding_id,
+            user_id,
+            username: Some(username),
+            membership_role: membership_role.as_deref(),
+            conv_id: &conv_id,
+            session_id: &session_id,
+            message: body.message.trim(),
+            request_id,
+        },
+    )
+    .await?
+    {
+        return Ok(response);
+    }
+
+    let workboard_context =
+        web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
+    let upstream_message = format!("{}{}", body.message.trim(), workboard_context);
+
+    let canonical_conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    conversation_persistence::append_message(
+        state.sqlx_pool(),
+        canonical_conversation.id,
+        "user_input",
+        Some("user"),
+        "visible",
+        body.message.trim(),
+        serde_json::json!({
+            "type": "user_input",
+            "text": body.message.trim(),
+            "request_id": request_id.to_string(),
+        }),
+        None,
+        Some(&format!("web-chat-user-input:{request_id}")),
+        None,
+    )
+    .await?;
+
+    crate::observability::metrics::chat_send_runtime_native();
+
+    let stores = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let deps = crate::core::native_runtime::NativeRuntimeDeps {
+        pool: state.sqlx_pool(),
+        config: state.config.as_ref(),
+        stores: &stores,
+    };
+    let runtime_stream = crate::core::native_runtime::start_native_web_chat_turn_event_stream(
+        crate::core::native_runtime::NativeWebChatTurnParams {
+            deps: &deps,
+            bear_id: bear.id,
+            user_id,
+            conversation_id: &conv_id,
+            session_id: &session_id,
+            prompt: &upstream_message,
+            request_id,
+        },
+    )
+    .await?;
+
+    crate::observability::metrics::chat_send_started();
+
+    let upstream = NativeWebChatUpstreamStream::new(runtime_stream);
+    let stream = BearChannelSseProxyStream::new(
+        upstream,
+        request_id,
+        user_id,
+        body.bear_id,
+        conv_id,
+        state.sqlx_pool().clone(),
+    );
+    chat_sse_response(stream, request_id)
+}
+
 async fn chat_send_inner(
     state: AppState,
     auth_session: AuthSession,
@@ -876,12 +1021,6 @@ async fn chat_send_inner(
         ));
     }
 
-    if !state.web_letta_data.is_enabled() {
-        return Err(CustomError::System(
-            "Chat is unavailable: LETTA_BASE_URL is not set".to_string(),
-        ));
-    }
-
     let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
     if !allowed {
         return Err(CustomError::Authorization(
@@ -893,16 +1032,30 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let chat_agent_id = bears_db::profile_binding_id(state.sqlx_pool(), bear.id, BearProfile::Chat)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            CustomError::System(
-                "This bear is not provisioned in Letta yet (missing chat profile runtime).".to_string(),
-            )
-        })?;
+    let native_runtime = state.config.uses_native_agent_runtime();
+    let chat_binding_id =
+        resolve_chat_profile_binding_id(state.sqlx_pool(), bear.id, native_runtime).await?;
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
+
+    if native_runtime {
+        return chat_send_native_inner(
+            state,
+            body,
+            request_id,
+            user_id,
+            username.as_str(),
+            bear,
+            &chat_binding_id,
+            conv_id,
+        )
+        .await;
+    }
+
+    if !state.web_letta_data.is_enabled() {
+        return Err(CustomError::System(
+            "Chat is unavailable: LETTA_BASE_URL is not set".to_string(),
+        ));
+    }
 
     if !state.web_chat_transport.is_enabled() {
         return Err(CustomError::System(
@@ -922,7 +1075,7 @@ async fn chat_send_inner(
         &state,
         ConversationTitleRequest {
             bear: &bear,
-            chat_agent_id: &chat_agent_id,
+            chat_agent_id: &chat_binding_id,
             user_id,
             username: Some(username.as_str()),
             membership_role: membership_role.as_deref(),
@@ -977,7 +1130,7 @@ async fn chat_send_inner(
                 session_id: &session_id,
                 conversation_id: &conv_id,
                 bear: &bear,
-                chat_agent_id: &chat_agent_id,
+                chat_agent_id: &chat_binding_id,
                 user_id,
                 username: Some(username.as_str()),
                 membership_role: membership_role.as_deref(),
@@ -998,18 +1151,7 @@ async fn chat_send_inner(
         conv_id,
         state.sqlx_pool().clone(),
     );
-
-    let request_id_header = HeaderValue::from_str(&request_id.to_string())
-        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from_stream(stream))
-        .map_err(|e| CustomError::System(format!("response build: {e}")))
+    chat_sse_response(stream, request_id)
 }
 
 #[cfg(test)]
