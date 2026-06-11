@@ -3,7 +3,7 @@ name: Den – build & push image
 
 on:
     push:
-        branches: [main, off-letta]
+        branches: [main, test]
         paths:
             - "services/den/**"
             - ".github/workflows/den-image.yml"
@@ -44,7 +44,7 @@ jobs:
                   images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
                   tags: |
                       type=sha,prefix=
-                      type=raw,value=off-letta,enable=${{ github.ref_name == 'off-letta' }}
+                      type=raw,value=test,enable=${{ github.ref_name == 'test' }}
                       type=raw,value=latest,enable={{is_default_branch}}
 
             - name: Build and push

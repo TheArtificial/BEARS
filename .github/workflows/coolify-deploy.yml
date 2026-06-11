@@ -2,7 +2,7 @@ name: Coolify deploy
 
 on:
     push:
-        branches: [main, off-letta]
+        branches: [main, test]
         paths:
             - "docker-compose.yaml"
             - ".github/workflows/coolify-deploy.yml"
