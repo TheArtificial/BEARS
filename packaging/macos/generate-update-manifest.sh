@@ -5,10 +5,10 @@ usage() {
   cat <<'USAGE'
 Usage: generate-update-manifest.sh (--pkg <path> | --binary <path>) --output <path> --base-url <url> [options]
 
-Generate a public update manifest for `bears-acp-adapter`.
+Generate a public update manifest for `bear-armature`.
 
-macOS manifests use `pkg_url` and are consumed by `bears-acp-adapter update-check` and
-`bears-acp-adapter update`. Linux manifests use `binary_url` and are consumed by
+macOS manifests use `pkg_url` and are consumed by `bear-armature update-check` and
+`bear-armature update`. Linux manifests use `binary_url` and are consumed by
 `.devcontainer/install-workspace-tools.sh`.
 
 Options:
@@ -130,7 +130,7 @@ if [ -z "$base_url" ]; then
 fi
 
 if [ -z "$version" ]; then
-  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bears-acp-adapter/Cargo.toml" | head -n 1)"
+  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bear-armature/Cargo.toml" | head -n 1)"
 fi
 
 if [ -z "$version" ]; then

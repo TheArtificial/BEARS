@@ -5,13 +5,13 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const EXE = process.platform === 'win32' ? 'bears-acp-adapter.exe' : 'bears-acp-adapter';
+const EXE = process.platform === 'win32' ? 'bear-armature.exe' : 'bear-armature';
 const bin = path.join(__dirname, 'bin', EXE);
 
 if (!fs.existsSync(bin)) {
   process.stderr.write(
-    'bears-acp-adapter: binary not found. Run `npm install` to download it, or build from source:\n' +
-    '  cargo build --release --manifest-path tools/bears-acp-adapter/Cargo.toml\n'
+    'bear-armature: binary not found. Run `npm install` to download it, or build from source:\n' +
+    '  cargo build --release --manifest-path tools/bear-armature/Cargo.toml\n'
   );
   process.exit(1);
 }

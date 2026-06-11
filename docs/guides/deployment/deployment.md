@@ -62,7 +62,7 @@ In the Compose resource general configuration:
 4. Under **Build**, enable **Preserve Repository During Deployment**.
 5. Save.
 
-Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts the ACP gateway used by local ACP adapters such as `bears-acp-adapter`. Letta can be public or restricted depending on your operator workflow, but it still needs a configured domain if you want to access the Letta UI/API from outside the Docker network.
+Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts the ACP gateway used by local ACP adapters such as `bear-armature`. Letta can be public or restricted depending on your operator workflow, but it still needs a configured domain if you want to access the Letta UI/API from outside the Docker network.
 
 ## 4. Connect The Network
 

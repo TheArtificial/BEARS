@@ -11,8 +11,22 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const DEFAULT_UPDATE_BASE_URL: &str = "https://bears-ai.github.io/bear-den/bears-acp-adapter";
+const DEFAULT_UPDATE_BASE_URL: &str = "https://bears-ai.github.io/bear-den/bear-armature";
+const LEGACY_UPDATE_BASE_URL: &str = "https://bears-ai.github.io/bear-den/bears-acp-adapter";
 const MACOS_PACKAGE_IDENTIFIER: &str = "ai.bears.acp-adapter";
+
+fn env_with_fallback(primary: &str, fallbacks: &[&str]) -> Option<String> {
+    std::env::var(primary)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            fallbacks.iter().find_map(|name| {
+                std::env::var(name)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+        })
+}
 
 #[derive(Clone, Debug)]
 pub enum UpdateCommand {
@@ -38,13 +52,15 @@ pub enum UpdateInstallMode {
 impl Default for UpdateOptions {
     fn default() -> Self {
         Self {
-            channel: env::var("BEARS_ACP_UPDATE_CHANNEL")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "stable".to_string()),
-            manifest_url: env::var("BEARS_ACP_UPDATE_MANIFEST_URL")
-                .ok()
-                .filter(|value| !value.trim().is_empty()),
+            channel: env_with_fallback(
+                "BEAR_ARMATURE_UPDATE_CHANNEL",
+                &["BEARS_ACP_UPDATE_CHANNEL", "DEN_ACP_UPDATE_CHANNEL"],
+            )
+            .unwrap_or_else(|| "stable".to_string()),
+            manifest_url: env_with_fallback(
+                "BEAR_ARMATURE_UPDATE_MANIFEST_URL",
+                &["BEARS_ACP_UPDATE_MANIFEST_URL", "DEN_ACP_UPDATE_MANIFEST_URL"],
+            ),
             yes: false,
             install_mode: UpdateInstallMode::OpenInstaller,
         }
@@ -85,7 +101,7 @@ impl UpdateOptions {
                 }
                 unknown => {
                     bail!(
-                        "unknown update argument {unknown:?}; use bears-acp-adapter update --help"
+                        "unknown update argument {unknown:?}; use bear-armature update --help"
                     )
                 }
             }
@@ -138,7 +154,7 @@ pub async fn update_doctor_line(http: &reqwest::Client) -> String {
     let options = UpdateOptions::default();
     match fetch_update_status(http, &options).await {
         Ok(status) if status.update_available => format!(
-            "• Adapter update available: {} -> {}\n  Run: bears-acp-adapter update\n  Manifest: {}",
+            "• Adapter update available: {} -> {}\n  Run: bear-armature update\n  Manifest: {}",
             crate::adapter_version(),
             status.manifest.version,
             status.manifest_url
@@ -190,11 +206,11 @@ async fn run_update(http: &reqwest::Client, options: &UpdateOptions) -> Result<(
         UpdateInstallMode::OpenInstaller => {
             open_installer_gui(&pkg_path)?;
             eprintln!("Opened macOS Installer for {}", pkg_path.display());
-            eprintln!("After installation, run: bears-acp-adapter doctor");
+            eprintln!("After installation, run: bear-armature doctor");
         }
         UpdateInstallMode::InstallWithSudo => {
             run_sudo_installer(&pkg_path)?;
-            eprintln!("Update installed. Validate with: bears-acp-adapter doctor");
+            eprintln!("Update installed. Validate with: bear-armature doctor");
         }
     }
 
@@ -210,13 +226,8 @@ async fn fetch_update_status(
         .manifest_url
         .clone()
         .unwrap_or_else(|| default_manifest_url(&options.channel, &target));
-    let response = http
-        .get(&manifest_url)
-        .send()
-        .await
-        .with_context(|| format!("could not fetch update manifest from {manifest_url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let (status, body, manifest_url) =
+        fetch_manifest_body(http, &manifest_url, options, &target).await?;
     if !status.is_success() {
         bail!(
             "update manifest fetch failed with HTTP {status}: {}",
@@ -315,7 +326,7 @@ async fn download_update_pkg(
         .path_segments()
         .and_then(|mut segments| segments.next_back())
         .filter(|segment| !segment.trim().is_empty())
-        .unwrap_or("bears-acp-adapter.pkg");
+        .unwrap_or("bear-armature.pkg");
     let filename = sanitize_pkg_filename(filename, target);
     let dir = create_update_download_dir()?;
     let pkg_path = dir.join(filename);
@@ -403,12 +414,18 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
 }
 
 fn enforce_expected_signer(pkgutil_output: &str) -> Result<()> {
-    let expected_identity = runtime_or_build_value(
-        "BEARS_ACP_UPDATE_INSTALLER_IDENTITY",
+    let expected_identity = runtime_or_build_value_aliases(
+        &[
+            "BEAR_ARMATURE_UPDATE_INSTALLER_IDENTITY",
+            "BEARS_ACP_UPDATE_INSTALLER_IDENTITY",
+        ],
         option_env!("BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY"),
     );
-    let expected_team_id = runtime_or_build_value(
-        "BEARS_ACP_UPDATE_INSTALLER_TEAM_ID",
+    let expected_team_id = runtime_or_build_value_aliases(
+        &[
+            "BEAR_ARMATURE_UPDATE_INSTALLER_TEAM_ID",
+            "BEARS_ACP_UPDATE_INSTALLER_TEAM_ID",
+        ],
         option_env!("BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID"),
     );
 
@@ -440,10 +457,13 @@ fn enforce_expected_signer(pkgutil_output: &str) -> Result<()> {
     Ok(())
 }
 
-fn runtime_or_build_value(runtime_env: &str, build_value: Option<&'static str>) -> Option<String> {
-    env::var(runtime_env)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+fn runtime_or_build_value_aliases(
+    runtime_envs: &[&str],
+    build_value: Option<&'static str>,
+) -> Option<String> {
+    runtime_envs
+        .iter()
+        .find_map(|name| env::var(name).ok())
         .or_else(|| build_value.map(str::to_string))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -549,7 +569,7 @@ fn create_update_download_dir() -> Result<PathBuf> {
         .unwrap_or_default()
         .as_millis();
     let dir = env::temp_dir().join(format!(
-        "bears-acp-adapter-update-{}-{millis}",
+        "bear-armature-update-{}-{millis}",
         std::process::id()
     ));
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
@@ -567,12 +587,42 @@ fn sanitize_pkg_filename(raw: &str, target: &str) -> String {
     if sanitized.ends_with(".pkg") && !sanitized.trim_matches('-').is_empty() {
         sanitized
     } else {
-        format!("bears-acp-adapter-{target}.pkg")
+        format!("bear-armature-{target}.pkg")
     }
 }
 
 fn path_arg(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+async fn fetch_manifest_body(
+    http: &reqwest::Client,
+    manifest_url: &str,
+    options: &UpdateOptions,
+    target: &str,
+) -> Result<(reqwest::StatusCode, String, String)> {
+    let response = http
+        .get(manifest_url)
+        .send()
+        .await
+        .with_context(|| format!("could not fetch update manifest from {manifest_url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if status == reqwest::StatusCode::NOT_FOUND
+        && options.manifest_url.is_none()
+        && manifest_url.starts_with(DEFAULT_UPDATE_BASE_URL)
+    {
+        let legacy_url = format!("{LEGACY_UPDATE_BASE_URL}/{}/{}.json", options.channel, target);
+        let legacy_response = http
+            .get(&legacy_url)
+            .send()
+            .await
+            .with_context(|| format!("could not fetch legacy update manifest from {legacy_url}"))?;
+        let legacy_status = legacy_response.status();
+        let legacy_body = legacy_response.text().await.unwrap_or_default();
+        return Ok((legacy_status, legacy_body, legacy_url));
+    }
+    Ok((status, body, manifest_url.to_string()))
 }
 
 fn default_manifest_url(channel: &str, target: &str) -> String {
@@ -621,6 +671,6 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_update_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter update\n\nUsage:\n  bears-acp-adapter update-check [--channel stable] [--manifest-url <url>]\n  bears-acp-adapter update [--channel stable] [--manifest-url <url>] [--open|--install|--download-only] [--yes]\n\nOptions:\n  --channel <name>       Update channel, default BEARS_ACP_UPDATE_CHANNEL or stable\n  --manifest-url <url>   Override the update manifest URL\n  --open                 Download, verify, and open the .pkg in macOS Installer (default)\n  --install, --cli       Download, verify, and run sudo /usr/sbin/installer\n  --download-only        Download and verify the .pkg without installing\n  --yes, -y              Skip confirmation; defaults to --install unless --open or --download-only is also passed\n  --help                 Show this help\n\nEnvironment:\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n  BEARS_ACP_UPDATE_INSTALLER_TEAM_ID      optional strict runtime signer check\n  BEARS_ACP_UPDATE_INSTALLER_IDENTITY     optional strict runtime signer check"
+        "bear-armature update\n\nUsage:\n  bear-armature update-check [--channel stable] [--manifest-url <url>]\n  bear-armature update [--channel stable] [--manifest-url <url>] [--open|--install|--download-only] [--yes]\n\nOptions:\n  --channel <name>       Update channel, default BEAR_ARMATURE_UPDATE_CHANNEL / BEARS_ACP_UPDATE_CHANNEL or stable\n  --manifest-url <url>   Override the update manifest URL\n  --open                 Download, verify, and open the .pkg in macOS Installer (default)\n  --install, --cli       Download, verify, and run sudo /usr/sbin/installer\n  --download-only        Download and verify the .pkg without installing\n  --yes, -y              Skip confirmation; defaults to --install unless --open or --download-only is also passed\n  --help                 Show this help\n\nEnvironment:\n  BEAR_ARMATURE_UPDATE_CHANNEL / BEARS_ACP_UPDATE_CHANNEL\n  BEAR_ARMATURE_UPDATE_MANIFEST_URL / BEARS_ACP_UPDATE_MANIFEST_URL\n  BEAR_ARMATURE_UPDATE_INSTALLER_TEAM_ID / BEARS_ACP_UPDATE_INSTALLER_TEAM_ID\n  BEAR_ARMATURE_UPDATE_INSTALLER_IDENTITY / BEARS_ACP_UPDATE_INSTALLER_IDENTITY"
     );
 }

@@ -1,35 +1,31 @@
-# Homebrew tap for bears-acp-adapter
+# Homebrew tap for bear-armature
 
-## Setting up the tap
-
-Create a public GitHub repo named `homebrew-bears` under the `TheArtificial` org, then copy `Formula/` into it:
-
-```
-TheArtificial/homebrew-bears/
-  Formula/
-    bears-acp-adapter.rb
+```text
+Formula/
+    bear-armature.rb
+    bears-acp-adapter.rb   # legacy formula alias
 ```
 
-Users can then install with:
+Install:
 
 ```bash
-brew tap bears-ai/bear-den
+brew install bear-armature
+```
+
+Legacy formula name (installs the same binary plus `bears-acp-adapter` symlink):
+
+```bash
 brew install bears-acp-adapter
 ```
 
-## Updating SHA256 hashes after a release
+The release workflow (`.github/workflows/bear-armature.yml`) prints SHA256 sums for all artifacts. After pushing a `bear-armature/v*` tag:
 
-The release workflow (`.github/workflows/acp-adapter-release.yml`) prints SHA256 sums for all artifacts. After pushing a `bears-acp-adapter/v*` tag:
+1. Open the workflow run for that tag.
+2. Copy the hashes for `bear-armature-aarch64-apple-darwin.tar.gz` and `bear-armature-x86_64-apple-darwin.tar.gz`.
+3. Update the `sha256` fields in `Formula/bear-armature.rb` and bump `version`.
 
-1. Find the "Print SHA256 sums" step in the `release` job output on GitHub Actions.
-2. Copy the hashes for `bears-acp-adapter-aarch64-apple-darwin.tar.gz` and `bears-acp-adapter-x86_64-apple-darwin.tar.gz`.
-3. Update the `sha256` fields in `Formula/bears-acp-adapter.rb` and bump `version`.
-4. Push the updated formula to the `homebrew-bears` tap repo.
-
-## macOS Gatekeeper note
-
-Binaries downloaded via Homebrew are automatically cleared of the quarantine attribute. If installing the binary manually (not via `brew`), run:
+Quarantine (local testing):
 
 ```bash
-xattr -d com.apple.quarantine /path/to/bears-acp-adapter
+xattr -d com.apple.quarantine /path/to/bear-armature
 ```

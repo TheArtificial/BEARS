@@ -1,11 +1,16 @@
 #!/bin/sh
 set -eu
 
-BIN="/usr/local/bin/bears-acp-adapter"
+BIN="/usr/local/bin/bear-armature"
+LEGACY_BIN="/usr/local/bin/bears-acp-adapter"
 
 if [ ! -x "$BIN" ]; then
   echo "BEARS ACP adapter was installed, but $BIN is not executable." >&2
   exit 1
+fi
+
+if [ ! -L "$LEGACY_BIN" ] && [ ! -e "$LEGACY_BIN" ]; then
+  ln -sf "$BIN" "$LEGACY_BIN"
 fi
 
 # Avoid running network/config checks here; installs should succeed before the user has credentials.
@@ -15,12 +20,13 @@ fi
 }
 
 cat <<'MESSAGE'
-BEARS ACP adapter installed successfully.
+BEARS ACP adapter (bear-armature) installed successfully.
 
 Next steps:
-  1. Configure your ACP client to run /usr/local/bin/bears-acp-adapter.
+  1. Configure your ACP client to run /usr/local/bin/bear-armature acp.
+     Legacy path /usr/local/bin/bears-acp-adapter still works via symlink.
   2. Provide DEN_API_URL, BEAR_SLUG, and DEN_TOKEN in the client environment.
-  3. Run /usr/local/bin/bears-acp-adapter doctor from the same environment to validate setup.
+  3. Run /usr/local/bin/bear-armature doctor from the same environment to validate setup.
 MESSAGE
 
 exit 0

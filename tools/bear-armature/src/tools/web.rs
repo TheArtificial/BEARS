@@ -54,7 +54,7 @@ pub(crate) async fn handle_local_web_fetch(
     };
     let body = String::from_utf8_lossy(body_bytes).to_string();
     eprintln!(
-        "bears-acp-adapter: web_fetch session_id={} url={} status={} bytes={} truncated={} duration_ms={}",
+        "bear-armature: web_fetch session_id={} url={} status={} bytes={} truncated={} duration_ms={}",
         session_id,
         raw_url,
         status,

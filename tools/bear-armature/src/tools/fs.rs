@@ -53,7 +53,7 @@ pub(crate) async fn handle_read_text_file(
         content.push('\n');
     }
     eprintln!(
-        "bears-acp-adapter: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
+        "bear-armature: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
         session_id,
         path.display(),
         line,
@@ -158,7 +158,7 @@ pub(crate) async fn handle_list_directory(
     let truncated = truncated || total_entries_seen > entries.len() || !queue.is_empty();
     let content = format_directory_listing(&path, &entries, truncated);
     eprintln!(
-        "bears-acp-adapter: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
+        "bear-armature: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
         session_id,
         path.display(),
         recursive,
@@ -242,7 +242,7 @@ pub(crate) async fn handle_find_paths(
     matches.sort();
     let content = format_find_path_results(glob, &matches, truncated);
     eprintln!(
-        "bears-acp-adapter: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
+        "bear-armature: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
         session_id,
         root.display(),
         glob,
@@ -386,7 +386,7 @@ pub(crate) async fn handle_search_files(
     }
     let content = format_search_results(query, &matches, truncated);
     eprintln!(
-        "bears-acp-adapter: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
+        "bear-armature: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
         session_id,
         path.display(),
         query.len(),
@@ -490,7 +490,7 @@ pub(crate) async fn handle_replace_text(
     let plan = ReplaceTextPlan::preflight(context, args, policy)?;
     let applied = plan.apply(context, policy)?;
     eprintln!(
-        "bears-acp-adapter: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
+        "bear-armature: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
         session_id,
         applied["path"].as_str().unwrap_or(""),
         applied["bytes_before"].as_u64().unwrap_or(0),
@@ -572,7 +572,7 @@ pub(crate) async fn handle_create_text_file(
         }
     });
     eprintln!(
-        "bears-acp-adapter: create_text_file session_id={} path={} bytes={} duration_ms={}",
+        "bear-armature: create_text_file session_id={} path={} bytes={} duration_ms={}",
         session_id,
         path.display(),
         content.len(),
@@ -643,7 +643,7 @@ pub(crate) async fn handle_create_directory(
         fs::create_dir(&path).with_context(|| format!("create directory {}", path.display()))?;
     }
     eprintln!(
-        "bears-acp-adapter: create_directory session_id={} path={} parents={} duration_ms={}",
+        "bear-armature: create_directory session_id={} path={} parents={} duration_ms={}",
         session_id,
         path.display(),
         parents,
@@ -743,7 +743,7 @@ pub(crate) async fn handle_move_path(
     fs::rename(&source, &destination)
         .with_context(|| format!("move {} to {}", source.display(), destination.display()))?;
     eprintln!(
-        "bears-acp-adapter: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
+        "bear-armature: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
         session_id,
         source.display(),
         destination.display(),
@@ -882,7 +882,7 @@ pub(crate) async fn handle_copy_path(
         copy_dir_recursive(&source, &destination)?;
     }
     eprintln!(
-        "bears-acp-adapter: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
+        "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
         session_id, source.display(), destination.display(), kind, total_bytes, entries.len(), started.elapsed().as_millis(),
     );
     Ok(json!({
@@ -995,7 +995,7 @@ pub(crate) async fn handle_apply_patch(
         changed.push(path.to_string_lossy().to_string());
     }
     eprintln!(
-        "bears-acp-adapter: apply_patch session_id={} files={} dry_run={}",
+        "bear-armature: apply_patch session_id={} files={} dry_run={}",
         session_id,
         changed.len(),
         dry_run,
@@ -1099,7 +1099,7 @@ pub(crate) async fn handle_delete_path(
         }
     );
     eprintln!(
-        "bears-acp-adapter: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
+        "bear-armature: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
         session_id,
         path.display(),
         kind,

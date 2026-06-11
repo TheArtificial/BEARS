@@ -77,7 +77,7 @@ pub(super) fn acp_compatibility_error_response(
             StatusCode::UPGRADE_REQUIRED,
             "adapter_out_of_date",
             "The BEARS ACP adapter is older than this Den server.",
-            "Update bears-acp-adapter and restart your ACP client.",
+            "Update bear-armature and restart your ACP client.",
             version,
         ),
         AcpCompatibilityError::DenOutOfDate { version } => (
@@ -125,7 +125,7 @@ pub(super) fn compatibility_tool_result_body(
     let (status, message, phase) = match err {
         AcpCompatibilityError::AdapterOutOfDate { .. } => (
             "error",
-            "The BEARS ACP adapter is older than this Den server. Update bears-acp-adapter and restart your ACP client.",
+            "The BEARS ACP adapter is older than this Den server. Update bear-armature and restart your ACP client.",
             "adapter_contract_out_of_date",
         ),
         AcpCompatibilityError::DenOutOfDate { .. } => (

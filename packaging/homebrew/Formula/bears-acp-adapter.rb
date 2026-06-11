@@ -1,18 +1,18 @@
-class BearArmature < Formula
-  desc "BEARS ACP stdio adapter for Zed and other ACP clients"
+# Legacy formula name — installs bear-armature and symlinks bears-acp-adapter.
+class BearsAcpAdapter < Formula
+  desc "BEARS ACP stdio adapter for Zed and other ACP clients (legacy formula name)"
   homepage "https://github.com/bears-ai/bear-den"
   version "0.1.0"
-  # License: see LICENSE in the upstream repo once added.
 
   on_macos do
     on_arm do
       url "https://github.com/bears-ai/bear-den/releases/download/bear-armature%2Fv#{version}/bear-armature-aarch64-apple-darwin.tar.gz"
-      sha256 "" # fill in from `sha256sum` output printed by the release workflow
+      sha256 ""
     end
 
     on_intel do
       url "https://github.com/bears-ai/bear-den/releases/download/bear-armature%2Fv#{version}/bear-armature-x86_64-apple-darwin.tar.gz"
-      sha256 "" # fill in from `sha256sum` output printed by the release workflow
+      sha256 ""
     end
   end
 
@@ -22,7 +22,6 @@ class BearArmature < Formula
   end
 
   test do
-    # --help exits 0 and prints usage to stderr
     system "#{bin}/bear-armature", "--help"
   end
 end

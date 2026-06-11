@@ -3,7 +3,7 @@
 This runbook covers the current Bear Den ACP direct path:
 
 ```text
-Zed/OpenCode ⇄ bears-acp-adapter ⇄ Den ACP gateway ⇄ Letta conversation API
+Zed/OpenCode ⇄ bear-armature ⇄ Den ACP gateway ⇄ Letta conversation API
 ```
 
 ACP `pair` role traffic should not route through Codepool.
@@ -21,7 +21,7 @@ curl -s "$DEN_API_URL/version"
 Check adapter startup in the editor logs:
 
 ```text
-bears-acp-adapter: starting version=... build_git_sha=... local_head_sha=...
+bear-armature: starting version=... build_git_sha=... local_head_sha=...
 ```
 
 If Den and adapter are not both current, fix that first. Many ACP failures are version skew.
@@ -67,7 +67,7 @@ Reply with exactly: hello from bear
 Expected adapter log:
 
 ```text
-bears-acp-adapter: Den stream summary ... event_types={"assistant_text_delta": ..., "turn_complete": 1} ... saw_assistant_output=true
+bear-armature: Den stream summary ... event_types={"assistant_text_delta": ..., "turn_complete": 1} ... saw_assistant_output=true
 ```
 
 Expected Den log:
@@ -102,10 +102,10 @@ Expected flow:
 Useful adapter log snippets:
 
 ```text
-bears-acp-adapter: requesting permission session_id=... tool_call_id=... tool_name=... path=...
-bears-acp-adapter: client fs/read_text_file path=... bytes=... duration_ms=...
-bears-acp-adapter: posted tool result session_id=... tool_call_id=... response=...
-bears-acp-adapter: Den stream summary ...
+bear-armature: requesting permission session_id=... tool_call_id=... tool_name=... path=...
+bear-armature: client fs/read_text_file path=... bytes=... duration_ms=...
+bear-armature: posted tool result session_id=... tool_call_id=... response=...
+bear-armature: Den stream summary ...
 ```
 
 Useful Den log snippets:

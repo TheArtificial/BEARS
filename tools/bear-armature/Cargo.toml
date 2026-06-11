@@ -1,7 +1,11 @@
 [package]
-name = "bears-acp-adapter"
+name = "bear-armature"
 version = "0.1.6"
 edition = "2021"
+
+[[bin]]
+name = "bear-armature"
+path = "src/main.rs"
 
 [dependencies]
 agent-client-protocol = { version = "0.11.1", features = ["unstable_auth_methods", "unstable_session_close", "unstable_session_resume"] }

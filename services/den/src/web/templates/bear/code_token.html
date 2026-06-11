@@ -81,8 +81,8 @@ endblock %} {% block content %}
   "agent_servers": {
     "BEARS {{ bear.name | e }}": {
       "type": "custom",
-      "command": "/path/to/bears-acp-adapter",
-      "args": ["--client", "zed", "--token-env", "DEN_TOKEN"],
+      "command": "/path/to/bear-armature",
+      "args": ["acp", "--client", "zed", "--token-env", "DEN_TOKEN"],
       "env": {
         "DEN_API_URL": "{{ api_server_url | e }}",
         "BEAR_SLUG": "{{ bear.slug | e }}"

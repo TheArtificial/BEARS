@@ -1,11 +1,11 @@
 # macOS installer packaging
 
-This directory contains the first-pass macOS `.pkg` installer pipeline for `bears-acp-adapter`.
+This directory contains the first-pass macOS `.pkg` installer pipeline for `bear-armature`.
 
 The package installs the adapter at:
 
 ```text
-/usr/local/bin/bears-acp-adapter
+/usr/local/bin/bear-armature
 ```
 
 That system-wide path is intentionally stable so non-technical users can paste the same command into ACP clients such as aizen, and so future client-specific configuration helpers can target one location.
@@ -15,15 +15,15 @@ That system-wide path is intentionally stable so non-technical users can paste t
 Build the adapter first:
 
 ```bash
-cargo build --release --target aarch64-apple-darwin --manifest-path tools/bears-acp-adapter/Cargo.toml
+cargo build --release --target aarch64-apple-darwin --manifest-path tools/bear-armature/Cargo.toml
 ```
 
 Then build an unsigned package:
 
 ```bash
 ./packaging/macos/build-pkg.sh \
-  --binary tools/bears-acp-adapter/target/aarch64-apple-darwin/release/bears-acp-adapter \
-  --output dist/macos/bears-acp-adapter-test.pkg
+  --binary tools/bear-armature/target/aarch64-apple-darwin/release/bear-armature \
+  --output dist/macos/bear-armature-test.pkg
 ```
 
 Release builds currently package the arm64 macOS binary only to keep CI fast. Add an `x86_64-apple-darwin` build and a `lipo` combine step later if Intel Mac support becomes necessary.
@@ -51,8 +51,8 @@ After importing your Developer ID certificates into your local keychain:
 
 ```bash
 ./packaging/macos/build-pkg.sh \
-  --binary dist/macos/bears-acp-adapter \
-  --output dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
+  --binary dist/macos/bear-armature \
+  --output dist/macos/bear-armature-aarch64-apple-darwin.pkg \
   --application-identity "Developer ID Application: Your Org (TEAMID)" \
   --installer-identity "Developer ID Installer: Your Org (TEAMID)"
 ```
@@ -63,7 +63,7 @@ Then notarize and staple:
 APP_STORE_CONNECT_API_KEY_ID="..." \
 APP_STORE_CONNECT_API_ISSUER_ID="..." \
 APP_STORE_CONNECT_API_KEY_PATH="/path/to/AuthKey_XXXX.p8" \
-./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+./packaging/macos/notarize.sh --pkg dist/macos/bear-armature-aarch64-apple-darwin.pkg
 ```
 
 ## Installing and validating
@@ -71,14 +71,14 @@ APP_STORE_CONNECT_API_KEY_PATH="/path/to/AuthKey_XXXX.p8" \
 Install the package by double-clicking it, or with:
 
 ```bash
-sudo installer -pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg -target /
+sudo installer -pkg dist/macos/bear-armature-aarch64-apple-darwin.pkg -target /
 ```
 
 Validate the installed adapter:
 
 ```bash
-/usr/local/bin/bears-acp-adapter --version
-/usr/local/bin/bears-acp-adapter doctor
+/usr/local/bin/bear-armature --version
+/usr/local/bin/bear-armature doctor
 ```
 
 `doctor` needs `DEN_API_URL`, `BEAR_SLUG`, and either `DEN_TOKEN` or `DEN_TOKEN_ENV` set in the same environment used by the ACP client for a complete pass. Without those values, it prints the missing setup items and exits non-zero.
@@ -88,20 +88,20 @@ Validate the installed adapter:
 The adapter self-update command reads a small JSON manifest from a stable public URL and installs a newer signed/notarized `.pkg`. The default stable arm64 macOS manifest URL compiled into the adapter is:
 
 ```text
-https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/aarch64-apple-darwin.json
+https://bears-ai.github.io/bear-den/bear-armature/stable/aarch64-apple-darwin.json
 ```
 
 GitHub Releases generate a Pages payload under:
 
 ```text
-dist/update-site/bears-acp-adapter/<stable-or-beta>/
+dist/update-site/bear-armature/<stable-or-beta>/
 ```
 
 The payload contains:
 
-- `bears-acp-adapter-aarch64-apple-darwin.pkg`
-- `bears-acp-adapter-x86_64-unknown-linux-gnu`
-- `bears-acp-adapter-aarch64-unknown-linux-gnu`
+- `bear-armature-aarch64-apple-darwin.pkg`
+- `bear-armature-x86_64-unknown-linux-gnu`
+- `bear-armature-aarch64-unknown-linux-gnu`
 - `aarch64-apple-darwin.json`
 - `x86_64-unknown-linux-gnu.json`
 - `aarch64-unknown-linux-gnu.json`
@@ -112,17 +112,17 @@ Generate a manifest manually with:
 
 ```bash
 ./packaging/macos/generate-update-manifest.sh \
-  --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
-  --output dist/update-site/bears-acp-adapter/stable/aarch64-apple-darwin.json \
-  --base-url https://bears-ai.github.io/bear-den/bears-acp-adapter/stable \
+  --pkg dist/macos/bear-armature-aarch64-apple-darwin.pkg \
+  --output dist/update-site/bear-armature/stable/aarch64-apple-darwin.json \
+  --base-url https://bears-ai.github.io/bear-den/bear-armature/stable \
   --channel stable \
   --target aarch64-apple-darwin \
   --release-notes-url https://github.com/bears-ai/bear-den/releases/latest
 
 ./packaging/macos/generate-update-manifest.sh \
-  --binary dist/update-site/bears-acp-adapter/stable/bears-acp-adapter-x86_64-unknown-linux-gnu \
-  --output dist/update-site/bears-acp-adapter/stable/x86_64-unknown-linux-gnu.json \
-  --base-url https://bears-ai.github.io/bear-den/bears-acp-adapter/stable \
+  --binary dist/update-site/bear-armature/stable/bear-armature-x86_64-unknown-linux-gnu \
+  --output dist/update-site/bear-armature/stable/x86_64-unknown-linux-gnu.json \
+  --base-url https://bears-ai.github.io/bear-den/bear-armature/stable \
   --channel stable \
   --target x86_64-unknown-linux-gnu \
   --release-notes-url https://github.com/bears-ai/bear-den/releases/latest
@@ -130,11 +130,11 @@ Generate a manifest manually with:
 
 On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch while preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.
 
-Pushes to `main` automatically create and publish `bears-acp-adapter/v<version>` when the version in `tools/bears-acp-adapter/Cargo.toml` does not already have a matching tag. For example, bumping Cargo.toml to `0.1.2` and merging to `main` creates/reuses `bears-acp-adapter/v0.1.2`, uploads release assets, and publishes the update site. If the matching tag already exists, the push is treated as a normal build and no update site is published.
+Pushes to `main` automatically create and publish `bear-armature/v<version>` when the version in `tools/bear-armature/Cargo.toml` does not already have a matching tag. For example, bumping Cargo.toml to `0.1.2` and merging to `main` creates/reuses `bear-armature/v0.1.2`, uploads release assets, and publishes the update site. If the matching tag already exists, the push is treated as a normal build and no update site is published.
 
-Tag pushes matching `v*` or `bears-acp-adapter/v*` also build and publish the update site. The tag suffix becomes the adapter/package/manifest version, so `bears-acp-adapter/v0.1.1` publishes version `0.1.1`. Tags with a prerelease suffix such as `v0.1.1-beta.1` publish to `beta`; other tag pushes publish to `stable`.
+Tag pushes matching `v*` or `bear-armature/v*` also build and publish the update site. The tag suffix becomes the adapter/package/manifest version, so `bear-armature/v0.1.1` publishes version `0.1.1`. Tags with a prerelease suffix such as `v0.1.1-beta.1` publish to `beta`; other tag pushes publish to `stable`.
 
-Manual workflow dispatches do not publish the public update site unless `create_release_from_cargo` or `publish_update_site` is checked. `create_release_from_cargo` creates/reuses `bears-acp-adapter/v<version>` from Cargo.toml and publishes the update site. For a manual publish without a release, check `publish_update_site`, choose the `stable` or `beta` `update_channel` input, and optionally provide a `release_notes_url`.
+Manual workflow dispatches do not publish the public update site unless `create_release_from_cargo` or `publish_update_site` is checked. `create_release_from_cargo` creates/reuses `bear-armature/v<version>` from Cargo.toml and publishes the update site. For a manual publish without a release, check `publish_update_site`, choose the `stable` or `beta` `update_channel` input, and optionally provide a `release_notes_url`.
 
 Linux devcontainer installs can be controlled with:
 

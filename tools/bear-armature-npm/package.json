@@ -1,5 +1,5 @@
 {
-    "name": "bears-acp-adapter",
+    "name": "bear-armature",
     "version": "0.1.0",
     "description": "BEARS ACP stdio adapter for Zed and other ACP clients",
     "homepage": "https://github.com/bears-ai/bear-den",
@@ -9,6 +9,7 @@
     },
     "license": "SEE LICENSE IN ../../LICENSE",
     "bin": {
+        "bear-armature": "run.js",
         "bears-acp-adapter": "run.js"
     },
     "scripts": {

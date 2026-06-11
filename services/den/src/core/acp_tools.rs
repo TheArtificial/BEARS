@@ -2534,7 +2534,7 @@ mod tests {
         let descriptors = acp_client_tool_descriptors_for_client_context(
             &json!({
                 "adapter": {
-                    "name": "bears-acp-adapter",
+                    "name": "bear-armature",
                     "version": "0.1.0",
                     "direct_tools": {
                         "fs_read_text_file": { "supported": true, "version": 1 },

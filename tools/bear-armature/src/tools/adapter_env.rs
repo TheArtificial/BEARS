@@ -113,7 +113,7 @@ pub(crate) async fn collect_bear_environment(
         "bear": {
             "role": "pair",
             "identity": "Builder Bear",
-            "implementation": "bears-acp-adapter"
+            "implementation": "bear-armature"
         },
         "runtime": {
             "kind": "acp_adapter",

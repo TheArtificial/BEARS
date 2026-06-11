@@ -153,7 +153,7 @@ pub(crate) async fn handle_process_run(
     };
     let content = process_result_content(command, &command_args, &cwd.to_string_lossy(), &result);
     eprintln!(
-        "bears-acp-adapter: process_run session_id={} command={} args={} cwd={} exit_code={:?} timed_out=false duration_ms={}",
+        "bear-armature: process_run session_id={} command={} args={} cwd={} exit_code={:?} timed_out=false duration_ms={}",
         session_id,
         command,
         command_args.len(),

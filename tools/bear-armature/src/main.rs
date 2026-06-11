@@ -591,7 +591,7 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
 async fn refresh_slash_commands_for_session(session_id: &str) {
     if let Err(err) = send_available_commands_update(session_id).await {
         eprintln!(
-            "bears-acp-adapter: failed to refresh slash commands session_id={session_id} error={err:#}"
+            "bear-armature: failed to refresh slash commands session_id={session_id} error={err:#}"
         );
     }
 }
@@ -633,7 +633,7 @@ fn spawn_adapter_environment_publish(
             Ok(snapshot) => snapshot,
             Err(err) => {
                 eprintln!(
-                    "bears-acp-adapter: failed to collect adapter environment for publish session_id={} error={err:#}",
+                    "bear-armature: failed to collect adapter environment for publish session_id={} error={err:#}",
                     session_id
                 );
                 return;
@@ -648,7 +648,7 @@ fn spawn_adapter_environment_publish(
         .await
         {
             eprintln!(
-                "bears-acp-adapter: failed to publish adapter environment session_id={} error={err:#}",
+                "bear-armature: failed to publish adapter environment session_id={} error={err:#}",
                 session_id
             );
         }
@@ -729,7 +729,7 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
     .await?;
     if env_bool("DEN_ACP_DEBUG_UI") {
         eprintln!(
-            "bears-acp-adapter: debug ui sent ACP plan update session_id={} entry_count={}",
+            "bear-armature: debug ui sent ACP plan update session_id={} entry_count={}",
             session_id, entry_count
         );
     }
@@ -774,7 +774,7 @@ impl LocalToolError {
             status: LocalToolStatus::PermissionDenied,
             message: message.into(),
             diagnostic: json!({
-                "component": "bears-acp-adapter",
+                "component": "bear-armature",
                 "phase": "adapter_permission_denied",
                 "reason": "client_permission_rejected",
             }),
@@ -786,7 +786,7 @@ impl LocalToolError {
             status: LocalToolStatus::Cancelled,
             message: message.into(),
             diagnostic: json!({
-                "component": "bears-acp-adapter",
+                "component": "bear-armature",
                 "phase": "adapter_cancelled",
                 "reason": "session_cancelled",
             }),
@@ -798,7 +798,7 @@ impl LocalToolError {
             status: LocalToolStatus::Timeout,
             message: message.into(),
             diagnostic: json!({
-                "component": "bears-acp-adapter",
+                "component": "bear-armature",
                 "phase": "adapter_permission_timeout",
                 "reason": "client_permission_timeout",
             }),
@@ -991,7 +991,7 @@ impl ServerHandler for BrowserBridgeServer {
         .with_server_info(
             McpImplementation::new("bears-host-browser-bridge", adapter_version())
                 .with_title("BEARS Host Browser MCP Bridge")
-                .with_description("Browser-only MCP bridge served by bears-acp-adapter."),
+                .with_description("Browser-only MCP bridge served by bear-armature."),
         )
         .with_instructions("This MCP server exposes browser-only tools from the BEARS host browser bridge. It can inspect and control the local browser via Chrome DevTools Protocol, but it does not provide host filesystem, host shell, or host git access.")
     }
@@ -1104,7 +1104,7 @@ async fn run_browser_bridge(config: BrowserBridgeConfig) -> Result<()> {
         .await
         .with_context(|| format!("bind browser bridge listener on {bind}"))?;
     eprintln!(
-        "bears-acp-adapter: browser-bridge listening addr={} path={} chrome={} origins={:?}",
+        "bear-armature: browser-bridge listening addr={} path={} chrome={} origins={:?}",
         bind,
         mcp_path,
         chrome_capability_status_line(),
@@ -1243,7 +1243,7 @@ fn route_browser_screenshot() -> rmcp::handler::server::router::tool::ToolRoute<
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        eprintln!("bears-acp-adapter: {err:#}");
+        eprintln!("bear-armature: {err:#}");
         std::process::exit(1);
     }
 }
@@ -1251,7 +1251,7 @@ async fn main() {
 async fn run() -> Result<()> {
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
-        "bears-acp-adapter: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
+        "bear-armature: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
         env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
@@ -1259,7 +1259,7 @@ async fn run() -> Result<()> {
         direct_tools_context()
     );
     eprintln!(
-        "bears-acp-adapter: chrome tools {}",
+        "bear-armature: chrome tools {}",
         chrome_capability_status_line()
     );
     if let Some(browser_bridge) = runtime.browser_bridge.clone() {
@@ -1269,7 +1269,7 @@ async fn run() -> Result<()> {
 
     if !runtime.doctor && runtime.update_command.is_none() {
         if runtime.is_configured() {
-            eprintln!("bears-acp-adapter: configuration looks valid");
+            eprintln!("bear-armature: configuration looks valid");
         } else {
             eprintln!("{}", runtime.configuration_error_message());
         }
@@ -1328,7 +1328,7 @@ async fn run() -> Result<()> {
             InboundMessage::Response { id, value } => {
                 if !adapter_state.transport.route_response(&id, value).await {
                     eprintln!(
-                        "bears-acp-adapter: unmatched JSON-RPC response id={}",
+                        "bear-armature: unmatched JSON-RPC response id={}",
                         id_key(&id)
                     );
                 }
@@ -1360,7 +1360,7 @@ async fn run() -> Result<()> {
         )
         .await
         {
-            eprintln!("bears-acp-adapter: request handling failed: {err:#}");
+            eprintln!("bear-armature: request handling failed: {err:#}");
         }
     }
 
@@ -1396,7 +1396,7 @@ impl BrowserBridgeConfig {
                     print_browser_bridge_help_to_stderr();
                     std::process::exit(0);
                 }
-                unknown => bail!("unknown browser-bridge argument {unknown:?}; use `bears-acp-adapter browser-bridge --help`"),
+                unknown => bail!("unknown browser-bridge argument {unknown:?}; use `bear-armature browser-bridge --help`"),
             }
         }
 
@@ -1420,42 +1420,103 @@ impl BrowserBridgeConfig {
     }
 }
 
+fn args_look_like_legacy_acp(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--api-url" | "--bear" | "--token" | "--token-env" | "--client" | "--check-config"
+                | "--check-server"
+        )
+    })
+}
+
+fn env_looks_like_acp_configured() -> bool {
+    let api_url = env::var("DEN_API_URL").unwrap_or_default();
+    let bear = env::var("BEAR_SLUG").unwrap_or_default();
+    if api_url.trim().is_empty() || bear.trim().is_empty() {
+        return false;
+    }
+    if !env::var("DEN_TOKEN")
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return true;
+    }
+    let token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
+    !token_env.trim().is_empty()
+        && env::var(&token_env)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+struct AcpConnectionArgs {
+    api_url: String,
+    bear: String,
+    token: String,
+    token_env: String,
+    client: String,
+    check_config: bool,
+    check_server: bool,
+    doctor: bool,
+}
+
+fn parse_acp_connection_args(mut args: impl Iterator<Item = String>) -> Result<AcpConnectionArgs> {
+    let mut api_url = env::var("DEN_API_URL").unwrap_or_default();
+    let mut bear = env::var("BEAR_SLUG").unwrap_or_default();
+    let mut token = env::var("DEN_TOKEN").unwrap_or_default();
+    let mut token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
+    let mut client = env::var("DEN_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
+    let mut check_config = false;
+    let mut check_server = false;
+    let mut doctor = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--api-url" => api_url = require_arg_value("--api-url", args.next())?,
+            "--bear" => bear = require_arg_value("--bear", args.next())?,
+            "--token" => token = require_arg_value("--token", args.next())?,
+            "--token-env" => token_env = require_arg_value("--token-env", args.next())?,
+            "--client" => client = require_arg_value("--client", args.next())?,
+            "--check-config" => check_config = true,
+            "--check-server" => check_server = true,
+            "doctor" | "--doctor" => doctor = true,
+            "--version" | "-V" => {
+                print_version_to_stderr();
+                std::process::exit(0);
+            }
+            "--help" | "-h" => {
+                print_acp_help_to_stderr();
+                std::process::exit(0);
+            }
+            unknown => {
+                return Err(anyhow!(
+                    "unknown ACP argument {unknown:?}; use `bear-armature acp --help`"
+                ))
+            }
+        }
+    }
+
+    Ok(AcpConnectionArgs {
+        api_url,
+        bear,
+        token,
+        token_env,
+        client,
+        check_config,
+        check_server,
+        doctor,
+    })
+}
+
 impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
-        let mut api_url = env::var("DEN_API_URL").unwrap_or_default();
-        let mut bear = env::var("BEAR_SLUG").unwrap_or_default();
-        let mut token = env::var("DEN_TOKEN").unwrap_or_default();
-        let mut token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
-        let mut client = env::var("DEN_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
-        let mut check_config = false;
-        let mut check_server = false;
-        let mut doctor = false;
+        let mut args: Vec<String> = env::args().skip(1).collect();
         let mut update_command: Option<UpdateCommand> = None;
         let mut browser_bridge: Option<BrowserBridgeConfig> = None;
 
-        let mut args = env::args().skip(1);
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "browser-bridge" => {
-                    browser_bridge = Some(BrowserBridgeConfig::from_args(args)?);
-                    break;
-                }
-                "update-check" => {
-                    update_command = Some(UpdateCommand::Check(UpdateOptions::from_args(args)?));
-                    break;
-                }
-                "update" => {
-                    update_command = Some(UpdateCommand::Update(UpdateOptions::from_args(args)?));
-                    break;
-                }
-                "--api-url" => api_url = require_arg_value("--api-url", args.next())?,
-                "--bear" => bear = require_arg_value("--bear", args.next())?,
-                "--token" => token = require_arg_value("--token", args.next())?,
-                "--token-env" => token_env = require_arg_value("--token-env", args.next())?,
-                "--client" => client = require_arg_value("--client", args.next())?,
-                "--check-config" => check_config = true,
-                "--check-server" => check_server = true,
-                "doctor" | "--doctor" => doctor = true,
+        if args.len() == 1 {
+            match args[0].as_str() {
                 "--version" | "-V" => {
                     print_version_to_stderr();
                     std::process::exit(0);
@@ -1464,9 +1525,77 @@ impl RuntimeConfig {
                     print_help_to_stderr();
                     std::process::exit(0);
                 }
-                unknown => return Err(anyhow!("unknown argument {unknown:?}; use --help")),
+                _ => {}
             }
         }
+
+        let first = args.first().cloned();
+        let acp_args = match first.as_deref() {
+            Some("browser-bridge") => {
+                browser_bridge = Some(BrowserBridgeConfig::from_args(args.into_iter().skip(1))?);
+                Vec::new()
+            }
+            Some("update-check") => {
+                update_command = Some(UpdateCommand::Check(UpdateOptions::from_args(
+                    args.into_iter().skip(1),
+                )?));
+                Vec::new()
+            }
+            Some("update") => {
+                update_command = Some(UpdateCommand::Update(UpdateOptions::from_args(
+                    args.into_iter().skip(1),
+                )?));
+                Vec::new()
+            }
+            Some("doctor") | Some("--doctor") => Vec::new(),
+            Some("acp") => args.into_iter().skip(1).collect(),
+            Some(_) if args_look_like_legacy_acp(&args) => args,
+            Some(unknown) => {
+                return Err(anyhow!(
+                    "unknown subcommand {unknown:?}; use `bear-armature --help`"
+                ));
+            }
+            None if env_looks_like_acp_configured() => Vec::new(),
+            None => {
+                print_help_to_stderr();
+                std::process::exit(0);
+            }
+        };
+
+        let AcpConnectionArgs {
+            mut api_url,
+            mut bear,
+            mut token,
+            mut token_env,
+            mut client,
+            check_config,
+            check_server,
+            doctor,
+        } = if browser_bridge.is_some() || update_command.is_some() {
+            AcpConnectionArgs {
+                api_url: env::var("DEN_API_URL").unwrap_or_default(),
+                bear: env::var("BEAR_SLUG").unwrap_or_default(),
+                token: env::var("DEN_TOKEN").unwrap_or_default(),
+                token_env: env::var("DEN_TOKEN_ENV").unwrap_or_default(),
+                client: env::var("DEN_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string()),
+                check_config: false,
+                check_server: false,
+                doctor: matches!(first.as_deref(), Some("doctor") | Some("--doctor")),
+            }
+        } else if matches!(first.as_deref(), Some("doctor") | Some("--doctor")) {
+            AcpConnectionArgs {
+                api_url: env::var("DEN_API_URL").unwrap_or_default(),
+                bear: env::var("BEAR_SLUG").unwrap_or_default(),
+                token: env::var("DEN_TOKEN").unwrap_or_default(),
+                token_env: env::var("DEN_TOKEN_ENV").unwrap_or_default(),
+                client: env::var("DEN_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string()),
+                check_config: false,
+                check_server: false,
+                doctor: true,
+            }
+        } else {
+            parse_acp_connection_args(acp_args.into_iter())?
+        };
 
         let mut diagnostics = Vec::new();
         let token_env = token_env.trim().to_string();
@@ -1524,7 +1653,7 @@ impl RuntimeConfig {
 
         if check_config {
             if runtime.is_configured() {
-                eprintln!("bears-acp-adapter: configuration looks valid");
+                eprintln!("bear-armature: configuration looks valid");
                 std::process::exit(0);
             }
             eprintln!("{}", runtime.configuration_error_message());
@@ -1609,7 +1738,7 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
+        "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
         local_head_sha(),
@@ -1642,16 +1771,28 @@ fn normalize_browser_bridge_path(path: &str) -> String {
 
 fn print_browser_bridge_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter browser-bridge\n\nUsage: bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>] [--allow-origin <origin>]...\n\nOptions:\n  --bind <host:port>      Bind address for the host browser MCP bridge HTTP server\n  --path <path>           MCP HTTP path, default /mcp\n  --token <token>         Required bearer token for Authorization: Bearer <token>\n  --allow-origin <url>    Allowed Origin value for browser requests; repeatable\n  --help                  Show this help\n\nEnvironment fallbacks:\n  DEN_HOST_BROWSER_MCP_BIND\n  DEN_HOST_BROWSER_MCP_PATH\n  DEN_HOST_BROWSER_MCP_TOKEN\n  DEN_HOST_BROWSER_MCP_ALLOWED_ORIGINS  comma-separated list",
+        "bear-armature browser-bridge\n\nUsage: bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>] [--allow-origin <origin>]...\n\nOptions:\n  --bind <host:port>      Bind address for the host browser MCP bridge HTTP server\n  --path <path>           MCP HTTP path, default /mcp\n  --token <token>         Required bearer token for Authorization: Bearer <token>\n  --allow-origin <url>    Allowed Origin value for browser requests; repeatable\n  --help                  Show this help\n\nEnvironment fallbacks:\n  DEN_HOST_BROWSER_MCP_BIND\n  DEN_HOST_BROWSER_MCP_PATH\n  DEN_HOST_BROWSER_MCP_TOKEN\n  DEN_HOST_BROWSER_MCP_ALLOWED_ORIGINS  comma-separated list",
+    );
+}
+
+fn print_acp_help_to_stderr() {
+    eprintln!(
+        "bear-armature acp\n\nUsage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n\n\
+Legacy editors may still invoke `bear-armature --api-url ... --bear ...` without the `acp` subcommand.\n\
+DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint."
     );
 }
 
 fn print_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
-Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n  DEN_ACP_UPDATE_CHANNEL\n  DEN_ACP_UPDATE_MANIFEST_URL\n\n\
+        "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
+Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
+Usage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bear-armature doctor\n       bear-armature update-check [--channel stable]\n       bear-armature update [--open|--install|--download-only] [--yes]\n       bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
+Legacy usage (still supported):\n  bear-armature --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
+Global options:\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n  BEAR_ARMATURE_UPDATE_CHANNEL / BEARS_ACP_UPDATE_CHANNEL\n  BEAR_ARMATURE_UPDATE_MANIFEST_URL / BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
 DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
@@ -1712,7 +1853,7 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, transport: JsonRp
             }
             Ok(None) => break,
             Err(err) => {
-                eprintln!("bears-acp-adapter: failed to read stdin: {err:#}");
+                eprintln!("bear-armature: failed to read stdin: {err:#}");
                 break;
             }
         }
@@ -1817,7 +1958,7 @@ async fn handle_request(
                 context.raw["mcp"] = mcp_context;
                 ensure_session_context_capabilities(&mut context);
                 eprintln!(
-                    "bears-acp-adapter: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
+                    "bear-armature: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
                     session_id,
                     context.cwd,
                     context.roots.join(","),
@@ -1949,7 +2090,7 @@ async fn handle_request(
                 )
                 .await;
                 eprintln!(
-                    "bears-acp-adapter: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                    "bear-armature: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
                     session_id,
                     requested_mode,
                     mode,
@@ -1960,7 +2101,7 @@ async fn handle_request(
                 );
                 if requested_mode != mode {
                     eprintln!(
-                        "bears-acp-adapter: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
+                        "bear-armature: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
                     let deferred = den_response
@@ -1969,7 +2110,7 @@ async fn handle_request(
                         .unwrap_or(false);
                     if !deferred {
                         eprintln!(
-                            "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
+                            "bear-armature: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
                             session_id,
                             requested_mode,
                             mode,
@@ -2048,7 +2189,7 @@ async fn handle_request(
                 )
                 .await;
                 eprintln!(
-                    "bears-acp-adapter: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                    "bear-armature: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
                     session_id,
                     requested_mode,
                     mode,
@@ -2059,7 +2200,7 @@ async fn handle_request(
                 );
                 if requested_mode != mode {
                     eprintln!(
-                        "bears-acp-adapter: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
+                        "bear-armature: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
                     let deferred = den_response
@@ -2068,7 +2209,7 @@ async fn handle_request(
                         .unwrap_or(false);
                     if !deferred {
                         eprintln!(
-                            "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
+                            "bear-armature: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
                             session_id,
                             requested_mode,
                             mode,
@@ -2337,12 +2478,12 @@ async fn handle_request(
                     );
                     if same_conversation {
                         eprintln!(
-                            "bears-acp-adapter: steering prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; cancelling previous turn and gating stale UI text updates",
+                            "bear-armature: steering prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; cancelling previous turn and gating stale UI text updates",
                             session_id, previous.token, turn_token, conversation_id_for_turn
                         );
                     } else {
                         eprintln!(
-                            "bears-acp-adapter: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
+                            "bear-armature: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
                             session_id, previous.token, turn_token, previous.conversation_id, conversation_id_for_turn
                         );
                     }
@@ -2407,7 +2548,7 @@ async fn handle_request(
                     .await?;
                 } else {
                     eprintln!(
-                        "bears-acp-adapter: ignoring session/close notification because adapter is not configured"
+                        "bear-armature: ignoring session/close notification because adapter is not configured"
                     );
                 }
                 return Ok(());
@@ -2432,7 +2573,7 @@ async fn handle_request(
                         .await?;
                     } else {
                         eprintln!(
-                            "bears-acp-adapter: session/close notification failed error={err:#}"
+                            "bear-armature: session/close notification failed error={err:#}"
                         );
                     }
                 }
@@ -2452,7 +2593,7 @@ async fn handle_request(
                     .await?;
                 } else {
                     eprintln!(
-                        "bears-acp-adapter: ignoring session/cancel notification because adapter is not configured"
+                        "bear-armature: ignoring session/cancel notification because adapter is not configured"
                     );
                 }
                 return Ok(());
@@ -2477,7 +2618,7 @@ async fn handle_request(
                         .await?;
                     } else {
                         eprintln!(
-                            "bears-acp-adapter: session/cancel notification failed error={err:#}"
+                            "bear-armature: session/cancel notification failed error={err:#}"
                         );
                     }
                 }
@@ -2514,7 +2655,7 @@ fn adapter_capabilities_context() -> Value {
 fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
     let chrome_supported = chrome_tools_available() && !has_client_mcp_tools;
     json!({
-        "name": "bears-acp-adapter",
+        "name": "bear-armature",
         "version": adapter_version(),
         "git_sha": env!("DEN_ACP_ADAPTER_GIT_SHA"),
         "built_at_utc": env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
@@ -2642,7 +2783,7 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
     eprintln!(
-        "bears-acp-adapter: session_context_from_params mcp_summary={}",
+        "bear-armature: session_context_from_params mcp_summary={}",
         summarize_acp_mcp_servers_param(params)
     );
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
@@ -2903,7 +3044,7 @@ async fn handle_client_read_text_file(
     })?;
     let content = parsed.content;
     eprintln!(
-        "bears-acp-adapter: client fs/read_text_file path={} bytes={} duration_ms={}",
+        "bear-armature: client fs/read_text_file path={} bytes={} duration_ms={}",
         path,
         content.len(),
         started.elapsed().as_millis(),
@@ -2988,7 +3129,7 @@ async fn execute_local_tool(
                 handle_client_read_text_file(adapter_state, session_id, &args).await
             } else {
                 eprintln!(
-                    "bears-acp-adapter: client did not advertise fs/read_text_file; using adapter-local fallback"
+                    "bear-armature: client did not advertise fs/read_text_file; using adapter-local fallback"
                 );
                 let mut params = args;
                 params["sessionId"] = json!(session_id);
@@ -3367,7 +3508,7 @@ fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
                 });
             }
             eprintln!(
-                "bears-acp-adapter: using adapter current directory as local session fallback cwd={} reason={err:#}",
+                "bear-armature: using adapter current directory as local session fallback cwd={} reason={err:#}",
                 cwd
             );
             let mut mcp_sources = parse_acp_mcp_servers(params)?;
@@ -3419,7 +3560,7 @@ fn session_params_have_cwd_hint(params: &Value) -> bool {
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
     eprintln!(
-        "bears-acp-adapter: session_context_from_den_session mcp_summary={}",
+        "bear-armature: session_context_from_den_session mcp_summary={}",
         summarize_acp_mcp_servers_param(params)
     );
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
@@ -3605,7 +3746,7 @@ async fn request_den_session_mode(
     if !status.is_success() {
         if status == reqwest::StatusCode::NOT_FOUND && body.contains("ACP session not found") {
             eprintln!(
-                "bears-acp-adapter: Den session mode deferred because session is not known yet session_id={} requested_mode={} status={} body={}",
+                "bear-armature: Den session mode deferred because session is not known yet session_id={} requested_mode={} status={} body={}",
                 session_id,
                 requested_mode,
                 status,
@@ -3630,7 +3771,7 @@ async fn request_den_session_mode(
     }
     let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
     eprintln!(
-        "bears-acp-adapter: Den mode response session_id={} requested_mode={} response={}",
+        "bear-armature: Den mode response session_id={} requested_mode={} response={}",
         session_id,
         requested_mode,
         serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
@@ -3790,7 +3931,7 @@ async fn fetch_conversation_history_chronological(
             .unwrap_or("<none>")
             .to_string();
         eprintln!(
-            "bears-acp-adapter: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
+            "bear-armature: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
             conversation_id,
             page_idx,
             before,
@@ -3834,14 +3975,14 @@ async fn replay_history_for_den_session(
     if let Some(conv) = conversation_id_for_history(den) {
         let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
         eprintln!(
-            "bears-acp-adapter: {} session_id={} replaying {} history messages for conversation_id={}",
+            "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
             lifecycle_method,
             session_id,
             messages.len(),
             conv
         );
         eprintln!(
-            "bears-acp-adapter: {} session_id={} history_ids={:?}",
+            "bear-armature: {} session_id={} history_ids={:?}",
             lifecycle_method,
             session_id,
             messages
@@ -3858,7 +3999,7 @@ async fn replay_history_for_den_session(
         }
     } else {
         eprintln!(
-            "bears-acp-adapter: {} session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
+            "bear-armature: {} session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
             lifecycle_method,
             session_id
         );
@@ -3881,7 +4022,7 @@ async fn restore_session_from_den(
         Ok(den) => Some(den),
         Err(err) if den_session_error_allows_local_fallback(&err) => {
             eprintln!(
-                "bears-acp-adapter: session/resume session_id={} could not load Den session ({}); restoring as local pending session",
+                "bear-armature: session/resume session_id={} could not load Den session ({}); restoring as local pending session",
                 session_id,
                 truncate_for_log(&format!("{err:#}"), 240)
             );
@@ -3902,7 +4043,7 @@ async fn restore_session_from_den(
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
     eprintln!(
-        "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
+        "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
         context.cwd,
         context.roots.join(","),
@@ -3954,7 +4095,7 @@ async fn handle_session_load(
         Ok(den) => Some(den),
         Err(err) if den_session_error_allows_local_fallback(&err) => {
             eprintln!(
-                "bears-acp-adapter: session/load session_id={} could not load Den session ({}); loading as local pending session",
+                "bear-armature: session/load session_id={} could not load Den session ({}); loading as local pending session",
                 session_id,
                 truncate_for_log(&format!("{err:#}"), 240)
             );
@@ -3975,7 +4116,7 @@ async fn handle_session_load(
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
     eprintln!(
-        "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
+        "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
         context.cwd,
         context.roots.join(","),
@@ -4316,7 +4457,7 @@ async fn handle_prompt_with_retry(
     let den_prompt = prompt_den_message_from_context(&prompt_context)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
+        "bear-armature: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
         session_id,
         prompt.len(),
         den_prompt.len(),
@@ -4364,7 +4505,7 @@ async fn handle_prompt_with_retry(
         .or_else(|| adapter_state.session_contexts.get(session_id).cloned())
         .unwrap_or_else(|| {
             eprintln!(
-                "bears-acp-adapter: session/prompt session_id={} had no cached session context; using fallback direct tool context",
+                "bear-armature: session/prompt session_id={} had no cached session context; using fallback direct tool context",
                 session_id
             );
             SessionContext {
@@ -4395,7 +4536,7 @@ async fn handle_prompt_with_retry(
         })
         .unwrap_or_default();
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
+        "bear-armature: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
         session_id,
         config.bear,
         conversation_log,
@@ -4451,14 +4592,14 @@ async fn handle_prompt_with_retry(
 
     let status = response.status();
     eprintln!(
-        "bears-acp-adapter: session/prompt Den response session_id={} status={}",
+        "bear-armature: session/prompt Den response session_id={} status={}",
         session_id, status
     );
     if !status.is_success() {
         let text = response.text().await.unwrap_or_else(|_| "".to_string());
         let message = den_status_error_message(status, text.trim());
         eprintln!(
-            "bears-acp-adapter: Den prompt returned non-success status session_id={} status={} message={}",
+            "bear-armature: Den prompt returned non-success status session_id={} status={} message={}",
             session_id, status, message
         );
         send_agent_message_chunk_for_turn(
@@ -4499,7 +4640,7 @@ async fn handle_prompt_with_retry(
                 ) =>
             {
                 eprintln!(
-                    "bears-acp-adapter: Den SSE stream ended with recoverable read error after terminal/progress events session_id={} error={err:#}",
+                    "bear-armature: Den SSE stream ended with recoverable read error after terminal/progress events session_id={} error={err:#}",
                     session_id
                 );
                 break;
@@ -4537,7 +4678,7 @@ async fn handle_prompt_with_retry(
             upstream_errors.extend(outcome.upstream_errors);
             if saw_done {
                 eprintln!(
-                    "bears-acp-adapter: session/prompt terminal Den event received; ending read loop early session_id={} saw_tool_activity={}",
+                    "bear-armature: session/prompt terminal Den event received; ending read loop early session_id={} saw_tool_activity={}",
                     session_id, saw_tool_activity
                 );
                 break;
@@ -4576,7 +4717,7 @@ async fn handle_prompt_with_retry(
 
     if recover_and_retry && !saw_visible_output && !saw_tool_activity {
         eprintln!(
-            "bears-acp-adapter: stale approval recovery requested by Den stream, but automatic compaction recovery is disabled session_id={} allow_recovery_retry={} errors={}",
+            "bear-armature: stale approval recovery requested by Den stream, but automatic compaction recovery is disabled session_id={} allow_recovery_retry={} errors={}",
             session_id,
             allow_recovery_retry,
             upstream_errors.join("; ")
@@ -4586,12 +4727,12 @@ async fn handle_prompt_with_retry(
     if !upstream_errors.is_empty() {
         if saw_visible_output {
             eprintln!(
-                "bears-acp-adapter: ignoring upstream error after visible output: {}",
+                "bear-armature: ignoring upstream error after visible output: {}",
                 upstream_errors.join("; ")
             );
         } else if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
             eprintln!(
-                "bears-acp-adapter: suppressing recovery hint for cancellation session_id={} errors={}",
+                "bear-armature: suppressing recovery hint for cancellation session_id={} errors={}",
                 session_id,
                 upstream_errors.join("; ")
             );
@@ -4621,7 +4762,7 @@ async fn handle_prompt_with_retry(
                 _ => terminal_user_message.clone().unwrap_or(message.clone()),
             };
             eprintln!(
-                "bears-acp-adapter: converting upstream stream error into terminal ACP turn session_id={} message={}",
+                "bear-armature: converting upstream stream error into terminal ACP turn session_id={} message={}",
                 session_id, rendered
             );
             send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &rendered)
@@ -4632,7 +4773,7 @@ async fn handle_prompt_with_retry(
     }
 
     eprintln!(
-        "bears-acp-adapter: Den stream summary session_id={} {}",
+        "bear-armature: Den stream summary session_id={} {}",
         session_id,
         stream_diagnostics.summary()
     );
@@ -4789,14 +4930,14 @@ async fn handle_local_slash_command(
             match compact_session_conversation(http, config, session_id).await {
                 Ok(result) => {
                     eprintln!(
-                        "bears-acp-adapter: manual ACP recovery completed session_id={} result={}",
+                        "bear-armature: manual ACP recovery completed session_id={} result={}",
                         session_id, result
                     );
                     render_compact_recovery_result(&result)
                 }
                 Err(err) => {
                     eprintln!(
-                        "bears-acp-adapter: manual ACP recovery failed session_id={} error={err:#}",
+                        "bear-armature: manual ACP recovery failed session_id={} error={err:#}",
                         session_id
                     );
                     "BEARS ACP recovery failed. The session may still be wedged; please start a new ACP session if retrying does not work.".to_string()
@@ -5349,7 +5490,7 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     eprintln!();
 
     if failed {
-        eprintln!("Doctor found setup problems. Fix the items marked ✗ above, then run `bears-acp-adapter doctor` again.");
+        eprintln!("Doctor found setup problems. Fix the items marked ✗ above, then run `bear-armature doctor` again.");
         std::process::exit(2);
     }
 
@@ -5358,13 +5499,15 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
 }
 
 fn installed_or_current_command_hint() -> String {
-    let installed = Path::new("/usr/local/bin/bears-acp-adapter");
-    if installed.exists() {
-        return installed.display().to_string();
+    for candidate in ["/usr/local/bin/bear-armature", "/usr/local/bin/bears-acp-adapter"] {
+        let installed = Path::new(candidate);
+        if installed.exists() {
+            return format!("{candidate} acp");
+        }
     }
     env::current_exe()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "bears-acp-adapter".to_string())
+        .map(|path| format!("{} acp", path.display()))
+        .unwrap_or_else(|_| "bear-armature acp".to_string())
 }
 
 async fn fetch_server_version(http: &reqwest::Client, config: &Config) -> Result<ServerVersion> {
@@ -6189,7 +6332,7 @@ async fn handle_sse_frame(
         ) {
             diagnostics.observe_unknown(&event);
             eprintln!(
-                "bears-acp-adapter: unknown Den ACP event type {:?}; sample={}",
+                "bear-armature: unknown Den ACP event type {:?}; sample={}",
                 ty,
                 truncate_for_log(&event.to_string(), 240)
             );
@@ -6319,7 +6462,7 @@ where
                     }
                     Ok(notice) => {
                         eprintln!(
-                            "bears-acp-adapter: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
+                            "bear-armature: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
                             session_id,
                             turn_token,
                             notice.session_id,
@@ -6328,7 +6471,7 @@ where
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         eprintln!(
-                            "bears-acp-adapter: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
+                            "bear-armature: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
                             session_id,
                             turn_token,
                             skipped,
@@ -6427,7 +6570,7 @@ fn spawn_tool_request_task(
         };
         if let Err(err) = result {
             eprintln!(
-                "bears-acp-adapter: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
+                "bear-armature: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
                 session_id, tool_call_id, tool_name
             );
             let local_err = LocalToolError::error(format!("local tool task failed: {err:#}"));
@@ -6561,7 +6704,7 @@ async fn handle_tool_request_event(
     };
     if approval_reused {
         eprintln!(
-            "bears-acp-adapter: approval_reused session_id={} tool_name={} path={}",
+            "bear-armature: approval_reused session_id={} tool_name={} path={}",
             session_id,
             tool_name,
             tool_path(event).unwrap_or("<unknown>")
@@ -6700,7 +6843,7 @@ async fn handle_tool_request_event(
                     )
                     .await;
                 eprintln!(
-                    "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope={}",
+                    "bear-armature: approval_remembered session_id={} tool_name={} scope={}",
                     session_id,
                     tool_name,
                     scope.as_str()
@@ -6771,7 +6914,7 @@ async fn handle_tool_request_event(
             "content": local_err.message,
             "structured_content": {},
             "diagnostic": {
-                "component": "bears-acp-adapter",
+                "component": "bear-armature",
                 "adapter_version": adapter_version(),
                 "phase": "unexpected_den_server_tool_routed_to_adapter",
                 "session_id": session_id,
@@ -6784,7 +6927,7 @@ async fn handle_tool_request_event(
         if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
             if is_turn_missing_error(&err) {
                 eprintln!(
-                    "bears-acp-adapter: late unexpected server-tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
+                    "bear-armature: late unexpected server-tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
                     session_id,
                     tool_call_id,
                     tool_name,
@@ -6845,7 +6988,7 @@ async fn handle_tool_request_event(
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
         "diagnostic": {
-            "component": "bears-acp-adapter",
+            "component": "bear-armature",
             "adapter_version": adapter_version(),
             "phase": "adapter_execution_started",
             "session_id": session_id,
@@ -6948,7 +7091,7 @@ async fn handle_tool_request_event(
     if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
         if is_turn_missing_error(&err) {
             eprintln!(
-                "bears-acp-adapter: late local tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
+                "bear-armature: late local tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
                 session_id,
                 tool_call_id,
                 tool_name,
@@ -6980,7 +7123,7 @@ async fn handle_tool_request_event(
                 text: &message,
                 event: Some(event),
                 raw_output: Some(json!({
-                    "component": "bears-acp-adapter",
+                    "component": "bear-armature",
                     "phase": "result_post_failed",
                     "error": format!("{err:#}"),
                 })),
@@ -7168,7 +7311,7 @@ async fn post_local_tool_error_result(
         "content": local_err.message,
         "structured_content": {},
         "diagnostic": {
-            "component": "bears-acp-adapter",
+            "component": "bear-armature",
             "adapter_version": adapter_version(),
             "phase": "adapter_execution_failed",
             "session_id": session_id,
@@ -7249,7 +7392,7 @@ async fn request_tool_permission(
         .and_then(Value::as_str)
         .unwrap_or("Letta requested approval before running this local ACP tool.");
     eprintln!(
-        "bears-acp-adapter: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
+        "bear-armature: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
     );
     let permission_content = replace_plan
@@ -7446,7 +7589,7 @@ async fn post_tool_result(
         return Err(anyhow!(den_status_error_message(status, body.trim())));
     }
     eprintln!(
-        "bears-acp-adapter: posted tool result session_id={} tool_call_id={} response={}",
+        "bear-armature: posted tool result session_id={} tool_call_id={} response={}",
         session_id,
         tool_call_id,
         body.trim()
@@ -7498,7 +7641,7 @@ async fn handle_den_event(
                 );
             } else {
                 eprintln!(
-                    "bears-acp-adapter: ignoring malformed Den tool_request event session_id={} event={}",
+                    "bear-armature: ignoring malformed Den tool_request event session_id={} event={}",
                     session_id,
                     truncate_for_log(&event.to_string(), 400)
                 );
@@ -7568,7 +7711,7 @@ async fn handle_den_event(
             if entries.is_empty() {
                 if env_bool("DEN_ACP_DEBUG_UI") {
                     eprintln!(
-                        "bears-acp-adapter: received empty plan update for session_id={}; not sending ACP plan UI update",
+                        "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
                         session_id
                     );
                 }
@@ -7579,7 +7722,7 @@ async fn handle_den_event(
                 }
             } else if env_bool("DEN_ACP_DEBUG_UI") {
                 eprintln!(
-                    "bears-acp-adapter: skipped unchanged plan update for session_id={}",
+                    "bear-armature: skipped unchanged plan update for session_id={}",
                     session_id
                 );
             }
@@ -7634,14 +7777,14 @@ async fn handle_den_event(
                                 .await
                         {
                             eprintln!(
-                                "bears-acp-adapter: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
+                                "bear-armature: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
                                 session_id
                             );
                         }
                     }
                 }
                 eprintln!(
-                    "bears-acp-adapter: session_id={} resolved conversation_id={}",
+                    "bear-armature: session_id={} resolved conversation_id={}",
                     session_id, conversation_id
                 );
             }
@@ -7806,7 +7949,7 @@ async fn handle_permission_request_event(
                         text: &message,
                         event: Some(event),
                         raw_output: Some(json!({
-                            "component": "bears-acp-adapter",
+                            "component": "bear-armature",
                             "phase": "permission_request_failed",
                             "permission_id": permission_id,
                             "error": format!("{err:#}"),
@@ -7920,7 +8063,7 @@ async fn handle_permission_request_event(
                     "status": "ok",
                     "content": "",
                     "structured_content": value,
-                    "diagnostic": { "component": "bears-acp-adapter", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
+                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
                 });
                 post_tool_result(config, session_id, tool_call_id, payload).await?;
             }
@@ -7931,7 +8074,7 @@ async fn handle_permission_request_event(
                     "status": "error",
                     "content": format!("{err:#}"),
                     "structured_content": {},
-                    "diagnostic": { "component": "bears-acp-adapter", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
+                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
                 });
                 post_tool_result(config, session_id, tool_call_id, payload).await?;
             }
@@ -8556,7 +8699,7 @@ async fn is_current_prompt_turn(
         .is_some_and(|turn| turn.token == turn_token);
     if !ok {
         eprintln!(
-            "bears-acp-adapter: dropped stale turn update session_id={} turn_token={} update_kind={}",
+            "bear-armature: dropped stale turn update session_id={} turn_token={} update_kind={}",
             session_id, turn_token, update_kind
         );
     }
@@ -8759,7 +8902,7 @@ fn den_compatibility_status_message(body: &str) -> Option<String> {
             let action = value
                 .get("suggested_action")
                 .and_then(Value::as_str)
-                .unwrap_or("Update bears-acp-adapter and restart your ACP client.");
+                .unwrap_or("Update bear-armature and restart your ACP client.");
             Some(format!("{message}\n\n{action}"))
         }
         "den_out_of_date" => {
@@ -8794,7 +8937,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = env::temp_dir().join(format!("bears-acp-adapter-{name}-{nonce}"));
+        let path = env::temp_dir().join(format!("bear-armature-{name}-{nonce}"));
         fs::create_dir_all(&path).unwrap();
         path
     }
@@ -10083,14 +10226,14 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn command_tool_titles_include_command_details() {
-        let event = json!({ "args": { "command": "cargo", "args": ["test", "--manifest-path", "tools/bears-acp-adapter/Cargo.toml"] } });
+        let event = json!({ "args": { "command": "cargo", "args": ["test", "--manifest-path", "tools/bear-armature/Cargo.toml"] } });
         assert_eq!(
             tool_call_title("terminal_run_command", &event),
-            "Run terminal command: cargo test --manifest-path tools/bears-acp-adapter/Cargo.toml"
+            "Run terminal command: cargo test --manifest-path tools/bear-armature/Cargo.toml"
         );
         assert_eq!(
             tool_call_title("process_run", &event),
-            "Run process: cargo test --manifest-path tools/bears-acp-adapter/Cargo.toml"
+            "Run process: cargo test --manifest-path tools/bear-armature/Cargo.toml"
         );
     }
 
@@ -10206,7 +10349,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let value = json!({
             "command": "cargo",
             "args": ["test", "--all"],
-            "cwd": "/workspace/tools/bears-acp-adapter",
+            "cwd": "/workspace/tools/bear-armature",
             "exit_code": 0,
             "timed_out": false,
             "elapsed_ms": 1234,
@@ -12192,15 +12335,15 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn session_context_from_params_adds_host_browser_bridge_from_env() {
-        let previous_url = std::env::var("DEN_HOST_BROWSER_MCP_URL").ok();
-        let previous_token = std::env::var("DEN_HOST_BROWSER_MCP_TOKEN").ok();
-        let previous_name = std::env::var("DEN_HOST_BROWSER_MCP_SERVER_NAME").ok();
+        let previous_url = std::env::var("BEARS_HOST_BROWSER_MCP_URL").ok();
+        let previous_token = std::env::var("BEARS_HOST_BROWSER_MCP_TOKEN").ok();
+        let previous_name = std::env::var("BEARS_HOST_BROWSER_MCP_SERVER_NAME").ok();
         std::env::set_var(
-            "DEN_HOST_BROWSER_MCP_URL",
+            "BEARS_HOST_BROWSER_MCP_URL",
             "http://host.docker.internal:3766/mcp",
         );
-        std::env::set_var("DEN_HOST_BROWSER_MCP_TOKEN", "secret-token");
-        std::env::set_var("DEN_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
+        std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", "secret-token");
+        std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
 
         let context = session_context_from_params(&json!({
             "cwd": "/workspace",
@@ -12217,19 +12360,19 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(context.raw["host_browser_bridge"]["configured"], true);
 
         if let Some(previous) = previous_url {
-            std::env::set_var("DEN_HOST_BROWSER_MCP_URL", previous);
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_URL", previous);
         } else {
-            std::env::remove_var("DEN_HOST_BROWSER_MCP_URL");
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_URL");
         }
         if let Some(previous) = previous_token {
-            std::env::set_var("DEN_HOST_BROWSER_MCP_TOKEN", previous);
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", previous);
         } else {
-            std::env::remove_var("DEN_HOST_BROWSER_MCP_TOKEN");
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_TOKEN");
         }
         if let Some(previous) = previous_name {
-            std::env::set_var("DEN_HOST_BROWSER_MCP_SERVER_NAME", previous);
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", previous);
         } else {
-            std::env::remove_var("DEN_HOST_BROWSER_MCP_SERVER_NAME");
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME");
         }
     }
 
@@ -12256,28 +12399,28 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn detect_local_chrome_executable_prefers_explicit_env_override() {
-        let previous_chrome = std::env::var("DEN_CHROME_EXECUTABLE").ok();
-        let previous_browser = std::env::var("DEN_BROWSER_EXECUTABLE").ok();
+        let previous_chrome = std::env::var("BEARS_CHROME_EXECUTABLE").ok();
+        let previous_browser = std::env::var("BEARS_BROWSER_EXECUTABLE").ok();
         let temp = env::temp_dir().join(format!(
-            "bears-acp-adapter-chrome-override-{}",
+            "bear-armature-chrome-override-{}",
             std::process::id()
         ));
         fs::write(&temp, "").unwrap();
-        std::env::set_var("DEN_CHROME_EXECUTABLE", &temp);
-        std::env::remove_var("DEN_BROWSER_EXECUTABLE");
+        std::env::set_var("BEARS_CHROME_EXECUTABLE", &temp);
+        std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
 
         let detected = crate::tools::chrome::detect_local_chrome_executable();
         assert_eq!(detected.as_deref(), Some(temp.as_path()));
 
         if let Some(previous) = previous_chrome {
-            std::env::set_var("DEN_CHROME_EXECUTABLE", previous);
+            std::env::set_var("BEARS_CHROME_EXECUTABLE", previous);
         } else {
-            std::env::remove_var("DEN_CHROME_EXECUTABLE");
+            std::env::remove_var("BEARS_CHROME_EXECUTABLE");
         }
         if let Some(previous) = previous_browser {
-            std::env::set_var("DEN_BROWSER_EXECUTABLE", previous);
+            std::env::set_var("BEARS_BROWSER_EXECUTABLE", previous);
         } else {
-            std::env::remove_var("DEN_BROWSER_EXECUTABLE");
+            std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
         }
         let _ = fs::remove_file(&temp);
     }

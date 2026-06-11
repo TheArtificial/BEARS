@@ -1,24 +1,25 @@
-name: ACP adapter – build binaries
+name: bear-armature – build binaries
 
 on:
     push:
         branches: [main]
         tags:
             - "v*"
+            - "bear-armature/v*"
             - "bears-acp-adapter/v*"
         paths:
-            - "tools/bears-acp-adapter/**"
+            - "tools/bear-armature/**"
             - "packaging/macos/**"
-            - ".github/workflows/acp-adapter.yml"
+            - ".github/workflows/bear-armature.yml"
     pull_request:
         paths:
-            - "tools/bears-acp-adapter/**"
+            - "tools/bear-armature/**"
             - "packaging/macos/**"
-            - ".github/workflows/acp-adapter.yml"
+            - ".github/workflows/bear-armature.yml"
     workflow_dispatch:
         inputs:
             create_release_from_cargo:
-                description: "Create/reuse bears-acp-adapter/v<version> from Cargo.toml and publish update site. Pushes to main do this automatically when the tag does not exist."
+                description: "Create/reuse bear-armature/v<version> from Cargo.toml and publish update site. Pushes to main do this automatically when the tag does not exist."
                 type: boolean
                 default: false
             publish_update_site:
@@ -41,7 +42,9 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
+    BEAR_ARMATURE_MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_CERT_IDENTITY_PUBLIC }}
     BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_CERT_IDENTITY_PUBLIC }}
+    BEAR_ARMATURE_MACOS_INSTALLER_TEAM_ID: ${{ vars.MACOS_INSTALLER_TEAM_ID }}
     BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID: ${{ vars.MACOS_INSTALLER_TEAM_ID }}
 
 permissions:
@@ -70,9 +73,9 @@ jobs:
               run: |
                   set -eu
 
-                  cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' tools/bears-acp-adapter/Cargo.toml | head -n 1)"
+                  cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' tools/bear-armature/Cargo.toml | head -n 1)"
                   if [ -z "$cargo_version" ]; then
-                    echo "::error::Could not read tools/bears-acp-adapter/Cargo.toml version"
+                    echo "::error::Could not read tools/bear-armature/Cargo.toml version"
                     exit 1
                   fi
 
@@ -91,12 +94,12 @@ jobs:
                     publish_update_site="true"
                     create_release="true"
                   elif [ "${{ inputs.create_release_from_cargo }}" = "true" ]; then
-                    tag="bears-acp-adapter/v${cargo_version}"
+                    tag="bear-armature/v${cargo_version}"
                     release_notes_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
                     publish_update_site="true"
                     create_release="true"
                   elif [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_TYPE:-}" = "branch" ] && [ "${GITHUB_REF_NAME:-}" = "main" ]; then
-                    candidate_tag="bears-acp-adapter/v${cargo_version}"
+                    candidate_tag="bear-armature/v${cargo_version}"
                     if git ls-remote --exit-code --tags origin "refs/tags/${candidate_tag}" >/dev/null 2>&1; then
                       echo "Cargo version ${cargo_version} already has tag ${candidate_tag}; not creating a release from this push."
                     else
@@ -183,6 +186,7 @@ jobs:
         needs: prepare-release
         env:
             UPDATE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
+            BEAR_ARMATURE_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             BEARS_ACP_ADAPTER_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         strategy:
@@ -191,16 +195,16 @@ jobs:
                 include:
                     - os: macos-14
                       target: aarch64-apple-darwin
-                      artifact_name: bears-acp-adapter-aarch64-apple-darwin
-                      binary_name: bears-acp-adapter
+                      artifact_name: bear-armature-aarch64-apple-darwin
+                      binary_name: bear-armature
                     - os: ubuntu-22.04
                       target: x86_64-unknown-linux-gnu
-                      artifact_name: bears-acp-adapter-x86_64-unknown-linux-gnu
-                      binary_name: bears-acp-adapter
+                      artifact_name: bear-armature-x86_64-unknown-linux-gnu
+                      binary_name: bear-armature
                     - os: ubuntu-22.04-arm
                       target: aarch64-unknown-linux-gnu
-                      artifact_name: bears-acp-adapter-aarch64-unknown-linux-gnu
-                      binary_name: bears-acp-adapter
+                      artifact_name: bear-armature-aarch64-unknown-linux-gnu
+                      binary_name: bear-armature
 
         steps:
             - uses: actions/checkout@v5
@@ -216,19 +220,19 @@ jobs:
                   path: |
                       ~/.cargo/registry
                       ~/.cargo/git
-                      tools/bears-acp-adapter/target
-                  key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('tools/bears-acp-adapter/Cargo.lock') }}
+                      tools/bear-armature/target
+                  key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('tools/bear-armature/Cargo.lock') }}
                   restore-keys: |
                       cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
             - name: Build adapter
-              run: cargo build --release --target ${{ matrix.target }} --manifest-path tools/bears-acp-adapter/Cargo.toml
+              run: cargo build --release --target ${{ matrix.target }} --manifest-path tools/bear-armature/Cargo.toml
 
             - name: Stage artifact (Unix)
               if: runner.os != 'Windows'
               run: |
                   mkdir -p dist
-                  cp "tools/bears-acp-adapter/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}"
+                  cp "tools/bear-armature/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}"
                   chmod +x "dist/${{ matrix.artifact_name }}"
 
             - name: Check Linux glibc compatibility
@@ -251,7 +255,7 @@ jobs:
               shell: pwsh
               run: |
                   New-Item -ItemType Directory -Force -Path dist | Out-Null
-                  Copy-Item "tools/bears-acp-adapter/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}.exe"
+                  Copy-Item "tools/bear-armature/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}.exe"
 
             - name: Upload build artifact
               uses: actions/upload-artifact@v5
@@ -275,7 +279,7 @@ jobs:
             UPDATE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             UPDATE_CHANNEL: ${{ needs.prepare-release.outputs.update_channel }}
             UPDATE_RELEASE_NOTES_URL: ${{ needs.prepare-release.outputs.release_notes_url }}
-            BEARS_ACP_ADAPTER_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
+            BEAR_ARMATURE_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
             PUBLISH_UPDATE_SITE: ${{ needs.prepare-release.outputs.publish_update_site }}
             MACOS_APPLICATION_CERT_IDENTITY: ${{ secrets.MACOS_APPLICATION_CERT_IDENTITY }}
@@ -293,21 +297,21 @@ jobs:
             - name: Download arm64 macOS binary
               uses: actions/download-artifact@v5
               with:
-                  name: bears-acp-adapter-aarch64-apple-darwin
+                  name: bear-armature-aarch64-apple-darwin
                   path: dist/input/aarch64-apple-darwin
 
             - name: Stage arm64 macOS binary
               run: |
                   mkdir -p dist/macos
-                  cp dist/input/aarch64-apple-darwin/bears-acp-adapter-aarch64-apple-darwin dist/macos/bears-acp-adapter
-                  chmod +x dist/macos/bears-acp-adapter
-                  file dist/macos/bears-acp-adapter
+                  cp dist/input/aarch64-apple-darwin/bear-armature-aarch64-apple-darwin dist/macos/bear-armature
+                  chmod +x dist/macos/bear-armature
+                  file dist/macos/bear-armature
 
             - name: Download Linux binaries for public update payload
               if: env.PUBLISH_UPDATE_SITE == 'true'
               uses: actions/download-artifact@v5
               with:
-                  pattern: bears-acp-adapter-*-unknown-linux-gnu
+                  pattern: bear-armature-*-unknown-linux-gnu
                   path: dist/input/linux
                   merge-multiple: true
 
@@ -331,9 +335,9 @@ jobs:
             - name: Build macOS package
               run: |
                   ./packaging/macos/build-pkg.sh \
-                    --binary dist/macos/bears-acp-adapter \
+                    --binary dist/macos/bear-armature \
                     --version "$UPDATE_VERSION" \
-                    --output dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+                    --output dist/macos/bear-armature-aarch64-apple-darwin.pkg
 
             - name: Prepare App Store Connect API key
               if: env.APP_STORE_CONNECT_API_KEY_BASE64 != ''
@@ -344,18 +348,18 @@ jobs:
 
             - name: Notarize and staple macOS package
               if: env.APP_STORE_CONNECT_API_KEY_BASE64 != '' && env.MACOS_INSTALLER_CERT_IDENTITY != ''
-              run: ./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+              run: ./packaging/macos/notarize.sh --pkg dist/macos/bear-armature-aarch64-apple-darwin.pkg
 
             - name: Generate public update payload
               if: env.PUBLISH_UPDATE_SITE == 'true'
               run: |
-                  site_dir="dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL"
-                  site_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL"
+                  site_dir="dist/update-site/bear-armature/$UPDATE_CHANNEL"
+                  site_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bear-armature/$UPDATE_CHANNEL"
                   mkdir -p "$site_dir"
 
-                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg"
+                  cp dist/macos/bear-armature-aarch64-apple-darwin.pkg "$site_dir/bear-armature-aarch64-apple-darwin.pkg"
                   ./packaging/macos/generate-update-manifest.sh \
-                    --pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg" \
+                    --pkg "$site_dir/bear-armature-aarch64-apple-darwin.pkg" \
                     --output "$site_dir/aarch64-apple-darwin.json" \
                     --base-url "$site_url" \
                     --channel "$UPDATE_CHANNEL" \
@@ -364,7 +368,7 @@ jobs:
                     --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
 
                   for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-                    asset="bears-acp-adapter-$target"
+                    asset="bear-armature-$target"
                     cp "dist/input/linux/$asset" "$site_dir/$asset"
                     ./packaging/macos/generate-update-manifest.sh \
                       --binary "$site_dir/$asset" \
@@ -379,7 +383,7 @@ jobs:
             - name: Validate public update payload metadata
               if: env.PUBLISH_UPDATE_SITE == 'true'
               run: |
-                  python3 - "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL" "$UPDATE_VERSION" <<'PY'
+                  python3 - "dist/update-site/bear-armature/$UPDATE_CHANNEL" "$UPDATE_VERSION" <<'PY'
                   import json
                   import pathlib
                   import sys
@@ -404,15 +408,15 @@ jobs:
               if: env.PUBLISH_UPDATE_SITE == 'true'
               uses: actions/upload-artifact@v5
               with:
-                  name: bears-acp-adapter-update-site
+                  name: bear-armature-update-site
                   path: dist/update-site
                   if-no-files-found: error
 
             - name: Upload macOS package artifact
               uses: actions/upload-artifact@v5
               with:
-                  name: bears-acp-adapter-aarch64-apple-darwin-pkg
-                  path: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+                  name: bear-armature-aarch64-apple-darwin-pkg
+                  path: dist/macos/bear-armature-aarch64-apple-darwin.pkg
                   if-no-files-found: error
 
             - name: Attach macOS package to GitHub release
@@ -421,8 +425,8 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   gh release upload "$RELEASE_TAG" \
-                    dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
-                    "dist/update-site/bears-acp-adapter/${UPDATE_CHANNEL}/aarch64-apple-darwin.json" \
+                    dist/macos/bear-armature-aarch64-apple-darwin.pkg \
+                    "dist/update-site/bear-armature/${UPDATE_CHANNEL}/aarch64-apple-darwin.json" \
                     --clobber
 
     publish-update-site:
@@ -435,7 +439,7 @@ jobs:
             - name: Download public update payload
               uses: actions/download-artifact@v5
               with:
-                  name: bears-acp-adapter-update-site
+                  name: bear-armature-update-site
                   path: dist/update-site
 
             - name: Publish to gh-pages branch

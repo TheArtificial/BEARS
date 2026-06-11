@@ -1,8 +1,10 @@
-# BEARS ACP adapter
+# bear-armature
 
-`bears-acp-adapter` is a local stdio edge adapter for Agent Client Protocol clients such as Zed.
+`bear-armature` is the local stdio edge for Agent Client Protocol clients such as Zed.
 
 It speaks ACP JSON-RPC over stdin/stdout and calls the remote Den API ACP gateway over HTTPS/SSE.
+
+The legacy binary name `bears-acp-adapter` remains available as a symlink for existing editor configurations.
 
 ## Current scope
 
@@ -59,13 +61,13 @@ temporary profile and a localhost-only remote-debugging port on first use.
 From the repository root:
 
 ```bash
-cargo build --manifest-path tools/bears-acp-adapter/Cargo.toml
+cargo build --manifest-path tools/bear-armature/Cargo.toml
 ```
 
 The binary will be at:
 
 ```bash
-tools/bears-acp-adapter/target/debug/bears-acp-adapter
+tools/bear-armature/target/debug/bear-armature
 ```
 
 ## Required environment
@@ -83,13 +85,13 @@ Use any Den API origin reachable from the process running the adapter. For Zed o
 You can validate configuration without starting ACP stdio:
 
 ```bash
-bears-acp-adapter --check-config
+bear-armature acp --check-config
 ```
 
 For a more user-friendly setup report, run:
 
 ```bash
-bears-acp-adapter doctor
+bear-armature doctor
 ```
 
 `doctor` prints the installed command path, version/build metadata, OS/architecture, required environment status, Den `/version` reachability when configuration is valid, and copy/paste-ready ACP client environment hints.
@@ -99,25 +101,25 @@ bears-acp-adapter doctor
 The macOS `.pkg` install can update itself by downloading and verifying a newer signed/notarized package from the public update manifest. Check for updates with:
 
 ```bash
-bears-acp-adapter update-check
+bear-armature update-check
 ```
 
 Install an available update with the macOS Installer GUI:
 
 ```bash
-bears-acp-adapter update
+bear-armature update
 ```
 
 For terminal-driven installs, use:
 
 ```bash
-bears-acp-adapter update --install --yes
+bear-armature update --install --yes
 ```
 
 Update options:
 
-- `--channel <stable|beta>` selects the public update channel. The default is `BEARS_ACP_UPDATE_CHANNEL` or `stable`.
-- `--manifest-url <url>` overrides the manifest URL. The default stable arm64 macOS manifest is `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/aarch64-apple-darwin.json`.
+- `--channel <stable|beta>` selects the public update channel. The default is `BEAR_ARMATURE_UPDATE_CHANNEL`, `BEARS_ACP_UPDATE_CHANNEL`, or `stable`.
+- `--manifest-url <url>` overrides the manifest URL. The default stable arm64 macOS manifest is `https://bears-ai.github.io/bear-den/bear-armature/stable/aarch64-apple-darwin.json` (with fallback to the legacy `bears-acp-adapter` path).
 - `--open` downloads, verifies, and opens the `.pkg` in macOS Installer.
 - `--install`/`--cli` downloads, verifies, and runs `sudo /usr/sbin/installer`.
 - `--download-only` downloads and verifies the `.pkg` without installing.
@@ -127,7 +129,7 @@ Verification checks include the manifest SHA-256 digest, macOS package signature
 You can also validate which Den server build the adapter reaches, without speaking ACP to the editor:
 
 ```bash
-bears-acp-adapter --check-server
+bear-armature acp --check-server
 ```
 
 This fetches `GET /version` from `DEN_API_URL` and prints Den's service name, package version, git SHA, and build timestamp when available.
@@ -143,8 +145,8 @@ In Zed settings, add a custom agent server. Adjust the command path and environm
   "agent_servers": {
     "BEARS": {
       "type": "custom",
-      "command": "/absolute/path/to/bears-acp-adapter",
-      "args": ["--client", "zed"],
+      "command": "/absolute/path/to/bear-armature",
+      "args": ["acp", "--client", "zed"],
       "env": {
         "DEN_API_URL": "https://api.bears.[domain]",
         "BEAR_SLUG": "test-bear",
@@ -162,14 +164,22 @@ For local development, prefer `--token-env` so the token is not written into Zed
   "agent_servers": {
     "BEARS": {
       "type": "custom",
-      "command": "/absolute/path/to/bears-acp-adapter",
-      "args": ["--client", "zed", "--token-env", "DEN_TOKEN"],
+      "command": "/absolute/path/to/bear-armature",
+      "args": ["acp", "--client", "zed", "--token-env", "DEN_TOKEN"],
       "env": {
         "DEN_API_URL": "https://api.bears.[domain]",
         "BEAR_SLUG": "test-bear"
       }
     }
   }
+}
+```
+
+Legacy editors that invoke the binary without the `acp` subcommand still work when they pass `--api-url`, `--bear`, and token flags directly:
+
+```json
+{
+  "args": ["--client", "zed", "--token-env", "DEN_TOKEN"]
 }
 ```
 
@@ -182,29 +192,29 @@ GitHub release/artifact downloads are unsigned today. macOS may quarantine the d
 For local testing, remove the quarantine flag and ensure the file is executable:
 
 ```bash
-chmod +x /path/to/bears-acp-adapter-aarch64-apple-darwin
-xattr -d com.apple.quarantine /path/to/bears-acp-adapter-aarch64-apple-darwin
+chmod +x /path/to/bear-armature-aarch64-apple-darwin
+xattr -d com.apple.quarantine /path/to/bear-armature-aarch64-apple-darwin
 ```
 
 Use the Intel filename if you downloaded the x86_64 build. You can verify the binary after clearing quarantine with:
 
 ```bash
-/path/to/bears-acp-adapter-aarch64-apple-darwin --help
+/path/to/bear-armature-aarch64-apple-darwin --help
 ```
 
 Building locally with Cargo also avoids the browser download quarantine path:
 
 ```bash
-cargo build --release --manifest-path tools/bears-acp-adapter/Cargo.toml
+cargo build --release --manifest-path tools/bear-armature/Cargo.toml
 ```
 
 Production distribution should add Developer ID signing and Apple notarization before we ask non-developer users to install the adapter.
 
 ## Debugging
 
-- Run `bears-acp-adapter doctor` for a user-friendly setup report.
-- Run `bears-acp-adapter --check-config` from the same shell or wrapper environment used by your editor.
-- Run `bears-acp-adapter --check-server` to print the Den `/version` response reached by `DEN_API_URL`.
+- Run `bear-armature doctor` for a user-friendly setup report.
+- Run `bear-armature acp --check-config` from the same shell or wrapper environment used by your editor.
+- Run `bear-armature acp --check-server` to print the Den `/version` response reached by `DEN_API_URL`.
 - Open Zed command palette: `dev: open acp logs`.
 - The adapter writes logs only to stderr.
 - Stdout is reserved for JSON-RPC protocol messages.

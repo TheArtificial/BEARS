@@ -72,7 +72,7 @@ impl ToolTaskRegistry {
         entry.updated_at = now;
         if phase.should_log_to_stderr() || previous_phase.should_log_to_stderr() {
             eprintln!(
-                "bears-acp-adapter: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
+                "bear-armature: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
                 session_id,
                 tool_call_id,
                 tool_name,
@@ -97,7 +97,7 @@ impl ToolTaskRegistry {
         if let Some(record) = removed.as_ref() {
             if record.phase != ToolTaskPhase::ResultPosted {
                 eprintln!(
-                    "bears-acp-adapter: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
+                    "bear-armature: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
                     record.session_id,
                     record.tool_call_id,
                     record.tool_name,
@@ -125,7 +125,7 @@ impl ToolTaskRegistry {
                 task.phase = ToolTaskPhase::Cancelled;
                 task.updated_at = now;
                 eprintln!(
-                    "bears-acp-adapter: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
+                    "bear-armature: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
                     task.session_id,
                     task.turn_token,
                     task.tool_call_id,
@@ -203,7 +203,7 @@ pub(crate) fn log_tool_task_phase(
         return;
     }
     eprintln!(
-        "bears-acp-adapter: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
+        "bear-armature: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
         phase.as_str(),
         session_id,
         tool_call_id,

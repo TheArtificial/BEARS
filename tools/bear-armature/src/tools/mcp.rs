@@ -191,12 +191,12 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
         .get("mcpServers")
         .or_else(|| params.get("mcp_servers"))
     else {
-        eprintln!("bears-acp-adapter: acp_mcp_params present=false count=0");
+        eprintln!("bear-armature: acp_mcp_params present=false count=0");
         return Ok(Vec::new());
     };
     let Some(items) = raw.as_array() else {
         eprintln!(
-            "bears-acp-adapter: acp_mcp_params invalid_shape summary={}",
+            "bear-armature: acp_mcp_params invalid_shape summary={}",
             summarize_acp_mcp_servers_param(params)
         );
         return Err(anyhow!(
@@ -204,7 +204,7 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
         ));
     };
     eprintln!(
-        "bears-acp-adapter: acp_mcp_params summary={}",
+        "bear-armature: acp_mcp_params summary={}",
         summarize_acp_mcp_servers_param(params)
     );
     let mut servers = Vec::new();
@@ -212,7 +212,7 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
         let transport_type = item.get("type").and_then(Value::as_str).unwrap_or("stdio");
         if transport_type != "stdio" {
             eprintln!(
-                "bears-acp-adapter: acp_mcp_parse unsupported_transport name={} transport={} summary={}",
+                "bear-armature: acp_mcp_parse unsupported_transport name={} transport={} summary={}",
                 item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>"),
                 transport_type,
                 summarize_mcp_server_param(item)
@@ -255,7 +255,7 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
             .unwrap_or_default();
         let env = parse_env(item.get("env"))?;
         eprintln!(
-            "bears-acp-adapter: acp_mcp_parse accepted_stdio source_kind=client_forwarded name={} command={} args_count={} env_names={:?}",
+            "bear-armature: acp_mcp_parse accepted_stdio source_kind=client_forwarded name={} command={} args_count={} env_names={:?}",
             name,
             command,
             args.len(),
@@ -269,7 +269,7 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
         });
     }
     eprintln!(
-        "bears-acp-adapter: acp_mcp_parse complete accepted_count={}",
+        "bear-armature: acp_mcp_parse complete accepted_count={}",
         servers.len()
     );
     Ok(servers)
@@ -391,7 +391,7 @@ impl McpRegistry {
         let mut descriptors = Vec::new();
         let mut server_summaries = Vec::new();
         eprintln!(
-            "bears-acp-adapter: acp_mcp_configure session_id={} source_count={}",
+            "bear-armature: acp_mcp_configure session_id={} source_count={}",
             session_id,
             sources.len()
         );
@@ -404,7 +404,7 @@ impl McpRegistry {
                     env,
                 } => {
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_start session_id={} source_kind={} server={} command={} args_count={} env_count={}",
+                        "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} command={} args_count={} env_count={}",
                         session_id,
                         source.source_kind(),
                         name,
@@ -415,7 +415,7 @@ impl McpRegistry {
                 }
                 McpSourceConfig::HostBrowserBridge { name, url, .. } => {
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_start session_id={} source_kind={} server={} url={}",
+                        "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} url={}",
                         session_id,
                         source.source_kind(),
                         name,
@@ -432,7 +432,7 @@ impl McpRegistry {
                         })
                         .collect::<Vec<_>>();
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_ok session_id={} source_kind={} server={} transport={} tool_count={} tool_names={:?}",
+                        "bear-armature: acp_mcp_discovery_ok session_id={} source_kind={} server={} transport={} tool_count={} tool_names={:?}",
                         session_id,
                         source.source_kind(),
                         source.name(),
@@ -479,7 +479,7 @@ impl McpRegistry {
                 }
                 Err(err) => {
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_error session_id={} source_kind={} server={} transport={} error={err:#}",
+                        "bear-armature: acp_mcp_discovery_error session_id={} source_kind={} server={} transport={} error={err:#}",
                         session_id,
                         source.source_kind(),
                         source.name(),
@@ -518,7 +518,7 @@ impl McpRegistry {
         let browser_tool_count = count_browser_tools(&descriptors);
         sessions.insert(session_id.to_string(), McpSession { tools });
         eprintln!(
-            "bears-acp-adapter: acp_mcp_configure_complete session_id={} dynamic_tool_count={} browser_tool_count={} source_counts={} active_browser_source={} dynamic_tool_names={:?}",
+            "bear-armature: acp_mcp_configure_complete session_id={} dynamic_tool_count={} browser_tool_count={} source_counts={} active_browser_source={} dynamic_tool_names={:?}",
             session_id,
             tool_count,
             browser_tool_count,
@@ -573,7 +573,7 @@ async fn discover_server_tools(source: &McpSourceConfig) -> Result<Vec<Value>> {
 
 async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value) -> Result<Value> {
     eprintln!(
-        "bears-acp-adapter: acp_mcp_call_start source_kind={} server={} transport={} tool={} args_keys={:?}",
+        "bear-armature: acp_mcp_call_start source_kind={} server={} transport={} tool={} args_keys={:?}",
         source.source_kind(),
         source.name(),
         source.transport(),
@@ -600,7 +600,7 @@ async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value
         let structured = serde_json::to_value(&result)?;
         let content = mcp_tool_result_content(&structured);
         eprintln!(
-            "bears-acp-adapter: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={} content_preview={:?}",
+            "bear-armature: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={} content_preview={:?}",
             source.source_kind(),
             source.name(),
             source.transport(),
@@ -641,7 +641,7 @@ fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) ->
 
     if changed {
         eprintln!(
-            "bears-acp-adapter: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
+            "bear-armature: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
             server_name,
             args,
             rewritten
@@ -670,7 +670,7 @@ where
                 command_process.env(name, value);
             }
             eprintln!(
-                "bears-acp-adapter: acp_mcp_spawn source_kind={} server={} command={} args={:?} env_names={:?}",
+                "bear-armature: acp_mcp_spawn source_kind={} server={} command={} args={:?} env_names={:?}",
                 source.source_kind(),
                 name,
                 command,
@@ -688,7 +688,7 @@ where
         }
         McpSourceConfig::HostBrowserBridge { name, url, token } => {
             eprintln!(
-                "bears-acp-adapter: acp_mcp_connect_http source_kind={} server={} url={} auth=bearer",
+                "bear-armature: acp_mcp_connect_http source_kind={} server={} url={} auth=bearer",
                 source.source_kind(),
                 name,
                 redact_url_for_log(url)
