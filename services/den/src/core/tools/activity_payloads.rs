@@ -51,7 +51,7 @@ pub(crate) fn activity_payload(plan: Option<&work_plans::WorkPlanProjection>) ->
             "current_item": plan.current_item.clone(),
             "items": plan.items.clone(),
             "visibility": plan.visibility.clone(),
-            "owner_role": plan.owner_role.clone(),
+            "owner_profile": plan.owner_profile.clone(),
             "version": plan.version,
             "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
             "handoff_intent_path": plan.handoff_intent_path.clone(),

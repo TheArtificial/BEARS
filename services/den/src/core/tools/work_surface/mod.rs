@@ -355,7 +355,7 @@ pub(crate) fn work_surface_anchor_paths(
         format!("core/work_surfaces/{slug}/decisions.md"),
         format!("core/work_surfaces/{slug}/conventions.md"),
     ];
-    let role_local = match role {
+    let profile_local = match role {
         BearProfile::Pair | BearProfile::Work => vec![
             format!(
                 "{}/work_surfaces/{slug}/current-understanding.md",
@@ -366,7 +366,7 @@ pub(crate) fn work_surface_anchor_paths(
         ],
         _ => Vec::new(),
     };
-    (canonical, role_local)
+    (canonical, profile_local)
 }
 
 pub(crate) fn collect_memory_tree_paths(files: &Value, out: &mut Vec<String>) {
@@ -601,7 +601,7 @@ pub(crate) fn build_work_surface_orientation_payload(
     sorted_files.sort();
     sorted_files.dedup();
     let slug = candidate_slug;
-    let (canonical_paths, role_local_paths) = slug
+    let (canonical_paths, profile_local_paths) = slug
         .as_deref()
         .map(|slug| work_surface_anchor_paths(role, slug))
         .unwrap_or_else(|| (Vec::new(), Vec::new()));
@@ -610,28 +610,28 @@ pub(crate) fn build_work_surface_orientation_payload(
         .filter(|path| sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
-    let existing_role_local = role_local_paths
+    let existing_profile_local = profile_local_paths
         .iter()
         .filter(|path| sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
     let missing_expected_paths = canonical_paths
         .iter()
-        .chain(role_local_paths.iter())
+        .chain(profile_local_paths.iter())
         .filter(|path| !sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
     let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
     let status = if slug.is_none() {
         "unresolved"
-    } else if existing_canonical.is_empty() && existing_role_local.is_empty() {
+    } else if existing_canonical.is_empty() && existing_profile_local.is_empty() {
         "candidate_without_anchors"
     } else {
         "oriented"
     };
     let mut recommended_read_order = Vec::new();
     recommended_read_order.extend(existing_canonical.iter().cloned());
-    recommended_read_order.extend(existing_role_local.iter().cloned());
+    recommended_read_order.extend(existing_profile_local.iter().cloned());
     json!({
         "workplace": hint_payload["workplace"].clone(),
         "work_surface": {
@@ -650,7 +650,7 @@ pub(crate) fn build_work_surface_orientation_payload(
             }
         },
         "canonical_paths": existing_canonical,
-        "role_local_paths": existing_role_local,
+        "profile_local_paths": existing_profile_local,
         "recommended_read_order": recommended_read_order,
         "missing_expected_paths": missing_expected_paths,
         "notes": if active_work_surface_roles {

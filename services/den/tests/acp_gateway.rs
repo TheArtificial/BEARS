@@ -323,7 +323,7 @@ async fn create_acp_session_work_plan(
         pool,
         WorkPlanUpsert {
             bear_id: user_bear.bear_id,
-            owner_role: BearProfile::Pair,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some(user_bear.pair_agent_id.clone()),
             created_by_user_id: Some(user_bear.user_id),
             source_conversation_id: Some("conv-acp-workboard-context".to_string()),
@@ -334,7 +334,7 @@ async fn create_acp_session_work_plan(
             update: WorkPlanUpdate {
                 title: "ACP context plan".to_string(),
                 summary: "Visible in pair prompt".to_string(),
-                visibility: WorkPlanVisibility::PrivateToRole,
+                visibility: WorkPlanVisibility::PrivateToProfile,
                 status: WorkPlanStatus::Active,
                 items: vec![WorkPlanItem {
                     id: "current".to_string(),

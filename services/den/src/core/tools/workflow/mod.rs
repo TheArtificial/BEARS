@@ -29,7 +29,7 @@ pub(crate) struct WorkPlanListArguments {
     #[serde(default, rename = "status")]
     pub(crate) statuses: Option<Vec<WorkPlanStatus>>,
     #[serde(default)]
-    pub(crate) owner_role: Option<BearProfile>,
+    pub(crate) owner_profile: Option<BearProfile>,
     #[serde(default)]
     pub(crate) include_archived: bool,
     #[serde(default)]
@@ -94,7 +94,7 @@ pub(crate) async fn list_work_plans(
         context.user_id,
         WorkPlanListFilter {
             statuses,
-            owner_role: args.owner_role,
+            owner_profile: args.owner_profile,
             include_archived: args.include_archived,
         },
     )
@@ -219,7 +219,7 @@ pub(crate) async fn update_work_plan(
         pool,
         WorkPlanUpsert {
             bear_id: context.bear_id,
-            owner_role: role,
+            owner_profile: role,
             owner_agent_id: clean_optional(&context.binding_id),
             created_by_user_id: Some(context.user_id),
             source_conversation_id: clean_optional(&context.conversation_id),
@@ -239,7 +239,7 @@ pub(crate) async fn update_work_plan(
     )
     .await?;
     let plan = row
-        .project_for_role(role, context.user_id)?
+        .project_for_profile(role, context.user_id)?
         .ok_or_else(|| {
             CustomError::System("updated work plan was not visible to its owner".to_string())
         })?;

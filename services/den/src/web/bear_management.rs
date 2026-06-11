@@ -649,7 +649,7 @@ struct BearWorkSurfaceRow {
     glossary_present: bool,
     pair_current_understanding_present: bool,
     work_current_understanding_present: bool,
-    role_local_presence_count: usize,
+    profile_local_presence_count: usize,
     active_workplace_count: usize,
     known_in_workplace_count: usize,
     workplace_labels: Vec<String>,
@@ -820,12 +820,12 @@ async fn bear_work_surface_rows(
         .filter(|(_, present)| *present)
         .map(|(role, _)| role.as_str().to_string())
         .collect::<Vec<_>>();
-        let role_local_presence_count = workplace_labels.len();
+        let profile_local_presence_count = workplace_labels.len();
         let active_workplace_count = workplace_labels.len();
-        let known_in_workplace_count = canonical_path_count + role_local_presence_count;
+        let known_in_workplace_count = canonical_path_count + profile_local_presence_count;
         let anchor_status = if canonical_path_count == 0 {
             "missing_canonical".to_string()
-        } else if role_local_presence_count == 0 {
+        } else if profile_local_presence_count == 0 {
             "canonical_only".to_string()
         } else {
             "active".to_string()
@@ -837,7 +837,7 @@ async fn bear_work_surface_rows(
             glossary_present,
             pair_current_understanding_present,
             work_current_understanding_present,
-            role_local_presence_count,
+            profile_local_presence_count,
             active_workplace_count,
             known_in_workplace_count,
             workplace_labels,
@@ -2726,7 +2726,7 @@ async fn bear_memory_delete_post(
             state.sqlx_pool(),
             CreateMemoryProposal {
                 bear_id: bear.id,
-                source_role: role,
+                source_profile: role,
                 source_agent_id: bears_db::profile_binding_id(state.sqlx_pool(), bear.id, role).await?,
                 source_paths: paths,
                 source_refs: serde_json::json!([]),
@@ -2884,7 +2884,7 @@ async fn bear_memory_proposal_post(
         memory_proposals::ProposalResolutionParams {
             bear_id: bear.id,
             proposal_id,
-            reviewer_role: BearProfile::Curate,
+            reviewer_profile: BearProfile::Curate,
             reviewer_agent_id: None,
             status,
             review_notes: form.review_notes.as_deref(),

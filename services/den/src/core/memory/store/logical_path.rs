@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryScopeType {
-    RoleLocal,
+    ProfileLocal,
     Shared,
 }
 
 impl MemoryScopeType {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::RoleLocal => "role_local",
+            Self::ProfileLocal => "profile_local",
             Self::Shared => "shared",
         }
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "role_local" => Some(Self::RoleLocal),
+            "profile_local" | "role_local" => Some(Self::ProfileLocal),
             "shared" => Some(Self::Shared),
             _ => None,
         }
@@ -28,17 +28,17 @@ impl MemoryScopeType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogicalMemoryPath {
     pub scope_type: MemoryScopeType,
-    pub scope_role: Option<String>,
+    pub scope_profile: Option<String>,
     pub work_surface_ref: Option<String>,
     pub kind: String,
     pub entity_ref: Option<String>,
 }
 
 impl LogicalMemoryPath {
-    pub fn role_local(role: &str, kind: &str) -> Self {
+    pub fn profile_local(profile: &str, kind: &str) -> Self {
         Self {
-            scope_type: MemoryScopeType::RoleLocal,
-            scope_role: Some(role.to_string()),
+            scope_type: MemoryScopeType::ProfileLocal,
+            scope_profile: Some(profile.to_string()),
             work_surface_ref: None,
             kind: kind.to_string(),
             entity_ref: None,
@@ -48,7 +48,7 @@ impl LogicalMemoryPath {
     pub fn shared_core(kind: &str) -> Self {
         Self {
             scope_type: MemoryScopeType::Shared,
-            scope_role: None,
+            scope_profile: None,
             work_surface_ref: None,
             kind: kind.to_string(),
             entity_ref: None,
@@ -57,7 +57,7 @@ impl LogicalMemoryPath {
 
     /// Encode to the legacy logical path string used by memory tools.
     pub fn to_logical_path(&self) -> String {
-        match (&self.scope_type, &self.scope_role, &self.work_surface_ref) {
+        match (&self.scope_type, &self.scope_profile, &self.work_surface_ref) {
             (MemoryScopeType::Shared, None, Some(ws)) => {
                 format!("core/work_surfaces/{ws}/{}.md", self.kind)
             }
@@ -65,11 +65,11 @@ impl LogicalMemoryPath {
                 "core/bear-overview.md".to_string()
             }
             (MemoryScopeType::Shared, None, None) => format!("core/{}.md", self.kind),
-            (MemoryScopeType::RoleLocal, Some(role), Some(ws)) => {
-                format!("{role}/work_surfaces/{ws}/{}.md", self.kind)
+            (MemoryScopeType::ProfileLocal, Some(profile), Some(ws)) => {
+                format!("{profile}/work_surfaces/{ws}/{}.md", self.kind)
             }
-            (MemoryScopeType::RoleLocal, Some(role), None) => {
-                format!("{role}/{}.md", self.kind)
+            (MemoryScopeType::ProfileLocal, Some(profile), None) => {
+                format!("{profile}/{}.md", self.kind)
             }
             _ => format!("memory/{}.md", self.kind),
         }
@@ -85,7 +85,7 @@ impl LogicalMemoryPath {
             let kind = file.trim_end_matches(".md").to_string();
             return Self {
                 scope_type: MemoryScopeType::Shared,
-                scope_role: None,
+                scope_profile: None,
                 work_surface_ref: Some(ws),
                 kind,
                 entity_ref: None,
@@ -98,7 +98,7 @@ impl LogicalMemoryPath {
                 .to_string();
             return Self::shared_core(&kind);
         }
-        if let Some((role, rest)) = trimmed.split_once('/') {
+        if let Some((profile, rest)) = trimmed.split_once('/') {
             if rest.starts_with("work_surfaces/") {
                 let sub = rest.trim_start_matches("work_surfaces/");
                 let mut parts = sub.split('/');
@@ -106,15 +106,15 @@ impl LogicalMemoryPath {
                 let file = parts.next().unwrap_or("index.md");
                 let kind = file.trim_end_matches(".md").to_string();
                 return Self {
-                    scope_type: MemoryScopeType::RoleLocal,
-                    scope_role: Some(role.to_string()),
+                    scope_type: MemoryScopeType::ProfileLocal,
+                    scope_profile: Some(profile.to_string()),
                     work_surface_ref: Some(ws),
                     kind,
                     entity_ref: None,
                 };
             }
             let kind = rest.trim_end_matches(".md").to_string();
-            return Self::role_local(role, &kind);
+            return Self::profile_local(profile, &kind);
         }
         Self::shared_core("note")
     }

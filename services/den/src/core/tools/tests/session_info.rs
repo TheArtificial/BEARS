@@ -9,7 +9,7 @@ use crate::core::{
             DEN_PLAN_MODE_ENTER_PROVIDER, DEN_SITUATION_GET_PROVIDER,
             DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
         },
-        descriptor::builtin_den_tool_descriptors_for_role,
+        descriptor::builtin_den_tool_descriptors_for_profile,
         payloads::session_info_payload,
         session::DenToolInvocationContext,
         work_surface::infer_work_surface_hint,
@@ -180,7 +180,7 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
 
 #[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair);
+    let descriptors = builtin_den_tool_descriptors_for_profile(BearProfile::Pair);
     let session_info = descriptors
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_SITUATION_GET_PROVIDER)
@@ -199,7 +199,7 @@ fn pair_session_info_descriptor_is_canonical_orientation_tool() {
 
 #[test]
 fn pair_memory_and_plan_descriptors_point_to_session_info_for_scope() {
-    let descriptors = builtin_den_tool_descriptors_for_role(BearProfile::Pair);
+    let descriptors = builtin_den_tool_descriptors_for_profile(BearProfile::Pair);
     for provider_name in [
         DEN_CONVERSATION_SET_TITLE_PROVIDER,
         DEN_MEMORY_WRITE_ENTRY_PROVIDER,

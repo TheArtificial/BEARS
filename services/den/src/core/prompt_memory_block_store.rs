@@ -161,7 +161,7 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
           AND (bear_id = $1 OR bear_id IS NULL)
           AND (
             scope = 'bear_wide'
-            OR (scope = 'role_local' AND profile_slug = $2)
+            OR (scope = 'profile_local' AND profile_slug = $2)
             OR (scope = 'session' AND session_id = $3)
             OR (scope = 'work_surface' AND work_surface = ANY($4))
           )
@@ -179,7 +179,7 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
     rows.into_iter().map(row_to_block).collect()
 }
 
-pub(crate) async fn list_prompt_memory_blocks_for_bear_role(
+pub(crate) async fn list_prompt_memory_blocks_for_bear_profile(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     profile_slug: &str,
@@ -298,7 +298,7 @@ fn db_decode(field: &'static str) -> impl Fn(sqlx::Error) -> CustomError {
 fn scope_to_db(scope: PromptMemoryBlockScope) -> &'static str {
     match scope {
         PromptMemoryBlockScope::BearWide => "bear_wide",
-        PromptMemoryBlockScope::RoleLocal => "role_local",
+        PromptMemoryBlockScope::RoleLocal => "profile_local",
         PromptMemoryBlockScope::WorkSurface => "work_surface",
         PromptMemoryBlockScope::Session => "session",
     }
@@ -306,7 +306,7 @@ fn scope_to_db(scope: PromptMemoryBlockScope) -> &'static str {
 
 fn block_type_to_db(block_type: PromptMemoryBlockType) -> &'static str {
     match block_type {
-        PromptMemoryBlockType::RoleGuidance => "role_guidance",
+        PromptMemoryBlockType::RoleGuidance => "profile_guidance",
         PromptMemoryBlockType::WorkSurfaceContext => "work_surface_context",
         PromptMemoryBlockType::SessionFocus => "session_focus",
         PromptMemoryBlockType::UserInstruction => "user_instruction",
@@ -325,7 +325,7 @@ fn state_to_db(state: PromptMemoryBlockState) -> &'static str {
 fn scope_from_db(value: &str) -> Result<PromptMemoryBlockScope, CustomError> {
     match value {
         "bear_wide" => Ok(PromptMemoryBlockScope::BearWide),
-        "role_local" => Ok(PromptMemoryBlockScope::RoleLocal),
+        "profile_local" => Ok(PromptMemoryBlockScope::RoleLocal),
         "work_surface" => Ok(PromptMemoryBlockScope::WorkSurface),
         "session" => Ok(PromptMemoryBlockScope::Session),
         other => Err(CustomError::Database(format!("unknown prompt memory scope: {other}"))),
@@ -334,7 +334,7 @@ fn scope_from_db(value: &str) -> Result<PromptMemoryBlockScope, CustomError> {
 
 fn block_type_from_db(value: &str) -> Result<PromptMemoryBlockType, CustomError> {
     match value {
-        "role_guidance" => Ok(PromptMemoryBlockType::RoleGuidance),
+        "profile_guidance" => Ok(PromptMemoryBlockType::RoleGuidance),
         "work_surface_context" => Ok(PromptMemoryBlockType::WorkSurfaceContext),
         "session_focus" => Ok(PromptMemoryBlockType::SessionFocus),
         "user_instruction" => Ok(PromptMemoryBlockType::UserInstruction),

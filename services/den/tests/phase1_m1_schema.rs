@@ -442,7 +442,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
           AND table_name = 'bear_work_plans'
           AND column_name IN (
             'bear_id',
-            'owner_role',
+            'owner_profile',
             'owner_agent_id',
             'created_by_user_id',
             'source_conversation_id',
@@ -504,7 +504,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
     .fetch_one(&pool)
     .await
     .expect("bear_work_plans visibility check");
-    assert!(visibility_check.contains("private_to_role"));
+    assert!(visibility_check.contains("private_to_profile"));
     assert!(visibility_check.contains("handoff_requested"));
 
     let event_type_check: String = sqlx::query_scalar(

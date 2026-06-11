@@ -255,7 +255,7 @@ pub(crate) async fn run_pair_reflection_summary(
         &state.memory_stores,
         CreateMemoryProposal {
             bear_id: session.bear_id,
-            source_role: BearProfile::Pair,
+            source_profile: BearProfile::Pair,
             source_agent_id: pair_agent_id.clone(),
             source_paths: vec![summary_path.clone()],
             source_refs: serde_json::json!({

@@ -725,7 +725,7 @@ async fn web_chat_workboard_prompt_context(
         user_id,
         WorkPlanListFilter {
             statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
-            owner_role: None,
+            owner_profile: None,
             include_archived: false,
         },
     )

@@ -1,6 +1,7 @@
 mod links;
 mod logical_path;
 mod manager;
+mod migrate;
 mod observations;
 mod promotions;
 mod proposals;
@@ -20,7 +21,7 @@ pub use promotions::{append_memory_promotion, promote_to_shared_core};
 pub use proposals::{create_memory_proposal, list_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal};
 pub use records::{
     append_memory_record, has_work_surface_canonical_anchor, head_record_for_logical_path,
-    list_records_for_logical_path, list_role_local_head_records, memory_sequence_high_water,
+    list_profile_local_head_records, list_records_for_logical_path, memory_sequence_high_water,
     MemoryRecordRow, BearMemoryStore,
 };
 pub use reflection_outcomes::{

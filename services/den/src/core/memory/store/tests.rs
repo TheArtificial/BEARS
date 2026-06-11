@@ -17,7 +17,7 @@ mod tests {
         config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-test-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();
-        let written = sqlite_tools::sqlite_write_role_entry(
+        let written = sqlite_tools::sqlite_write_profile_entry(
             &stores,
             &config,
             bear_id,
@@ -45,7 +45,7 @@ mod tests {
             .unwrap_or("")
             .contains("Body"));
         let logical = LogicalMemoryPath::from_logical_path(path);
-        assert_eq!(logical.scope_role.as_deref(), Some("pair"));
+        assert_eq!(logical.scope_profile.as_deref(), Some("pair"));
     }
 
     #[tokio::test]

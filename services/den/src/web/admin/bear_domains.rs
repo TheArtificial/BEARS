@@ -26,7 +26,7 @@ use crate::{
             },
             tools as sqlite_memory, MemoryStoreManager,
         },
-        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
+        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
         user::db as user_db,
     },
     errors::CustomError,
@@ -404,7 +404,7 @@ async fn context_view(
     let mut prompt_blocks: Vec<PromptMemoryAdminRow> = Vec::new();
     for role in ["pair", "chat", "curate", "work", "watch"] {
         if let Ok(blocks) =
-            list_prompt_memory_blocks_for_bear_role(state.sqlx_pool(), id, role).await
+            list_prompt_memory_blocks_for_bear_profile(state.sqlx_pool(), id, role).await
         {
             for block in blocks {
                 let body_preview: String = block.body.chars().take(200).collect();

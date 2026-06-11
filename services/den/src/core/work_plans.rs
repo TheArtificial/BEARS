@@ -11,7 +11,7 @@ use crate::errors::CustomError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkPlanVisibility {
-    PrivateToRole,
+    PrivateToProfile,
     SameUser,
     BearVisible,
     HandoffRequested,
@@ -20,7 +20,7 @@ pub enum WorkPlanVisibility {
 impl WorkPlanVisibility {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::PrivateToRole => "private_to_role",
+            Self::PrivateToProfile => "private_to_profile",
             Self::SameUser => "same_user",
             Self::BearVisible => "bear_visible",
             Self::HandoffRequested => "handoff_requested",
@@ -29,7 +29,7 @@ impl WorkPlanVisibility {
 
     pub fn parse(value: &str) -> Result<Self, CustomError> {
         match value.trim() {
-            "private_to_role" => Ok(Self::PrivateToRole),
+            "private_to_profile" => Ok(Self::PrivateToProfile),
             "same_user" => Ok(Self::SameUser),
             "bear_visible" => Ok(Self::BearVisible),
             "handoff_requested" => Ok(Self::HandoffRequested),
@@ -151,7 +151,7 @@ pub struct BearWorkPlanRow {
     pub bear_id: Uuid,
     pub title: String,
     pub summary: String,
-    pub owner_role: String,
+    pub owner_profile: String,
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
@@ -172,7 +172,7 @@ pub struct BearWorkPlanRow {
 #[derive(Debug, Clone)]
 pub struct WorkPlanUpsert {
     pub bear_id: Uuid,
-    pub owner_role: BearProfile,
+    pub owner_profile: BearProfile,
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
@@ -186,7 +186,7 @@ pub struct WorkPlanUpsert {
 #[derive(Debug, Clone, Default)]
 pub struct WorkPlanListFilter {
     pub statuses: Option<Vec<WorkPlanStatus>>,
-    pub owner_role: Option<BearProfile>,
+    pub owner_profile: Option<BearProfile>,
     pub include_archived: bool,
 }
 
@@ -203,7 +203,7 @@ pub struct WorkPlanProjection {
     pub bear_id: Uuid,
     pub title: String,
     pub summary: String,
-    pub owner_role: String,
+    pub owner_profile: String,
     pub visibility: String,
     pub status: String,
     pub version: i32,
@@ -256,8 +256,8 @@ impl From<WorkPlanValidationError> for CustomError {
 }
 
 impl BearWorkPlanRow {
-    pub fn parsed_owner_role(&self) -> Result<BearProfile, CustomError> {
-        self.owner_role.parse().map_err(CustomError::Parsing)
+    pub fn parsed_owner_profile(&self) -> Result<BearProfile, CustomError> {
+        self.owner_profile.parse().map_err(CustomError::Parsing)
     }
 
     pub fn parsed_visibility(&self) -> Result<WorkPlanVisibility, CustomError> {
@@ -273,18 +273,18 @@ impl BearWorkPlanRow {
         viewer_role: BearProfile,
         user_id: i32,
     ) -> Result<bool, CustomError> {
-        let owner_role = self.parsed_owner_role()?;
+        let owner_profile = self.parsed_owner_profile()?;
         let visibility = self.parsed_visibility()?;
         let same_user = self.created_by_user_id == Some(user_id);
         Ok(role_can_read_work_plan(
             viewer_role,
-            owner_role,
+            owner_profile,
             visibility,
             same_user,
         ))
     }
 
-    pub fn project_for_role(
+    pub fn project_for_profile(
         &self,
         viewer_role: BearProfile,
         user_id: i32,
@@ -299,7 +299,7 @@ impl BearWorkPlanRow {
             bear_id: self.bear_id,
             title: self.title.clone(),
             summary: self.summary.clone(),
-            owner_role: self.owner_role.clone(),
+            owner_profile: self.owner_profile.clone(),
             visibility: self.visibility.clone(),
             status: self.status.clone(),
             version: self.version,
@@ -344,10 +344,10 @@ pub async fn create_or_update_work_plan(
     params: WorkPlanUpsert,
 ) -> Result<BearWorkPlanRow, CustomError> {
     validate_work_plan_update(&params.update)?;
-    if !role_can_update_work_plan(params.owner_role) {
+    if !role_can_update_work_plan(params.owner_profile) {
         return Err(CustomError::Authorization(format!(
             "the `{}` role cannot update work plans",
-            params.owner_role
+            params.owner_profile
         )));
     }
 
@@ -358,7 +358,7 @@ pub async fn create_or_update_work_plan(
         find_existing_plan_id(
             &mut tx,
             params.bear_id,
-            params.owner_role,
+            params.owner_profile,
             params.source_conversation_id.as_deref(),
             params.source_acp_session_id.as_deref(),
         )
@@ -378,7 +378,7 @@ pub async fn create_or_update_work_plan(
         WorkPlanEventParams {
             plan_id: row.id,
             bear_id: row.bear_id,
-            actor_role: Some(params.owner_role),
+            actor_role: Some(params.owner_profile),
             actor_agent_id: params.owner_agent_id.as_deref(),
             actor_user_id: params.created_by_user_id,
             event_type,
@@ -397,7 +397,7 @@ pub async fn create_or_update_work_plan(
 async fn find_existing_plan_id(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     bear_id: Uuid,
-    owner_role: BearProfile,
+    owner_profile: BearProfile,
     source_conversation_id: Option<&str>,
     source_acp_session_id: Option<&str>,
 ) -> Result<Option<Uuid>, CustomError> {
@@ -406,7 +406,7 @@ async fn find_existing_plan_id(
         SELECT id
         FROM bear_work_plans
         WHERE bear_id = $1
-          AND owner_role = $2
+          AND owner_profile = $2
           AND COALESCE(source_conversation_id, '') = COALESCE($3, '')
           AND COALESCE(source_acp_session_id, '') = COALESCE($4, '')
           AND status <> 'archived'
@@ -415,7 +415,7 @@ async fn find_existing_plan_id(
         "#,
     )
     .bind(bear_id)
-    .bind(owner_role.as_str())
+    .bind(owner_profile.as_str())
     .bind(source_conversation_id)
     .bind(source_acp_session_id)
     .fetch_optional(&mut **tx)
@@ -430,12 +430,12 @@ async fn insert_new_plan(
     sqlx::query_as::<_, BearWorkPlanRow>(
         r#"
         INSERT INTO bear_work_plans (
-            bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+            bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
             source_conversation_id, source_acp_session_id, source_channel, workspace_context,
             visibility, status, items
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13::jsonb)
-        RETURNING id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+        RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
                   source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
@@ -444,7 +444,7 @@ async fn insert_new_plan(
     .bind(params.bear_id)
     .bind(params.update.title.trim())
     .bind(params.update.summary.trim())
-    .bind(params.owner_role.as_str())
+    .bind(params.owner_profile.as_str())
     .bind(params.owner_agent_id.as_deref())
     .bind(params.created_by_user_id)
     .bind(params.source_conversation_id.as_deref())
@@ -479,9 +479,9 @@ async fn update_existing_plan(
             updated_at = NOW()
         WHERE id = $1
           AND bear_id = $2
-          AND owner_role = $3
+          AND owner_profile = $3
           AND ($11::integer IS NULL OR version = $11)
-        RETURNING id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+        RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
                   source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
@@ -489,7 +489,7 @@ async fn update_existing_plan(
     )
     .bind(plan_id)
     .bind(params.bear_id)
-    .bind(params.owner_role.as_str())
+    .bind(params.owner_profile.as_str())
     .bind(params.update.title.trim())
     .bind(params.update.summary.trim())
     .bind(params.update.visibility.as_str())
@@ -551,7 +551,7 @@ pub async fn list_visible_work_plans(
 ) -> Result<Vec<WorkPlanProjection>, CustomError> {
     let rows = sqlx::query_as::<_, BearWorkPlanRow>(
         r#"
-        SELECT id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+        SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
                source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                visibility, status, items, version, handoff_intent_path, handoff_task_id,
                archived_at, created_at, updated_at
@@ -570,8 +570,8 @@ pub async fn list_visible_work_plans(
         if !filter.include_archived && row.status == WorkPlanStatus::Archived.as_str() {
             continue;
         }
-        if let Some(owner_role) = filter.owner_role {
-            if row.owner_role != owner_role.as_str() {
+        if let Some(owner_profile) = filter.owner_profile {
+            if row.owner_profile != owner_profile.as_str() {
                 continue;
             }
         }
@@ -580,7 +580,7 @@ pub async fn list_visible_work_plans(
                 continue;
             }
         }
-        if let Some(projected) = row.project_for_role(viewer_role, user_id)? {
+        if let Some(projected) = row.project_for_profile(viewer_role, user_id)? {
             visible.push(projected);
         }
     }
@@ -617,7 +617,7 @@ pub async fn get_visible_work_plan(
     };
 
     match row {
-        Some(row) => row.project_for_role(viewer_role, user_id),
+        Some(row) => row.project_for_profile(viewer_role, user_id),
         None => Ok(None),
     }
 }
@@ -633,7 +633,7 @@ pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
     for plan in plans.iter().take(5) {
         out.push_str(&format!(
             "- plan_id={} owner={} status={} visibility={} title={}",
-            plan.id, plan.owner_role, plan.status, plan.visibility, plan.title
+            plan.id, plan.owner_profile, plan.status, plan.visibility, plan.title
         ));
         if let Some(current) = plan.current_item.as_ref() {
             out.push_str(&format!(
@@ -652,7 +652,7 @@ pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
 }
 
 const SELECT_WORK_PLAN_BY_ID: &str = r#"
-    SELECT id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+    SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
@@ -661,7 +661,7 @@ const SELECT_WORK_PLAN_BY_ID: &str = r#"
 "#;
 
 const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r#"
-    SELECT id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+    SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
@@ -672,7 +672,7 @@ const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r#"
 "#;
 
 const SELECT_WORK_PLAN_BY_CONVERSATION: &str = r#"
-    SELECT id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
+    SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
@@ -728,16 +728,16 @@ pub fn role_can_request_work_handoff(role: BearProfile) -> bool {
 
 pub fn role_can_read_work_plan(
     viewer_role: BearProfile,
-    owner_role: BearProfile,
+    owner_profile: BearProfile,
     visibility: WorkPlanVisibility,
     same_user: bool,
 ) -> bool {
     match visibility {
-        WorkPlanVisibility::PrivateToRole => viewer_role == owner_role,
-        WorkPlanVisibility::SameUser => same_user || viewer_role == owner_role,
+        WorkPlanVisibility::PrivateToProfile => viewer_role == owner_profile,
+        WorkPlanVisibility::SameUser => same_user || viewer_role == owner_profile,
         WorkPlanVisibility::BearVisible => true,
         WorkPlanVisibility::HandoffRequested => {
-            matches!(viewer_role, BearProfile::Curate) || viewer_role == owner_role
+            matches!(viewer_role, BearProfile::Curate) || viewer_role == owner_profile
         }
     }
 }
@@ -795,13 +795,13 @@ mod tests {
         assert!(role_can_read_work_plan(
             BearProfile::Pair,
             BearProfile::Pair,
-            WorkPlanVisibility::PrivateToRole,
+            WorkPlanVisibility::PrivateToProfile,
             false
         ));
         assert!(!role_can_read_work_plan(
             BearProfile::Chat,
             BearProfile::Pair,
-            WorkPlanVisibility::PrivateToRole,
+            WorkPlanVisibility::PrivateToProfile,
             false
         ));
         assert!(role_can_read_work_plan(
@@ -839,7 +839,7 @@ mod tests {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             title: "Build task system".to_string(),
             summary: "Keep status current".to_string(),
-            owner_role: "pair".to_string(),
+            owner_profile: "pair".to_string(),
             visibility: "bear_visible".to_string(),
             status: "active".to_string(),
             version: 1,

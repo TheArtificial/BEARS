@@ -174,7 +174,7 @@ async fn enqueue_observation_review(
         stores,
         CreateMemoryProposal {
             bear_id: context.bear_id,
-            source_role: BearProfile::Watch,
+            source_profile: BearProfile::Watch,
             source_agent_id: Some(context.binding_id.clone()),
             source_paths: vec![observation.logical_path.clone()],
             source_refs: serde_json::json!({

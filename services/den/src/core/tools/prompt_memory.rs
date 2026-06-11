@@ -7,7 +7,7 @@ use crate::{
         bears::BearProfile,
         prompt_memory_block_store::{
             archive_conflicting_prompt_memory_blocks,
-            archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_role,
+            archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_profile,
             patch_prompt_memory_block, upsert_prompt_memory_block, PromptMemoryBlockPatch,
             PromptMemoryBlockWrite,
         },
@@ -163,7 +163,7 @@ pub(crate) async fn prompt_memory_list(
         ));
     }
     let args: PromptMemoryListArguments = serde_json::from_value(arguments)?;
-    let mut blocks = list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+    let mut blocks = list_prompt_memory_blocks_for_bear_profile(pool, context.bear_id, role.as_str()).await?;
     if !args.include_archived {
         blocks.retain(|block| block.state != PromptMemoryBlockState::Archived);
     }

@@ -32,7 +32,7 @@ pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
     pub stores: &'a MemoryStoreManager,
     pub bear_id: Uuid,
-    pub role: BearProfile,
+    pub profile: BearProfile,
     pub conversation_id: &'a str,
     pub turn_runtime_context: Option<&'a str>,
     pub human_message: Option<&'a str>,
@@ -108,12 +108,12 @@ pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, CustomError> {
-    let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.role).await?;
+    let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
     let projection = match project_key_memory(KeyMemoryProjectionInput {
         pool: ctx.pool,
         stores: ctx.stores,
         bear,
-        role: ctx.role,
+        profile: ctx.profile,
         conversation_id: ctx.conversation_id,
         session_hints: ctx.session_hints(),
         work_surface_status_override: ctx.work_surface_status_override(),
@@ -125,7 +125,7 @@ pub async fn assemble_native_turn_for_bear(
         Err(err) => {
             tracing::warn!(
                 bear_id = %ctx.bear_id,
-                role = %ctx.role.as_str(),
+                role = %ctx.profile.as_str(),
                 conversation_id = %ctx.conversation_id,
                 error = %err,
                 "key memory projection failed; continuing without projected memory"
@@ -139,7 +139,7 @@ pub async fn assemble_native_turn_for_bear(
                 }),
                 cache_key: KeyMemoryProjectionCacheKey {
                     bear_id: ctx.bear_id,
-                    role: ctx.role,
+                    profile: ctx.profile,
                     conversation_id: ctx.conversation_id.to_string(),
                     primary_surface_slug: None,
                     sequence_high_water: 0,
@@ -180,7 +180,7 @@ pub async fn assemble_native_turn_for_bear(
         let supplement = assemble_den_owned_runtime_supplement(
             ctx.pool,
             ctx.bear_id,
-            ctx.role.as_str(),
+            ctx.profile.as_str(),
             session_id,
             &roots,
             &client_context,
@@ -211,7 +211,7 @@ pub async fn assemble_native_turn_for_bear(
     }
     messages.extend(ctx.tool_messages.iter().cloned());
     let messages = repair_tool_call_message_chain(messages);
-    let messages = if ctx.native_runtime && ctx.role == BearProfile::Pair {
+    let messages = if ctx.native_runtime && ctx.profile == BearProfile::Pair {
         prune_messages_for_native_pair(messages)
     } else {
         messages

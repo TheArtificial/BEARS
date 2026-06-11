@@ -41,7 +41,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 - New `core/memory/store/` backed by `sqlx` SQLite. Schema per ADR-0031: `memory_records`, `memory_links`, `memory_promotions`, plus a Bear-wide monotonic sequence allocator.
 - Operational defaults: WAL, `synchronous=NORMAL`, `busy_timeout=5000`; single logical write path (`SqlitePool`, `max_connections(1)`); define per-Bear DB file lifecycle/placement.
-- **Logical-path projection**: map logical paths to (`scope_type`, `scope_role`, `work_surface_ref`, `kind`) so `memory_browse`/`memory_read` keep the stable-anchor UX over rows.
+- **Logical-path projection**: map logical paths to (`scope_type`, `scope_profile`, `work_surface_ref`, `kind`) so `memory_browse`/`memory_read` keep the stable-anchor UX over rows.
 - Migrate Den-hosted memory tools off MemFS to the SQLite store (`memory_write`, `memory_read`, `memory_review`, `memfs` retire/replace), routed through the memory manager to SQLite instead of the `/v1/git` MemFS API.
 - Move all Bear cognition into per-Bear SQLite: `bear_memory_proposals`, `bear_observations`, and curate/promotion decisions + audit migrate from Den Postgres; `core/` promotion writes `memory_records`/`memory_promotions`.
 - **Reflection-run boundary (split):** scheduler/queue stays in Den Postgres; the run record + outcomes move to SQLite next to `memory_promotions`; the queue references the SQLite run id.

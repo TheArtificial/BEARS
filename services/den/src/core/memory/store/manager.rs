@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{config::Config, errors::CustomError};
 
-use super::records::BearMemoryStore;
+use super::{migrate::migrate_bear_sqlite_schema, records::BearMemoryStore};
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -56,6 +56,7 @@ impl MemoryStoreManager {
                 .await
                 .map_err(|e| CustomError::System(format!("bear sqlite schema failed: {e}")))?;
         }
+        migrate_bear_sqlite_schema(&pool).await?;
         guard.insert(bear_id, pool.clone());
         Ok(pool)
     }

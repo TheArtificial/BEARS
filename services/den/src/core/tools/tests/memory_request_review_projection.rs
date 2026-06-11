@@ -135,7 +135,7 @@ async fn memory_request_review_projects_typed_conversation_records(
             event: crate::core::conversation_events::ProjectionEvent::MemoryReviewRequested(
                 crate::core::conversation_events::MemoryReviewRequestedPayload {
                     proposal_id,
-                    source_role: "pair".to_string(),
+                    source_profile: "pair".to_string(),
                     title: "Promote memory".to_string(),
                     suggested_action: "promote_to_core".to_string(),
                     status: "pending".to_string(),

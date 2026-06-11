@@ -697,7 +697,7 @@ mod tests {
             &pool,
             memory_proposals::CreateMemoryProposal {
                 bear_id,
-                source_role: BearProfile::Pair,
+                source_profile: BearProfile::Pair,
                 source_agent_id: Some("pair-agent".to_string()),
                 source_paths: vec!["pair/notes/worker.md".to_string()],
                 source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-worker-test"}),
@@ -786,7 +786,7 @@ mod tests {
             &pool,
             memory_proposals::CreateMemoryProposal {
                 bear_id,
-                source_role: BearProfile::Pair,
+                source_profile: BearProfile::Pair,
                 source_agent_id: Some("pair-agent".to_string()),
                 source_paths: vec!["pair/notes/example.md".to_string()],
                 source_refs: serde_json::json!({"conversation_id": "conv-memory-curate-test"}),
@@ -845,7 +845,7 @@ mod tests {
             .expect("reload proposal")
             .expect("proposal exists");
         assert_eq!(updated_proposal.status, "retained_local");
-        assert_eq!(updated_proposal.reviewer_role.as_deref(), Some("curate"));
+        assert_eq!(updated_proposal.reviewer_profile.as_deref(), Some("curate"));
         assert_eq!(
             updated_proposal.reviewer_agent_id.as_deref(),
             Some(memory_curate_executor::MEMORY_CURATE_RUNNER_AGENT_ID)

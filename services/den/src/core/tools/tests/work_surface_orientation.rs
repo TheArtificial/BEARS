@@ -45,11 +45,11 @@ fn work_surface_candidate_slug_prefers_trusted_repo_like_hint() {
 
 #[test]
 fn work_surface_anchor_paths_are_stable() {
-    let (canonical, role_local) = work_surface_anchor_paths(BearProfile::Pair, "builder-bear");
+    let (canonical, profile_local) = work_surface_anchor_paths(BearProfile::Pair, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert_eq!(canonical[1], "core/work_surfaces/builder-bear/overview.md");
     assert_eq!(
-        role_local[0],
+        profile_local[0],
         "pair/work_surfaces/builder-bear/current-understanding.md"
     );
 }
@@ -88,7 +88,7 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
     assert_eq!(payload["work_surface"]["status"], json!("oriented"));
     assert_eq!(payload["work_surface"]["slug"], json!("builder-bear"));
     assert!(payload["canonical_paths"].as_array().unwrap().len() >= 2);
-    assert!(payload["role_local_paths"].as_array().unwrap().len() >= 1);
+    assert!(payload["profile_local_paths"].as_array().unwrap().len() >= 1);
     assert!(payload["recommended_read_order"].as_array().unwrap().len() >= 3);
 }
 
@@ -103,10 +103,10 @@ fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
 }
 
 #[test]
-fn work_surface_anchor_paths_skip_role_local_paths_for_chat() {
-    let (canonical, role_local) = work_surface_anchor_paths(BearProfile::Chat, "builder-bear");
+fn work_surface_anchor_paths_skip_profile_local_paths_for_chat() {
+    let (canonical, profile_local) = work_surface_anchor_paths(BearProfile::Chat, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
-    assert!(role_local.is_empty());
+    assert!(profile_local.is_empty());
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn build_work_surface_orientation_payload_for_chat_is_reference_only() {
         Some("builder-bear".to_string()),
     );
     assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
-    assert_eq!(payload["role_local_paths"], json!([]));
+    assert_eq!(payload["profile_local_paths"], json!([]));
     assert!(payload["notes"][1]
         .as_str()
         .unwrap()

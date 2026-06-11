@@ -78,7 +78,7 @@ use crate::core::prompt_memory_blocks::{
             prompt_memory_block_store::{
                 archive_conflicting_prompt_memory_blocks,
                 archive_prompt_memory_blocks_superseded_by,
-                list_prompt_memory_blocks_for_bear_role,
+                list_prompt_memory_blocks_for_bear_profile,
                 patch_prompt_memory_block, select_prompt_memory_blocks_for_runtime,
                 upsert_prompt_memory_block, PromptMemoryBlockPatch,
                 PromptMemoryBlockQuery, PromptMemoryBlockWrite,
@@ -2233,7 +2233,7 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("patch draft block");
 
-        let all_blocks = list_prompt_memory_blocks_for_bear_role(&pool, bear_id, profile_slug.as_str())
+        let all_blocks = list_prompt_memory_blocks_for_bear_profile(&pool, bear_id, profile_slug.as_str())
             .await
             .expect("list prompt memory blocks");
         let original = all_blocks

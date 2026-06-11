@@ -36,7 +36,7 @@ pub struct CurateBriefingItem {
     pub title: String,
     pub summary: String,
     pub suggested_action: String,
-    pub source_role: String,
+    pub source_profile: String,
     pub status: String,
     pub triage: String,
 }
@@ -52,7 +52,7 @@ pub struct MemoryCurateRunOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CurateTriage {
-    RetainRoleLocal {
+    RetainProfileLocal {
         review_notes: &'static str,
         decision_summary: &'static str,
     },
@@ -77,7 +77,7 @@ enum CurateTriage {
 impl CurateTriage {
     fn triage_label(&self) -> &'static str {
         match self {
-            Self::RetainRoleLocal { .. } => "retain_role_local",
+            Self::RetainProfileLocal { .. } => "retain_profile_local",
             Self::Reject { .. } => "reject",
             Self::Defer { .. } => "defer",
             Self::EscalateHuman { .. } => "escalate_human",
@@ -87,7 +87,7 @@ impl CurateTriage {
 
     fn resolution_status(&self) -> &'static str {
         match self {
-            Self::RetainRoleLocal { .. } => "retained_local",
+            Self::RetainProfileLocal { .. } => "retained_local",
             Self::Reject { .. } => "rejected",
             Self::Defer { .. } => "deferred",
             Self::EscalateHuman { .. } => "needs_human_review",
@@ -97,7 +97,7 @@ impl CurateTriage {
 
     fn review_notes(&self) -> &'static str {
         match self {
-            Self::RetainRoleLocal { review_notes, .. }
+            Self::RetainProfileLocal { review_notes, .. }
             | Self::Reject { review_notes, .. }
             | Self::Defer { review_notes, .. }
             | Self::EscalateHuman { review_notes, .. }
@@ -107,7 +107,7 @@ impl CurateTriage {
 
     fn decision_summary(&self) -> &'static str {
         match self {
-            Self::RetainRoleLocal { decision_summary, .. }
+            Self::RetainProfileLocal { decision_summary, .. }
             | Self::Reject { decision_summary, .. }
             | Self::Defer { decision_summary, .. }
             | Self::EscalateHuman { decision_summary, .. }
@@ -136,7 +136,7 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             review_notes: "Proposal requested explicit human review.",
             decision_summary: "Escalated to human review per suggested_action=human_review.",
         },
-        "retain_role_local" => CurateTriage::RetainRoleLocal {
+        "retain_profile_local" => CurateTriage::RetainProfileLocal {
             review_notes: "Role-local memory remains the durable source; no shared-memory write needed.",
             decision_summary: "Autonomous curate retained the proposal as role-local memory.",
         },
@@ -163,7 +163,7 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
         },
         "unspecified" => {
             if trigger == Some("pair_reflection") && proposal.sensitivity == "normal" {
-                CurateTriage::RetainRoleLocal {
+                CurateTriage::RetainProfileLocal {
                     review_notes: "Pair reflection summary is durable in pair-local memory; shared promotion is not automatic.",
                     decision_summary: "Autonomous curate retained the pair reflection summary as role-local memory.",
                 }
@@ -226,7 +226,7 @@ fn promotion_body(proposal: &MemoryProposalRow) -> String {
     format!(
         "{distilled}\n\n---\nSource proposal: `{}`\nSource role: `{}`\nSource paths: {}\n",
         proposal.id,
-        proposal.source_role,
+        proposal.source_profile,
         proposal.source_paths.join(", ")
     )
 }
@@ -303,7 +303,7 @@ async fn build_curate_briefing(
             title: proposal.title,
             summary: proposal.summary,
             suggested_action: proposal.suggested_action,
-            source_role: proposal.source_role,
+            source_profile: proposal.source_profile,
             status: outcome.status.clone(),
             triage: outcome.triage.clone(),
         });
@@ -342,7 +342,7 @@ async fn resolve_curate_proposal(
                     ProposalResolutionParams {
                         bear_id,
                         proposal_id: proposal.id,
-                        reviewer_role: BearProfile::Curate,
+                        reviewer_profile: BearProfile::Curate,
                         reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
                         status: "deferred",
                         review_notes: Some(&format!(
@@ -376,7 +376,7 @@ async fn resolve_curate_proposal(
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearProfile::Curate,
+            reviewer_profile: BearProfile::Curate,
             reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
             status: triage.resolution_status(),
             review_notes: Some(triage.review_notes()),
@@ -461,7 +461,7 @@ async fn apply_core_promotion(
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearProfile::Curate,
+            reviewer_profile: BearProfile::Curate,
             reviewer_agent_id: Some(MEMORY_CURATE_RUNNER_AGENT_ID),
             status: "approved",
             review_notes: Some(triage.review_notes()),
@@ -501,7 +501,7 @@ mod tests {
         MemoryProposalRow {
             id: Uuid::new_v4(),
             bear_id: Uuid::new_v4(),
-            source_role: "pair".to_string(),
+            source_profile: "pair".to_string(),
             source_agent_id: Some("pair-agent".to_string()),
             source_paths: vec!["pair/summaries/example.md".to_string()],
             source_refs: serde_json::json!({}),
@@ -517,7 +517,7 @@ mod tests {
             sensitivity: sensitivity.to_string(),
             requires_human,
             status: "pending".to_string(),
-            reviewer_role: None,
+            reviewer_profile: None,
             reviewer_agent_id: None,
             review_notes: None,
             decision_summary: None,
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn requires_human_escalates() {
-        let proposal = sample_proposal("retain_role_local", "normal", true);
+        let proposal = sample_proposal("retain_profile_local", "normal", true);
         let triage = decide_curate_triage(&proposal, Some("pair_reflection"));
         assert_eq!(triage.resolution_status(), "needs_human_review");
     }
@@ -577,7 +577,7 @@ mod tests {
                 proposal_id: Uuid::new_v4(),
                 status: "retained_local".to_string(),
                 suggested_action: "unspecified".to_string(),
-                triage: "retain_role_local".to_string(),
+                triage: "retain_profile_local".to_string(),
                 result_path: None,
                 error: None,
             },

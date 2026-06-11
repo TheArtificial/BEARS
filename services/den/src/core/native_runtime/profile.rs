@@ -7,7 +7,7 @@ use crate::core::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeCapabilityProfile {
-    pub role: BearProfile,
+    pub profile: BearProfile,
     pub max_steps: u32,
     /// When false, the turn relies on explicit runtime_context instead of prompt-memory blocks.
     pub include_prompt_memory: bool,
@@ -15,28 +15,28 @@ pub struct NativeCapabilityProfile {
 }
 
 impl NativeCapabilityProfile {
-    pub fn for_role(role: BearProfile) -> Self {
-        match role {
+    pub fn for_profile(profile: BearProfile) -> Self {
+        match profile {
             BearProfile::Pair => Self {
-                role,
+                profile,
                 max_steps: 8,
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
             },
             BearProfile::Curate => Self {
-                role,
+                profile,
                 max_steps: 6,
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
             },
             BearProfile::Watch => Self {
-                role,
+                profile,
                 max_steps: 4,
                 include_prompt_memory: false,
                 strategy: StrategyProfile::plain_react(),
             },
             BearProfile::Chat | BearProfile::Work => Self {
-                role,
+                profile,
                 max_steps: 8,
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
@@ -64,7 +64,7 @@ mod tests {
             BearProfile::Watch,
         ] {
             assert!(is_native_api_direct_role(role));
-            assert!(NativeCapabilityProfile::for_role(role).max_steps > 0);
+            assert!(NativeCapabilityProfile::for_profile(role).max_steps > 0);
         }
     }
 

@@ -16,7 +16,7 @@ pub async fn sqlite_write_at_path(
     config: &Config,
     bear_id: Uuid,
     logical_path: &str,
-    author_role: &str,
+    author_profile: &str,
     title: &str,
     body: &str,
     metadata: Value,
@@ -39,7 +39,7 @@ pub async fn sqlite_write_at_path(
         &store,
         &logical,
         &logical.kind,
-        author_role,
+        author_profile,
         None,
         &content,
         &Value::Object(metadata_obj),
@@ -47,7 +47,7 @@ pub async fn sqlite_write_at_path(
     .await?;
     Ok(json!({
         "bear_id": bear_id,
-        "role": author_role,
+        "profile": author_profile,
         "kind": row.kind,
         "entry_id": row.memory_id,
         "path": row.logical_path,
@@ -56,11 +56,11 @@ pub async fn sqlite_write_at_path(
     }))
 }
 
-pub async fn sqlite_write_role_entry(
+pub async fn sqlite_write_profile_entry(
     stores: &MemoryStoreManager,
     config: &Config,
     bear_id: Uuid,
-    role: &str,
+    profile: &str,
     kind: &str,
     title: &str,
     body: &str,
@@ -69,7 +69,7 @@ pub async fn sqlite_write_role_entry(
     author: Option<String>,
 ) -> Result<Value, CustomError> {
     let store = stores.store_for_bear(bear_id).await?;
-    let logical = LogicalMemoryPath::role_local(role, kind);
+    let logical = LogicalMemoryPath::profile_local(profile, kind);
     let content = format!("# {title}\n\n{body}");
     let metadata = json!({
         "title": title,
@@ -83,7 +83,7 @@ pub async fn sqlite_write_role_entry(
         &store,
         &logical,
         kind,
-        role,
+        profile,
         None,
         &content,
         &metadata,
@@ -91,7 +91,7 @@ pub async fn sqlite_write_role_entry(
     .await?;
     Ok(json!({
         "bear_id": bear_id,
-        "role": role,
+        "profile": profile,
         "kind": row.kind,
         "entry_id": row.memory_id,
         "path": row.logical_path,
@@ -108,7 +108,7 @@ pub async fn sqlite_memory_browse(
         r#"
         SELECT DISTINCT logical_path
         FROM memory_records
-        WHERE bear_id = ? AND scope_role = ? AND logical_path IS NOT NULL
+        WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
         ORDER BY logical_path ASC
         "#,
     )
@@ -179,7 +179,7 @@ pub async fn sqlite_memory_search(
         r#"
         SELECT memory_id, logical_path, content_text, sequence_no
         FROM memory_records
-        WHERE bear_id = ? AND scope_role = ? AND content_text LIKE ?
+        WHERE bear_id = ? AND scope_profile = ? AND content_text LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
         "#,
@@ -219,7 +219,7 @@ pub async fn sqlite_collect_role_logical_paths(
         r#"
         SELECT DISTINCT logical_path
         FROM memory_records
-        WHERE bear_id = ? AND scope_role = ? AND logical_path IS NOT NULL
+        WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
         ORDER BY logical_path ASC
         "#,
     )
@@ -239,7 +239,7 @@ pub async fn sqlite_list_plan_artifacts(
         r#"
         SELECT memory_id, logical_path, content_text, sequence_no
         FROM memory_records
-        WHERE bear_id = ? AND scope_role = ? AND logical_path LIKE ?
+        WHERE bear_id = ? AND scope_profile = ? AND logical_path LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
         "#,
@@ -274,7 +274,7 @@ pub async fn sqlite_memory_status(
         r#"
         SELECT COUNT(DISTINCT logical_path)
         FROM memory_records
-        WHERE bear_id = ? AND scope_role = ?
+        WHERE bear_id = ? AND scope_profile = ?
         "#,
     )
     .bind(store.bear_id().to_string())

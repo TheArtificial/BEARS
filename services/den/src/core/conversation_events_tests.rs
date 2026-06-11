@@ -107,7 +107,7 @@ fn projection_memory_review_requested_json_uses_typed_event_shape() {
         },
         event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
             proposal_id: uuid::Uuid::nil(),
-            source_role: "pair".to_string(),
+            source_profile: "pair".to_string(),
             title: "Promote note".to_string(),
             suggested_action: "promote_to_core".to_string(),
             status: "pending".to_string(),
@@ -135,8 +135,8 @@ fn projection_visible_summary_record_uses_visible_assistant_shape() {
         },
         event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
             proposal_id: uuid::Uuid::nil(),
-            source_role: "pair".to_string(),
-            suggested_action: "retain_role_local".to_string(),
+            source_profile: "pair".to_string(),
+            suggested_action: "retain_profile_local".to_string(),
             title: "Proposal".to_string(),
             status: "pending".to_string(),
         }),

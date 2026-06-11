@@ -734,7 +734,7 @@ pub struct ProjectionProvenance {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryProposalCreatedPayload {
     pub proposal_id: Uuid,
-    pub source_role: String,
+    pub source_profile: String,
     pub suggested_action: String,
     pub title: String,
     pub status: String,
@@ -743,11 +743,11 @@ pub struct MemoryProposalCreatedPayload {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryProposalResolvedPayload {
     pub proposal_id: Uuid,
-    pub source_role: String,
+    pub source_profile: String,
     pub suggested_action: String,
     pub title: String,
     pub status: String,
-    pub reviewer_role: Option<String>,
+    pub reviewer_profile: Option<String>,
     pub result_path: Option<String>,
     pub result_commit: Option<String>,
 }
@@ -816,7 +816,7 @@ pub struct MemoryCurateFailedPayload {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryReviewRequestedPayload {
     pub proposal_id: Uuid,
-    pub source_role: String,
+    pub source_profile: String,
     pub title: String,
     pub suggested_action: String,
     pub status: String,
@@ -862,7 +862,7 @@ pub struct Projection {
 pub fn memory_proposal_created_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_role: String,
+    source_profile: String,
     suggested_action: String,
     title: String,
     status: String,
@@ -871,7 +871,7 @@ pub fn memory_proposal_created_projection(
         provenance,
         event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
             proposal_id,
-            source_role: source_role.clone(),
+            source_profile: source_profile.clone(),
             suggested_action,
             title: title.clone(),
             status,
@@ -879,7 +879,7 @@ pub fn memory_proposal_created_projection(
         workflow_text: format!("Memory proposal created: {title}"),
         visible_summary: Some(format!(
             "Review requested for memory proposal '{}' from {}.",
-            title, source_role
+            title, source_profile
         )),
     }
 }
@@ -887,11 +887,11 @@ pub fn memory_proposal_created_projection(
 pub fn memory_proposal_resolved_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_role: String,
+    source_profile: String,
     suggested_action: String,
     title: String,
     status: String,
-    reviewer_role: Option<String>,
+    reviewer_profile: Option<String>,
     result_path: Option<String>,
     result_commit: Option<String>,
 ) -> Projection {
@@ -907,11 +907,11 @@ pub fn memory_proposal_resolved_projection(
         provenance,
         event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
             proposal_id,
-            source_role,
+            source_profile,
             suggested_action,
             title: title.clone(),
             status: status.clone(),
-            reviewer_role,
+            reviewer_profile,
             result_path,
             result_commit,
         }),
@@ -923,7 +923,7 @@ pub fn memory_proposal_resolved_projection(
 pub fn memory_review_requested_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_role: String,
+    source_profile: String,
     suggested_action: String,
     title: String,
     status: String,
@@ -933,7 +933,7 @@ pub fn memory_review_requested_projection(
         provenance,
         event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
             proposal_id,
-            source_role: source_role.clone(),
+            source_profile: source_profile.clone(),
             title: title.clone(),
             suggested_action,
             status,
@@ -942,7 +942,7 @@ pub fn memory_review_requested_projection(
         workflow_text: format!("Memory review requested: {title}"),
         visible_summary: Some(format!(
             "Review requested for memory proposal '{}' from {}.",
-            title, source_role
+            title, source_profile
         )),
     }
 }

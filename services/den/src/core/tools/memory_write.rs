@@ -120,7 +120,7 @@ pub(crate) async fn write_memory_entry(
         .or_else(|| context.username.clone());
     if config.uses_native_agent_runtime() {
         let stores = MemoryStoreManager::new(config);
-        return sqlite_memory::sqlite_write_role_entry(
+        return sqlite_memory::sqlite_write_profile_entry(
             &stores,
             config,
             context.bear_id,

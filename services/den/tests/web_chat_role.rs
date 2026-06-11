@@ -201,7 +201,7 @@ async fn create_visible_work_plan(pool: &sqlx::PgPool, user_bear: &TestUserBear)
         pool,
         WorkPlanUpsert {
             bear_id: user_bear.bear_id,
-            owner_role: BearProfile::Pair,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-web-context".to_string()),
             created_by_user_id: Some(user_bear.user_id),
             source_conversation_id: Some("conv-web-context".to_string()),

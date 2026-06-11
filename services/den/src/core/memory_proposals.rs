@@ -18,7 +18,7 @@ use crate::{
 pub struct MemoryProposalRow {
     pub id: Uuid,
     pub bear_id: Uuid,
-    pub source_role: String,
+    pub source_profile: String,
     pub source_agent_id: Option<String>,
     pub source_paths: Vec<String>,
     pub source_refs: serde_json::Value,
@@ -34,7 +34,7 @@ pub struct MemoryProposalRow {
     pub sensitivity: String,
     pub requires_human: bool,
     pub status: String,
-    pub reviewer_role: Option<String>,
+    pub reviewer_profile: Option<String>,
     pub reviewer_agent_id: Option<String>,
     pub review_notes: Option<String>,
     pub decision_summary: Option<String>,
@@ -47,7 +47,7 @@ pub struct MemoryProposalRow {
 #[derive(Debug, Clone)]
 pub struct CreateMemoryProposal<'a> {
     pub bear_id: Uuid,
-    pub source_role: BearProfile,
+    pub source_profile: BearProfile,
     pub source_agent_id: Option<String>,
     pub source_paths: Vec<String>,
     pub source_refs: serde_json::Value,
@@ -87,7 +87,7 @@ fn maybe_project_memory_proposal_created(pool: &PgPool, row: &MemoryProposalRow)
         memory_proposal_created_projection(
             memory_proposal_provenance(row.bear_id),
             row.id,
-            row.source_role.clone(),
+            row.source_profile.clone(),
             row.suggested_action.clone(),
             row.title.clone(),
             row.status.clone(),
@@ -104,11 +104,11 @@ fn maybe_project_memory_proposal_resolved(pool: &PgPool, row: &MemoryProposalRow
         memory_proposal_resolved_projection(
             memory_proposal_provenance(row.bear_id),
             row.id,
-            row.source_role.clone(),
+            row.source_profile.clone(),
             row.suggested_action.clone(),
             row.title.clone(),
             row.status.clone(),
-            row.reviewer_role.clone(),
+            row.reviewer_profile.clone(),
             row.result_path.clone(),
             row.result_commit.clone(),
         ),
@@ -122,7 +122,7 @@ pub async fn create(
     let row = sqlx::query(
         r#"
         INSERT INTO bear_memory_proposals (
-            bear_id, source_role, source_agent_id, source_paths, source_refs,
+            bear_id, source_profile, source_agent_id, source_paths, source_refs,
             proposal_type, suggested_action, target_ref, title, summary, rationale,
             proposed_content, proposed_patch, refs, sensitivity, requires_human, status
         )
@@ -130,15 +130,15 @@ pub async fn create(
             $1, $2, $3, $4, $5, 'memory_review', $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15, 'pending'
         )
-        RETURNING id, bear_id, source_role, source_agent_id, source_paths, source_refs,
+        RETURNING id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                   proposal_type, suggested_action, target_ref, title, summary, rationale,
                   proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
-                  reviewer_role, reviewer_agent_id, review_notes, decision_summary,
+                  reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                   result_path, result_commit, created_at, reviewed_at
         "#,
     )
     .bind(params.bear_id)
-    .bind(params.source_role.as_str())
+    .bind(params.source_profile.as_str())
     .bind(params.source_agent_id)
     .bind(params.source_paths)
     .bind(params.source_refs)
@@ -169,10 +169,10 @@ pub async fn list_for_bear(
 ) -> Result<Vec<MemoryProposalRow>, CustomError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, bear_id, source_role, source_agent_id, source_paths, source_refs,
+        SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                proposal_type, suggested_action, target_ref, title, summary, rationale,
                proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
-               reviewer_role, reviewer_agent_id, review_notes, decision_summary,
+               reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                result_path, result_commit, created_at, reviewed_at
         FROM bear_memory_proposals
         WHERE bear_id = $1
@@ -192,7 +192,7 @@ pub async fn list_for_bear(
 pub struct ProposalResolutionParams<'a> {
     pub bear_id: Uuid,
     pub proposal_id: Uuid,
-    pub reviewer_role: BearProfile,
+    pub reviewer_profile: BearProfile,
     pub reviewer_agent_id: Option<&'a str>,
     pub status: &'a str,
     pub review_notes: Option<&'a str>,
@@ -210,7 +210,7 @@ pub async fn resolve_for_bear(
         r#"
         UPDATE bear_memory_proposals
         SET status = $3,
-            reviewer_role = $4,
+            reviewer_profile = $4,
             reviewer_agent_id = $5,
             review_notes = $6,
             decision_summary = $7,
@@ -218,17 +218,17 @@ pub async fn resolve_for_bear(
             result_commit = COALESCE($9, result_commit),
             reviewed_at = NOW()
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, source_role, source_agent_id, source_paths, source_refs,
+        RETURNING id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                   proposal_type, suggested_action, target_ref, title, summary, rationale,
                   proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
-                  reviewer_role, reviewer_agent_id, review_notes, decision_summary,
+                  reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                   result_path, result_commit, created_at, reviewed_at
         "#,
     )
     .bind(params.bear_id)
     .bind(params.proposal_id)
     .bind(params.status)
-    .bind(params.reviewer_role.as_str())
+    .bind(params.reviewer_profile.as_str())
     .bind(params.reviewer_agent_id)
     .bind(params.review_notes)
     .bind(params.decision_summary)
@@ -250,10 +250,10 @@ pub async fn get_for_bear(
 ) -> Result<Option<MemoryProposalRow>, CustomError> {
     let row = sqlx::query(
         r#"
-        SELECT id, bear_id, source_role, source_agent_id, source_paths, source_refs,
+        SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                proposal_type, suggested_action, target_ref, title, summary, rationale,
                proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
-               reviewer_role, reviewer_agent_id, review_notes, decision_summary,
+               reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                result_path, result_commit, created_at, reviewed_at
         FROM bear_memory_proposals
         WHERE bear_id = $1 AND id = $2
@@ -270,7 +270,7 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> MemoryProposalRow {
     MemoryProposalRow {
         id: row.get("id"),
         bear_id: row.get("bear_id"),
-        source_role: row.get("source_role"),
+        source_profile: row.get("source_profile"),
         source_agent_id: row.get("source_agent_id"),
         source_paths: row.get("source_paths"),
         source_refs: row.get("source_refs"),
@@ -286,7 +286,7 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> MemoryProposalRow {
         sensitivity: row.get("sensitivity"),
         requires_human: row.get("requires_human"),
         status: row.get("status"),
-        reviewer_role: row.get("reviewer_role"),
+        reviewer_profile: row.get("reviewer_profile"),
         reviewer_agent_id: row.get("reviewer_agent_id"),
         review_notes: row.get("review_notes"),
         decision_summary: row.get("decision_summary"),

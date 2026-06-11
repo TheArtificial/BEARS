@@ -9,7 +9,7 @@ use crate::{
         acp_sessions,
         bears::{db as bears_db, db::role_is_bear_admin, BearProfile},
         memory::MemoryStoreManager,
-        tools::descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_role},
+        tools::descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
         user,
     },
     errors::CustomError,
@@ -201,7 +201,7 @@ pub async fn invoke_den_tool(
         }
     }
     let role = authorize_context(pool, &context).await?;
-    authorize_tool_for_role(tool_name, role)?;
+    authorize_tool_for_profile(tool_name, role)?;
     match tool_name {
         DEN_BEAR_GET_SELF => get_bear_self(pool, &context).await,
         DEN_USER_GET_CURRENT => get_current_user(pool, &context).await,
@@ -361,12 +361,12 @@ async fn context_role(
     Ok(registered_profile)
 }
 
-pub(crate) fn authorize_tool_for_role(tool_name: &str, role: BearProfile) -> Result<(), CustomError> {
+pub(crate) fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> Result<(), CustomError> {
     let descriptor = builtin_den_tool_descriptors()
         .into_iter()
         .find(|descriptor| descriptor.name == tool_name)
         .ok_or_else(|| CustomError::NotFound(format!("unknown Den tool: {tool_name}")))?;
-    if descriptor.allows_role(role) {
+    if descriptor.allows_profile(role) {
         Ok(())
     } else {
         Err(CustomError::Authorization(format!(
@@ -458,7 +458,7 @@ async fn list_capabilities_self(
     context: &DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
     let role = context_role(pool, context).await?;
-    let descriptors = builtin_den_tool_descriptors_for_role(role);
+    let descriptors = builtin_den_tool_descriptors_for_profile(role);
     Ok(json!({
         "bear_id": context.bear_id,
         "channel": context.channel,

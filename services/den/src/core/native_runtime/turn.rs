@@ -207,7 +207,7 @@ async fn build_session(
             pool: &state.sqlx_pool,
             stores: &state.memory_stores,
             bear_id,
-            role: profile.role,
+            profile: profile.profile,
             conversation_id,
             turn_runtime_context: runtime_context,
             human_message,
@@ -232,7 +232,7 @@ async fn build_session(
     let messages = assembled.messages;
     let tools = merge_den_and_client_tools(
         state.config.as_ref(),
-        profile.role,
+        profile.profile,
         client_tools,
         human_message,
     )?;
@@ -270,7 +270,7 @@ pub async fn start_native_profile_turn_event_stream(
             "native runtime requested but AGENT_RUNTIME is not native".to_string(),
         ));
     }
-    let profile = NativeCapabilityProfile::for_role(role);
+    let profile = NativeCapabilityProfile::for_profile(role);
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.state.sqlx_pool.clone());
     let materialized =

@@ -80,7 +80,7 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         &pool,
         CreateMemoryProposal {
             bear_id,
-            source_role: BearProfile::Pair,
+            source_profile: BearProfile::Pair,
             source_agent_id: Some("agent-pair".to_string()),
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: json!({

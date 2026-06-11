@@ -61,7 +61,7 @@ fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
 }
 
 #[test]
-fn work_surface_scaffold_requests_use_work_role_local_path_when_role_is_work() {
+fn work_surface_scaffold_requests_use_work_profile_local_path_when_role_is_work() {
     let requests = work_surface_scaffold_requests(
         BearProfile::Work,
         "meta",
@@ -78,7 +78,7 @@ fn work_surface_scaffold_requests_use_work_role_local_path_when_role_is_work() {
 }
 
 #[test]
-fn work_surface_scaffold_requests_skip_role_local_file_for_chat() {
+fn work_surface_scaffold_requests_skip_profile_local_file_for_chat() {
     let requests = work_surface_scaffold_requests(
         BearProfile::Chat,
         "meta",

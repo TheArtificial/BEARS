@@ -160,7 +160,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
         &pool,
         WorkPlanUpsert {
             bear_id,
-            owner_role: BearProfile::Pair,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),
@@ -168,7 +168,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
             source_channel: json!({ "protocol": "acp" }),
             plan_id: None,
             expected_version: None,
-            update: update("Private pair plan", WorkPlanVisibility::PrivateToRole),
+            update: update("Private pair plan", WorkPlanVisibility::PrivateToProfile),
         },
     )
     .await
@@ -203,7 +203,7 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
         &pool,
         WorkPlanUpsert {
             bear_id,
-            owner_role: BearProfile::Pair,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),

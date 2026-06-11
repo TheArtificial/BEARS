@@ -7,7 +7,7 @@ use crate::{
         bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash, Bear},
         memory::{
             has_work_surface_canonical_anchor, head_record_for_logical_path,
-            list_role_local_head_records, memory_sequence_high_water, MemoryRecordRow, MemoryStoreManager,
+            list_profile_local_head_records, memory_sequence_high_water, MemoryRecordRow, MemoryStoreManager,
         },
         tools::{
             support::truncate_chars,
@@ -31,7 +31,7 @@ const TIER4_SITUATION_PATH: &str = "core/situation/briefing.md";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyMemoryProjectionCacheKey {
     pub bear_id: Uuid,
-    pub role: BearProfile,
+    pub profile: BearProfile,
     pub conversation_id: String,
     pub primary_surface_slug: Option<String>,
     pub sequence_high_water: i64,
@@ -50,7 +50,7 @@ pub struct KeyMemoryProjectionInput<'a> {
     pub pool: &'a PgPool,
     pub stores: &'a MemoryStoreManager,
     pub bear: &'a Bear,
-    pub role: BearProfile,
+    pub profile: BearProfile,
     pub conversation_id: &'a str,
     pub session_hints: WorkSurfaceSessionHints,
     pub work_surface_status_override: Option<&'a str>,
@@ -68,7 +68,7 @@ struct ProjectionBudget {
     tiers: [TierBudget; 4],
 }
 
-fn projection_budget_for_role(role: BearProfile) -> ProjectionBudget {
+fn projection_budget_for_profile(role: BearProfile) -> ProjectionBudget {
     let global_cap = match role {
         BearProfile::Pair | BearProfile::Chat | BearProfile::Work => 8_000,
         BearProfile::Curate => 6_000,
@@ -175,7 +175,7 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     let store = input.stores.store_for_bear(input.bear.id).await?;
     let sequence_high_water = memory_sequence_high_water(&store).await?;
     let compiled_config_token =
-        compiled_prompt_cache_token(input.pool, input.bear, input.role, input.native_runtime)
+        compiled_prompt_cache_token(input.pool, input.bear, input.profile, input.native_runtime)
             .await?;
     let status = work_surface_projection_status(
         &input.session_hints,
@@ -184,14 +184,14 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     let primary_slug = work_surface_candidate_slug_from_hints(&input.session_hints);
     let cache_key = KeyMemoryProjectionCacheKey {
         bear_id: input.bear.id,
-        role: input.role,
+        profile: input.profile,
         conversation_id: input.conversation_id.to_string(),
         primary_surface_slug: primary_slug.clone(),
         sequence_high_water,
         compiled_config_token,
     };
 
-    let budget = projection_budget_for_role(input.role);
+    let budget = projection_budget_for_profile(input.profile);
     let mut included = Vec::<Value>::new();
     let mut omitted_budget = Vec::<String>::new();
     let mut omitted_no_surface = Vec::<String>::new();
@@ -249,7 +249,7 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         } else if matches!(status, WorkSurfaceProjectionStatus::Candidate) && !tier2_active {
             omitted_no_surface.push(format!("tier2:slug={slug}:anchor_required"));
         } else if tier2_active {
-            let (canonical_paths, _) = work_surface_anchor_paths(input.role, slug);
+            let (canonical_paths, _) = work_surface_anchor_paths(input.profile, slug);
             let mut tracker = BudgetTracker::new(&budget, 1);
             let mut blocks = Vec::new();
             for path in canonical_paths {
@@ -289,17 +289,17 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
             None
         };
         let records = if let Some(surface) = surface_ref {
-            let mut rows = list_role_local_head_records(&store, input.role.as_str(), Some(surface), 8)
+            let mut rows = list_profile_local_head_records(&store, input.profile.as_str(), Some(surface), 8)
                 .await?;
             if rows.len() < budget.tiers[2].max_records {
                 let remaining = (budget.tiers[2].max_records - rows.len()) as i64;
-                let global = list_role_local_head_records(&store, input.role.as_str(), None, remaining)
+                let global = list_profile_local_head_records(&store, input.profile.as_str(), None, remaining)
                     .await?;
                 rows.extend(global);
             }
             rows
         } else {
-            list_role_local_head_records(&store, input.role.as_str(), None, budget.tiers[2].max_records as i64)
+            list_profile_local_head_records(&store, input.profile.as_str(), None, budget.tiers[2].max_records as i64)
                 .await?
         };
         for record in records {
@@ -329,7 +329,7 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         if !blocks.is_empty() {
             sections.push(format!(
                 "## Role highlights ({})\n\n{}",
-                input.role.as_str(),
+                input.profile.as_str(),
                 blocks.join("\n\n")
             ));
         }

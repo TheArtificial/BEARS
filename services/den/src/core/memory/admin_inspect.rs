@@ -20,7 +20,7 @@ pub struct BearMemoryAdminStats {
     pub db_size_bytes: Option<u64>,
     pub record_count: i64,
     pub shared_count: i64,
-    pub role_local_count: i64,
+    pub profile_local_count: i64,
     pub sequence_high_water: i64,
     pub pending_proposals: i64,
     pub pending_observations: i64,
@@ -60,13 +60,13 @@ pub async fn bear_memory_admin_stats(
     .await
     .map_err(|e| CustomError::System(format!("memory shared count failed: {e}")))?;
 
-    let role_local_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'role_local'",
+    let profile_local_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'profile_local'",
     )
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory role_local count failed: {e}")))?;
+    .map_err(|e| CustomError::System(format!("memory profile_local count failed: {e}")))?;
 
     let distinct_paths: i64 = sqlx::query_scalar(
         "SELECT COUNT(DISTINCT logical_path) FROM memory_records WHERE bear_id = ? AND logical_path IS NOT NULL",
@@ -96,7 +96,7 @@ pub async fn bear_memory_admin_stats(
         db_size_bytes,
         record_count,
         shared_count,
-        role_local_count,
+        profile_local_count,
         sequence_high_water,
         pending_proposals,
         pending_observations,
@@ -132,7 +132,7 @@ pub async fn get_memory_record_by_id(
     let store = manager.store_for_bear(bear_id).await?;
     let row = sqlx::query(
         r#"
-        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND memory_id = ?
@@ -160,8 +160,8 @@ pub async fn get_memory_record_by_id(
             &row.try_get::<String, _>("scope_type")
                 .map_err(|e| CustomError::System(e.to_string()))?,
         )
-        .unwrap_or(MemoryScopeType::RoleLocal),
-        scope_role: row.try_get("scope_role").ok(),
+        .unwrap_or(MemoryScopeType::ProfileLocal),
+        scope_profile: row.try_get("scope_profile").ok(),
         kind: row.try_get("kind").map_err(|e| CustomError::System(e.to_string()))?,
         content_text: row
             .try_get("content_text")
@@ -181,7 +181,7 @@ pub async fn list_recent_memory_records(
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
         r#"
-        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ?
@@ -206,8 +206,8 @@ pub async fn list_recent_memory_records(
                 scope_type: MemoryScopeType::parse(
                     &row.try_get::<String, _>("scope_type")?,
                 )
-                .unwrap_or(MemoryScopeType::RoleLocal),
-                scope_role: row.try_get("scope_role").ok(),
+                .unwrap_or(MemoryScopeType::ProfileLocal),
+                scope_profile: row.try_get("scope_profile").ok(),
                 kind: row.try_get("kind")?,
                 content_text: row.try_get("content_text")?,
                 logical_path: row.try_get("logical_path").ok(),

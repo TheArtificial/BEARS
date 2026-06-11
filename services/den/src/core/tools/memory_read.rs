@@ -7,7 +7,7 @@ use crate::{
     core::{
         bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
-        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
+        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
         prompt_memory_blocks::{PromptMemoryBlock, PromptMemoryBlockState},
         tools::{
             memfs::{
@@ -94,7 +94,7 @@ pub(crate) async fn memory_status(
         let store = stores.store_for_bear(context.bear_id).await?;
         let mut response = sqlite_memory::sqlite_memory_status(&store, role.as_str()).await?;
         let prompt_memory_blocks =
-            list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+            list_prompt_memory_blocks_for_bear_profile(pool, context.bear_id, role.as_str()).await?;
         if let Some(obj) = response.as_object_mut() {
             obj.insert(
                 "prompt_memory_diagnostic".to_string(),
@@ -113,7 +113,7 @@ pub(crate) async fn memory_status(
     )
     .await?;
     let prompt_memory_blocks =
-        list_prompt_memory_blocks_for_bear_role(pool, context.bear_id, role.as_str()).await?;
+        list_prompt_memory_blocks_for_bear_profile(pool, context.bear_id, role.as_str()).await?;
     let prompt_memory_diagnostic =
         prompt_memory_diagnostic_summary_for_bear_role(&prompt_memory_blocks);
     let Some(response) = response else {

@@ -37,7 +37,7 @@ pub async fn create_proposal(
     }
     let store = stores.store_for_bear(params.bear_id).await?;
     let payload = json!({
-        "source_role": params.source_role.as_str(),
+        "source_profile": params.source_profile.as_str(),
         "source_agent_id": params.source_agent_id,
         "source_paths": params.source_paths,
         "source_refs": params.source_refs,
@@ -60,7 +60,7 @@ pub async fn create_proposal(
         &payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_role))
+    Ok(sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile))
 }
 
 pub async fn create_observation(
@@ -165,7 +165,7 @@ pub async fn resolve_proposal(
     }
     let store = stores.store_for_bear(params.bear_id).await?;
     let review_payload = json!({
-        "reviewer_role": params.reviewer_role.as_str(),
+        "reviewer_profile": params.reviewer_profile.as_str(),
         "reviewer_agent_id": params.reviewer_agent_id,
         "review_notes": params.review_notes,
         "decision_summary": params.decision_summary,
@@ -182,7 +182,7 @@ pub async fn resolve_proposal(
     Ok(sqlite_proposal_to_row(
         params.bear_id,
         &sqlite,
-        params.reviewer_role,
+        params.reviewer_profile,
     ))
 }
 
@@ -192,10 +192,10 @@ pub async fn promote_core_content(
     source_memory_id: &str,
     kind: &str,
     content_text: &str,
-    author_role: &str,
+    author_profile: &str,
 ) -> Result<(String, String), CustomError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_role).await
+    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile).await
 }
 
 pub async fn record_reflection_outcome_start(
@@ -228,16 +228,16 @@ pub async fn record_reflection_outcome_complete(
 fn sqlite_proposal_to_row(
     bear_id: Uuid,
     sqlite: &SqliteMemoryProposal,
-    source_role: BearProfile,
+    source_profile: BearProfile,
 ) -> MemoryProposalRow {
     let p = &sqlite.payload_json;
     MemoryProposalRow {
         id: Uuid::parse_str(&sqlite.proposal_id).unwrap_or_else(|_| Uuid::new_v4()),
         bear_id,
-        source_role: p
-            .get("source_role")
+        source_profile: p
+            .get("source_profile")
             .and_then(|v| v.as_str())
-            .unwrap_or(source_role.as_str())
+            .unwrap_or(source_profile.as_str())
             .to_string(),
         source_agent_id: p
             .get("source_agent_id")
@@ -294,7 +294,7 @@ fn sqlite_proposal_to_row(
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         status: sqlite.status.clone(),
-        reviewer_role: None,
+        reviewer_profile: None,
         reviewer_agent_id: None,
         review_notes: None,
         decision_summary: None,

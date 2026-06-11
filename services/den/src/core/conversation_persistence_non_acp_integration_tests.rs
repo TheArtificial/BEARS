@@ -69,13 +69,13 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         &pool,
         CreateMemoryProposal {
             bear_id,
-            source_role: BearProfile::Pair,
+            source_profile: BearProfile::Pair,
             source_agent_id: Some("agent-pair".to_string()),
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: serde_json::json!({
                 "conversation_id": "conv-memory-proposal-test"
             }),
-            suggested_action: "retain_role_local",
+            suggested_action: "retain_profile_local",
             target_ref: None,
             title: "Test proposal",
             summary: "Test summary",
@@ -95,7 +95,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         ProposalResolutionParams {
             bear_id,
             proposal_id: proposal.id,
-            reviewer_role: BearProfile::Curate,
+            reviewer_profile: BearProfile::Curate,
             reviewer_agent_id: Some("agent-curate"),
             status: "approved",
             review_notes: Some("looks good"),
@@ -118,7 +118,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             },
             event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
                 proposal_id: proposal.id,
-                source_role: proposal.source_role.clone(),
+                source_profile: proposal.source_profile.clone(),
                 suggested_action: proposal.suggested_action.clone(),
                 title: proposal.title.clone(),
                 status: proposal.status.clone(),
@@ -126,7 +126,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             workflow_text: format!("Memory proposal created: {}", proposal.title),
             visible_summary: Some(format!(
                 "Review requested for memory proposal '{}' from {}.",
-                proposal.title, proposal.source_role
+                proposal.title, proposal.source_profile
             )),
         },
     )
@@ -143,11 +143,11 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             },
             event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
                 proposal_id: resolved.id,
-                source_role: resolved.source_role.clone(),
+                source_profile: resolved.source_profile.clone(),
                 suggested_action: resolved.suggested_action.clone(),
                 title: resolved.title.clone(),
                 status: resolved.status.clone(),
-                reviewer_role: resolved.reviewer_role.clone(),
+                reviewer_profile: resolved.reviewer_profile.clone(),
                 result_path: resolved.result_path.clone(),
                 result_commit: resolved.result_commit.clone(),
             }),

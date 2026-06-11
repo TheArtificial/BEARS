@@ -122,7 +122,7 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
             "toward_workplan_id": Value::Null,
             "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
             "visibility": plan.visibility,
-            "owner_role": plan.owner_role,
+            "owner_profile": plan.owner_profile,
             "version": plan.version,
         }),
         None => json!({

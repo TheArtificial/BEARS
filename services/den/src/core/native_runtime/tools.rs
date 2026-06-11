@@ -8,7 +8,7 @@ use crate::{
         tools::{
             descriptor::{
                 builtin_den_tool_descriptors_for_pair_acp_surface,
-                builtin_den_tool_descriptors_for_role, DenToolDescriptor,
+                builtin_den_tool_descriptors_for_profile, DenToolDescriptor,
             },
             memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name},
         },
@@ -71,12 +71,12 @@ fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> 
     }
 }
 
-pub fn den_tools_for_role(config: &Config, role: BearProfile) -> Vec<LlmToolDefinition> {
+pub fn den_tools_for_profile(config: &Config, role: BearProfile) -> Vec<LlmToolDefinition> {
     let compact = config.uses_native_agent_runtime();
     let descriptors = if config.uses_native_agent_runtime() && role == BearProfile::Pair {
         builtin_den_tool_descriptors_for_pair_acp_surface()
     } else {
-        builtin_den_tool_descriptors_for_role(role)
+        builtin_den_tool_descriptors_for_profile(role)
     };
     descriptors
         .into_iter()
@@ -116,7 +116,7 @@ pub fn merge_den_and_client_tools(
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, CustomError> {
-    let mut merged = den_tools_for_role(config, role);
+    let mut merged = den_tools_for_profile(config, role);
     let include_client_tools = if config.uses_native_agent_runtime() && role == BearProfile::Pair {
         pair_turn_needs_workspace_client_tools(pair_turn_prompt)
     } else {

@@ -114,7 +114,7 @@ fn work_plan_payload_is_activity_native() {
         bear_id: uuid::Uuid::nil(),
         title: "Activity".to_string(),
         summary: "Current work".to_string(),
-        owner_role: "pair".to_string(),
+        owner_profile: "pair".to_string(),
         visibility: "same_user".to_string(),
         status: "active".to_string(),
         version: 1,

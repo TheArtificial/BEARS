@@ -13,7 +13,7 @@
   <dt>Database</dt>
   <dd><code>{{ stats.db_path | e }}</code>{% if stats.db_exists %} ({{ stats.db_size_bytes }} bytes){% else %} <em>missing</em>{% endif %}</dd>
   <dt>Records</dt>
-  <dd>{{ stats.record_count }} total ({{ stats.shared_count }} shared, {{ stats.role_local_count }} role-local)</dd>
+  <dd>{{ stats.record_count }} total ({{ stats.shared_count }} shared, {{ stats.profile_local_count }} role-local)</dd>
   <dt>Paths</dt>
   <dd>{{ stats.distinct_paths }}</dd>
   <dt>Sequence high water</dt>
@@ -56,7 +56,7 @@
     <tr>
       <td><code>{{ r.memory_id | e }}</code></td>
       <td>{{ r.sequence_no }}</td>
-      <td>{{ r.scope_type }} {% if r.scope_role %}({{ r.scope_role | e }}){% endif %}</td>
+      <td>{{ r.scope_type }} {% if r.scope_profile %}({{ r.scope_profile | e }}){% endif %}</td>
       <td>{% if r.logical_path %}<code>{{ r.logical_path | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td>{{ r.kind | e }}</td>
       <td><a href="/admin/bears/{{ bear.id }}/memory/records/{{ r.memory_id | e }}">View</a></td>

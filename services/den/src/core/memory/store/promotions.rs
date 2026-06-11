@@ -46,7 +46,7 @@ pub async fn promote_to_shared_core(
     source_memory_id: &str,
     kind: &str,
     content_text: &str,
-    author_role: &str,
+    author_profile: &str,
 ) -> Result<(String, String), CustomError> {
     use super::records::append_memory_record;
     let logical = LogicalMemoryPath::shared_core(kind);
@@ -54,7 +54,7 @@ pub async fn promote_to_shared_core(
         store,
         &logical,
         kind,
-        author_role,
+        author_profile,
         None,
         content_text,
         &serde_json::json!({ "promoted_from": source_memory_id }),

@@ -10,7 +10,7 @@ use crate::{
                 DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE_PROVIDER,
                 DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             },
-            descriptor::builtin_den_tool_descriptors_for_role,
+            descriptor::builtin_den_tool_descriptors_for_profile,
             memory_write::source_acp_session_id,
             session::DenToolInvocationContext,
             support::{memory_read_scopes, memory_write_scopes},
@@ -60,7 +60,7 @@ pub(crate) fn bear_environment_payload(
     });
     let tools = json!({
         "session_policy": context.session_policy,
-        "available_den_tools": builtin_den_tool_descriptors_for_role(role)
+        "available_den_tools": builtin_den_tool_descriptors_for_profile(role)
             .into_iter()
             .map(|descriptor| json!({
                 "name": descriptor.name,
@@ -296,7 +296,7 @@ pub(crate) fn session_info_payload(
             "agent_id": context.binding_id,
             "contract_label": role_contract_label,
             "contract_source": if role_contract_label.is_some() { json!("system_prompt") } else { Value::Null },
-            "contract_purpose": if role_contract_label.is_some() { json!("behavioral_style_and_role_guidance") } else { Value::Null },
+            "contract_purpose": if role_contract_label.is_some() { json!("behavioral_style_and_profile_guidance") } else { Value::Null },
         },
         "runtime_context": {
             "active_bear_slug": context.bear_slug,

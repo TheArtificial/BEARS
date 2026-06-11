@@ -15,7 +15,7 @@ pub use governance::{
     record_reflection_outcome_start, resolve_proposal, uses_sqlite_governance,
 };
 pub use store::{
-    has_work_surface_canonical_anchor, head_record_for_logical_path, list_role_local_head_records,
+    has_work_surface_canonical_anchor, head_record_for_logical_path, list_profile_local_head_records,
     memory_sequence_high_water, BearMemoryStore, LogicalMemoryPath, MemoryRecordRow,
     MemoryScopeType, MemoryStoreManager,
 };

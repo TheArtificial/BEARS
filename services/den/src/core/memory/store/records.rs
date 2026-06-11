@@ -13,7 +13,7 @@ pub struct MemoryRecordRow {
     pub memory_id: String,
     pub sequence_no: i64,
     pub scope_type: MemoryScopeType,
-    pub scope_role: Option<String>,
+    pub scope_profile: Option<String>,
     pub kind: String,
     pub content_text: String,
     pub logical_path: Option<String>,
@@ -58,7 +58,7 @@ impl BearMemoryStore {
         &self,
         logical: &LogicalMemoryPath,
         kind: &str,
-        author_role: &str,
+        author_profile: &str,
         author_agent_id: Option<&str>,
         content_text: &str,
         metadata_json: &Value,
@@ -73,8 +73,8 @@ impl BearMemoryStore {
         sqlx::query(
             r#"
             INSERT INTO memory_records (
-                memory_id, bear_id, sequence_no, scope_type, scope_role, kind, entity_ref,
-                author_role, author_agent_id, created_at, content_text, metadata_json,
+                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind, entity_ref,
+                author_profile, author_agent_id, created_at, content_text, metadata_json,
                 visibility, logical_path, work_surface_ref
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -83,10 +83,10 @@ impl BearMemoryStore {
         .bind(self.bear_id.to_string())
         .bind(sequence_no)
         .bind(logical.scope_type.as_str())
-        .bind(&logical.scope_role)
+        .bind(&logical.scope_profile)
         .bind(kind)
         .bind(&logical.entity_ref)
-        .bind(author_role)
+        .bind(author_profile)
         .bind(author_agent_id)
         .bind(&created_at)
         .bind(content_text)
@@ -101,7 +101,7 @@ impl BearMemoryStore {
             memory_id,
             sequence_no,
             scope_type: logical.scope_type,
-            scope_role: logical.scope_role.clone(),
+            scope_profile: logical.scope_profile.clone(),
             kind: kind.to_string(),
             content_text: content_text.to_string(),
             logical_path: Some(logical_path),
@@ -116,7 +116,7 @@ pub async fn append_memory_record(
     store: &BearMemoryStore,
     logical: &LogicalMemoryPath,
     kind: &str,
-    author_role: &str,
+    author_profile: &str,
     author_agent_id: Option<&str>,
     content_text: &str,
     metadata_json: &Value,
@@ -125,7 +125,7 @@ pub async fn append_memory_record(
         .append_record(
             logical,
             kind,
-            author_role,
+            author_profile,
             author_agent_id,
             content_text,
             metadata_json,
@@ -151,7 +151,7 @@ pub async fn head_record_for_logical_path(
 ) -> Result<Option<MemoryRecordRow>, CustomError> {
     let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r#"
-        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
@@ -187,19 +187,19 @@ pub async fn has_work_surface_canonical_anchor(
     Ok(false)
 }
 
-pub async fn list_role_local_head_records(
+pub async fn list_profile_local_head_records(
     store: &BearMemoryStore,
-    role: &str,
+    profile: &str,
     work_surface_ref: Option<&str>,
     limit: i64,
 ) -> Result<Vec<MemoryRecordRow>, CustomError> {
     let rows = if let Some(surface) = work_surface_ref {
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r#"
-            SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+            SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                    logical_path, work_surface_ref, metadata_json, created_at
             FROM memory_records
-            WHERE bear_id = ? AND scope_type = 'role_local' AND scope_role = ?
+            WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref = ?
               AND NOT EXISTS (
                 SELECT 1 FROM memory_records newer
@@ -211,7 +211,7 @@ pub async fn list_role_local_head_records(
             "#,
         )
         .bind(store.bear_id.to_string())
-        .bind(role)
+        .bind(profile)
         .bind(surface)
         .bind(limit)
         .fetch_all(store.pool())
@@ -219,10 +219,10 @@ pub async fn list_role_local_head_records(
     } else {
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r#"
-            SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+            SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                    logical_path, work_surface_ref, metadata_json, created_at
             FROM memory_records
-            WHERE bear_id = ? AND scope_type = 'role_local' AND scope_role = ?
+            WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM memory_records newer
@@ -234,12 +234,12 @@ pub async fn list_role_local_head_records(
             "#,
         )
         .bind(store.bear_id.to_string())
-        .bind(role)
+        .bind(profile)
         .bind(limit)
         .fetch_all(store.pool())
         .await
     }
-    .map_err(|e| CustomError::System(format!("list role_local memory_records failed: {e}")))?;
+    .map_err(|e| CustomError::System(format!("list profile_local memory_records failed: {e}")))?;
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
@@ -250,7 +250,7 @@ pub async fn list_records_for_logical_path(
 ) -> Result<Vec<MemoryRecordRow>, CustomError> {
     let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r#"
-        SELECT memory_id, sequence_no, scope_type, scope_role, kind, content_text,
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ?
@@ -272,7 +272,7 @@ struct MemoryRecordSqlRow {
     memory_id: String,
     sequence_no: i64,
     scope_type: String,
-    scope_role: Option<String>,
+    scope_profile: Option<String>,
     kind: String,
     content_text: String,
     logical_path: Option<String>,
@@ -287,8 +287,8 @@ impl MemoryRecordSqlRow {
             memory_id: self.memory_id,
             sequence_no: self.sequence_no,
             scope_type: MemoryScopeType::parse(&self.scope_type)
-                .unwrap_or(MemoryScopeType::RoleLocal),
-            scope_role: self.scope_role,
+                .unwrap_or(MemoryScopeType::ProfileLocal),
+            scope_profile: self.scope_profile,
             kind: self.kind,
             content_text: self.content_text,
             logical_path: self.logical_path,

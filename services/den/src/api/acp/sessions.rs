@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         acp_sessions,
-        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_role,
+        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
         work_plans::WorkPlanProjection,
     },
     errors::CustomError,
@@ -96,7 +96,7 @@ pub(crate) async fn acp_session_row_to_http_with_modes(
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     let turn_context = resolve_acp_turn_context(&row, plan_mode_row.as_ref(), None);
     let prompt_memory_blocks =
-        list_prompt_memory_blocks_for_bear_role(pool, row.bear_id, "pair").await?;
+        list_prompt_memory_blocks_for_bear_profile(pool, row.bear_id, "pair").await?;
     let prompt_memory_diagnostic = Some(
         serde_json::json!({
             "status": if prompt_memory_blocks.iter().any(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active) { "ok" } else { "empty" },
