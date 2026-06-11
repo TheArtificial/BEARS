@@ -126,9 +126,9 @@ This is distinct from:
 |-----------|------|
 | **Compiled system prompt** | Identity, role contract, operator steering — from `bear_compiled_configs` |
 | **Prompt memory blocks** | Editable in-context state in Den Postgres — session/work-surface/role scoped ([prompt-memory contract](den-prompt-memory-block-contract.md)) |
-| **Key memory projection** | Read-only proactive slice of **canonical SQLite memory** |
-| **`memory_search` / `memory_read` tools** | On-demand retrieval when projection is insufficient |
-| **Derived semantic index** | Optional recall assist; not source of truth |
+| **Key memory projection** | Read-only proactive slice of **canonical SQLite memory** (path anchors) |
+| **Derived recall** | Vector search over chunked passages ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); bounded turn-start + hybrid `memory_search` |
+| **`memory_search` / `memory_read` tools** | On-demand retrieval; `memory_search` becomes hybrid when Qdrant is configured |
 
 #### v1 selection policy (locked)
 
@@ -229,7 +229,8 @@ Order target:
 
 ```text
 system:  [compiled role prompt]
-       + [key memory projection]
+       + [key memory projection — path anchors]
+       + [derived recall — optional vector passages]
        + [runtime supplements: prompt-memory, compaction, channel reminders]
 messages: [canonical transcript] + [current user/tool step]
 tools:    [merged Den + client descriptors]
@@ -249,9 +250,14 @@ Per ADR-0031, canonical memory is append-only records, not a markdown file tree:
 
 Git is retained **only** for human-authored artifacts: skills documentation, prompts, policies, schema definitions/migrations, design artifacts, tests/fixtures, and optionally exported curated summaries. It is no longer canonical for any live machine-written Bear memory.
 
-### Semantic retrieval
+### Semantic retrieval (derived recall)
 
-Letta Archives are removed with Letta. Semantic recall, if needed, is a Den-owned derived index over the SQLite canonical sources — not a separate source of truth and (per repo policy) not a justification for a new general-purpose vector store.
+Letta Archives and Letta pgvector are removed with Letta. Semantic recall is a **Den-owned derived index** — not a second canonical memory store.
+
+- **Platform embedding standard:** versioned contract shared by Bear memory and Cabinet ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); initial id `bears-embed-v1` (`text-embedding-3-small`, 1536d via Bifrost).
+- **Vector store:** Qdrant collections named per embedding standard; passage metadata in Den Postgres; vectors are disposable (rebuild from SQLite / Cabinet sources).
+- **Complements key memory projection:** anchors = fixed logical paths; recall = fuzzy / cross-corpus passages when policy allows.
+- **Implementation:** [Derived recall index plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 
 ## Loop strategies
 
@@ -274,7 +280,7 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
+Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). **Derived recall** (Qdrant + platform embedding standard) is specified in [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) and not yet wired. Remaining parity gaps: vector recall lane, conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
 
 ## What this supersedes
 
@@ -287,6 +293,7 @@ Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_pro
 ## Related documents
 
 - Migration plan and phasing: [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- Derived recall (Qdrant + embeddings): [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [`../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)
 - Bear package format (portable export/import): [`../guides/bear-package.md`](../guides/bear-package.md)
 - Memory model (Bear-facing): [`memory-model.md`](memory-model.md)
 - Historical Letta dependency inventory: [`letta-dependency-matrix.md`](letta-dependency-matrix.md)

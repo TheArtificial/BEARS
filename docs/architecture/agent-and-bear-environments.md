@@ -103,13 +103,14 @@ Turn Context is narrower than a role runtime, which is narrower than Bear Operat
 
 In the target Bear Den implementation (native runtime), Turn Context is assembled in layers:
 
-1. **Compiled system prompt** — from `bear_compiled_configs.rendered_prompts_json[role]` (managed blocks + `context_profile`). See [Den-Native Runtime: Turn context assembly](den-native-runtime.md#turn-context-assembly).
-2. **Key memory projection** — bounded proactive slice of per-Bear SQLite canonical memory (identity anchors, active work-surface anchors, role highlights). Not the full memory bank. v1 policy: [Den-Native Runtime: v1 selection policy](den-native-runtime.md#v1-selection-policy-locked) (work-surface tier requires canonical anchors even for `candidate` status).
-3. **Den baseline / role / steering / bear context** — these are *inputs* to compilation, not recomposed ad hoc at turn time.
-4. **Prompt memory blocks** — editable in-context state from Den Postgres ([prompt-memory contract](den-prompt-memory-block-contract.md)).
-5. **Runtime/thread context** — situational supplements: ACP reminders, plan mode, workboard, compaction envelope.
+1. **Compiled system prompt** — from `bear_compiled_configs.rendered_prompts_json[profile]` (managed blocks + `context_profile`). See [Den-Native Runtime: Turn context assembly](den-native-runtime.md#turn-context-assembly).
+2. **Key memory projection** — bounded proactive slice of per-Bear SQLite canonical memory (path anchors). v1 policy: [v1 selection policy](den-native-runtime.md#v1-selection-policy-locked).
+3. **Derived recall** — optional bounded vector passages when Qdrant is configured ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)).
+4. **Den baseline / profile / steering / bear context** — inputs to compilation, not recomposed ad hoc at turn time.
+5. **Prompt memory blocks** — editable in-context state from Den Postgres ([prompt-memory contract](den-prompt-memory-block-contract.md)).
+6. **Runtime/thread context** — situational supplements: ACP reminders, plan mode, workboard, compaction envelope.
 
-Older docs may still describe inline `compose_role_context` at turn time; the target is **compiled prompt + projection + supplements**.
+Older docs may still describe inline `compose_role_context` at turn time; the target is **compiled prompt + projection + recall + supplements**.
 
 Additional runtime-specific context may be added per turn. For example, a `pair` ACP turn may include a Den-injected system reminder describing available local client tools, Den server tools, workspace roots, authenticated human identity, memory boundaries, plan-mode state, visible workboard state, work-surface hints, and tool-loop behavior.
 

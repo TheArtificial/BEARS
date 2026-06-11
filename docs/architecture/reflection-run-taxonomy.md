@@ -46,7 +46,7 @@ Reflection
 |------|----------|---------------|---------|
 | `pair_reflect` | Pair reflection run | Den / pair reflection process | Maintain `pair/` memory and create review requests. |
 | `memory_curate` | Review memory run | `review` | Review role-local memory and maintain `core/`. |
-| `archive_index` | Archive indexing run | Den / indexer | Sync selected canonical sources into Letta Archives. |
+| `archive_index` | Archive indexing run | Den / indexer | Reconcile derived Qdrant recall index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) over selected canonical sources. |
 | `watch_observation_review` | Watch observation review run | `review` | Review `watch` observations before memory/action. |
 | `work_result_review` | Work result review run | `review` | Review `work` results and promote useful summaries. |
 | `skill_review` | Skill review run | `review` or reviewer | Review proposed reusable skills/procedures. |
@@ -132,7 +132,7 @@ Constraints:
 
 Purpose:
 
-- maintain Letta Archives as derived semantic indexes over canonical Bear Den sources.
+- maintain **derived recall indexes** (Qdrant + platform embedding standard [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) over canonical Bear Den and Cabinet sources. Replaces Letta Archives.
 
 Inputs:
 
@@ -145,16 +145,15 @@ Inputs:
 
 Outputs:
 
-- Letta Archive passages;
-- updated source-to-passage mappings;
-- deleted/recreated stale passages;
-- archive indexing activity records.
+- Qdrant passage upserts/deletes;
+- updated passage registry rows;
+- indexing activity records.
 
 Constraints:
 
-- Letta Archives are not source of truth;
-- no Bear Den vector store;
-- changed source hashes use delete-and-create passage sync;
+- Qdrant vectors are not source of truth;
+- canonical SQLite/Cabinet sources remain authoritative;
+- changed source hashes trigger re-embed / passage replace;
 - search results must point back to canonical sources.
 
 ## `watch_observation_review`

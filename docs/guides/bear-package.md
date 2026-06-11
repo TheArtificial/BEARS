@@ -19,6 +19,7 @@ How to **export**, **transport**, and **import** a Bear's **cognition and config
 | Membership (`user_bear`), users | **No** | Den Postgres |
 | Approvals in flight, ACP session state | **No** | Den Postgres / channel adapters |
 | Host-local runtime binding ids (`den-native:{id}:chat`, …) | **No** | re-provision on import |
+| Qdrant / derived recall vectors | **No** | rebuild from `memory.sqlite` on import ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
 | Secrets (OAuth, API keys, webhook signing) | **No** | host secret store |
 
 The boundary matches [den-native-runtime storage](../architecture/den-native-runtime.md#storage-boundary-bear-cognition-vs-den-control-plane): **Bear cognition → per-Bear SQLite**; **control plane → Den Postgres**. A package is the portable half of that split plus human-authored artifacts.

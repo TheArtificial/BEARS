@@ -199,6 +199,8 @@ Durable memory is broader Bear knowledge. Prompt blocks are the smaller subset i
 
 **Key memory projection** (native runtime) is a separate, read-only proactive slice of **SQLite canonical memory** — not prompt memory blocks. v1 selection, budgets, and anchor-required work-surface gating: [Den-Native Runtime: v1 selection policy](den-native-runtime.md#v1-selection-policy-locked).
 
+**Derived recall** (Qdrant vector passages) is a third lane — [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md).
+
 ### Versus archival retrieval
 
 Retrieval returns relevant indexed content at query time. Prompt blocks are standing scoped context selected by policy rather than search.

@@ -16,7 +16,7 @@ Because memory is Bear-scoped, a single Bear may accumulate knowledge across mul
 - `review` is responsible for deciding what becomes durable shared memory.
 - Memory curation is a lane within the broader **Reflection** system.
 - Letta Archives provide semantic retrieval indexes over selected canonical memory; they are not the source of truth.
-- Bear Den should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
+- **Target (post-Letta):** Den-owned **derived recall** via Qdrant + platform embedding standard [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), shared with Cabinet. Complements path-based key memory projection; does not replace SQLite canonical memory.
 - Local grounding should be **work-surface-first within the current role and channel**: use the current work surface's canonical anchors before falling back to broader Bear-global memory.
 
 ## Work-surface grounding
@@ -177,7 +177,7 @@ It should contain durable knowledge that is useful across roles and surfaces. Fo
 
 `core/` should be curated, not treated as a dumping ground. The goal is to keep shared memory useful, compact, and trustworthy.
 
-`core/` is not a semantic search index. If selected `core/` content is indexed into Letta Archives, the archive passage is a derived summary or pointer. `core/` remains the canonical object to inspect when exact truth matters.
+`core/` is not a semantic search index. Selected `core/` content may be indexed into the **derived recall index** (Qdrant passages with provenance); `core/` remains the canonical object to inspect when exact truth matters.
 
 ## Role-specific memory
 
@@ -205,9 +205,25 @@ Common role-local memory kinds include:
 | `scratch` | Temporary working memory. |
 | `summary` | Condensed form of longer local material. |
 
-## Semantic retrieval with Letta Archives
+## Semantic retrieval (target)
 
-Bear Den uses **Letta Archives** as the preferred semantic retrieval layer. Archives are collections of archival passages that can be shared between agents. They are useful for fuzzy recall, but they are derived indexes over canonical sources, not canonical memory.
+Post-Letta semantic recall is **Den-owned derived recall** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)):
+
+- **Canonical:** per-Bear SQLite `memory_records` (+ Cabinet sources where linked).
+- **Derived:** chunked passages embedded with platform standard **`bears-embed-v1`**; vectors in **Qdrant**; passage metadata in Den Postgres.
+- **Proactive context:** [key memory projection](den-native-runtime.md#layer-2--key-memory-projection-sqlite) (path anchors) + bounded **vector recall** at turn start + prompt memory blocks.
+- **On-demand:** hybrid `memory_search` when Qdrant is configured.
+- **Cabinet alignment:** same embedding standard enables cross-corpus retrieval when policy and ACL allow ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)).
+
+Vectors are rebuildable; bear packages do not include them ([bear package](../guides/bear-package.md)).
+
+Implementation: [Derived recall index plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
+
+## Semantic retrieval with Letta Archives (historical)
+
+> Superseded for native runtime by [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md).
+
+Bear Den previously used **Letta Archives** as the preferred semantic retrieval layer. Archives are collections of archival passages that can be shared between agents. They are useful for fuzzy recall, but they are derived indexes over canonical sources, not canonical memory.
 
 Recommended archive rules:
 
@@ -268,14 +284,16 @@ Bear memory should not store:
 
 Secrets belong in secret-management systems, not in Bear memory.
 
-## Relationship to Letta memory systems
+## Relationship to Letta memory systems (historical)
+
+> Native runtime (`AGENT_RUNTIME=native`) uses SQLite + derived Qdrant recall per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md). The table below describes the Letta-backed era.
 
 Letta and Letta Code provide several memory mechanisms. Bear Den should use them at the right layer:
 
 | Mechanism | Bear Den stance |
 |-----------|--------------|
 | Letta Code reflection | Use for Letta Code-backed roles such as `chat` and `work` where appropriate. Do not duplicate it for those roles. |
-| Letta Archives / archival memory | Use for semantic retrieval. Do not build a separate Bear Den vector store. |
+| Letta Archives / archival memory | Historical: Letta semantic retrieval. **Target:** Den Qdrant derived recall ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). |
 | Letta conversation compaction | Letta owns context-window pressure and conversation summarization. |
 | Letta memory blocks | Treat as legacy/runtime state for Bear Den direction; do not make them the primary long-term memory architecture. |
 | Bear Den `review` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
@@ -299,7 +317,7 @@ Use **situation** for trusted interaction briefings, not “current context.” 
 Prefer:
 
 - “The Bear remembers durable knowledge through curated memory.”
-- “`core/` is canonical shared orientation; Letta Archives provide semantic recall.”
+- “`core/` is canonical shared orientation; **derived recall** (Qdrant + shared embedding standard) provides semantic search over selected passages.”
 - “`core/` is shared memory; role branches hold local context.”
 - “Raw interactions are reviewed before they become shared memory.”
 - “Some memories are intentionally role-local.”
@@ -318,7 +336,7 @@ Avoid:
 - “Shared memory is automatically updated by every agent.”
 - “Letta archival memory is the source of truth.”
 - “Every role should independently archive `core/`.”
-- “Bear Den has its own vector store.”
+- “Bear Den has its own vector store as canonical memory.” (Vectors are **derived** only; SQLite/Cabinet stay canonical.)
 - “Every memory must become Cabinet knowledge.”
 - “Every role memory is waiting for promotion.”
 - “A Cabinet Mission is the same thing as a Bear's purpose.”

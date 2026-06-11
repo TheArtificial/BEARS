@@ -113,7 +113,8 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 ## Risks and sequencing notes
 
 - **Tool-calling fidelity:** provider/Bifrost tool-call streaming differs from Letta's framing; Phase 1 parser + Phase 4 golden traces de-risk this.
-- **Context/compaction parity:** Den must reproduce in-context management Letta did implicitly (Phase 3 context assembler), including **`bear_compiled_configs` for system prompts** and **key memory projection** for proactive SQLite grounding — see [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
+- **Context/compaction parity:** Den must reproduce in-context management Letta did implicitly (Phase 3 context assembler), including **`bear_compiled_configs`**, **key memory projection**, and **derived recall** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) — see [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
+- **Recall index (parallel track):** [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + `bears-embed-v1`; not blocking Phase 4 ACP wiring but required for Letta archival parity at scale.
 - **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; data migration of existing MemFS content is deferred to Phase 8.
 - **Cross-store discipline:** Den Postgres (control plane) and per-Bear SQLite (cognition) must not grow a sync seam; control plane references cognition by id only.
 - **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it.
@@ -121,7 +122,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 ## Non-goals
 
-- No new vector store; SQLite is canonical record storage, not a semantic index.
+- Derived recall is a **Qdrant derived index**, not canonical memory ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); SQLite remains canonical record storage.
 - No pluggable multi-runtime abstraction retained "for optionality" — the native loop is the runtime.
 - No bear-local task store: tasks/jobs stay Docket-canonical in Den Postgres (ADR-0034); SQLite stores memory/cognition only.
 - No "agent-pattern" framework or pattern zoo: reasoning patterns are a small fixed set of composable strategy knobs (ADR-0033). LATS/LLM Compiler deferred.

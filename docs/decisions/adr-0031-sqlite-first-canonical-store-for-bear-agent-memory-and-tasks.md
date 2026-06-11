@@ -341,7 +341,7 @@ This ADR does not define:
 
 ## Portability
 
-Per-Bear SQLite is the natural unit for **Bear cognition export**: a package bundles `memory.sqlite` (this schema) with a YAML **`manifest.yaml`** for identity, role profiles, and version fields — not Den Postgres conversation or Docket state. See [`../guides/bear-package.md`](../guides/bear-package.md) for include/exclude boundaries, import rules, and export tiers.
+Per-Bear SQLite is the natural unit for **Bear cognition export**: a package bundles `memory.sqlite` (this schema) with a YAML **`manifest.yaml`** for identity, role profiles, and version fields — not Den Postgres conversation or Docket state. **Derived recall vectors (Qdrant) are not packaged**; rebuild the recall index from imported SQLite after import per [ADR-0038](adr-0038-platform-embedding-standard-and-derived-recall-index.md). See [`../guides/bear-package.md`](../guides/bear-package.md) for include/exclude boundaries, import rules, and export tiers.
 
 ## Follow-up work
 

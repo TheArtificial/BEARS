@@ -1,6 +1,6 @@
 # Den Archival Memory and Ingestion Contract
 
-> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), not Letta Archives. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and Cabinet sources ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)), using a **derived Qdrant index** and **platform embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
 
 This document defines the implementation-facing contract for Den-owned archival/recall memory and source ingestion during the Letta migration.
 
@@ -35,7 +35,7 @@ Den should distinguish these layers explicitly:
    - chunked or transformed representations used for indexing and retrieval.
 
 4. **Retrieval indexes**
-   - derived search structures such as embeddings/vector indexes or other retrieval-friendly materializations.
+   - derived search structures: **Qdrant** vector collections keyed by **embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); passage metadata in Den Postgres; not canonical.
 
 5. **Query-time retrieval results**
    - relevance-scored outputs returned to runtime prompt assembly or operator tooling.
@@ -145,7 +145,11 @@ Compaction artifacts preserve continuity within long-running sessions. Retrieval
 A v1 archival/ingestion replacement is acceptable if it provides:
 
 - Den-owned source registration,
-- source-to-chunk provenance,
+- source-to-chunk provenance with **content-hash dedup**,
 - update/delete semantics,
 - explicit query-time retrieval boundaries,
+- **platform embedding standard** (`bears-embed-v1`) shared across Bear memory and Cabinet indexing,
+- Qdrant derived vectors (rebuildable from canonical sources),
 - and a clear separation between canonical sources and derived indexes.
+
+See [Derived recall index implementation plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).

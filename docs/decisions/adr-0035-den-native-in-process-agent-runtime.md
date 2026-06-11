@@ -73,7 +73,7 @@ During migration, `AGENT_RUNTIME=letta|native` (default `letta` until parity pro
 
 ## Non-goals
 
-- No new general-purpose vector store; semantic recall remains derived over SQLite sources.
+- Derived semantic recall uses a **Qdrant derived index** and platform embedding standard ([ADR-0038](adr-0038-platform-embedding-standard-and-derived-recall-index.md)); SQLite remains canonical. Not a second memory store.
 - No pluggable multi-runtime framework retained for optionality.
 - No bear-local task store.
 - No "agent-pattern" framework.
