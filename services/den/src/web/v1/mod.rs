@@ -33,7 +33,7 @@ use crate::{
     },
     errors::CustomError,
     observability::{
-        chat_proxy_stream::BearChannelSseProxyStream,
+        chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
         native_web_chat_stream::NativeWebChatUpstreamStream,
     },
     web::AppState,
@@ -856,11 +856,7 @@ async fn maybe_handle_direct_set_conversation_title(
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("Conversation title updated.");
-    let body = format!(
-        "data: {}\n\ndata: {}\n\n",
-        serde_json::json!({ "type": "assistant_delta", "text": text }),
-        serde_json::json!({ "type": "done", "stop_reason": "end_turn" })
-    );
+    let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
     let response = Response::builder()
@@ -875,11 +871,7 @@ async fn maybe_handle_direct_set_conversation_title(
 }
 
 fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, CustomError> {
-    let body = format!(
-        "data: {}\n\ndata: {}\n\n",
-        serde_json::json!({ "type": "assistant_delta", "text": text }),
-        serde_json::json!({ "type": "done", "stop_reason": "end_turn" })
-    );
+    let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
     Response::builder()

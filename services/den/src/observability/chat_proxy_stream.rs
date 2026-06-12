@@ -428,6 +428,18 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
     bear_channel_sse_bytes(&mapped)
 }
 
+/// Maps a single assistant text payload into Deep Chat SSE bytes for direct fast-path responses
+/// (capabilities list, title set, etc.) that bypass [`BearChannelSseProxyStream`].
+pub(crate) fn deep_chat_sse_body_for_assistant_text(text: &str) -> String {
+    let event = serde_json::json!({
+        "type": "assistant_delta",
+        "text": text,
+    });
+    bear_channel_event_to_deep_chat_sse(&event)
+        .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap_or_default())
+        .unwrap_or_default()
+}
+
 pub(crate) fn map_bear_channel_sse_frame(frame: &[u8]) -> Vec<Bytes> {
     let text = String::from_utf8_lossy(frame);
     let mut out = Vec::new();
@@ -775,6 +787,14 @@ mod tests {
             .map(|b| String::from_utf8(b.to_vec()).expect("utf8"))
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    #[test]
+    fn deep_chat_sse_body_for_assistant_text_maps_to_assistant_message() {
+        let body = deep_chat_sse_body_for_assistant_text("Capabilities list");
+        assert!(body.contains("\"message_type\":\"assistant_message\""));
+        assert!(body.contains("\"content\":\"Capabilities list\""));
+        assert!(body.starts_with("data: "));
     }
 
     #[test]
