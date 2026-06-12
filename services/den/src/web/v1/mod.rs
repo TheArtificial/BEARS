@@ -408,6 +408,14 @@ async fn chat_history(
     }))
 }
 
+/// Deep Chat history expects `ai`; Postgres stores `assistant`.
+fn client_chat_history_role(storage_role: &str) -> String {
+    match storage_role {
+        "assistant" => "ai".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn map_persisted_history_page(
     rows: &[conversation_persistence::PersistedConversationMessage],
     page_limit: usize,
@@ -419,10 +427,10 @@ fn map_persisted_history_page(
 
     let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
     for row in visible_rows {
-        let role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
+        let storage_role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
         if let Some((_, last)) = coalesced_desc.last_mut() {
-            if last.role == role
-                && role == "assistant"
+            if last.role == client_chat_history_role(&storage_role)
+                && storage_role == "assistant"
                 && matches!(
                     row.storage_message_type(),
                     Ok(crate::core::conversation_message_types::ConversationMessageType::Assistant)
@@ -435,7 +443,7 @@ fn map_persisted_history_page(
         coalesced_desc.push((
             row.sequence_no,
             ChatHistoryMessage {
-                role,
+                role: client_chat_history_role(&storage_role),
                 text: row.content_text.clone(),
             },
         ));
@@ -1222,6 +1230,40 @@ async fn chat_send_inner(
 #[cfg(test)]
 mod chat_history_map_tests {
     use super::*;
+    use crate::core::conversation_persistence::PersistedConversationMessage;
+
+    fn persisted_row(
+        sequence_no: i64,
+        role: &str,
+        message_type: &str,
+        text: &str,
+    ) -> PersistedConversationMessage {
+        PersistedConversationMessage {
+            sequence_no,
+            message_type: message_type.to_string(),
+            role: Some(role.to_string()),
+            visibility: "default".to_string(),
+            content_text: text.to_string(),
+            provider_message_id: None,
+            created_at: time::OffsetDateTime::now_utc(),
+        }
+    }
+
+    #[test]
+    fn map_persisted_page_emits_ai_role_for_assistant_rows() {
+        // `list_messages_page` returns rows newest-first (sequence DESC).
+        let rows = vec![
+            persisted_row(2, "assistant", "assistant", "Hi there"),
+            persisted_row(1, "user", "user", "Hello"),
+        ];
+        let (msgs, has_more, _) = map_persisted_history_page(&rows, 10);
+        assert!(!has_more);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].text, "Hello");
+        assert_eq!(msgs[1].role, "ai");
+        assert_eq!(msgs[1].text, "Hi there");
+    }
 
     #[test]
     fn map_page_desc_order_to_chronological_bubbles() {
