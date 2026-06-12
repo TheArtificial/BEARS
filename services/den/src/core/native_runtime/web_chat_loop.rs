@@ -5,6 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use futures::Stream;
 use serde_json::Value;
@@ -32,6 +33,8 @@ use crate::{
     },
     errors::CustomError,
 };
+
+const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct NativeWebChatLoopRuntime {
@@ -74,6 +77,11 @@ pub struct NativeWebChatLoopStream {
     phase: LoopPhase,
     pending_out: VecDeque<RuntimeStreamEvent>,
     saw_turn_completed: bool,
+    last_outbound: Instant,
+}
+
+fn keepalive_event() -> RuntimeStreamEvent {
+    status_event("Still working…")
 }
 
 fn status_event(text: impl Into<String>) -> RuntimeStreamEvent {
@@ -106,7 +114,23 @@ impl NativeWebChatLoopStream {
             phase: LoopPhase::Streaming(initial),
             pending_out: VecDeque::from([status_event("Thinking…")]),
             saw_turn_completed: false,
+            last_outbound: Instant::now(),
         }
+    }
+
+    fn touch_outbound(&mut self) {
+        self.last_outbound = Instant::now();
+    }
+
+    fn maybe_keepalive(&mut self) -> Option<RuntimeStreamEvent> {
+        if matches!(self.phase, LoopPhase::Finished) {
+            return None;
+        }
+        if self.last_outbound.elapsed() < WEB_CHAT_KEEPALIVE_INTERVAL {
+            return None;
+        }
+        self.touch_outbound();
+        Some(keepalive_event())
     }
 
     pub(crate) fn wrap_step_stream(
@@ -204,6 +228,10 @@ impl Stream for NativeWebChatLoopStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.pending_out.pop_front() {
+            self.touch_outbound();
+            return Poll::Ready(Some(Ok(event)));
+        }
+        if let Some(event) = self.maybe_keepalive() {
             return Poll::Ready(Some(Ok(event)));
         }
 
@@ -227,9 +255,13 @@ impl Stream for NativeWebChatLoopStream {
                         event @ RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }),
                     ))) => {
                         self.saw_turn_completed = true;
+                        self.touch_outbound();
                         return Poll::Ready(Some(Ok(event)));
                     }
-                    Poll::Ready(Some(item)) => return Poll::Ready(Some(item)),
+                    Poll::Ready(Some(item)) => {
+                        self.touch_outbound();
+                        return Poll::Ready(Some(item));
+                    }
                     Poll::Ready(None) => {
                         let session = match self.runtime.session_store.get(&self.runtime.session_key) {
                             Some(session) => session,

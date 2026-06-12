@@ -268,6 +268,10 @@ pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes>
     Some(Bytes::from(format!("data: {}\n\n", event)))
 }
 
+pub(crate) fn sse_comment_keepalive_bytes() -> Bytes {
+    Bytes::from(": keepalive\n\n")
+}
+
 fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
     let mapped = serde_json::json!({
         "message_type": "error_message",
@@ -498,6 +502,13 @@ impl Stream for BearChannelSseProxyStream {
                     while let Some(pos) = this.buffer.windows(2).position(|w| w == b"\n\n") {
                         let frame: Vec<u8> = this.buffer.drain(..pos + 2).collect();
                         let text = String::from_utf8_lossy(&frame);
+                        if text
+                            .lines()
+                            .all(|line| line.is_empty() || line.starts_with(':'))
+                        {
+                            this.pending.push_back(Bytes::from(frame));
+                            continue;
+                        }
                         for line in text.lines() {
                             let Some(data) = line.strip_prefix("data:") else {
                                 continue;
@@ -654,6 +665,12 @@ mod tests {
         let text = String::from_utf8(bytes.to_vec()).expect("utf8");
         assert!(text.contains("stream_empty_terminal") || text.contains("error_message"));
         assert!(text.contains("f42114ea-99bd-48a7-818a-78d4e3d914be"));
+    }
+
+    #[test]
+    fn sse_comment_keepalive_bytes_format() {
+        let bytes = sse_comment_keepalive_bytes();
+        assert_eq!(std::str::from_utf8(&bytes).unwrap(), ": keepalive\n\n");
     }
 }
 
