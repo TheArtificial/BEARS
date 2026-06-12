@@ -18,8 +18,11 @@ mod tool_policy;
 mod transcript;
 
 pub use tool_outcome::{
-    is_legacy_synthetic_interrupted_tool_result, tool_result_content_indicates_error,
-    tool_result_persistence_status, user_visible_tool_error_summary,
+    is_incomplete_tool_result, is_legacy_synthetic_interrupted_tool_result,
+    tool_call_finished_event, tool_call_finished_event_for_content,
+    tool_call_finished_event_for_incomplete, tool_message_counts_toward_llm_resolution,
+    tool_result_content_indicates_error, tool_result_persistence_status,
+    user_visible_tool_error_summary, user_visible_tool_summary, INCOMPLETE_TOOL_RESULT_MARK,
     LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
 };
 
@@ -39,4 +42,7 @@ pub use step::run_agent_step_stream;
 pub use policy::{select_strategy_profile, StrategyPolicyInput};
 pub use strategy::StrategyProfile;
 pub use tool_policy::{maybe_pause_for_tool_approval, provider_tool_requires_approval, record_approval_decision};
-pub use transcript::spawn_persist_web_chat_turn;
+pub use transcript::{
+    spawn_persist_incomplete_acp_tool_results, spawn_persist_web_chat_interrupted_turn,
+    spawn_persist_web_chat_turn,
+};

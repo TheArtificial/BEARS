@@ -171,6 +171,27 @@ pub struct RuntimeCleanupResult {
     pub payload: serde_json::Value,
 }
 
+/// Terminal status for a server or adapter tool invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallFinishStatus {
+    Ok,
+    Error,
+    Incomplete,
+    Cancelled,
+}
+
+impl ToolCallFinishStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Incomplete => "incomplete",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuntimeSemanticEvent {
     AssistantTextDelta {
@@ -200,6 +221,13 @@ pub enum RuntimeSemanticEvent {
         approval_required: bool,
         approval_reason: Option<String>,
         run_id: Option<String>,
+    },
+    ToolCallFinished {
+        tool_call_id: String,
+        tool_name: String,
+        status: ToolCallFinishStatus,
+        summary: Option<String>,
+        error_message: Option<String>,
     },
     Error {
         message: String,

@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::session_store::AgentLoopSession;
-use super::transcript::spawn_persist_native_agent_step;
+use super::transcript::{spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
@@ -124,6 +124,23 @@ impl SessionTrackingStream {
             );
         });
         self.assistant_synced_to_session = true;
+    }
+
+    fn persist_outstanding_tools_as_incomplete(&self, reason: &str) {
+        if self.tool_calls.is_empty() {
+            return;
+        }
+        let calls = self.accumulated_tool_calls();
+        spawn_persist_incomplete_acp_tool_results(
+            self.pool.clone(),
+            self.bear_id,
+            self.user_id,
+            self.conversation_id.clone(),
+            self.acp_session_id.clone(),
+            self.request_id.clone(),
+            &calls,
+            reason,
+        );
     }
 
     fn persist_assistant_tool_step(&self) {
@@ -309,6 +326,7 @@ impl Stream for SessionTrackingStream {
                     // tool results and continues via /tool-results (same class of bug as
                     // openai_stream synthetic TurnCompleted).
                     self.persist_assistant_tool_step();
+                    self.persist_outstanding_tools_as_incomplete("turn_ended_before_tool_results");
                     self.finished = true;
                     tracing::debug!(
                         acp_session_id = %self.acp_session_id,
@@ -328,6 +346,7 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(other) => {
                 if matches!(other, None) && !self.tool_calls.is_empty() {
                     self.persist_assistant_tool_step();
+                    self.persist_outstanding_tools_as_incomplete("llm_stream_ended_before_tool_results");
                     self.finished = true;
                     tracing::debug!(
                         acp_session_id = %self.acp_session_id,

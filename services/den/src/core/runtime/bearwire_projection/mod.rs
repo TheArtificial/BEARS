@@ -2,7 +2,9 @@ use bytes::Bytes;
 
 use crate::core::{
     acp_letta_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
-    runtime_contracts::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent},
+    runtime_contracts::{
+        RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
+    },
 };
 
 pub fn runtime_semantic_event_to_bearwire_gateway_events(
@@ -99,6 +101,30 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
         RuntimeSemanticEvent::RunProgress { kind, text, .. } => vec![AcpGatewayEvent::StatusText {
             text: text.unwrap_or(kind),
         }],
+        RuntimeSemanticEvent::ToolCallFinished {
+            tool_name,
+            status,
+            summary,
+            error_message,
+            ..
+        } => {
+            let summary = summary
+                .or(error_message.clone())
+                .unwrap_or_else(|| format!("Finished {tool_name}"));
+            let mut events = vec![AcpGatewayEvent::StatusText { text: summary }];
+            if status == ToolCallFinishStatus::Error {
+                if let Some(message) = error_message {
+                    events.push(AcpGatewayEvent::Error {
+                        message,
+                        detail: Some(format!("Tool `{tool_name}` returned an error.")),
+                        error_type: Some("tool_execution_error".to_string()),
+                        request_id: None,
+                        context: None,
+                    });
+                }
+            }
+            events
+        }
     }
 }
 

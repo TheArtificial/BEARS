@@ -11,7 +11,8 @@ use crate::core::{
 };
 
 use super::{
-    tool_outcome::tool_result_persistence_status,
+    pending_tools::pending_tool_calls,
+    tool_outcome::{is_incomplete_tool_result, tool_result_persistence_status},
     tool_policy::provider_tool_requires_approval,
 };
 
@@ -143,13 +144,18 @@ pub fn spawn_persist_web_chat_turn(
                     continue;
                 };
                 let status = tool_result_persistence_status(message.content.as_deref());
+                let persisted_content = if is_incomplete_tool_result(message.content.as_deref()) {
+                    None
+                } else {
+                    message.content.clone()
+                };
                 spawn_persist_tool_result(
                     context.clone(),
                     message.name.clone(),
                     tool_call_id,
                     None,
                     status.to_string(),
-                    message.content.clone(),
+                    persisted_content,
                     Value::Null,
                     serde_json::json!({
                         "component": "den.web_chat",
@@ -162,4 +168,114 @@ pub fn spawn_persist_web_chat_turn(
             _ => {}
         }
     }
+}
+
+fn spawn_persist_incomplete_tool_results(
+    context: crate::core::conversation_events::ConversationPersistenceContext,
+    provenance: &ConversationEventProvenance,
+    request_id: Option<String>,
+    tool_calls: &[ChatToolCall],
+    reason: &str,
+    phase: &str,
+) {
+    for call in tool_calls {
+        spawn_persist_tool_result(
+            context.clone(),
+            Some(call.function.name.clone()),
+            call.id.clone(),
+            None,
+            "incomplete".to_string(),
+            None,
+            Value::Null,
+            serde_json::json!({
+                "component": "den.agent_loop",
+                "phase": phase,
+                "reason": reason,
+                "tool_name": call.function.name,
+            }),
+            request_id.clone(),
+            provenance,
+        );
+    }
+}
+
+/// Persist a web chat turn that ended before all tool calls completed.
+pub fn spawn_persist_web_chat_interrupted_turn(
+    pool: PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    conversation_id: String,
+    session_id: String,
+    request_id: String,
+    messages: &[ChatMessage],
+    from_index: usize,
+    reason: &str,
+) {
+    if from_index >= messages.len() {
+        return;
+    }
+    let provenance = ConversationEventProvenance::acp_session(session_id.clone());
+    let context = canonical_persistence_context(
+        pool.clone(),
+        bear_id,
+        Some(user_id),
+        conversation_id,
+        Some(session_id.clone()),
+        Some(request_id.clone()),
+        session_id,
+        false,
+    );
+    spawn_persist_web_chat_turn(
+        pool,
+        bear_id,
+        user_id,
+        context.external_conversation_id.clone(),
+        provenance.scope_id.clone(),
+        request_id.clone(),
+        messages,
+        from_index,
+    );
+    let pending = pending_tool_calls(&messages[from_index..]);
+    spawn_persist_incomplete_tool_results(
+        context,
+        &provenance,
+        Some(request_id),
+        &pending,
+        reason,
+        "web_chat_interrupted_turn",
+    );
+}
+
+pub fn spawn_persist_incomplete_acp_tool_results(
+    pool: PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    conversation_id: String,
+    acp_session_id: String,
+    request_id: Option<String>,
+    tool_calls: &[ChatToolCall],
+    reason: &str,
+) {
+    if tool_calls.is_empty() {
+        return;
+    }
+    let provenance = ConversationEventProvenance::acp_session(acp_session_id.clone());
+    let context = canonical_persistence_context(
+        pool,
+        bear_id,
+        user_id,
+        conversation_id,
+        Some(acp_session_id.clone()),
+        request_id.clone(),
+        acp_session_id,
+        false,
+    );
+    spawn_persist_incomplete_tool_results(
+        context,
+        &provenance,
+        request_id,
+        tool_calls,
+        reason,
+        "acp_interrupted_turn",
+    );
 }

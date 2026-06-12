@@ -100,6 +100,25 @@ pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
                 "conversation_id": conversation.id,
             }))
         }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished {
+            tool_call_id,
+            tool_name,
+            status,
+            summary,
+            error_message,
+        }) => {
+            let summary = summary
+                .or(error_message)
+                .unwrap_or_else(|| format!("Finished {tool_name}"));
+            Ok(serde_json::json!({
+                "message_type": "status_message",
+                "content": summary,
+                "status_type": "server_tool_finished",
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "tool_status": status.as_str(),
+            }))
+        }
         other => Err(std::io::Error::other(format!(
             "runtime event not supported by ACP persistence mapper: {other:?}"
         ))),
@@ -135,7 +154,8 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
             | RuntimeSemanticEvent::TurnCompleted { .. }
             | RuntimeSemanticEvent::TurnFailed { .. }
             | RuntimeSemanticEvent::TurnCancelled { .. }
-            | RuntimeSemanticEvent::RunProgress { .. },
+            | RuntimeSemanticEvent::RunProgress { .. }
+            | RuntimeSemanticEvent::ToolCallFinished { .. },
         ) => {
             if let RuntimeStreamEvent::Semantic(semantic_event) = runtime_event_for_projection.clone() {
                 runtime_semantic_event_to_bearwire_gateway_events(semantic_event)

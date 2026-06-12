@@ -9,7 +9,7 @@ use futures::{ready, Stream};
 use uuid::Uuid;
 
 use crate::core::runtime_contracts::{
-    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
+    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 
 use super::chat_proxy_stream::bear_channel_sse_bytes;
@@ -26,19 +26,34 @@ pub fn runtime_semantic_to_bear_channel_events(
         RuntimeSemanticEvent::StatusText { text } => {
             vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
         }
-        RuntimeSemanticEvent::RunProgress {
-            kind,
-            text,
-            phase,
+        RuntimeSemanticEvent::ToolCallFinished {
+            tool_name,
+            status,
+            summary,
+            error_message,
             ..
-        } if kind == "tool_finished" => {
-            let tool = phase.unwrap_or_else(|| "tool".to_string());
-            let summary = text.unwrap_or_default();
-            vec![serde_json::json!({
+        } => {
+            let display_summary = summary
+                .clone()
+                .or_else(|| error_message.clone())
+                .unwrap_or_else(|| format!("Finished {tool_name}"));
+            let mut events = vec![serde_json::json!({
                 "type": "server_tool_finished",
-                "tool": tool,
-                "summary": summary,
-            })]
+                "tool": tool_name,
+                "summary": display_summary,
+                "status": status.as_str(),
+            })];
+            if status == ToolCallFinishStatus::Error {
+                if let Some(message) = error_message {
+                    events.push(serde_json::json!({
+                        "type": "error",
+                        "message": message,
+                        "error_type": "tool_execution_error",
+                        "request_id": request_id,
+                    }));
+                }
+            }
+            events
         }
         RuntimeSemanticEvent::RunProgress {
             text: Some(text),
@@ -258,19 +273,21 @@ mod tests {
     }
 
     #[test]
-    fn maps_tool_finished_to_server_tool_finished() {
+    fn maps_tool_call_finished_to_server_tool_finished() {
         let events = runtime_semantic_to_bear_channel_events(
-            RuntimeSemanticEvent::RunProgress {
-                kind: "tool_finished".to_string(),
-                text: Some("memory_read failed: not found".to_string()),
-                phase: Some("memory_read".to_string()),
-                detail: None,
+            RuntimeSemanticEvent::ToolCallFinished {
+                tool_call_id: "call_1".to_string(),
+                tool_name: "memory_read".to_string(),
+                status: ToolCallFinishStatus::Error,
+                summary: Some("memory_read failed: not found".to_string()),
+                error_message: Some("memory_read failed: not found".to_string()),
             },
-            None,
+            Some("req-1"),
         );
         assert_eq!(events[0]["type"], "server_tool_finished");
         assert_eq!(events[0]["tool"], "memory_read");
-        assert_eq!(events[0]["summary"], "memory_read failed: not found");
+        assert_eq!(events[0]["status"], "error");
+        assert_eq!(events[1]["type"], "error");
     }
 
     #[test]

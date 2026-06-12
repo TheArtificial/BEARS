@@ -164,6 +164,13 @@ impl AcpStreamDiagnostics {
                 "tool_call_requested"
             }
             crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
+                crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallFinished { .. },
+            ) => {
+                self.saw_visible_output = true;
+                self.saw_substantive_output = true;
+                "tool_call_finished"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
                 crate::core::runtime_provider::RuntimeSemanticEvent::Error { .. },
             ) => {
                 self.saw_error = true;

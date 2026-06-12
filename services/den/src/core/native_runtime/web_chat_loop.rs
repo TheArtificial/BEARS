@@ -17,10 +17,13 @@ use crate::{
     core::{
         agent_loop::{
             pending_tool_calls, run_agent_step_stream, provider_tool_requires_approval,
-            spawn_persist_web_chat_turn, tool_result_content_indicates_error,
-            user_visible_tool_error_summary, AgentLoopSessionStore, NativeToolDispatchMode,
+            spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
+            tool_call_finished_event, tool_call_finished_event_for_content,
+            tool_call_finished_event_for_incomplete,
+            tool_result_content_indicates_error, AgentLoopSessionStore, NativeToolDispatchMode,
             SessionTrackingStream,
         },
+        runtime_contracts::ToolCallFinishStatus,
         bears::BearProfile,
         llm::{ChatMessage, ChatToolCall, LlmClient},
         memory::MemoryStoreManager,
@@ -107,31 +110,6 @@ fn status_event(text: impl Into<String>) -> RuntimeStreamEvent {
     })
 }
 
-fn tool_finished_event(call: &ChatToolCall, summary: &str) -> RuntimeStreamEvent {
-    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
-        kind: "tool_finished".to_string(),
-        text: Some(summary.to_string()),
-        phase: Some(call.function.name.clone()),
-        detail: Some(serde_json::json!({
-            "tool_call_id": call.id,
-            "tool_name": call.function.name,
-        })),
-    })
-}
-
-fn tool_error_event(call: &ChatToolCall, message: String, request_id: &str) -> RuntimeStreamEvent {
-    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-        message,
-        detail: Some(format!("Tool `{}` returned an error.", call.function.name)),
-        error_type: Some("tool_execution_error".to_string()),
-        request_id: Some(request_id.to_string()),
-        context: Some(serde_json::json!({
-            "tool_call_id": call.id,
-            "tool_name": call.function.name,
-        })),
-    })
-}
-
 fn tool_started_event(call: &ChatToolCall) -> RuntimeStreamEvent {
     RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
         tool_call_id: call.id.clone(),
@@ -182,6 +160,35 @@ impl NativeWebChatLoopStream {
             &session.messages,
             self.turn_start_message_len,
         );
+    }
+
+    fn persist_interrupted_turn(&mut self, reason: &str) {
+        if self.transcript_persisted {
+            return;
+        }
+        self.transcript_persisted = true;
+        let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) else {
+            return;
+        };
+        spawn_persist_web_chat_interrupted_turn(
+            self.runtime.pool.clone(),
+            self.runtime.bear_id,
+            self.runtime.user_id,
+            self.runtime.conversation_id.clone(),
+            self.runtime.session_id.clone(),
+            self.runtime.request_id.clone(),
+            &session.messages,
+            self.turn_start_message_len,
+            reason,
+        );
+    }
+
+    fn emit_incomplete_tool_outcomes(&mut self, calls: &[ChatToolCall], reason: &str) {
+        for call in calls {
+            self.pending_out.push_back(RuntimeStreamEvent::Semantic(
+                tool_call_finished_event_for_incomplete(call.id.clone(), &call.function.name, reason),
+            ));
+        }
     }
 
     fn touch_outbound(&mut self) {
@@ -276,21 +283,30 @@ impl NativeWebChatLoopStream {
             Poll::Ready(Ok(message)) => {
                 let call = calls[*index].clone();
                 let content = message.content.as_deref();
-                if tool_result_content_indicates_error(content) {
-                    let summary = user_visible_tool_error_summary(&call.function.name, content);
-                    self.pending_out
-                        .push_back(tool_finished_event(&call, &summary));
-                    self.pending_out.push_back(tool_error_event(
-                        &call,
-                        summary,
-                        &self.runtime.request_id,
-                    ));
-                } else {
-                    self.pending_out.push_back(tool_finished_event(
-                        &call,
-                        &format!("Finished {}", call.function.name),
+                let finished = tool_call_finished_event_for_content(&call, content);
+                if let RuntimeSemanticEvent::ToolCallFinished {
+                    error_message: Some(message),
+                    ..
+                } = &finished
+                {
+                    self.pending_out.push_back(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::Error {
+                            message: message.clone(),
+                            detail: Some(format!(
+                                "Tool `{}` returned an error.",
+                                call.function.name
+                            )),
+                            error_type: Some("tool_execution_error".to_string()),
+                            request_id: Some(self.runtime.request_id.clone()),
+                            context: Some(serde_json::json!({
+                                "tool_call_id": call.id,
+                                "tool_name": call.function.name,
+                            })),
+                        },
                     ));
                 }
+                self.pending_out
+                    .push_back(RuntimeStreamEvent::Semantic(finished));
                 results.push(message);
                 *index += 1;
                 *active = None;
@@ -300,12 +316,25 @@ impl NativeWebChatLoopStream {
             Poll::Ready(Err(error)) => {
                 let call = calls[*index].clone();
                 let summary = format!("{} failed: {error}", call.function.name);
-                self.pending_out
-                    .push_back(tool_finished_event(&call, &summary));
-                self.pending_out.push_back(tool_error_event(
-                    &call,
-                    summary.clone(),
-                    &self.runtime.request_id,
+                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
+                    tool_call_finished_event(
+                        &call,
+                        ToolCallFinishStatus::Error,
+                        summary.clone(),
+                        Some(summary.clone()),
+                    ),
+                ));
+                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::Error {
+                        message: summary.clone(),
+                        detail: Some(format!("Tool `{}` failed to execute.", call.function.name)),
+                        error_type: Some("tool_execution_error".to_string()),
+                        request_id: Some(self.runtime.request_id.clone()),
+                        context: Some(serde_json::json!({
+                            "tool_call_id": call.id,
+                            "tool_name": call.function.name,
+                        })),
+                    },
                 ));
                 results.push(ChatMessage {
                     role: "tool".to_string(),
@@ -336,6 +365,14 @@ impl Stream for NativeWebChatLoopStream {
             return Poll::Ready(Some(Ok(event)));
         }
         if self.started_at.elapsed() >= WEB_CHAT_TURN_BUDGET {
+            if let LoopPhase::ExecutingTools { calls, index, .. } = &self.phase {
+                let pending = calls[*index..].to_vec();
+                self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
+            } else if let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) {
+                let pending = pending_tool_calls(&session.messages);
+                self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
+            }
+            self.persist_interrupted_turn("turn_timeout");
             self.phase = LoopPhase::Finished;
             self.touch_outbound();
             return Poll::Ready(Some(Ok(turn_timeout_event())));

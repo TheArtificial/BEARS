@@ -773,6 +773,13 @@ impl Stream for AcpRuntimeSseStream {
                                                     };
                                                     queued_events.push(AcpGatewayEvent::StatusText { text: rendered });
                                                 }
+                                                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. }) => {
+                                                    if let RuntimeStreamEvent::Semantic(semantic) = event {
+                                                        queued_events.extend(
+                                                            crate::core::runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events(semantic),
+                                                        );
+                                                    }
+                                                }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
                                                     queued_events.push(AcpGatewayEvent::ConversationResolved {
                                                         conversation_id: conversation.id,
