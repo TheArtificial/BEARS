@@ -414,14 +414,20 @@ fn map_persisted_history_page(
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let visible_rows: Vec<_> = rows
         .iter()
-        .filter(|row| row.visibility == "visible" && matches!(row.role.as_deref(), Some("user") | Some("assistant")))
+        .filter(|row| {
+            matches!(row.visibility.as_str(), "default" | "visible")
+                && matches!(row.role.as_deref(), Some("user") | Some("assistant"))
+        })
         .collect();
 
     let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
     for row in visible_rows {
         let role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
         if let Some((_, last)) = coalesced_desc.last_mut() {
-            if last.role == role && role == "assistant" && row.message_type == "assistant_output" {
+            if last.role == role
+                && role == "assistant"
+                && matches!(row.message_type.as_str(), "assistant" | "assistant_output")
+            {
                 last.text.push_str(&row.content_text);
                 continue;
             }
@@ -952,9 +958,9 @@ async fn chat_send_native_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        "user_input",
+        "user",
         Some("user"),
-        "visible",
+        "default",
         body.message.trim(),
         serde_json::json!({
             "type": "user_input",
@@ -1106,9 +1112,9 @@ async fn chat_send_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        "user_input",
+        "user",
         Some("user"),
-        "visible",
+        "default",
         body.message.trim(),
         serde_json::json!({
             "type": "user_input",

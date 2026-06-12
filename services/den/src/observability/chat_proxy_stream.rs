@@ -215,7 +215,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                "assistant_reasoning",
+                "workflow_event",
                 Some("assistant"),
                 "diagnostic_only",
                 &self.reasoning_text,
@@ -237,9 +237,9 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                "assistant_output",
+                "assistant",
                 Some("assistant"),
-                "visible",
+                "default",
                 &self.assistant_text,
                 serde_json::json!({
                     "type": "assistant_delta_coalesced",
