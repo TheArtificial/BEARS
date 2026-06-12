@@ -447,6 +447,8 @@ impl BearChannelSseProxyStream {
                 user_id = %self.user_id,
                 bear_id = %self.bear_id,
                 conversation_id = %self.conversation_id,
+                browser_bytes = self.total_bytes,
+                empty_terminal_error_emitted = self.empty_terminal_error_emitted,
                 elapsed_ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
                 "chat_send bear_channel stream ended with zero browser-compatible bytes"
             ),
@@ -462,12 +464,22 @@ impl Drop for BearChannelSseProxyStream {
             return;
         }
         metrics::chat_send_finished_proxy_error();
+        metrics::record_chat_send_dropped(self.total_bytes > 0);
+        let elapsed_ms = self.started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let ttfb_ms = self.first_byte_at.map(|fb| {
+            fb.duration_since(self.started_at)
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64
+        });
         tracing::warn!(
             request_id = %self.request_id,
             user_id = %self.user_id,
             bear_id = %self.bear_id,
             conversation_id = %self.conversation_id,
-            total_bytes = self.total_bytes,
+            browser_bytes = self.total_bytes,
+            ttfb_ms,
+            elapsed_ms,
+            empty_terminal_error_emitted = self.empty_terminal_error_emitted,
             "chat_send bear_channel proxy stream dropped before terminal poll (client disconnect or task cancelled)"
         );
     }
@@ -479,6 +491,25 @@ impl Stream for BearChannelSseProxyStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.as_mut().get_mut();
         if let Some(bytes) = this.pending.pop_front() {
+            if this.total_bytes == 0 {
+                let ttfb_ms = this
+                    .started_at
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64;
+                metrics::record_chat_send_ttfb_ms(ttfb_ms);
+                if this.first_byte_at.is_none() {
+                    this.first_byte_at = Some(Instant::now());
+                    tracing::info!(
+                        request_id = %this.request_id,
+                        user_id = %this.user_id,
+                        bear_id = %this.bear_id,
+                        conversation_id = %this.conversation_id,
+                        ttfb_ms,
+                        "chat_send first browser-visible byte"
+                    );
+                }
+            }
             this.total_bytes += bytes.len();
             return Poll::Ready(Some(Ok(bytes)));
         }

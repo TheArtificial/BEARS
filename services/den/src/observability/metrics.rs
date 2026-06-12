@@ -9,6 +9,10 @@ static CHAT_SEND_FINISHED_PROXY_ERROR: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_RUNTIME_LEGACY: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_RUNTIME_BEAR_CHANNEL: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_RUNTIME_NATIVE: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_TTFB_MS_SUM: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_TTFB_MS_COUNT: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_DROPPED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_DROPPED_WITH_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 pub fn chat_send_started() {
@@ -45,9 +49,23 @@ pub fn chat_send_runtime_native() {
     CHAT_SEND_RUNTIME_NATIVE.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_chat_send_ttfb_ms(ms: u64) {
+    CHAT_SEND_TTFB_MS_SUM.fetch_add(ms, Ordering::Relaxed);
+    CHAT_SEND_TTFB_MS_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_chat_send_dropped(had_browser_bytes: bool) {
+    CHAT_SEND_DROPPED_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if had_browser_bytes {
+        CHAT_SEND_DROPPED_WITH_BYTES_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Prometheus text exposition 0.0.4.
 pub fn render_prometheus_text() -> String {
-    let mut s = String::with_capacity(512);
+    let mut s = String::with_capacity(768);
     let a = CHAT_SEND_STARTED.load(Ordering::Relaxed);
     let b = CHAT_SEND_FINISHED_OK.load(Ordering::Relaxed);
     let c = CHAT_SEND_FINISHED_EMPTY.load(Ordering::Relaxed);
@@ -55,6 +73,10 @@ pub fn render_prometheus_text() -> String {
     let e = CHAT_SEND_RUNTIME_LEGACY.load(Ordering::Relaxed);
     let f = CHAT_SEND_RUNTIME_BEAR_CHANNEL.load(Ordering::Relaxed);
     let g = CHAT_SEND_RUNTIME_NATIVE.load(Ordering::Relaxed);
+    let ttfb_sum = CHAT_SEND_TTFB_MS_SUM.load(Ordering::Relaxed);
+    let ttfb_count = CHAT_SEND_TTFB_MS_COUNT.load(Ordering::Relaxed);
+    let dropped = CHAT_SEND_DROPPED_TOTAL.load(Ordering::Relaxed);
+    let dropped_with_bytes = CHAT_SEND_DROPPED_WITH_BYTES_TOTAL.load(Ordering::Relaxed);
 
     writeln!(
         s,
@@ -116,6 +138,38 @@ pub fn render_prometheus_text() -> String {
     writeln!(s, "# TYPE den_chat_send_runtime_native_total counter").unwrap();
     writeln!(s, "den_chat_send_runtime_native_total {g}").unwrap();
 
+    writeln!(
+        s,
+        "# HELP den_chat_send_ttfb_ms_sum Sum of browser-visible time-to-first-byte for chat SSE streams (milliseconds)."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_ttfb_ms_sum counter").unwrap();
+    writeln!(s, "den_chat_send_ttfb_ms_sum {ttfb_sum}").unwrap();
+
+    writeln!(
+        s,
+        "# HELP den_chat_send_ttfb_ms_count Count of chat SSE streams with a recorded browser-visible TTFB."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_ttfb_ms_count counter").unwrap();
+    writeln!(s, "den_chat_send_ttfb_ms_count {ttfb_count}").unwrap();
+
+    writeln!(
+        s,
+        "# HELP den_chat_send_dropped_total Chat SSE proxy streams dropped before a terminal poll (client disconnect or task cancelled)."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_dropped_total counter").unwrap();
+    writeln!(s, "den_chat_send_dropped_total {dropped}").unwrap();
+
+    writeln!(
+        s,
+        "# HELP den_chat_send_dropped_with_bytes_total Chat SSE proxy drops that had already sent at least one browser-visible byte."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_dropped_with_bytes_total counter").unwrap();
+    writeln!(s, "den_chat_send_dropped_with_bytes_total {dropped_with_bytes}").unwrap();
+
     s
 }
 
@@ -131,5 +185,19 @@ mod tests {
         assert!(s.contains("den_chat_send_started_total "));
         assert!(s.contains("# HELP den_chat_send_runtime_legacy_total"));
         assert!(s.contains("# HELP den_chat_send_runtime_bear_channel_total"));
+        assert!(s.contains("# HELP den_chat_send_ttfb_ms_sum"));
+        assert!(s.contains("# HELP den_chat_send_dropped_total"));
+    }
+
+    #[test]
+    fn ttfb_and_drop_counters_increment() {
+        record_chat_send_ttfb_ms(42);
+        record_chat_send_dropped(false);
+        record_chat_send_dropped(true);
+        let s = render_prometheus_text();
+        assert!(s.contains("den_chat_send_ttfb_ms_sum 42"));
+        assert!(s.contains("den_chat_send_ttfb_ms_count 1"));
+        assert!(s.contains("den_chat_send_dropped_total 2"));
+        assert!(s.contains("den_chat_send_dropped_with_bytes_total 1"));
     }
 }
