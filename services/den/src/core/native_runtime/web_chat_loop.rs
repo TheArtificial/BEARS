@@ -1,6 +1,7 @@
 //! Multi-step native web chat turn: executes Den server tools in-process and continues the loop.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -51,16 +52,21 @@ pub struct NativeWebChatLoopRuntime {
     pub session_store: AgentLoopSessionStore,
 }
 
+type ToolExecFuture =
+    Pin<Box<dyn Future<Output = Result<ChatMessage, CustomError>> + Send>>;
+type NextStepFuture =
+    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, CustomError>> + Send>>;
+
 enum LoopPhase {
     Streaming(Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>>),
-    Driving(Pin<Box<dyn std::future::Future<Output = Result<LoopDriveOutcome, CustomError>> + Send>>),
+    ExecutingTools {
+        calls: Vec<ChatToolCall>,
+        index: usize,
+        results: Vec<ChatMessage>,
+        active: Option<ToolExecFuture>,
+    },
+    StartingNextStep(NextStepFuture),
     Finished,
-}
-
-enum LoopDriveOutcome {
-    NextStep(RuntimeEventStream),
-    TurnComplete,
-    Failed(RuntimeStreamEvent),
 }
 
 pub struct NativeWebChatLoopStream {
@@ -70,12 +76,35 @@ pub struct NativeWebChatLoopStream {
     saw_turn_completed: bool,
 }
 
+fn status_event(text: impl Into<String>) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "status".to_string(),
+        text: Some(text.into()),
+        phase: None,
+        detail: None,
+    })
+}
+
+fn tool_started_event(call: &ChatToolCall) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+        tool_call_id: call.id.clone(),
+        tool_name: call.function.name.clone(),
+        title: Some(call.function.name.clone()),
+        kind: Some("function".to_string()),
+        arguments: serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default())),
+        approval_request_id: None,
+        approval_required: provider_tool_requires_approval(&call.function.name),
+        approval_reason: None,
+        run_id: None,
+    })
+}
+
 impl NativeWebChatLoopStream {
     pub fn new(runtime: NativeWebChatLoopRuntime, initial: RuntimeEventStream) -> Self {
         Self {
             runtime,
             phase: LoopPhase::Streaming(initial),
-            pending_out: VecDeque::new(),
+            pending_out: VecDeque::from([status_event("Thinking…")]),
             saw_turn_completed: false,
         }
     }
@@ -98,6 +127,76 @@ impl NativeWebChatLoopStream {
             NativeToolDispatchMode::ServerSideInProcess,
         ))
     }
+
+    fn begin_tool_execution(&mut self, calls: Vec<ChatToolCall>) {
+        self.pending_out.push_back(status_event("Running tools…"));
+        self.phase = LoopPhase::ExecutingTools {
+            calls,
+            index: 0,
+            results: Vec::new(),
+            active: None,
+        };
+    }
+
+    fn begin_next_step(&mut self) {
+        let runtime = self.runtime.clone();
+        self.pending_out.push_back(status_event("Continuing…"));
+        self.phase = LoopPhase::StartingNextStep(Box::pin(async move {
+            let session = runtime
+                .session_store
+                .get(&runtime.session_key)
+                .ok_or_else(|| CustomError::System("native web chat session not found".to_string()))?;
+            let raw = run_agent_step_stream(&runtime.llm, &session).await?;
+            Ok(NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session))
+        }));
+    }
+
+    fn poll_tool_execution(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RuntimeStreamEvent, CustomError>>> {
+        let LoopPhase::ExecutingTools {
+            calls,
+            index,
+            results,
+            active,
+        } = &mut self.phase
+        else {
+            return Poll::Pending;
+        };
+
+        if *index >= calls.len() {
+            let completed = std::mem::take(results);
+            let runtime = self.runtime.clone();
+            runtime.session_store.update(&runtime.session_key, |session| {
+                session.messages.extend(completed);
+            });
+            self.begin_next_step();
+            return Poll::Pending;
+        }
+
+        if active.is_none() {
+            let call = calls[*index].clone();
+            self.pending_out.push_back(tool_started_event(&call));
+            let runtime = self.runtime.clone();
+            *active = Some(Box::pin(async move { execute_one_web_chat_den_tool(&runtime, call).await }));
+        }
+
+        let Some(fut) = active.as_mut() else {
+            return Poll::Pending;
+        };
+        match fut.as_mut().poll(cx) {
+            Poll::Ready(Ok(message)) => {
+                results.push(message);
+                *index += 1;
+                *active = None;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(Err(error)) => {
+                self.phase = LoopPhase::Finished;
+                Poll::Ready(Some(Err(error)))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 impl Stream for NativeWebChatLoopStream {
@@ -111,26 +210,11 @@ impl Stream for NativeWebChatLoopStream {
         loop {
             match &mut self.phase {
                 LoopPhase::Finished => return Poll::Ready(None),
-                LoopPhase::Driving(future) => match future.as_mut().poll(cx) {
-                    Poll::Ready(Ok(LoopDriveOutcome::NextStep(stream))) => {
+                LoopPhase::ExecutingTools { .. } => return self.poll_tool_execution(cx),
+                LoopPhase::StartingNextStep(future) => match future.as_mut().poll(cx) {
+                    Poll::Ready(Ok(stream)) => {
                         self.saw_turn_completed = false;
                         self.phase = LoopPhase::Streaming(stream);
-                    }
-                    Poll::Ready(Ok(LoopDriveOutcome::TurnComplete)) => {
-                        if !self.saw_turn_completed {
-                            self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                                RuntimeSemanticEvent::TurnCompleted { turn: None },
-                            ));
-                        }
-                        self.phase = LoopPhase::Finished;
-                        if let Some(event) = self.pending_out.pop_front() {
-                            return Poll::Ready(Some(Ok(event)));
-                        }
-                        return Poll::Ready(None);
-                    }
-                    Poll::Ready(Ok(LoopDriveOutcome::Failed(event))) => {
-                        self.phase = LoopPhase::Finished;
-                        return Poll::Ready(Some(Ok(event)));
                     }
                     Poll::Ready(Err(error)) => {
                         self.phase = LoopPhase::Finished;
@@ -147,8 +231,39 @@ impl Stream for NativeWebChatLoopStream {
                     }
                     Poll::Ready(Some(item)) => return Poll::Ready(Some(item)),
                     Poll::Ready(None) => {
-                        let runtime = self.runtime.clone();
-                        self.phase = LoopPhase::Driving(Box::pin(drive_after_step(runtime)));
+                        let session = match self.runtime.session_store.get(&self.runtime.session_key) {
+                            Some(session) => session,
+                            None => {
+                                self.phase = LoopPhase::Finished;
+                                return Poll::Ready(Some(Err(CustomError::System(
+                                    "native web chat session not found".to_string(),
+                                ))));
+                            }
+                        };
+                        let pending = pending_tool_calls(&session.messages);
+                        if pending.is_empty() {
+                            if !self.saw_turn_completed {
+                                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
+                                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                                ));
+                            }
+                            self.phase = LoopPhase::Finished;
+                            if let Some(event) = self.pending_out.pop_front() {
+                                return Poll::Ready(Some(Ok(event)));
+                            }
+                            return Poll::Ready(None);
+                        }
+                        if session.step >= session.max_steps {
+                            self.phase = LoopPhase::Finished;
+                            return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::TurnFailed {
+                                    turn: None,
+                                    category: RuntimeErrorCategory::Internal,
+                                    message: "native web chat reached max agent steps".to_string(),
+                                },
+                            ))));
+                        }
+                        self.begin_tool_execution(pending);
                         continue;
                     }
                     Poll::Pending => return Poll::Pending,
@@ -158,107 +273,68 @@ impl Stream for NativeWebChatLoopStream {
     }
 }
 
-async fn drive_after_step(runtime: NativeWebChatLoopRuntime) -> Result<LoopDriveOutcome, CustomError> {
-    let session = runtime
-        .session_store
-        .get(&runtime.session_key)
-        .ok_or_else(|| CustomError::System("native web chat session not found".to_string()))?;
-    let pending = pending_tool_calls(&session.messages);
-    if pending.is_empty() {
-        return Ok(LoopDriveOutcome::TurnComplete);
-    }
-    if session.step >= session.max_steps {
-        return Ok(LoopDriveOutcome::Failed(RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::TurnFailed {
-                turn: None,
-                category: RuntimeErrorCategory::Internal,
-                message: "native web chat reached max agent steps".to_string(),
-            },
-        )));
-    }
-
-    let tool_messages = execute_web_chat_den_tools(&runtime, pending).await?;
-    runtime.session_store.update(&runtime.session_key, |session| {
-        session.messages.extend(tool_messages);
-    });
-
-    let session = runtime
-        .session_store
-        .get(&runtime.session_key)
-        .ok_or_else(|| CustomError::System("native web chat session not found".to_string()))?;
-    let raw = run_agent_step_stream(&runtime.llm, &session).await?;
-    let stream = NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session);
-    Ok(LoopDriveOutcome::NextStep(stream))
-}
-
-async fn execute_web_chat_den_tools(
+async fn execute_one_web_chat_den_tool(
     runtime: &NativeWebChatLoopRuntime,
-    calls: Vec<ChatToolCall>,
-) -> Result<Vec<ChatMessage>, CustomError> {
-    let mut results = Vec::with_capacity(calls.len());
-    for call in calls {
-        let provider_name = call.function.name.clone();
-        let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
-            .map(|descriptor| descriptor.name.to_string())
-            .unwrap_or_else(|| provider_name.clone());
-        let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| {
-            serde_json::json!({})
-        });
-        let content = if provider_tool_requires_approval(&provider_name) {
-            serde_json::json!({
-                "ok": false,
-                "error": "This tool requires interactive approval, which web chat does not support yet."
-            })
-            .to_string()
-        } else if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
-            format!("unsupported server tool: {provider_name}")
-        } else {
-            let tool_context = DenToolInvocationContext {
-                bear_id: runtime.bear_id,
-                bear_slug: runtime.bear_slug.clone(),
-                binding_id: runtime.chat_binding_id.clone(),
-                profile: Some(BearProfile::Chat),
-                user_id: runtime.user_id,
-                username: runtime.username.clone(),
-                membership_role: runtime.membership_role.clone(),
-                conversation_id: runtime.conversation_id.clone(),
-                session_id: runtime.session_id.clone(),
-                acp_session_id: None,
-                conversation_selection: Some(runtime.conversation_id.clone()),
-                runtime_target: Some(runtime.conversation_id.clone()),
-                workspace_roots: Vec::new(),
-                session_policy: None,
-                activity: None,
-                runtime: None,
-                context_budget: None,
-                request_id: Some(runtime.request_id.clone()),
-                channel: DenToolChannelContext {
-                    family: Some("browser_chat".to_string()),
-                    client: Some("den_web".to_string()),
-                    protocol: Some("den_chat".to_string()),
-                },
-            };
-            match invoke_den_tool(
-                &runtime.pool,
-                runtime.config.as_ref(),
-                &runtime.stores,
-                &canonical,
-                args,
-                tool_context,
-            )
-            .await
-            {
-                Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
-                Err(error) => format!("error: {error}"),
-            }
+    call: ChatToolCall,
+) -> Result<ChatMessage, CustomError> {
+    let provider_name = call.function.name.clone();
+    let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
+        .map(|descriptor| descriptor.name.to_string())
+        .unwrap_or_else(|| provider_name.clone());
+    let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default()));
+    let content = if provider_tool_requires_approval(&provider_name) {
+        serde_json::json!({
+            "ok": false,
+            "error": "This tool requires interactive approval, which web chat does not support yet."
+        })
+        .to_string()
+    } else if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
+        format!("unsupported server tool: {provider_name}")
+    } else {
+        let tool_context = DenToolInvocationContext {
+            bear_id: runtime.bear_id,
+            bear_slug: runtime.bear_slug.clone(),
+            binding_id: runtime.chat_binding_id.clone(),
+            profile: Some(BearProfile::Chat),
+            user_id: runtime.user_id,
+            username: runtime.username.clone(),
+            membership_role: runtime.membership_role.clone(),
+            conversation_id: runtime.conversation_id.clone(),
+            session_id: runtime.session_id.clone(),
+            acp_session_id: None,
+            conversation_selection: Some(runtime.conversation_id.clone()),
+            runtime_target: Some(runtime.conversation_id.clone()),
+            workspace_roots: Vec::new(),
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: Some(runtime.request_id.clone()),
+            channel: DenToolChannelContext {
+                family: Some("browser_chat".to_string()),
+                client: Some("den_web".to_string()),
+                protocol: Some("den_chat".to_string()),
+            },
         };
-        results.push(ChatMessage {
-            role: "tool".to_string(),
-            content: Some(content),
-            tool_call_id: Some(call.id),
-            name: Some(provider_name),
-            tool_calls: None,
-        });
-    }
-    Ok(results)
+        match invoke_den_tool(
+            &runtime.pool,
+            runtime.config.as_ref(),
+            &runtime.stores,
+            &canonical,
+            args,
+            tool_context,
+        )
+        .await
+        {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+            Err(error) => format!("error: {error}"),
+        }
+    };
+    Ok(ChatMessage {
+        role: "tool".to_string(),
+        content: Some(content),
+        tool_call_id: Some(call.id),
+        name: Some(provider_name),
+        tool_calls: None,
+    })
 }
