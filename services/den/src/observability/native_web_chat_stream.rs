@@ -38,16 +38,15 @@ pub fn runtime_semantic_to_bear_channel_events(
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![serde_json::json!({
-                "type": "server_tool_finished",
-                "tool": tool_name,
-                "summary": display_summary,
-                "status": status.as_str(),
+                "type": "reasoning_delta",
+                "text": format!("Finished {tool_name}: {display_summary}"),
             })];
             if status == ToolCallFinishStatus::Error {
                 if let Some(message) = error_message {
                     events.push(serde_json::json!({
                         "type": "error",
                         "message": message,
+                        "detail": format!("Tool `{tool_name}` returned an error."),
                         "error_type": "tool_execution_error",
                         "request_id": request_id,
                     }));
@@ -78,9 +77,8 @@ pub fn runtime_semantic_to_bear_channel_events(
         } => {
             let summary = title.unwrap_or_else(|| tool_name.clone());
             vec![serde_json::json!({
-                "type": "server_tool_started",
-                "tool": tool_name,
-                "summary": summary,
+                "type": "reasoning_delta",
+                "text": format!("Started {summary}"),
             })]
         }
         RuntimeSemanticEvent::Error {
@@ -273,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_tool_call_finished_to_server_tool_finished() {
+    fn maps_tool_call_finished_to_reasoning_and_single_error() {
         let events = runtime_semantic_to_bear_channel_events(
             RuntimeSemanticEvent::ToolCallFinished {
                 tool_call_id: "call_1".to_string(),
@@ -284,10 +282,35 @@ mod tests {
             },
             Some("req-1"),
         );
-        assert_eq!(events[0]["type"], "server_tool_finished");
-        assert_eq!(events[0]["tool"], "memory_read");
-        assert_eq!(events[0]["status"], "error");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["type"], "reasoning_delta");
+        assert!(events[0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Finished memory_read"));
         assert_eq!(events[1]["type"], "error");
+        assert_eq!(events[1]["error_type"], "tool_execution_error");
+    }
+
+    #[test]
+    fn maps_tool_call_requested_to_reasoning_delta() {
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call_1".to_string(),
+                tool_name: "den_capabilities_list_self".to_string(),
+                title: Some("den_capabilities_list_self".to_string()),
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+            None,
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "reasoning_delta");
+        assert_eq!(events[0]["text"], "Started den_capabilities_list_self");
     }
 
     #[test]

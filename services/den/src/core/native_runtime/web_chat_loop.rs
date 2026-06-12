@@ -16,8 +16,8 @@ use crate::{
     config::Config,
     core::{
         agent_loop::{
-            pending_tool_calls, run_agent_step_stream, provider_tool_requires_approval,
-            spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
+            pending_tool_calls, run_agent_step_stream, spawn_persist_web_chat_interrupted_turn,
+            spawn_persist_web_chat_turn,
             tool_call_finished_event, tool_call_finished_event_for_content,
             tool_call_finished_event_for_incomplete,
             AgentLoopSessionStore, NativeToolDispatchMode,
@@ -107,20 +107,6 @@ fn status_event(text: impl Into<String>) -> RuntimeStreamEvent {
         text: Some(text.into()),
         phase: None,
         detail: None,
-    })
-}
-
-fn tool_started_event(call: &ChatToolCall) -> RuntimeStreamEvent {
-    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-        tool_call_id: call.id.clone(),
-        tool_name: call.function.name.clone(),
-        title: Some(call.function.name.clone()),
-        kind: Some("function".to_string()),
-        arguments: serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default())),
-        approval_request_id: None,
-        approval_required: provider_tool_requires_approval(&call.function.name),
-        approval_reason: None,
-        run_id: None,
     })
 }
 
@@ -271,7 +257,6 @@ impl NativeWebChatLoopStream {
 
         if active.is_none() {
             let call = calls[*index].clone();
-            self.pending_out.push_back(tool_started_event(&call));
             let runtime = self.runtime.clone();
             *active = Some(Box::pin(async move { execute_one_web_chat_den_tool(&runtime, call).await }));
         }
@@ -284,27 +269,6 @@ impl NativeWebChatLoopStream {
                 let call = calls[*index].clone();
                 let content = message.content.as_deref();
                 let finished = tool_call_finished_event_for_content(&call, content);
-                if let RuntimeSemanticEvent::ToolCallFinished {
-                    error_message: Some(message),
-                    ..
-                } = &finished
-                {
-                    self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::Error {
-                            message: message.clone(),
-                            detail: Some(format!(
-                                "Tool `{}` returned an error.",
-                                call.function.name
-                            )),
-                            error_type: Some("tool_execution_error".to_string()),
-                            request_id: Some(self.runtime.request_id.clone()),
-                            context: Some(serde_json::json!({
-                                "tool_call_id": call.id,
-                                "tool_name": call.function.name,
-                            })),
-                        },
-                    ));
-                }
                 self.pending_out
                     .push_back(RuntimeStreamEvent::Semantic(finished));
                 results.push(message);
@@ -323,18 +287,6 @@ impl NativeWebChatLoopStream {
                         summary.clone(),
                         Some(summary.clone()),
                     ),
-                ));
-                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                    RuntimeSemanticEvent::Error {
-                        message: summary.clone(),
-                        detail: Some(format!("Tool `{}` failed to execute.", call.function.name)),
-                        error_type: Some("tool_execution_error".to_string()),
-                        request_id: Some(self.runtime.request_id.clone()),
-                        context: Some(serde_json::json!({
-                            "tool_call_id": call.id,
-                            "tool_name": call.function.name,
-                        })),
-                    },
                 ));
                 results.push(ChatMessage {
                     role: "tool".to_string(),
@@ -473,13 +425,7 @@ async fn execute_one_web_chat_den_tool(
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| provider_name.clone());
     let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default()));
-    let content = if provider_tool_requires_approval(&provider_name) {
-        serde_json::json!({
-            "ok": false,
-            "error": "This tool requires interactive approval, which web chat does not support yet."
-        })
-        .to_string()
-    } else if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
+    let content = if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
         format!("unsupported server tool: {provider_name}")
     } else {
         let tool_context = DenToolInvocationContext {

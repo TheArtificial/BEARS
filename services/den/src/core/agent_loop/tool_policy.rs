@@ -2,11 +2,18 @@ use crate::core::{
     acp_tools::{acp_tool_policy, acp_tool_policy_json_for_provider, AcpToolName},
     agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
     runtime_contracts::RuntimeSemanticEvent,
+    tools::descriptor::den_tool_policy_json_for_provider,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
 
 pub fn provider_tool_requires_approval(provider_name: &str) -> bool {
+    if let Some(policy) = den_tool_policy_json_for_provider(provider_name) {
+        return policy
+            .get("approval_required")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+    }
     acp_tool_policy_json_for_provider(provider_name)
         .get("approval_required")
         .and_then(|value| value.as_bool())
@@ -64,4 +71,15 @@ pub async fn record_approval_decision(
         reason,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn den_capabilities_list_self_does_not_require_approval() {
+        assert!(!provider_tool_requires_approval("den_capabilities_list_self"));
+        assert!(!provider_tool_requires_approval("den.capabilities.list_self"));
+    }
 }
