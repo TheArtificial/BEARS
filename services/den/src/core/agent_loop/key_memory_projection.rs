@@ -155,7 +155,7 @@ pub(crate) async fn compiled_prompt_cache_token(
     pool: &PgPool,
     bear: &Bear,
     role: BearProfile,
-    native_runtime: bool,
+    _native_runtime: bool,
 ) -> Result<String, CustomError> {
     if bear.context_profile.is_none() {
         return Ok(format!("legacy:{}:{}", bear.id, bear.provisioning_version));

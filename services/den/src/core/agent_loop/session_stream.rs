@@ -344,7 +344,7 @@ impl Stream for SessionTrackingStream {
                 ))))
             }
             Poll::Ready(other) => {
-                if matches!(other, None) && !self.tool_calls.is_empty() {
+                if other.is_none() && !self.tool_calls.is_empty() {
                     self.persist_assistant_tool_step();
                     self.persist_outstanding_tools_as_incomplete("llm_stream_ended_before_tool_results");
                     self.finished = true;

@@ -116,7 +116,7 @@ pub async fn reconcile_bear_native(
 
 async fn reconcile_one_native_profile(
     pool: &PgPool,
-    config: &Config,
+    _config: &Config,
     bear: &Bear,
     profile: BearProfile,
 ) -> Result<crate::core::bears::sync::BearProfileSyncOutcome, CustomError> {

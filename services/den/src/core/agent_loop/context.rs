@@ -5,9 +5,8 @@ use uuid::Uuid;
 use crate::{
     core::{
         agent_loop::tool_outcome::{
-            is_incomplete_tool_result, is_legacy_synthetic_interrupted_tool_result,
+            is_legacy_synthetic_interrupted_tool_result,
             tool_message_counts_toward_llm_resolution, INCOMPLETE_TOOL_RESULT_MARK,
-            LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
         },
         conversation_events::{
             canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
@@ -437,6 +436,7 @@ pub async fn assemble_agent_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::agent_loop::tool_outcome::LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE;
     use serde_json::json;
 
     #[test]

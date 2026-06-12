@@ -533,6 +533,7 @@ dependencies = [
  "axum-login",
  "base64",
  "bytes",
+ "den-core",
  "dotenvy",
  "futures",
  "http-body-util",
@@ -569,6 +570,15 @@ dependencies = [
  "utoipa",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "den-core"
+version = "0.1.0"
+dependencies = [
+ "dotenvy",
+ "tracing",
+ "url",
 ]
 
 [[package]]

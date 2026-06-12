@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::errors::CustomError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConversationRow {

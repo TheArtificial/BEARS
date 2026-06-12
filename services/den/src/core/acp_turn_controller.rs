@@ -390,7 +390,7 @@ impl AcpTurnController {
         if self.orphaned_requires_approval && self.phase != AcpTurnPhase::Terminal {
             return AcpTurnStatusUpdate {
                 key: format!("heartbeat:recovering:{tick}"),
-                text: if tick % 2 == 0 {
+                text: if tick.is_multiple_of(2) {
                     "Recovering stale model approval…".to_string()
                 } else {
                     "Cleaning up interrupted approval state…".to_string()
@@ -421,7 +421,7 @@ impl AcpTurnController {
                     .to_string();
                 AcpTurnStatusUpdate {
                     key: format!("heartbeat:waiting:{tick}"),
-                    text: if tick % 3 == 0 {
+                    text: if tick.is_multiple_of(3) {
                         format!("{base} (still waiting)…")
                     } else {
                         base

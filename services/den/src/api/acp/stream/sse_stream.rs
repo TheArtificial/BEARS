@@ -383,7 +383,8 @@ impl AcpRuntimeSseStream {
         let mut turn_controller = AcpTurnController::new();
         turn_controller.set_client_label(context.client.clone());
         turn_controller.on_stream_started();
-        let mut stream = Self {
+        
+        Self {
             inner: Box::pin(inner),
             pending,
             context,
@@ -403,8 +404,7 @@ impl AcpRuntimeSseStream {
             last_adapter_update_at,
             status_heartbeat_interval: ACP_STATUS_HEARTBEAT_INTERVAL,
             status_heartbeat_sleep: None,
-        };
-        stream
+        }
     }
 
     #[cfg(test)]
@@ -769,7 +769,7 @@ impl Stream for AcpRuntimeSseStream {
                                                     let rendered = if kind == "status_text" {
                                                         text.unwrap_or_default()
                                                     } else {
-                                                        text.unwrap_or_else(|| kind)
+                                                        text.unwrap_or(kind)
                                                     };
                                                     queued_events.push(AcpGatewayEvent::StatusText { text: rendered });
                                                 }

@@ -1,6 +1,6 @@
 //! Routes Bear cognition writes to per-Bear SQLite when `AGENT_RUNTIME=native`.
 
-use serde_json::{json, Value};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 

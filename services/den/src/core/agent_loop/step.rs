@@ -61,10 +61,10 @@ impl LazyAgentStepStream {
                         handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
                         "LLM chat/completions handshake timed out"
                     );
-                    return Err(CustomError::System(format!(
+                    Err(CustomError::System(format!(
                         "LLM chat/completions handshake timed out after {}s",
                         NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
-                    )));
+                    )))
                 }
                 Ok(Err(err)) => {
                     tracing::warn!(
@@ -74,7 +74,7 @@ impl LazyAgentStepStream {
                         error = %err,
                         "LLM chat/completions handshake failed"
                     );
-                    return Err(err);
+                    Err(err)
                 }
                 Ok(Ok(byte_stream)) => {
                     tracing::info!(

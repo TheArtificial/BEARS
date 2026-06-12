@@ -52,6 +52,12 @@ pub struct NativeRuntimeConversationBackend {
     pool: Option<PgPool>,
 }
 
+impl Default for NativeRuntimeConversationBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeRuntimeConversationBackend {
     pub fn new() -> Self {
         Self { pool: None }
@@ -305,11 +311,8 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     let mut stream = run_agent_step_stream(&llm, &session).await?;
     let mut text = String::new();
     while let Some(item) = stream.next().await {
-        match item? {
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta }) => {
-                text.push_str(&delta);
-            }
-            _ => {}
+        if let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta }) = item? {
+            text.push_str(&delta);
         }
     }
     Ok(text)

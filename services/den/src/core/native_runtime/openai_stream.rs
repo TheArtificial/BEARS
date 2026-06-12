@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub fn openai_byte_stream_to_event_stream(
-    mut parsed: impl Stream<Item = Result<bytes::Bytes, CustomError>> + Send + Unpin + 'static,
+    parsed: impl Stream<Item = Result<bytes::Bytes, CustomError>> + Send + Unpin + 'static,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
     let mut queued_events: VecDeque<Result<RuntimeStreamEvent, CustomError>> = VecDeque::new();

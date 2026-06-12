@@ -1,6 +1,5 @@
 use serde_json::Value;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 use crate::errors::CustomError;
 
