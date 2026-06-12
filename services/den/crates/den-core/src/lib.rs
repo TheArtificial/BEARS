@@ -4,3 +4,4 @@
 //! dependencies only. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 pub mod config;
+pub mod metrics;
