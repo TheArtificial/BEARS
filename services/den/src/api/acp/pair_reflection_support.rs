@@ -53,7 +53,7 @@ pub(crate) async fn run_pair_reflection_summary(
             )
             .await?;
             rows.into_iter()
-                .filter(|row| matches!(row.visibility.as_str(), "default" | "visible"))
+                .filter(|row| row.is_transcript_visible())
                 .map(|row| {
                     format!(
                         "{}: {}",

@@ -2,7 +2,13 @@ use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use crate::{
+    core::conversation_message_types::{
+        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+        ConversationMessageWrite,
+    },
+    errors::CustomError,
+};
 
 use super::{
     acp_runtime::is_acp_history_target,
@@ -58,9 +64,9 @@ pub enum CanonicalConversationRecord {
         provider_message_id: Option<String>,
     },
     StructuredEvent {
-        message_type: String,
-        role: Option<String>,
-        visibility: String,
+        message_type: ConversationMessageType,
+        role: Option<ConversationMessageRole>,
+        visibility: ConversationMessageVisibility,
         content_text: String,
         content_json: serde_json::Value,
         provider_message_id: Option<String>,
@@ -163,9 +169,9 @@ impl CanonicalConversationRecord {
         provider_message_id: Option<String>,
     ) -> Self {
         Self::StructuredEvent {
-            message_type: "tool_result".to_string(),
-            role: Some("system".to_string()),
-            visibility: "diagnostic_only".to_string(),
+            message_type: ConversationMessageType::ToolResult,
+            role: Some(ConversationMessageRole::System),
+            visibility: ConversationMessageVisibility::DiagnosticOnly,
             content_text: content_text.into(),
             content_json,
             provider_message_id,
@@ -178,9 +184,9 @@ impl CanonicalConversationRecord {
         provider_message_id: Option<String>,
     ) -> Self {
         Self::StructuredEvent {
-            message_type: "tool_call".to_string(),
-            role: Some("system".to_string()),
-            visibility: "diagnostic_only".to_string(),
+            message_type: ConversationMessageType::ToolCall,
+            role: Some(ConversationMessageRole::System),
+            visibility: ConversationMessageVisibility::DiagnosticOnly,
             content_text: content_text.into(),
             content_json,
             provider_message_id,
@@ -193,9 +199,9 @@ impl CanonicalConversationRecord {
         provider_message_id: Option<String>,
     ) -> Self {
         Self::StructuredEvent {
-            message_type: "workflow_event".to_string(),
-            role: Some("system".to_string()),
-            visibility: "diagnostic_only".to_string(),
+            message_type: ConversationMessageType::WorkflowEvent,
+            role: Some(ConversationMessageRole::System),
+            visibility: ConversationMessageVisibility::DiagnosticOnly,
             content_text: content_text.into(),
             content_json,
             provider_message_id,
@@ -325,17 +331,17 @@ impl CanonicalConversationRecord {
     }
 
     pub fn structured_event(
-        message_type: impl Into<String>,
-        role: Option<String>,
-        visibility: impl Into<String>,
+        message_type: ConversationMessageType,
+        role: Option<ConversationMessageRole>,
+        visibility: ConversationMessageVisibility,
         content_text: impl Into<String>,
         content_json: serde_json::Value,
         provider_message_id: Option<String>,
     ) -> Self {
         Self::normalized_structured_event(
-            message_type.into(),
+            message_type,
             role,
-            visibility.into(),
+            visibility,
             content_text.into(),
             content_json,
             provider_message_id,
@@ -343,19 +349,21 @@ impl CanonicalConversationRecord {
     }
 
     pub fn normalized_structured_event(
-        message_type: String,
-        role: Option<String>,
-        visibility: String,
+        message_type: ConversationMessageType,
+        role: Option<ConversationMessageRole>,
+        visibility: ConversationMessageVisibility,
         content_text: String,
         content_json: serde_json::Value,
         provider_message_id: Option<String>,
     ) -> Self {
-        match message_type.as_str() {
-            "tool_event" | "tool_result" => {
+        match message_type {
+            ConversationMessageType::ToolResult => {
                 Self::tool_event(content_text, content_json, provider_message_id)
             }
-            "tool_call" => Self::tool_call_event(content_text, content_json, provider_message_id),
-            "workflow_event" => {
+            ConversationMessageType::ToolCall => {
+                Self::tool_call_event(content_text, content_json, provider_message_id)
+            }
+            ConversationMessageType::WorkflowEvent if visibility == ConversationMessageVisibility::DiagnosticOnly => {
                 Self::workflow_event(content_text, content_json, provider_message_id)
             }
             _ => Self::StructuredEvent {
@@ -369,24 +377,52 @@ impl CanonicalConversationRecord {
         }
     }
 
-    fn storage_message_type(&self) -> &str {
+    pub fn to_write(&self, source_event_id: Option<String>) -> ConversationMessageWrite {
         match self {
-            Self::VisibleMessage { role, .. } => role.as_str(),
-            Self::StructuredEvent { message_type, .. } => message_type.as_str(),
-        }
-    }
-
-    fn storage_role(&self) -> Option<&str> {
-        match self {
-            Self::VisibleMessage { role, .. } => Some(role.as_str()),
-            Self::StructuredEvent { role, .. } => role.as_deref(),
-        }
-    }
-
-    fn storage_visibility(&self) -> &str {
-        match self {
-            Self::VisibleMessage { .. } => "default",
-            Self::StructuredEvent { visibility, .. } => visibility.as_str(),
+            Self::VisibleMessage {
+                role,
+                text,
+                content_json,
+                provider_message_id,
+            } => {
+                let (message_type, message_role) = match role {
+                    CanonicalVisibleRole::User => (
+                        ConversationMessageType::User,
+                        ConversationMessageRole::User,
+                    ),
+                    CanonicalVisibleRole::Assistant => (
+                        ConversationMessageType::Assistant,
+                        ConversationMessageRole::Assistant,
+                    ),
+                };
+                ConversationMessageWrite {
+                    message_type,
+                    role: Some(message_role),
+                    visibility: ConversationMessageVisibility::Default,
+                    content_text: text.clone(),
+                    content_json: content_json.clone(),
+                    provider_message_id: provider_message_id.clone(),
+                    source_event_id,
+                    created_at: None,
+                }
+            }
+            Self::StructuredEvent {
+                message_type,
+                role,
+                visibility,
+                content_text,
+                content_json,
+                provider_message_id,
+            } => ConversationMessageWrite {
+                message_type: *message_type,
+                role: *role,
+                visibility: *visibility,
+                content_text: content_text.clone(),
+                content_json: content_json.clone(),
+                provider_message_id: provider_message_id.clone(),
+                source_event_id,
+                created_at: None,
+            },
         }
     }
 
@@ -469,19 +505,8 @@ pub async fn persist_canonical_conversation_record(
     {
         return Ok(());
     }
-    append_message(
-        &context.pool,
-        canonical.id,
-        record.storage_message_type(),
-        record.storage_role(),
-        record.storage_visibility(),
-        record.storage_text(),
-        record.storage_json(),
-        record.provider_message_id(),
-        source_event_id.as_deref(),
-        None,
-    )
-    .await?;
+    let write = record.to_write(source_event_id);
+    append_message(&context.pool, canonical.id, &write).await?;
     Ok(())
 }
 
@@ -528,14 +553,22 @@ pub fn normalize_persisted_gateway_record(
                 provider_message_id,
             ),
         },
-        _ => CanonicalConversationRecord::normalized_structured_event(
-            message_type.to_string(),
-            role.map(str::to_string),
-            visibility.to_string(),
-            content_text,
-            content_json,
-            provider_message_id,
-        ),
+        _ => {
+            let message_type = ConversationMessageType::try_from_storage(message_type)
+                .unwrap_or(ConversationMessageType::WorkflowEvent);
+            let visibility = ConversationMessageVisibility::try_from_storage(visibility)
+                .unwrap_or(ConversationMessageVisibility::DiagnosticOnly);
+            let role = role
+                .and_then(|value| ConversationMessageRole::try_from_storage(value).ok());
+            CanonicalConversationRecord::normalized_structured_event(
+                message_type,
+                role,
+                visibility,
+                content_text,
+                content_json,
+                provider_message_id,
+            )
+        }
     }
 }
 

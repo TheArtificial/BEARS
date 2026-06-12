@@ -32,6 +32,7 @@ pub mod sandbox;
 pub mod migration;
 pub mod codepool;
 pub mod conversation_events;
+pub mod conversation_message_types;
 pub mod conversation_persistence;
 pub mod conversation {
     pub mod events {
@@ -44,6 +45,7 @@ pub mod conversation {
     }
 
     pub mod persistence {
+        pub use super::super::conversation_message_types::*;
         pub use super::super::conversation_persistence::*;
 
         #[cfg(test)]

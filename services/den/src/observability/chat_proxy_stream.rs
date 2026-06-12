@@ -215,17 +215,13 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                "workflow_event",
-                Some("assistant"),
-                "diagnostic_only",
-                &self.reasoning_text,
-                serde_json::json!({
-                    "type": "reasoning_delta_coalesced",
-                    "text": self.reasoning_text,
-                }),
-                None,
-                None,
-                None,
+                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_reasoning_diagnostic(
+                    &self.reasoning_text,
+                    serde_json::json!({
+                        "type": "reasoning_delta_coalesced",
+                        "text": self.reasoning_text,
+                    }),
+                ),
             )
             .await
             {
@@ -237,17 +233,13 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                "assistant",
-                Some("assistant"),
-                "default",
-                &self.assistant_text,
-                serde_json::json!({
-                    "type": "assistant_delta_coalesced",
-                    "text": self.assistant_text,
-                }),
-                None,
-                None,
-                None,
+                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                    &self.assistant_text,
+                    serde_json::json!({
+                        "type": "assistant_delta_coalesced",
+                        "text": self.assistant_text,
+                    }),
+                ),
             )
             .await
             {
@@ -259,14 +251,10 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                "workflow_event",
-                None,
-                "diagnostic_only",
-                "Conversation resolved",
-                event,
-                None,
-                None,
-                None,
+                &crate::core::conversation_message_types::ConversationMessageWrite::workflow_diagnostic(
+                    "Conversation resolved",
+                    event,
+                ),
             )
             .await
             {

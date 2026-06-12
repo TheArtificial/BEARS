@@ -2,7 +2,13 @@ use serde::Serialize;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use crate::{
+    core::conversation_message_types::{
+        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+        ConversationMessageWrite,
+    },
+    errors::CustomError,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationRecord {
@@ -23,6 +29,37 @@ pub struct PersistedConversationMessage {
     pub content_text: String,
     pub provider_message_id: Option<String>,
     pub created_at: time::OffsetDateTime,
+}
+
+impl PersistedConversationMessage {
+    pub fn storage_message_type(&self) -> Result<ConversationMessageType, CustomError> {
+        ConversationMessageType::try_from_storage(&self.message_type)
+    }
+
+    pub fn storage_visibility(&self) -> Result<ConversationMessageVisibility, CustomError> {
+        ConversationMessageVisibility::try_from_storage(&self.visibility)
+    }
+
+    pub fn storage_role(&self) -> Result<Option<ConversationMessageRole>, CustomError> {
+        match self.role.as_deref() {
+            None => Ok(None),
+            Some(role) => ConversationMessageRole::try_from_storage(role).map(Some),
+        }
+    }
+
+    /// Rows that should appear in user-facing chat history (web chat / pair reflection).
+    pub fn is_transcript_visible(&self) -> bool {
+        let Ok(visibility) = self.storage_visibility() else {
+            return false;
+        };
+        if !visibility.is_transcript_visible() {
+            return false;
+        }
+        matches!(
+            self.role.as_deref(),
+            Some("user") | Some("assistant")
+        )
+    }
 }
 
 pub async fn ensure_conversation_for_external_id(
@@ -336,15 +373,16 @@ pub async fn list_messages_page(
 pub async fn append_message(
     pool: &PgPool,
     conversation_id: Uuid,
-    message_type: &str,
-    role: Option<&str>,
-    visibility: &str,
-    content_text: &str,
-    content_json: serde_json::Value,
-    provider_message_id: Option<&str>,
-    source_event_id: Option<&str>,
-    created_at: Option<&str>,
+    message: &ConversationMessageWrite,
 ) -> Result<i64, CustomError> {
+    let message_type = message.message_type.as_str();
+    let role = message.role.map(|r| r.as_str());
+    let visibility = message.visibility.as_str();
+    let content_text = message.content_text.as_str();
+    let content_json = message.content_json.clone();
+    let provider_message_id = message.provider_message_id.as_deref();
+    let source_event_id = message.source_event_id.as_deref();
+    let created_at = message.created_at.as_deref();
     let mut tx = pool
         .begin()
         .await
@@ -477,14 +515,15 @@ pub async fn insert_message_if_absent(
     pool: &PgPool,
     conversation_id: Uuid,
     sequence_no: i64,
-    message_type: &str,
-    role: Option<&str>,
-    visibility: &str,
-    content_text: &str,
-    content_json: serde_json::Value,
-    provider_message_id: Option<&str>,
-    created_at: Option<&str>,
+    message: &ConversationMessageWrite,
 ) -> Result<(), CustomError> {
+    let message_type = message.message_type.as_str();
+    let role = message.role.map(|r| r.as_str());
+    let visibility = message.visibility.as_str();
+    let content_text = message.content_text.as_str();
+    let content_json = message.content_json.clone();
+    let provider_message_id = message.provider_message_id.as_deref();
+    let created_at = message.created_at.as_deref();
     sqlx::query(
         r#"
         INSERT INTO conversation_messages (

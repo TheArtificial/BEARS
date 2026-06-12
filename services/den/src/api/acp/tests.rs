@@ -3373,9 +3373,18 @@ use crate::core::prompt_memory_blocks::{
                 content_text,
                 ..
             } => {
-                assert_eq!(message_type, "workflow_event");
-                assert_eq!(role.as_deref(), Some("system"));
-                assert_eq!(visibility, "diagnostic_only");
+                assert_eq!(
+                    message_type,
+                    crate::core::conversation_message_types::ConversationMessageType::WorkflowEvent
+                );
+                assert_eq!(
+                    role,
+                    Some(crate::core::conversation_message_types::ConversationMessageRole::System)
+                );
+                assert_eq!(
+                    visibility,
+                    crate::core::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                );
                 assert_eq!(content_text, "Turn outcome: ok / stream_complete");
             }
             _ => panic!("expected structured event"),
@@ -5936,9 +5945,18 @@ use crate::core::prompt_memory_blocks::{
                 content_json,
                 provider_message_id,
             } => {
-                assert_eq!(message_type, "workflow_event");
-                assert_eq!(role.as_deref(), Some("system"));
-                assert_eq!(visibility, "diagnostic_only");
+                assert_eq!(
+                    message_type,
+                    crate::core::conversation_message_types::ConversationMessageType::WorkflowEvent
+                );
+                assert_eq!(
+                    role,
+                    Some(crate::core::conversation_message_types::ConversationMessageRole::System)
+                );
+                assert_eq!(
+                    visibility,
+                    crate::core::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                );
                 assert_eq!(content_text, "Conversation resolved");
                 assert!(provider_message_id.is_none());
                 assert_eq!(content_json["source"], "acp_stream");

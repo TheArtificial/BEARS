@@ -2,6 +2,7 @@ use sqlx::PgPool;
 
 use crate::core::{
     bears::{db::create_bear, db::BearParams},
+    conversation_message_types::{ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility, ConversationMessageWrite},
     conversation_persistence::{append_message, ensure_conversation_for_external_id},
 };
 
@@ -39,30 +40,19 @@ async fn duplicate_source_event_id_returns_existing_sequence(
         "request_id": "req-123"
     });
 
-    let first = append_message(
-        &pool,
-        conversation.id,
-        "assistant",
-        Some("assistant"),
-        "default",
+    let message = ConversationMessageWrite::structured(
+        ConversationMessageType::Assistant,
+        Some(ConversationMessageRole::Assistant),
+        ConversationMessageVisibility::Default,
         "hello",
         content_json.clone(),
-        None,
-        Some(source_event_id),
-        None,
     )
-    .await?;
+    .with_source_event_id(Some(source_event_id.to_string()));
+    let first = append_message(&pool, conversation.id, &message).await?;
     let second = append_message(
         &pool,
         conversation.id,
-        "assistant",
-        Some("assistant"),
-        "default",
-        "hello",
-        content_json,
-        None,
-        Some(source_event_id),
-        None,
+        &message.with_source_event_id(Some(source_event_id.to_string())),
     )
     .await?;
 

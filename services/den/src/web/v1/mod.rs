@@ -414,10 +414,7 @@ fn map_persisted_history_page(
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let visible_rows: Vec<_> = rows
         .iter()
-        .filter(|row| {
-            matches!(row.visibility.as_str(), "default" | "visible")
-                && matches!(row.role.as_deref(), Some("user") | Some("assistant"))
-        })
+        .filter(|row| row.is_transcript_visible())
         .collect();
 
     let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
@@ -426,7 +423,10 @@ fn map_persisted_history_page(
         if let Some((_, last)) = coalesced_desc.last_mut() {
             if last.role == role
                 && role == "assistant"
-                && matches!(row.message_type.as_str(), "assistant" | "assistant_output")
+                && matches!(
+                    row.storage_message_type(),
+                    Ok(crate::core::conversation_message_types::ConversationMessageType::Assistant)
+                )
             {
                 last.text.push_str(&row.content_text);
                 continue;
@@ -958,18 +958,15 @@ async fn chat_send_native_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        "user",
-        Some("user"),
-        "default",
-        body.message.trim(),
-        serde_json::json!({
-            "type": "user_input",
-            "text": body.message.trim(),
-            "request_id": request_id.to_string(),
-        }),
-        None,
-        Some(&format!("web-chat-user-input:{request_id}")),
-        None,
+        &crate::core::conversation_message_types::ConversationMessageWrite::user_turn(
+            body.message.trim(),
+            serde_json::json!({
+                "type": "user_input",
+                "text": body.message.trim(),
+                "request_id": request_id.to_string(),
+            }),
+            Some(format!("web-chat-user-input:{request_id}")),
+        ),
     )
     .await?;
 
@@ -1112,18 +1109,15 @@ async fn chat_send_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        "user",
-        Some("user"),
-        "default",
-        body.message.trim(),
-        serde_json::json!({
-            "type": "user_input",
-            "text": body.message.trim(),
-            "request_id": request_id.to_string(),
-        }),
-        None,
-        Some(&format!("web-chat-user-input:{request_id}")),
-        None,
+        &crate::core::conversation_message_types::ConversationMessageWrite::user_turn(
+            body.message.trim(),
+            serde_json::json!({
+                "type": "user_input",
+                "text": body.message.trim(),
+                "request_id": request_id.to_string(),
+            }),
+            Some(format!("web-chat-user-input:{request_id}")),
+        ),
     )
     .await?;
 

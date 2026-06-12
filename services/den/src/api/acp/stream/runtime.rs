@@ -61,14 +61,14 @@ pub(in crate::api::acp) fn acp_session_provenance(
 fn prompt_memory_diagnostic_record(
     context: &AcpStreamContext,
 ) -> crate::core::conversation_events::CanonicalConversationRecord {
-    crate::core::conversation_events::CanonicalConversationRecord::StructuredEvent {
-        message_type: "prompt_memory_diagnostic".to_string(),
-        role: Some("system".to_string()),
-        visibility: "diagnostic_only".to_string(),
-        content_text: "Prompt memory runtime selection diagnostic".to_string(),
-        content_json: context.prompt_memory_diagnostic.clone(),
-        provider_message_id: None,
-    }
+    crate::core::conversation_events::CanonicalConversationRecord::structured_event(
+        crate::core::conversation_message_types::ConversationMessageType::WorkflowEvent,
+        Some(crate::core::conversation_message_types::ConversationMessageRole::System),
+        crate::core::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly,
+        "Prompt memory runtime selection diagnostic",
+        context.prompt_memory_diagnostic.clone(),
+        None,
+    )
 }
 
 pub(in crate::api::acp) fn spawn_persist_acp_assistant_output(
