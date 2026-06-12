@@ -101,19 +101,9 @@ pub fn spawn_persist_web_chat_turn(
     for message in messages.iter().skip(from_index) {
         match message.role.as_str() {
             "assistant" => {
-                if let Some(text) = message
-                    .content
-                    .as_ref()
-                    .filter(|value| !value.trim().is_empty())
-                {
-                    spawn_persist_assistant_output(
-                        context.clone(),
-                        text.clone(),
-                        &provenance,
-                        None,
-                        Some(request_id.clone()),
-                    );
-                }
+                // Browser-visible assistant text is persisted by the SSE proxy from streamed
+                // `assistant_delta` events (including interrupted turns). This path only records
+                // tool-call metadata for the agent loop.
                 if let Some(calls) = &message.tool_calls {
                     for call in calls {
                         let args: Value = serde_json::from_str(&call.function.arguments)

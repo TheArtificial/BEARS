@@ -161,6 +161,9 @@ fn rich_event_status_text(event: &serde_json::Value) -> Option<String> {
 #[derive(Default)]
 struct PendingConversationPersistence {
     assistant_text: String,
+    /// User-visible status lines (tool started/finished, progress) shown during the live stream.
+    status_text: String,
+    error_text: String,
     reasoning_text: String,
     resolved_conversation_id: Option<String>,
     workflow_events: Vec<serde_json::Value>,
@@ -179,6 +182,26 @@ impl PendingConversationPersistence {
                     self.reasoning_text.push_str(text);
                 }
             }
+            "error" => {
+                if let Some(message) = event.get("message").and_then(|v| v.as_str()) {
+                    if !self.error_text.is_empty() {
+                        self.error_text.push_str("\n\n");
+                    }
+                    self.error_text.push_str(message);
+                }
+            }
+            "server_tool_started"
+            | "server_tool_finished"
+            | "subagent_started"
+            | "subagent_finished"
+            | "memory_update_recorded" => {
+                if let Some(text) = rich_event_status_text(event) {
+                    if !self.status_text.is_empty() {
+                        self.status_text.push('\n');
+                    }
+                    self.status_text.push_str(&text);
+                }
+            }
             "conversation_resolved" => {
                 if let Some(conversation_id) = event.get("conversation_id").and_then(|v| v.as_str()) {
                     self.resolved_conversation_id = Some(conversation_id.to_string());
@@ -189,7 +212,23 @@ impl PendingConversationPersistence {
         }
     }
 
-    async fn flush(self, pool: &PgPool, bear_id: Uuid, user_id: i32, conversation_id: &str) {
+    fn has_flushable_content(&self) -> bool {
+        !self.assistant_text.trim().is_empty()
+            || !self.status_text.trim().is_empty()
+            || !self.error_text.trim().is_empty()
+            || !self.reasoning_text.trim().is_empty()
+            || !self.workflow_events.is_empty()
+    }
+
+    async fn flush(
+        self,
+        pool: &PgPool,
+        bear_id: Uuid,
+        user_id: i32,
+        conversation_id: &str,
+        request_id: Uuid,
+        interrupted: bool,
+    ) {
         let external_conversation_id = self
             .resolved_conversation_id
             .as_deref()
@@ -211,17 +250,20 @@ impl PendingConversationPersistence {
             }
         };
 
-        if !self.reasoning_text.is_empty() {
+        if !self.reasoning_text.trim().is_empty() {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_reasoning_diagnostic(
+                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
                     &self.reasoning_text,
                     serde_json::json!({
                         "type": "reasoning_delta_coalesced",
                         "text": self.reasoning_text,
+                        "request_id": request_id.to_string(),
+                        "interrupted": interrupted,
                     }),
-                ),
+                )
+                .with_source_event_id(Some(format!("web-chat-reasoning:{request_id}"))),
             )
             .await
             {
@@ -229,7 +271,28 @@ impl PendingConversationPersistence {
             }
         }
 
-        if !self.assistant_text.is_empty() {
+        if !self.status_text.trim().is_empty() {
+            if let Err(err) = append_message(
+                pool,
+                canonical.id,
+                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                    &self.status_text,
+                    serde_json::json!({
+                        "type": "status_message_coalesced",
+                        "text": self.status_text,
+                        "request_id": request_id.to_string(),
+                        "interrupted": interrupted,
+                    }),
+                )
+                .with_source_event_id(Some(format!("web-chat-status:{request_id}"))),
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat status");
+            }
+        }
+
+        if !self.assistant_text.trim().is_empty() {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
@@ -238,12 +301,36 @@ impl PendingConversationPersistence {
                     serde_json::json!({
                         "type": "assistant_delta_coalesced",
                         "text": self.assistant_text,
+                        "request_id": request_id.to_string(),
+                        "interrupted": interrupted,
                     }),
-                ),
+                )
+                .with_source_event_id(Some(format!("web-chat-assistant:{request_id}"))),
             )
             .await
             {
                 tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat assistant output");
+            }
+        }
+
+        if !self.error_text.trim().is_empty() {
+            if let Err(err) = append_message(
+                pool,
+                canonical.id,
+                &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                    &self.error_text,
+                    serde_json::json!({
+                        "type": "error_message_coalesced",
+                        "text": self.error_text,
+                        "request_id": request_id.to_string(),
+                        "interrupted": interrupted,
+                    }),
+                )
+                .with_source_event_id(Some(format!("web-chat-error:{request_id}"))),
+            )
+            .await
+            {
+                tracing::warn!(bear_id = %bear_id, conversation_id = conversation_id, resolved_conversation_id = external_conversation_id, error = %err, "failed to append canonical web chat error");
             }
         }
 
@@ -270,6 +357,16 @@ pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes>
 
 pub(crate) fn sse_comment_keepalive_bytes() -> Bytes {
     Bytes::from(": keepalive\n\n")
+}
+
+fn empty_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "type": "error",
+        "message": "The assistant stream ended without a reply.",
+        "detail": "No displayable content reached the browser before the stream closed. You can retry, or share the reference below when asking for help.",
+        "error_type": "stream_empty_terminal",
+        "request_id": request_id.to_string(),
+    })
 }
 
 fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
@@ -406,9 +503,37 @@ impl BearChannelSseProxyStream {
             return false;
         }
         self.empty_terminal_error_emitted = true;
+        let error_event = empty_terminal_bear_channel_error(self.request_id);
+        self.persistence.ingest(&error_event);
         self.pending
             .push_back(browser_empty_terminal_error(self.request_id));
         true
+    }
+
+    /// Persist browser-visible stream content. Runs on normal stream end and on abrupt drop.
+    fn schedule_persistence_flush(&mut self, interrupted: bool) {
+        if self.flush_started || !self.persistence.has_flushable_content() {
+            return;
+        }
+        self.flush_started = true;
+        let persistence = std::mem::take(&mut self.persistence);
+        let pool = self.pool.clone();
+        let bear_id = self.bear_id;
+        let user_id = self.user_id;
+        let conversation_id = self.conversation_id.clone();
+        let request_id = self.request_id;
+        self.flush_task = Some(tokio::spawn(async move {
+            persistence
+                .flush(
+                    &pool,
+                    bear_id,
+                    user_id,
+                    &conversation_id,
+                    request_id,
+                    interrupted,
+                )
+                .await;
+        }));
     }
 
     fn record_terminal(&mut self, t: Terminal) {
@@ -460,6 +585,9 @@ impl BearChannelSseProxyStream {
 
 impl Drop for BearChannelSseProxyStream {
     fn drop(&mut self) {
+        if self.terminal.is_none() {
+            self.schedule_persistence_flush(true);
+        }
         if self.terminal.is_some() {
             return;
         }
@@ -480,6 +608,7 @@ impl Drop for BearChannelSseProxyStream {
             ttfb_ms,
             elapsed_ms,
             empty_terminal_error_emitted = self.empty_terminal_error_emitted,
+            flush_scheduled = self.flush_started,
             "chat_send bear_channel proxy stream dropped before terminal poll (client disconnect or task cancelled)"
         );
     }
@@ -562,6 +691,7 @@ impl Stream for BearChannelSseProxyStream {
                     }
                 }
                 Some(Err(e)) => {
+                    this.schedule_persistence_flush(true);
                     this.log_and_record_finish(Terminal::ProxyError);
                     tracing::error!(
                         request_id = %this.request_id,
@@ -598,16 +728,19 @@ impl Stream for BearChannelSseProxyStream {
                             return Poll::Ready(Some(Ok(bytes)));
                         }
                     }
+                    if this.terminal.is_some() {
+                        return Poll::Ready(None);
+                    }
+                    if this.queue_empty_terminal_error_if_needed() {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    if !this.pending.is_empty() {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
                     if !this.flush_started {
-                        this.flush_started = true;
-                        let persistence = std::mem::take(&mut this.persistence);
-                        let pool = this.pool.clone();
-                        let bear_id = this.bear_id;
-                        let user_id = this.user_id;
-                        let conversation_id = this.conversation_id.clone();
-                        this.flush_task = Some(tokio::spawn(async move {
-                            persistence.flush(&pool, bear_id, user_id, &conversation_id).await;
-                        }));
+                        this.schedule_persistence_flush(false);
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }
@@ -619,14 +752,7 @@ impl Stream for BearChannelSseProxyStream {
                             }
                         }
                     }
-                    if this.terminal.is_some() {
-                        return Poll::Ready(None);
-                    }
-                    if this.queue_empty_terminal_error_if_needed() {
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
-                    let outcome = if this.total_bytes == 0 {
+                    let outcome = if this.empty_terminal_error_emitted || this.total_bytes == 0 {
                         Terminal::Empty
                     } else {
                         Terminal::Ok
@@ -665,6 +791,28 @@ mod tests {
         let out = mapped_text("data: {\"type\":\"reasoning_delta\",\"text\":\"Thinking\"}\n\n");
         assert!(out.contains("\"message_type\":\"reasoning_message\""));
         assert!(out.contains("\"reasoning\":\"Thinking\""));
+    }
+
+    #[test]
+    fn persistence_ingest_tracks_browser_visible_content() {
+        let mut persistence = PendingConversationPersistence::default();
+        assert!(!persistence.has_flushable_content());
+        persistence.ingest(&serde_json::json!({"type": "assistant_delta", "text": "Hello"}));
+        assert!(persistence.has_flushable_content());
+        persistence.ingest(&serde_json::json!({"type": "error", "message": "Tool failed"}));
+        persistence.ingest(&serde_json::json!({
+            "type": "server_tool_started",
+            "tool": "memory_read",
+            "summary": "memory_read"
+        }));
+        persistence.ingest(&serde_json::json!({
+            "type": "subagent_finished",
+            "name": "researcher",
+            "summary": "done"
+        }));
+        assert!(!persistence.assistant_text.is_empty());
+        assert!(!persistence.error_text.is_empty());
+        assert!(!persistence.status_text.is_empty());
     }
 
     #[test]

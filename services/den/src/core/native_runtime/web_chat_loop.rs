@@ -20,7 +20,7 @@ use crate::{
             spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
             tool_call_finished_event, tool_call_finished_event_for_content,
             tool_call_finished_event_for_incomplete,
-            tool_result_content_indicates_error, AgentLoopSessionStore, NativeToolDispatchMode,
+            AgentLoopSessionStore, NativeToolDispatchMode,
             SessionTrackingStream,
         },
         runtime_contracts::ToolCallFinishStatus,
@@ -388,6 +388,7 @@ impl Stream for NativeWebChatLoopStream {
                         self.phase = LoopPhase::Streaming(stream);
                     }
                     Poll::Ready(Err(error)) => {
+                        self.persist_interrupted_turn("next_step_failed");
                         self.phase = LoopPhase::Finished;
                         return Poll::Ready(Some(Err(error)));
                     }
@@ -401,9 +402,22 @@ impl Stream for NativeWebChatLoopStream {
                         self.touch_outbound();
                         return Poll::Ready(Some(Ok(event)));
                     }
-                    Poll::Ready(Some(item)) => {
+                    Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                        event @ RuntimeSemanticEvent::TurnFailed { .. },
+                    )))) => {
+                        self.persist_interrupted_turn("turn_failed");
+                        self.phase = LoopPhase::Finished;
                         self.touch_outbound();
-                        return Poll::Ready(Some(item));
+                        return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(event))));
+                    }
+                    Poll::Ready(Some(Ok(item))) => {
+                        self.touch_outbound();
+                        return Poll::Ready(Some(Ok(item)));
+                    }
+                    Poll::Ready(Some(Err(error))) => {
+                        self.persist_interrupted_turn("stream_error");
+                        self.phase = LoopPhase::Finished;
+                        return Poll::Ready(Some(Err(error)));
                     }
                     Poll::Ready(None) => {
                         let session = match self.runtime.session_store.get(&self.runtime.session_key) {
@@ -430,6 +444,7 @@ impl Stream for NativeWebChatLoopStream {
                             return Poll::Ready(None);
                         }
                         if session.step >= session.max_steps {
+                            self.persist_interrupted_turn("max_agent_steps");
                             self.phase = LoopPhase::Finished;
                             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                                 RuntimeSemanticEvent::TurnFailed {
