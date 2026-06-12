@@ -5,7 +5,7 @@
 pub mod api;
 pub mod auth_backend;
 pub mod build_info;
-pub mod config;
+pub use den_core::config;
 pub mod core;
 pub mod errors;
 pub mod observability;

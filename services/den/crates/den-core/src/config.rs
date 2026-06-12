@@ -150,7 +150,7 @@ pub struct Config {
     pub letta_api_key: String,
 
     /// **Codepool** harness base URL (no trailing slash), e.g. `http://bears-codepool:3030`.
-    /// Required when `run_web` is true — [`crate::startup::validate_runtime_config`] enforces this.
+    /// Required when `run_web` is true — `startup::validate_runtime_config` enforces this.
     pub codepool_base_url: String,
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
     pub codepool_internal_token: String,
@@ -205,7 +205,7 @@ pub struct Config {
     /// Set to 0 to disable idle reaping.
     pub db_idle_timeout_secs: u64,
 
-    /// PAT with `read:packages` for [`crate::web::status`] GHCR comparison (optional; when empty, registry columns show "not configured").
+    /// PAT with `read:packages` for `web::status` GHCR comparison (optional; when empty, registry columns show "not configured").
     pub github_packages_token: String,
     /// GitHub org or username that owns `den` / `codepool` images on GHCR (e.g. `theartificial`).
     pub ghcr_packages_owner: String,
@@ -583,7 +583,7 @@ fn derive_default_mail_from(web_server_url: &str) -> Option<String> {
     Some(format!("noreply@{host}"))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-util"))]
 impl Config {
     /// Minimal config for unit tests that only need URL / branding fields.
     pub fn test_stub() -> Self {

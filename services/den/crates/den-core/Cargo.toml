@@ -1,0 +1,21 @@
+[package]
+name = "den-core"
+version = "0.1.0"
+edition = "2021"
+
+# Foundation leaf crate for the den workspace (DEN_CRATE_SPLIT_PLAN.md):
+# shared config, types, errors. Third-party deps only; depends on no other
+# den crate.
+
+[features]
+# Exposes test-only constructors (e.g. `Config::test_stub`) to dependent
+# crates' test builds.
+test-util = []
+
+[lints]
+workspace = true
+
+[dependencies]
+url = "2.5.4"
+tracing = "0.1.41"
+dotenvy = "0.15.7"

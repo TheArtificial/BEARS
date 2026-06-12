@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = []
+members = ["crates/den-core"]
 
 [lints]
 workspace = true
@@ -98,6 +98,7 @@ lto = "thin"
 codegen-units = 16
 
 [dependencies]
+den-core = { path = "crates/den-core" }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 anyhow = "1.0"
 async-trait = "0.1.86"
@@ -152,6 +153,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rusty-s3 = "0.8"
 
 [dev-dependencies]
+den-core = { path = "crates/den-core", features = ["test-util"] }
 serde_json = "1.0.138"
 http-body-util = "0.1"
 minijinja-autoreload = "2.5.0"  # Development-only template reloading
