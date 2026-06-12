@@ -35,6 +35,7 @@ use crate::{
 };
 
 const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
 pub struct NativeWebChatLoopRuntime {
@@ -78,6 +79,15 @@ pub struct NativeWebChatLoopStream {
     pending_out: VecDeque<RuntimeStreamEvent>,
     saw_turn_completed: bool,
     last_outbound: Instant,
+    started_at: Instant,
+}
+
+fn turn_timeout_event() -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+        turn: None,
+        category: RuntimeErrorCategory::Timeout,
+        message: "This reply took too long and was stopped. Try a simpler question or retry.".to_string(),
+    })
 }
 
 fn keepalive_event() -> RuntimeStreamEvent {
@@ -115,6 +125,7 @@ impl NativeWebChatLoopStream {
             pending_out: VecDeque::from([status_event("Thinking…")]),
             saw_turn_completed: false,
             last_outbound: Instant::now(),
+            started_at: Instant::now(),
         }
     }
 
@@ -233,6 +244,11 @@ impl Stream for NativeWebChatLoopStream {
         }
         if let Some(event) = self.maybe_keepalive() {
             return Poll::Ready(Some(Ok(event)));
+        }
+        if self.started_at.elapsed() >= WEB_CHAT_TURN_BUDGET {
+            self.phase = LoopPhase::Finished;
+            self.touch_outbound();
+            return Poll::Ready(Some(Ok(turn_timeout_event())));
         }
 
         loop {
