@@ -185,6 +185,21 @@ pub fn builtin_den_tool_descriptors_for_profile(role: BearProfile) -> Vec<DenToo
         .collect()
 }
 
+/// Compact manifest for browser chat system context so meta questions need no tool round-trip.
+pub fn render_profile_tool_surface_blurb(role: BearProfile) -> String {
+    let descriptors = builtin_den_tool_descriptors_for_profile(role);
+    let mut lines = vec![
+        "Available Den tools for this browser chat session (answer from this list when asked about capabilities; call a tool only when needed):".to_string(),
+    ];
+    for descriptor in descriptors {
+        lines.push(format!(
+            "- {} ({}): {}",
+            descriptor.label, descriptor.provider_name, descriptor.description
+        ));
+    }
+    lines.join("\n")
+}
+
 /// Den tools on the ACP pair surface (adapter environment + native pair LLM turns).
 /// Keeps session/memory/plan tools without session-admin or plan-mode control noise.
 pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {

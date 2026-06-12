@@ -338,6 +338,7 @@ pub async fn start_native_web_chat_turn_event_stream(
             "native runtime requested but AGENT_RUNTIME is not native".to_string(),
         ));
     }
+    let assembly_started = std::time::Instant::now();
     let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
         params.deps,
@@ -358,6 +359,15 @@ pub async fn start_native_web_chat_turn_event_stream(
         Vec::new(),
     )
     .await?;
+    tracing::info!(
+        request_id = %params.request_id,
+        bear_id = %params.bear_id,
+        conversation_id = %params.conversation_id,
+        message_count = session.messages.len(),
+        tool_count = session.tools.len(),
+        assembly_ms = assembly_started.elapsed().as_millis(),
+        "native web chat turn assembled"
+    );
     let llm = LlmClient::new(params.deps.config);
     let stream = run_agent_step_stream(&llm, &session).await?;
     let runtime = NativeWebChatLoopRuntime {

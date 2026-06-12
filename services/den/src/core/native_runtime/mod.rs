@@ -20,7 +20,9 @@ mod web_chat_loop;
 pub use openai_stream::openai_byte_stream_to_event_stream;
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
 pub use profile_briefing::compose_curate_briefing_prompt;
-pub use tools::merge_den_and_client_tools;
+pub use tools::{
+    chat_turn_is_capabilities_meta_query, merge_den_and_client_tools,
+};
 pub use turn::{
     continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,
     run_native_profile_turn_collect_assistant_text, start_native_acp_turn_event_stream,

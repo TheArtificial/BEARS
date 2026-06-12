@@ -866,6 +866,56 @@ async fn maybe_handle_direct_set_conversation_title(
     Ok(Some(response))
 }
 
+fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, CustomError> {
+    let body = format!(
+        "data: {}\n\ndata: {}\n\n",
+        serde_json::json!({ "type": "assistant_delta", "text": text }),
+        serde_json::json!({ "type": "done", "stop_reason": "end_turn" })
+    );
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from(body))
+        .map_err(|err| CustomError::System(format!("response build: {err}")))
+}
+
+async fn maybe_handle_direct_capabilities_list(
+    pool: &sqlx::PgPool,
+    canonical_conversation_id: Uuid,
+    message: &str,
+    request_id: Uuid,
+) -> Result<Option<Response>, CustomError> {
+    if !crate::core::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
+        return Ok(None);
+    }
+    let text = crate::core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
+    conversation_persistence::append_message(
+        pool,
+        canonical_conversation_id,
+        &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
+            text.clone(),
+            serde_json::json!({
+                "type": "assistant_output",
+                "text": text,
+                "request_id": request_id.to_string(),
+                "source": "direct_capabilities_list",
+            }),
+        ),
+    )
+    .await?;
+    tracing::info!(
+        %request_id,
+        conversation_id = %canonical_conversation_id,
+        "web chat capabilities list answered without LLM round-trip"
+    );
+    Ok(Some(direct_chat_sse_response(&text, request_id)?))
+}
+
 async fn resolve_chat_profile_binding_id(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
@@ -969,6 +1019,17 @@ async fn chat_send_native_inner(
         ),
     )
     .await?;
+
+    if let Some(response) = maybe_handle_direct_capabilities_list(
+        state.sqlx_pool(),
+        canonical_conversation.id,
+        body.message.trim(),
+        request_id,
+    )
+    .await?
+    {
+        return Ok(response);
+    }
 
     crate::observability::metrics::chat_send_runtime_native();
 

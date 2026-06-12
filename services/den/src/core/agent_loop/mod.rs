@@ -24,7 +24,7 @@ pub use assembler::{
     assemble_native_turn_messages_for_bear, AssembledNativeTurn, AssembleTurnContext,
 };
 pub use key_memory_projection::{project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult};
-pub use context::{assemble_agent_messages, repair_tool_call_message_chain};
+pub use context::{assemble_agent_messages, prune_messages_for_native_chat, repair_tool_call_message_chain};
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
 pub use pending_tools::pending_tool_calls;
 pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};

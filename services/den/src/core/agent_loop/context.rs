@@ -218,6 +218,11 @@ pub async fn load_transcript_messages(
     Ok(reconstruct_transcript_messages(rows))
 }
 
+/// Cap transcript tail sent to native browser chat turns (system prefix + recent turns).
+pub fn prune_messages_for_native_chat(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    prune_messages_for_native_pair(messages)
+}
+
 /// Cap transcript tail sent to native pair LLM turns (system prefix + recent turns).
 pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     const MAX_TAIL_MESSAGES: usize = 28;

@@ -110,17 +110,93 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
     Some(compact)
 }
 
+/// Browser chat turns omit the full Den tool surface unless the prompt suggests tool-relevant work.
+pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
+    let Some(prompt) = prompt.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    if chat_turn_is_capabilities_meta_query(prompt) {
+        return false;
+    }
+    if pair_turn_needs_workspace_client_tools(Some(prompt)) {
+        return true;
+    }
+    let lower = prompt.to_ascii_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "memory",
+        "remember",
+        "recall",
+        "search",
+        "browse",
+        "work plan",
+        "workboard",
+        "handoff",
+        "fetch ",
+        "http",
+        "https://",
+        "url ",
+        "web ",
+        "title",
+        "rename conversation",
+        "policy",
+        "members",
+        "proposal",
+        "review",
+        "curate",
+        "write ",
+        "save ",
+        "update ",
+        "plan mode",
+    ];
+    KEYWORDS.iter().any(|keyword| lower.contains(keyword))
+}
+
+pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "list capabilities",
+        "list your capabilities",
+        "list tools",
+        "list your tools",
+        "what tools",
+        "what capabilities",
+        "which tools",
+        "which capabilities",
+        "what can you do",
+        "what do you have access",
+        "show me your tools",
+        "show your tools",
+        "available tools",
+        "available capabilities",
+        "tools do you have",
+        "capabilities do you have",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
 pub fn merge_den_and_client_tools(
     config: &Config,
     role: BearProfile,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, CustomError> {
-    let mut merged = den_tools_for_profile(config, role);
+    let mut merged = if config.uses_native_agent_runtime() && role == BearProfile::Chat {
+        if chat_turn_needs_full_tool_surface(pair_turn_prompt) {
+            den_tools_for_profile(config, role)
+        } else {
+            tracing::info!(
+                role = %role.as_str(),
+                "native chat turn using empty tool surface (informational prompt; tool list is in system context)"
+            );
+            Vec::new()
+        }
+    } else {
+        den_tools_for_profile(config, role)
+    };
     let include_client_tools = if config.uses_native_agent_runtime() && role == BearProfile::Pair {
         pair_turn_needs_workspace_client_tools(pair_turn_prompt)
     } else {
-        true
+        role != BearProfile::Chat
     };
     if !include_client_tools {
         tracing::info!(
@@ -285,5 +361,38 @@ mod tests {
         assert!(names.contains(&"memory_apply_core_update"));
         assert!(names.contains(&"memory_read"));
         assert!(!names.contains(&"enter_plan_mode"));
+    }
+
+    #[test]
+    fn chat_capabilities_query_omits_den_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Chat,
+            None,
+            Some("list your capabilities"),
+        )
+        .unwrap();
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn chat_memory_prompt_includes_den_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Chat,
+            None,
+            Some("search memory for deployment notes"),
+        )
+        .unwrap();
+        assert!(!merged.is_empty());
+    }
+
+    #[test]
+    fn chat_turn_is_capabilities_meta_query_matches_common_phrases() {
+        assert!(chat_turn_is_capabilities_meta_query("list your tools"));
+        assert!(chat_turn_is_capabilities_meta_query("What capabilities do you have?"));
+        assert!(!chat_turn_is_capabilities_meta_query("search memory for onboarding"));
     }
 }

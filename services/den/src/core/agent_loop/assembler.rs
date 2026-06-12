@@ -16,7 +16,8 @@ use crate::{
 
 use super::{
     context::{
-        load_transcript_messages, prune_messages_for_native_pair, repair_tool_call_message_chain,
+        load_transcript_messages, prune_messages_for_native_chat,
+        prune_messages_for_native_pair, repair_tool_call_message_chain,
     },
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
@@ -109,7 +110,24 @@ pub async fn assemble_native_turn_for_bear(
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, CustomError> {
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
-    let projection = match project_key_memory(KeyMemoryProjectionInput {
+    let projection = if ctx.profile == BearProfile::Chat {
+        KeyMemoryProjectionResult {
+            rendered_text: String::new(),
+            diagnostic: serde_json::json!({
+                "source": "key_memory_projection",
+                "status": "skipped_for_chat",
+            }),
+            cache_key: KeyMemoryProjectionCacheKey {
+                bear_id: ctx.bear_id,
+                profile: ctx.profile,
+                conversation_id: ctx.conversation_id.to_string(),
+                primary_surface_slug: None,
+                sequence_high_water: 0,
+                compiled_config_token: String::new(),
+            },
+        }
+    } else {
+        match project_key_memory(KeyMemoryProjectionInput {
         pool: ctx.pool,
         stores: ctx.stores,
         bear,
@@ -147,6 +165,7 @@ pub async fn assemble_native_turn_for_bear(
                 },
             }
         }
+    }
     };
     if let Some(expected) = ctx.key_memory_cache {
         if &projection.cache_key != expected {
@@ -191,6 +210,12 @@ pub async fn assemble_native_turn_for_bear(
             system_text.push_str(&supplement);
         }
     }
+    if ctx.profile == BearProfile::Chat {
+        system_text.push_str("\n\n");
+        system_text.push_str(&crate::core::tools::descriptor::render_profile_tool_surface_blurb(
+            ctx.profile,
+        ));
+    }
 
     let mut messages = vec![ChatMessage {
         role: "system".to_string(),
@@ -213,6 +238,8 @@ pub async fn assemble_native_turn_for_bear(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if ctx.native_runtime && ctx.profile == BearProfile::Pair {
         prune_messages_for_native_pair(messages)
+    } else if ctx.native_runtime && ctx.profile == BearProfile::Chat {
+        prune_messages_for_native_chat(messages)
     } else {
         messages
     };
