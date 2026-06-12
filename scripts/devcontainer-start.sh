@@ -78,7 +78,6 @@ export DATABASE_URL="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/
 export LLM_API_URL="${LLM_API_URL:-http://bears-bifrost:8080/v1}"
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
-export DEN_PULL_POLICY="${DEN_PULL_POLICY:-never}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 
 wait_postgres_service() {

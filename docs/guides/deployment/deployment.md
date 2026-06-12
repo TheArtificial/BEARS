@@ -90,8 +90,8 @@ Optional:
 | Variable | Value |
 | -------- | ----- |
 | `ACP_GATEWAY_ENABLED` | Defaults to `true`; set to `false` only if you do not want the Den API ACP gateway mounted |
-| `DEN_IMAGE` | Override the prebuilt Den image |
-| `DEN_PULL_POLICY` | Leave as `always` in production; dev/smoke sets `never` with locally built images |
+| `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
+| `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
 | `BIFROST_BASE_URL` | Internal Bifrost URL for status probes (default `http://bears-bifrost:8080`) |
 | `LLM_API_URL` | OpenAI-compatible inference URL (default `http://bears-bifrost:8080/v1`) |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults web+API on) |

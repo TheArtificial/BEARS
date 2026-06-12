@@ -17,7 +17,6 @@ export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
-export DEN_PULL_POLICY="${DEN_PULL_POLICY:-never}"
 
 if [ "${AGENT_RUNTIME}" != "native" ]; then
   printf 'smoke-stack.sh requires AGENT_RUNTIME=native; Letta/Codepool/MemFS are not in docker-compose.yaml\n' >&2
@@ -35,7 +34,6 @@ export COMPOSE_ENV_FILES=(
   "AGENT_RUNTIME=${AGENT_RUNTIME}"
   "BIFROST_IMAGE=${BIFROST_IMAGE}"
   "DEN_IMAGE=${DEN_IMAGE}"
-  "DEN_PULL_POLICY=${DEN_PULL_POLICY}"
 )
 
 compose_with_env() {

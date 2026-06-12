@@ -3,6 +3,7 @@
 .opencode
 .DS_Store
 .devcontainer/logs/
+.docker-cache/
 .claude/
 __pycache__/
 *.py[cod]

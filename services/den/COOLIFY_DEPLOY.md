@@ -148,32 +148,23 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 
 ---
 
-## Option B (recommended): Pre-built image from CI — “Docker Image” resource
+## Option B: Versioned image publish from CI
 
-A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../../.github/workflows/den-image.yml)) builds the Docker image on every push to `main` that touches `services/den/` and pushes it to GHCR. This avoids compiling Rust on the Coolify host (which can OOM on small servers).
+The normal compose deployment builds Den from source on the deploy host. GitHub Actions only publishes a Den image when `services/den/Cargo.toml` changes and the Den crate `package.version` is different from the previous commit.
 
 The workflow:
 
 - Builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata (no database needed at build time).
-- Tags images as **`ghcr.io/bears-ai/den:latest`** and **`ghcr.io/theartificial/den:<short-sha>`**.
+- Tags images as **`ghcr.io/<owner>/den:<version>`**, **`ghcr.io/<owner>/den:v<version>`**, and the commit SHA. The default branch also gets `latest`.
 - Uses GitHub Actions layer cache (`type=gha`) so unchanged layers are reused across builds.
 
-### Coolify setup
+Use this path for pinned releases or external consumers. The root `docker-compose.yaml` does not depend on these images for normal deployment.
 
-1. **Add New Resource** → **Docker Image**.
-2. Set **Image** to `ghcr.io/bears-ai/den:latest` (or pin a SHA tag for reproducibility).
-3. If the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
+If you do deploy one of these images directly and the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
    ```
    echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USER> --password-stdin
    ```
-   The PAT needs the `read:packages` scope. This must be run as root (Coolify's Docker daemon uses `/root/.docker/config.json`).
-4. Configure **environment variables**, **ports**, **health checks**, and **restart policy** exactly as in **Option A §5–§8**.
-5. The CI workflow triggers a Coolify redeploy automatically via webhook after a successful image push. Set two **GitHub repository secrets** (**Settings → Secrets → Actions**):
-
-   | Secret | Where to find it |
-   | ------ | ---------------- |
-   | `COOLIFY_WEBHOOK` | Coolify dashboard → your Den resource → **Webhooks** → copy the deploy URL. |
-   | `COOLIFY_TOKEN` | Coolify dashboard → **Keys & Tokens** (or **API Tokens**) → create a token with **deploy** permission. |
+The PAT needs the `read:packages` scope. This must be run as root (Coolify's Docker daemon uses `/root/.docker/config.json`).
 
 ### Keeping `.sqlx/` up to date
 
@@ -199,7 +190,7 @@ After deploy:
 | Symptom | What to check in Coolify |
 | ------- | ------------------------ |
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
-| **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Switch to **Option B** (CI-built image) or add swap / RAM to the build host. |
+| **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Lower `CARGO_BUILD_JOBS`, add swap/RAM to the deploy host, or temporarily deploy a pinned versioned image from CI. |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
