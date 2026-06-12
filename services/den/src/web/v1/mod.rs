@@ -997,7 +997,7 @@ async fn chat_send_native_inner(
 
     crate::observability::metrics::chat_send_started();
 
-    let upstream = NativeWebChatUpstreamStream::new(runtime_stream);
+    let upstream = NativeWebChatUpstreamStream::new(runtime_stream, request_id);
     let stream = BearChannelSseProxyStream::new(
         upstream,
         request_id,

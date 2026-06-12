@@ -6,6 +6,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::{ready, Stream};
+use uuid::Uuid;
 
 use crate::core::runtime_contracts::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
@@ -14,7 +15,10 @@ use crate::core::runtime_contracts::{
 use super::chat_proxy_stream::bear_channel_sse_bytes;
 
 /// Maps a native runtime semantic event to zero or more bear_channel JSON events.
-pub fn runtime_semantic_to_bear_channel_events(event: RuntimeSemanticEvent) -> Vec<serde_json::Value> {
+pub fn runtime_semantic_to_bear_channel_events(
+    event: RuntimeSemanticEvent,
+    request_id: Option<&str>,
+) -> Vec<serde_json::Value> {
     match event {
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
             vec![serde_json::json!({ "type": "assistant_delta", "text": text })]
@@ -51,14 +55,14 @@ pub fn runtime_semantic_to_bear_channel_events(event: RuntimeSemanticEvent) -> V
             message,
             detail,
             error_type,
-            request_id,
+            request_id: event_request_id,
             context,
         } => vec![serde_json::json!({
             "type": "error",
             "message": message,
             "detail": detail,
             "error_type": error_type,
-            "request_id": request_id,
+            "request_id": event_request_id.or_else(|| request_id.map(str::to_string)),
             "context": context,
         })],
         RuntimeSemanticEvent::TurnFailed {
@@ -79,11 +83,13 @@ pub fn runtime_semantic_to_bear_channel_events(event: RuntimeSemanticEvent) -> V
                 RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
                 RuntimeErrorCategory::Internal => "runtime_internal",
             },
+            "request_id": request_id,
         })],
         RuntimeSemanticEvent::TurnCancelled { .. } => vec![serde_json::json!({
             "type": "error",
             "message": "Runtime continuation was cancelled.",
             "error_type": "runtime_turn_cancelled",
+            "request_id": request_id,
         })],
         RuntimeSemanticEvent::RunPaused { reason, .. } => {
             let text = if reason == "awaiting_approval" {
@@ -96,12 +102,17 @@ pub fn runtime_semantic_to_bear_channel_events(event: RuntimeSemanticEvent) -> V
     }
 }
 
-fn runtime_stream_event_to_bear_channel_bytes(event: RuntimeStreamEvent) -> Vec<Bytes> {
+fn runtime_stream_event_to_bear_channel_bytes(
+    event: RuntimeStreamEvent,
+    request_id: Option<&str>,
+) -> Vec<Bytes> {
     match event {
-        RuntimeStreamEvent::Semantic(semantic) => runtime_semantic_to_bear_channel_events(semantic)
-            .into_iter()
-            .filter_map(|value| bear_channel_sse_bytes(&value))
-            .collect(),
+        RuntimeStreamEvent::Semantic(semantic) => {
+            runtime_semantic_to_bear_channel_events(semantic, request_id)
+                .into_iter()
+                .filter_map(|value| bear_channel_sse_bytes(&value))
+                .collect()
+        }
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
@@ -109,6 +120,7 @@ fn runtime_stream_event_to_bear_channel_bytes(event: RuntimeStreamEvent) -> Vec<
 /// Presents native runtime events as bear_channel SSE bytes for [`super::chat_proxy_stream::BearChannelSseProxyStream`].
 pub struct NativeWebChatUpstreamStream {
     inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send>>,
+    request_id: Uuid,
     pending: VecDeque<Bytes>,
     finished: bool,
 }
@@ -116,19 +128,22 @@ pub struct NativeWebChatUpstreamStream {
 impl NativeWebChatUpstreamStream {
     pub fn new(
         inner: impl Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static,
+        request_id: Uuid,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
+            request_id,
             pending: VecDeque::new(),
             finished: false,
         }
     }
 
-    fn push_error_bytes(&mut self, message: impl Into<String>) {
+    fn push_error_bytes(&mut self, message: impl Into<String>, error_type: &str) {
         let value = serde_json::json!({
             "type": "error",
             "message": message.into(),
-            "error_type": "runtime_internal",
+            "error_type": error_type,
+            "request_id": self.request_id.to_string(),
         });
         if let Some(bytes) = bear_channel_sse_bytes(&value) {
             self.pending.push_back(bytes);
@@ -152,10 +167,12 @@ impl Stream for NativeWebChatUpstreamStream {
             return Poll::Ready(None);
         }
 
+        let request_id = this.request_id.to_string();
         loop {
             match ready!(this.inner.as_mut().poll_next(cx)) {
                 Some(Ok(event)) => {
-                    let mut bytes = runtime_stream_event_to_bear_channel_bytes(event);
+                    let mut bytes =
+                        runtime_stream_event_to_bear_channel_bytes(event, Some(&request_id));
                     if bytes.is_empty() {
                         continue;
                     }
@@ -166,7 +183,7 @@ impl Stream for NativeWebChatUpstreamStream {
                     return Poll::Ready(Some(Ok(first)));
                 }
                 Some(Err(error)) => {
-                    this.push_error_bytes(error.to_string());
+                    this.push_error_bytes(error.to_string(), "runtime_internal");
                     if let Some(bytes) = this.pending.pop_front() {
                         return Poll::Ready(Some(Ok(bytes)));
                     }
@@ -193,25 +210,47 @@ mod tests {
 
     #[test]
     fn maps_assistant_text_to_assistant_delta() {
-        let events = runtime_semantic_to_bear_channel_events(RuntimeSemanticEvent::AssistantTextDelta {
-            text: "Hello".to_string(),
-        });
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::AssistantTextDelta {
+                text: "Hello".to_string(),
+            },
+            None,
+        );
         assert_eq!(events[0]["type"], "assistant_delta");
         assert_eq!(events[0]["text"], "Hello");
     }
 
     #[test]
     fn maps_status_text_to_reasoning_delta() {
-        let events = runtime_semantic_to_bear_channel_events(RuntimeSemanticEvent::StatusText {
-            text: "Indexing".to_string(),
-        });
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::StatusText {
+                text: "Indexing".to_string(),
+            },
+            None,
+        );
         assert_eq!(events[0]["type"], "reasoning_delta");
     }
 
     #[test]
     fn maps_turn_completed_to_done() {
-        let events =
-            runtime_semantic_to_bear_channel_events(RuntimeSemanticEvent::TurnCompleted { turn: None });
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::TurnCompleted { turn: None },
+            None,
+        );
         assert_eq!(events[0]["type"], "done");
+    }
+
+    #[test]
+    fn turn_failed_includes_request_id() {
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::TurnFailed {
+                turn: None,
+                category: RuntimeErrorCategory::Timeout,
+                message: "timed out".to_string(),
+            },
+            Some("req-123"),
+        );
+        assert_eq!(events[0]["request_id"], "req-123");
+        assert_eq!(events[0]["error_type"], "runtime_timeout");
     }
 }

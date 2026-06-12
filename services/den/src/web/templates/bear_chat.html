@@ -889,6 +889,7 @@ block head %} {{ super() }}
                 var reasoningFull = "";
                 var assistantBuf = "";
                 var sawAssistantOrReasoning = false;
+                var sawStreamActivity = false;
                 var sawStreamError = false;
                 var sseParseWarned = false;
                 signals.onOpen();
@@ -947,6 +948,7 @@ block head %} {{ super() }}
                     }
 
                     if (inner.message_type === "status_message") {
+                        sawStreamActivity = true;
                         var statusText = assistantChunkText(inner);
                         if (statusText) {
                             signals.onResponse({
@@ -958,6 +960,7 @@ block head %} {{ super() }}
                     }
 
                     if (inner.message_type === "reasoning_message") {
+                        sawStreamActivity = true;
                         sawAssistantOrReasoning = true;
                         var pieceR = "";
                         if (typeof inner.reasoning === "string")
@@ -1052,14 +1055,25 @@ block head %} {{ super() }}
                                 !sawStreamError &&
                                 !sseParseWarned
                             ) {
-                                denChatSignalError(
-                                    signals,
-                                    formatChatError(
-                                        "No response received",
-                                        "The assistant did not return any text. You can retry, or share the reference below if the problem continues.",
-                                        requestRef,
-                                    ),
-                                );
+                                if (sawStreamActivity) {
+                                    denChatSignalError(
+                                        signals,
+                                        formatChatError(
+                                            "Reply incomplete",
+                                            "The assistant was still working but did not finish a reply. You can retry, or share the reference below when asking for help.",
+                                            requestRef,
+                                        ),
+                                    );
+                                } else {
+                                    denChatSignalError(
+                                        signals,
+                                        formatChatError(
+                                            "No response received",
+                                            "The assistant did not return any text. You can retry, or share the reference below if the problem continues.",
+                                            requestRef,
+                                        ),
+                                    );
+                                }
                             }
                             signals.onClose();
                             loadConversations();
@@ -1073,7 +1087,10 @@ block head %} {{ super() }}
             .catch(function (x) {
                 hideReasoningLog();
                 if (x.name === "AbortError") {
-                    signals.onResponse({ text: "\n[stopped]" });
+                    var stoppedText = requestRef
+                        ? "\n[stopped]\n\nReference: " + requestRef
+                        : "\n[stopped]";
+                    signals.onResponse({ text: stoppedText });
                     signals.onClose();
                 } else {
                     denChatSignalError(

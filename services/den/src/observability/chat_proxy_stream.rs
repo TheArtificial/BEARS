@@ -268,6 +268,17 @@ pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes>
     Some(Bytes::from(format!("data: {}\n\n", event)))
 }
 
+fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
+    let mapped = serde_json::json!({
+        "message_type": "error_message",
+        "message": "The assistant stream ended without a reply.",
+        "detail": "No displayable content reached the browser before the stream closed. You can retry, or share the reference below when asking for help.",
+        "error_type": "stream_empty_terminal",
+        "support_ref": request_id.to_string(),
+    });
+    bear_channel_sse_bytes(&mapped).expect("empty terminal error serializes")
+}
+
 fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Bytes> {
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let mapped = match ty {
@@ -354,6 +365,7 @@ pub struct BearChannelSseProxyStream {
     persistence: PendingConversationPersistence,
     flush_started: bool,
     flush_task: Option<tokio::task::JoinHandle<()>>,
+    empty_terminal_error_emitted: bool,
 }
 
 impl BearChannelSseProxyStream {
@@ -381,7 +393,18 @@ impl BearChannelSseProxyStream {
             persistence: PendingConversationPersistence::default(),
             flush_started: false,
             flush_task: None,
+            empty_terminal_error_emitted: false,
         }
+    }
+
+    fn queue_empty_terminal_error_if_needed(&mut self) -> bool {
+        if self.total_bytes > 0 || self.empty_terminal_error_emitted {
+            return false;
+        }
+        self.empty_terminal_error_emitted = true;
+        self.pending
+            .push_back(browser_empty_terminal_error(self.request_id));
+        true
     }
 
     fn record_terminal(&mut self, t: Terminal) {
@@ -557,6 +580,10 @@ impl Stream for BearChannelSseProxyStream {
                     if this.terminal.is_some() {
                         return Poll::Ready(None);
                     }
+                    if this.queue_empty_terminal_error_if_needed() {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
                     let outcome = if this.total_bytes == 0 {
                         Terminal::Empty
                     } else {
@@ -619,6 +646,14 @@ mod tests {
     fn drops_done_control_event() {
         let out = mapped_text("data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n");
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn empty_terminal_error_includes_support_ref() {
+        let bytes = browser_empty_terminal_error(Uuid::parse_str("f42114ea-99bd-48a7-818a-78d4e3d914be").unwrap());
+        let text = String::from_utf8(bytes.to_vec()).expect("utf8");
+        assert!(text.contains("stream_empty_terminal") || text.contains("error_message"));
+        assert!(text.contains("f42114ea-99bd-48a7-818a-78d4e3d914be"));
     }
 }
 
