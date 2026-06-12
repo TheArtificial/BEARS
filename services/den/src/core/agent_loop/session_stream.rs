@@ -128,16 +128,18 @@ impl SessionTrackingStream {
 
     fn persist_assistant_tool_step(&self) {
         let calls = self.accumulated_tool_calls();
-        spawn_persist_native_agent_step(
-            self.pool.clone(),
-            self.bear_id,
-            self.user_id,
-            self.conversation_id.clone(),
-            self.acp_session_id.clone(),
-            self.request_id.clone(),
-            self.assistant_text.clone(),
-            &calls,
-        );
+        if self.dispatch_mode != NativeToolDispatchMode::ServerSideInProcess {
+            spawn_persist_native_agent_step(
+                self.pool.clone(),
+                self.bear_id,
+                self.user_id,
+                self.conversation_id.clone(),
+                self.acp_session_id.clone(),
+                self.request_id.clone(),
+                self.assistant_text.clone(),
+                &calls,
+            );
+        }
         if !self.tool_calls.is_empty() {
             self.store.update(&self.session_key, |session| {
                 session.step += 1;

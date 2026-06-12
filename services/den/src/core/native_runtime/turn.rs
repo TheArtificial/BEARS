@@ -378,7 +378,12 @@ pub async fn start_native_web_chat_turn_event_stream(
         session_store: SESSION_STORE.clone(),
     };
     let step_stream = NativeWebChatLoopStream::wrap_step_stream(&runtime, stream, &session);
-    Ok(Box::pin(NativeWebChatLoopStream::new(runtime, step_stream)))
+    let turn_start_message_len = session.messages.len();
+    Ok(Box::pin(NativeWebChatLoopStream::new(
+        runtime,
+        step_stream,
+        turn_start_message_len,
+    )))
 }
 
 pub async fn start_native_acp_turn_event_stream(

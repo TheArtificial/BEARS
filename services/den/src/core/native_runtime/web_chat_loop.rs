@@ -17,6 +17,7 @@ use crate::{
     core::{
         agent_loop::{
             pending_tool_calls, run_agent_step_stream, provider_tool_requires_approval,
+            spawn_persist_web_chat_turn,
             AgentLoopSessionStore, NativeToolDispatchMode, SessionTrackingStream,
         },
         bears::BearProfile,
@@ -80,6 +81,8 @@ pub struct NativeWebChatLoopStream {
     saw_turn_completed: bool,
     last_outbound: Instant,
     started_at: Instant,
+    turn_start_message_len: usize,
+    transcript_persisted: bool,
 }
 
 fn turn_timeout_event() -> RuntimeStreamEvent {
@@ -118,7 +121,11 @@ fn tool_started_event(call: &ChatToolCall) -> RuntimeStreamEvent {
 }
 
 impl NativeWebChatLoopStream {
-    pub fn new(runtime: NativeWebChatLoopRuntime, initial: RuntimeEventStream) -> Self {
+    pub fn new(
+        runtime: NativeWebChatLoopRuntime,
+        initial: RuntimeEventStream,
+        turn_start_message_len: usize,
+    ) -> Self {
         Self {
             runtime,
             phase: LoopPhase::Streaming(initial),
@@ -126,7 +133,29 @@ impl NativeWebChatLoopStream {
             saw_turn_completed: false,
             last_outbound: Instant::now(),
             started_at: Instant::now(),
+            turn_start_message_len,
+            transcript_persisted: false,
         }
+    }
+
+    fn persist_completed_turn(&mut self) {
+        if self.transcript_persisted {
+            return;
+        }
+        self.transcript_persisted = true;
+        let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) else {
+            return;
+        };
+        spawn_persist_web_chat_turn(
+            self.runtime.pool.clone(),
+            self.runtime.bear_id,
+            self.runtime.user_id,
+            self.runtime.conversation_id.clone(),
+            self.runtime.session_id.clone(),
+            self.runtime.request_id.clone(),
+            &session.messages,
+            self.turn_start_message_len,
+        );
     }
 
     fn touch_outbound(&mut self) {
@@ -295,6 +324,7 @@ impl Stream for NativeWebChatLoopStream {
                                     RuntimeSemanticEvent::TurnCompleted { turn: None },
                                 ));
                             }
+                            self.persist_completed_turn();
                             self.phase = LoopPhase::Finished;
                             if let Some(event) = self.pending_out.pop_front() {
                                 return Poll::Ready(Some(Ok(event)));
