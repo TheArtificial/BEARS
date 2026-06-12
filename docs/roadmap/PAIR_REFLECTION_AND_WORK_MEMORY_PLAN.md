@@ -11,7 +11,7 @@ Related docs:
 
 - [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation status and sequencing.
 - [Memory tools implementation plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
-- [Review memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Memory curation plan](MEMORY_CURATION_PLAN.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Bear Charter and Cabinet Missions](../concepts/BEAR_CHARTER_AND_CABINET_MISSIONS.md)
 - [Memory model](../concepts/../architecture/memory-model.md)
@@ -53,7 +53,7 @@ pair learns workplace knowledge
 |---|---|
 | `pair` | Interactive coding/client collaboration. Writes role-local notes, logs, decisions, reflections, summaries, and review requests. |
 | Pair reflection loop | Background/session-end maintenance of `pair/`: summarize, deduplicate, identify durable learnings, request curation when useful. |
-| `review` | Cross-role memory governance. Reads role branches, reviews proposals, keeps `core/` clean, indexes curated summaries, and prepares work-safe context. |
+| `review` | Cross-role memory curation. Reads role branches, reviews proposals, keeps `core/` clean, indexes curated summaries, and prepares work-safe context. |
 | `work` | Executes approved scoped tasks. Reads `core/`, `work/`, task context, and allowed archives; does not read raw `pair/`. |
 | Den | Orchestrates loops, stores proposal/activity state, enforces policy, writes audit records, and exposes UI. |
 

@@ -22,7 +22,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 | ACP `pair` direct local-tool runtime | Baseline runtime exists and has confirmed end-to-end local tool operation; current work is reliability and continuation hardening | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) |
 | Activity plans and ACP plan mode | Implemented baseline; current priority is Den-wide ontology alignment so workplan, activity, memory, and execution remain clearly separated across reminders, APIs, operators, and UI | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
 | Memory tools | Partial implementation / active follow-up, especially for `pair`; must align with the workflow-state ontology so semantic memory is structurally distinct from workplan artifacts, activity state, and execution state | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
-| Reflection and memory governance | MVP schema/storage foundation exists; full review review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
+| Reflection and memory curation | MVP schema/storage foundation exists; full review review and promotion runtime remains active follow-up work | [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 
 ### Current implementation picture
 
@@ -31,7 +31,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - **ACP for `pair` has changed direction and is now real.** The canonical path is the **direct Den ⇄ adapter ⇄ Letta conversation API runtime** in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with current hardening work captured in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). Older Codepool relay documents are historical only.
 - **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes Den live **activity** plans from the ACP `pair` **workplan** approval gate. This is the active planning/status model rather than older ad hoc plan ideas.
 - **Workplan artifacts are not semantic memory.** Even where current implementation still stores a durable markdown artifact under `pair/plans/`, that artifact is part of the workplan domain, not a MemFS semantic-memory document and not part of the `den.memory.*` tool family.
-- **Memory governance is split intentionally.** [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) covers role-facing Den memory tools, while [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md) covers proposal, review, and promotion into shared `core/` memory.
+- **Memory curation is split intentionally.** [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) covers role-facing Den memory tools, while [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md) covers proposal, review, and promotion into shared `core/` memory.
 
 ### Important contradictions resolved here
 
@@ -65,7 +65,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 ### 3. Complete Den memory and review flows
 
 1. Land and normalize role-facing memory tools from [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), especially for `pair`.
-2. Land governed review/promotion flows from [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md).
+2. Land governed review/promotion flows from [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md).
 3. Keep reflection behavior aligned with [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md).
 
 ### 4. Continue Phase 1 operator/product integration
@@ -83,7 +83,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Workflow state ontology ADR](../architecture/adr/workflow-state-ontology.md) — unify workplan, activity, memory, and execution state now rather than as a later cleanup, and align all remaining Den surfaces to that ontology.
 - [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — live activity plans, workplan approval gates, handoff, and task runtime.
 - [Memory tools implementation](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — role-facing Den memory tools.
-- [Review memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — review and promotion of memory into `core/`.
+- [Memory curation](MEMORY_CURATION_PLAN.md) — review and promotion of memory into `core/`.
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md) — reflection lanes and review architecture.
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — canonical ACP `pair` local-tool architecture.
 - [ACP adapter improvement plan](ACP_ADAPTER_IMPROVEMENT_PLAN.md) — active ACP hardening follow-up.
@@ -95,7 +95,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md) — development-environment support work, not the primary delivery spine.
 - [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation tracker for pair reflection, memory proposals, `memory_curate`, archives, and work-context bridge.
 - [Reflection system shared infrastructure](REFLECTION_SYSTEM_PLAN.md) — focused queue/runner/scheduler design.
-- [Review memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
+- [Memory curation](MEMORY_CURATION_PLAN.md) — focused memory proposal and core-write curation design.
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — focused pair→curate→work boundary design.
 
 ### Reference design and downstream product plans

@@ -28,7 +28,7 @@ Capabilities are exposed via **Den-side MCP servers**. The agents call them as M
 
 | Server | Domain | Optional? |
 |---|---|---|
-| `den` | Bear lifecycle, skill management, memory governance, observation recording, Den-internal queries | Required |
+| `den` | Bear lifecycle, skill management, memory curation, observation recording, Den-internal queries | Required |
 
 **User/Bear collaboration services** — privileged spaces where users and Bears share authoritative state:
 
@@ -37,7 +37,7 @@ Capabilities are exposed via **Den-side MCP servers**. The agents call them as M
 | `docket` | Task intent lifecycle, approved task management, run results, project planning, human task UI | Optional |
 | `cabinet` | Knowledge base search and contribution; durable referential knowledge | Optional |
 
-The two tiers behave differently in the architecture. `den` is part of Bear's core operation — the Bear cannot function without it because skill management, observations, and memory governance all flow through it. `docket` and `cabinet` are sibling services the Bear collaborates with: they have their own human UIs as primary interfaces, their own data stores as systems of record, and the Bear is one of several clients. Deployments without `docket` lose autonomous task execution; deployments without `cabinet` lose the durable referential knowledge layer; both can be omitted independently.
+The two tiers behave differently in the architecture. `den` is part of Bear's core operation — the Bear cannot function without it because skill management, observations, and memory curation all flow through it. `docket` and `cabinet` are sibling services the Bear collaborates with: they have their own human UIs as primary interfaces, their own data stores as systems of record, and the Bear is one of several clients. Deployments without `docket` lose autonomous task execution; deployments without `cabinet` lose the durable referential knowledge layer; both can be omitted independently.
 
 ### 2. Server boundaries
 
@@ -86,7 +86,7 @@ Role enforcement happens at the tool call, not at tool attachment. Every MCP ser
 
 The curate agent's tool access deserves explicit articulation, since curate is otherwise tool-minimal:
 
-- Curate has **broad access to `den`** — it is the agent that performs skill approvals, memory governance operations, and observation reviews; these are core to its role as integrator.
+- Curate has **broad access to `den`** — it is the agent that performs skill approvals, memory curation operations, and observation reviews; these are core to its role as integrator.
 - Curate has **scoped access to `docket` and `cabinet`** — limited to the operations curate's role requires:
   - In Docket: approve/reject task intents, write derived task intents from observations, query task and run state. Curate does *not* write task intents on the user's behalf, schedule tasks, or override Docket's human-side workflows.
   - In Cabinet: contribute authoritative entries (curate-promoted knowledge), review proposed contributions from channel agents, and follow links between entries. Curate does *not* freely search Cabinet (it sees `core/` directly and reads peer branches via worktree); search is for agents that lack curate's privileged read access.
@@ -143,9 +143,9 @@ Some `den` tools touch memory: `request_memory_rollback`, `query_memory_history`
 The split:
 
 - **MemFS** is for the agent's natural memory access — files loaded into context, browsable as filesystem operations through Letta's existing MemFS layer. This is plumbing.
-- **`den` memory tools** are for cross-agent operations that require Den mediation — proposing writes, requesting rollbacks, querying historical states, recording provenance. This is governance.
+- **`den` memory tools** are for cross-agent operations that require Den mediation — proposing writes, requesting rollbacks, querying historical states, recording provenance. This is curation.
 
-A talk agent reading its own `core/` files goes through MemFS. A talk or pair agent that wants curation of role-local memory goes through `den.memory.request_review`, optionally with `suggested_action: promote_to_core`, `summarize_into_core`, `cabinet_update`, or `skill_review`. Den queues the request for Reflection/`curate` review. The two paths to memory have different semantics on purpose: one is in-context plumbing, the other is auditable governance.
+A talk agent reading its own `core/` files goes through MemFS. A talk or pair agent that wants curation of role-local memory goes through `den.memory.request_review`, optionally with `suggested_action: promote_to_core`, `summarize_into_core`, `cabinet_update`, or `skill_review`. Den queues the request for Reflection/`curate` review. The two paths to memory have different semantics on purpose: one is in-context plumbing, the other is auditable curation.
 
 ## Consequences
 

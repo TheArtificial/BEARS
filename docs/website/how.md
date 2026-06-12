@@ -1,6 +1,6 @@
 # How Den Builds Bears
 
-Den does not merely send prompts to a model. It assembles a Bear from several connected concerns: visible behavior, durable identity, current context, memory, tools, collaboration, governance, and runtime infrastructure.
+Den does not merely send prompts to a model. It assembles a Bear from several connected concerns: visible behavior, durable identity, current context, memory, tools, collaboration, curation, and runtime infrastructure.
 
 This document is the beginning of a hierarchical explanation. The first and last sections are framing sections; the middle sections are intended to expand into deeper documentation over time.
 
@@ -60,7 +60,7 @@ How Bears work with people, teams, and each other.
 - **Handoffs** — one Bear can leave useful context for another Bear or future session.
 - **Collaboration patterns** — solo assistance, pair work, review, delegation, monitoring.
 
-## 7. Governance: Reflection and Curation
+## 7. Curation: Reflection and Review
 
 How Bears improve without turning memory into a mess.
 
@@ -88,5 +88,5 @@ This is a working map for keeping the marketing hierarchy connected to the imple
 | **Memory** | Durable Bear knowledge and the lifecycle that moves knowledge between role-local and shared memory. | Canonical Bear memory is MemFS/git-backed via `services/memfs-manager/git_memfs_server.py`, Bear fields such as `memfs_repo_path`/`runtime_plan`, and Den memory tooling in `services/den/src/core/tools/memory_*`, `services/den/src/core/memory_manager_head.rs`, and `services/den/src/core/memory_proposals.rs`; role branches should follow `talk/`, `pair/`, `curate/`, `work/`, `watch/`, with `core/` as canonical shared memory. Letta Archives are currently derived retrieval indexes, not source of truth. |
 | **Action** | Tools, permissions, runtime execution, and safe effects. | Descriptor-owned tools in `services/den/src/core/tools/descriptor/`, `constants.rs`, `aliases.rs`, and `den_tools_impl.rs`; individual tool families under `services/den/src/core/tools/`; Codepool tool bridge in `services/codepool/src/den-tools.ts`; runtime loop/session pool in `services/codepool/src/pool.ts`; Den-managed skill and subscription schema in `bear_skills_manifest`, `bear_skill_proposals`, and `bear_subscriptions`. |
 | **Coordination** | Collaboration across humans, Bears, work surfaces, handoffs, and Cabinet Missions. | Membership in `user_bear`; logical conversations in `conversations`; live per-Bear workboards and handoff state in `bear_work_plans` and `bear_work_plan_events`; ACP session linkage in `acp_sessions`; conceptual Cabinet/Mission guidance in `docs/architecture/bear-charter-and-cabinet-missions.md`. Cabinet Missions are shared containers; use `mission_ref` only for Cabinet Missions, not Bear Domains. |
-| **Governance** | Reflection, curation, review, provenance, and human override. | Reflection schema in `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations`; pair reflection and review queue schema in `pair_reflection_runs` and `bear_memory_proposals`; conductor/domain code in `services/den/src/core/reflection_conductor.rs`, `services/den/src/core/pair_reflection/`, and `services/den/src/core/memory_proposals.rs`; review tools in `services/den/src/core/tools/memory_review.rs`; skill governance through `bear_skill_proposals`. |
+| **Curation** | Reflection, curation, review, provenance, and human override. | Reflection schema in `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations`; pair reflection and review queue schema in `pair_reflection_runs` and `bear_memory_proposals`; conductor/domain code in `services/den/src/core/reflection_conductor.rs`, `services/den/src/core/pair_reflection/`, and `services/den/src/core/memory_proposals.rs`; review tools in `services/den/src/core/tools/memory_review.rs`; skill review through `bear_skill_proposals`. |
 | **Infrastructure** | The runtime substrate and service boundary. | Root `docker-compose.yaml`; Rust/Axum Den in `services/den/`; TypeScript Codepool harness in `services/codepool/`; Python MemFS Manager in `services/memfs-manager/`; current backing services under `services/letta/`, `services/bifrost/`, and `services/garage/`; schema evolution in `services/den/migrations/`; smoke tests in `tests/smoke/`. |

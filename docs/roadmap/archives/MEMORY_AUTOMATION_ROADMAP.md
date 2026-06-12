@@ -3,12 +3,12 @@
 For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 
-This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, review governance, `core/`, Cabinet, task context, and Letta Archives.
+This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, review curation, `core/`, Cabinet, task context, and Letta Archives.
 
 Related docs:
 
 - [Pair Reflection and Work Memory Sharing Plan](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
-- [Review Memory Governance Plan](CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Memory Curation Plan](../MEMORY_CURATION_PLAN.md)
 - [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
 - [Memory Model](../concepts/../../architecture/memory-model.md)
 

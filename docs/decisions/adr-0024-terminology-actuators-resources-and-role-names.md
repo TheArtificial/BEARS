@@ -98,7 +98,7 @@ Judgment and consolidation role for evaluating, synthesizing, reviewing, and gov
 - `actuator` better reflects the action-taking role of the ACP execution layer.
 - `resource` provides a broader and more reusable term than `work surface`.
 - role names become plainer and more legible to operators and users.
-- `review` better communicates governance and synthesis responsibilities than `curate`.
+- `review` better communicates curation and synthesis responsibilities than `curate`.
 
 ### Tradeoffs
 

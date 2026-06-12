@@ -143,7 +143,7 @@ The runtime should be able to identify which context comes from:
 
 Compaction does not imply durable memory promotion.
 
-Any promotion of facts, learnings, or summaries into longer-lived memory must occur through separate memory-governance flows.
+Any promotion of facts, learnings, or summaries into longer-lived memory must occur through separate memory-curation flows.
 
 ### 4. Compaction may not cross protected active spans
 

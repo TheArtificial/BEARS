@@ -12,7 +12,7 @@ A **Bear** keeps durable knowledge in its own **SQLite database** (`memory.sqlit
 
 - **Shared `core/`** — curated facts, decisions, work-surface overviews (promoted by **curate**).
 - **Profile-scoped branches** — notes under `chat/`, `pair/`, `work/`, etc.; they can stay local forever.
-- **Governance trail** — proposals, promotions, observations (how knowledge was reviewed).
+- **Curation trail** — proposals, promotions, observations (how knowledge was reviewed).
 
 Memory is **append-only**: updates usually add new records and may supersede older ones, rather than editing rows in place.
 

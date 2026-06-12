@@ -64,7 +64,7 @@ Den should treat context-compaction state as three distinct layers:
 - **Derived compaction state**: summaries, collapsed tool bundles, and other prompt-assembly artifacts produced from transcript history to keep active context bounded.
 - **Durable memory state**: separately governed memory entries promoted for longer-lived reuse beyond the current session continuation.
 
-This ADR treats the transcript as canonical. Compaction artifacts are derived state that should be inspectable, attributable, and, where practical, rebuildable from transcript history plus compaction policy. Durable memory promotion remains a separate governance flow and must not be implied automatically by compaction.
+This ADR treats the transcript as canonical. Compaction artifacts are derived state that should be inspectable, attributable, and, where practical, rebuildable from transcript history plus compaction policy. Durable memory promotion remains a separate curation flow and must not be implied automatically by compaction.
 
 ### Runtime invariants
 

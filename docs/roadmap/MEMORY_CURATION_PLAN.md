@@ -1,6 +1,6 @@
-# Review memory governance plan
+# Memory curation plan
 
-> **Direction changed (2026-06).** The governance lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions` — not MemFS `core/`/role branches or Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions` — not MemFS `core/`/role branches or Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
@@ -490,7 +490,7 @@ Human admins should be able to inspect, override, and manually review, but manua
 
 ## Implementation tracker
 
-Detailed phase status, completed work, and next implementation steps are tracked in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md). This document should stay focused on memory governance rules, tool boundaries, proposal lifecycle, core-write policy, archive integration design, and curation UI behavior.
+Detailed phase status, completed work, and next implementation steps are tracked in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md). This document should stay focused on memory curation rules, tool boundaries, proposal lifecycle, core-write policy, archive integration design, and curation UI behavior.
 
 ---
 
@@ -527,4 +527,4 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step.
 
-The product priority remains: make review activity visible and overrideable, while keeping routine memory governance autonomous rather than making human approval the normal path.
+The product priority remains: make review activity visible and overrideable, while keeping routine memory curation autonomous rather than making human approval the normal path.

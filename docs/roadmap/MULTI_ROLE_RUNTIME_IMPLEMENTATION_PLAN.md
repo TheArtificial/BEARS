@@ -38,7 +38,7 @@ This checklist translates the durable role model in [`../concepts/../architectur
   - `review`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, work-plan read tools.
   - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`.
   - `watch`: `den.observation.write`, `den.skill.propose`.
-- Memory proposal tools such as `den.memory.request_review` and curate-side memory proposal review tools are planned as part of the Reflection/memory governance follow-up, not part of the completed role-scoped Den tools framework.
+- Memory proposal tools such as `den.memory.request_review` and curate-side memory proposal review tools are planned as part of the Reflection/memory curation follow-up, not part of the completed role-scoped Den tools framework.
 
 ### C. Task intent capture for `chat` and `pair` — next
 

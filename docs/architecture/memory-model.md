@@ -296,7 +296,7 @@ Letta and Letta Code provide several memory mechanisms. Bear Den should use them
 | Letta Archives / archival memory | Historical: Letta semantic retrieval. **Target:** Den Qdrant derived recall ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). |
 | Letta conversation compaction | Letta owns context-window pressure and conversation summarization. |
 | Letta memory blocks | Treat as legacy/runtime state for Bear Den direction; do not make them the primary long-term memory architecture. |
-| Bear Den `review` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
+| Bear Den `review` | Owns cross-role memory curation, `core/` cleanliness, and archive indexing policy. |
 
 `pair` and `watch` are API-direct and do not naturally receive Letta Code reflection. Do not add separate dream agents for them at first: `pair` writes role-local entries and `watch` writes observations; `review` reviews and consolidates their durable outputs.
 

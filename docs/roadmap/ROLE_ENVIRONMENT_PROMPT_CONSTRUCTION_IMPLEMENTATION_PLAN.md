@@ -141,7 +141,7 @@ Priority order:
 #### 4.1 `review`
 
 Emphasis:
-- memory governance
+- memory curation
 - semantic integration
 - review authority
 - distinction between durable memory, observations, results, and active workflow state

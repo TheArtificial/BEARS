@@ -96,7 +96,7 @@ For skills, role applicability should be metadata-driven rather than path-driven
 
 ## Skill proposals
 
-Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill governance still overlaps strongly with memory governance because skills are a special memory artifact.
+Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill curation still overlaps strongly with memory curation because skills are a special memory artifact.
 
 The normal skill-learning flow is:
 
@@ -119,7 +119,7 @@ Den owns the canonical records for:
 - which tools each role may use,
 - which skills are installed,
 - which roles a skill applies to,
-- which dependency and governance metadata apply to a skill,
+- which dependency and curation metadata apply to a skill,
 - and whether runtime state matches the intended configuration.
 
 Agents may request capability changes. Den enforces and installs them.

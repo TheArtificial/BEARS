@@ -46,7 +46,7 @@ Different roles will emphasize different policy areas:
 
 - `chat` emphasizes conversational steering, user interaction, and handoff clarity.
 - `pair` emphasizes collaborative client-mediated tool use, live activity/progress tracking, and mutation/execution boundaries.
-- `review` emphasizes semantic integration, review authority, memory governance, and durable knowledge boundaries.
+- `review` emphasizes semantic integration, review authority, memory curation, and durable knowledge boundaries.
 - `work` emphasizes approved execution, task authorization, and result/reporting flows.
 - `watch` emphasizes observation, event interpretation, and boundaries between observation, activity, memory, and execution.
 

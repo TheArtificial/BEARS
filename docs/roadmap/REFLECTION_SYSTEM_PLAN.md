@@ -13,7 +13,7 @@ Related docs:
 - [Reflection System ADR](../architecture/adr/reflection-system.md) — durable architecture decision and risk boundaries.
 - [Reflection system concept](../concepts/REFLECTION_SYSTEM.md) — vocabulary, conductor model, heartbeats, and lanes.
 - [Reflection run taxonomy](../concepts/REFLECTION_RUN_TAXONOMY.md) — lane names and purposes.
-- [Review memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — `memory_curate` lane behavior and proposal lifecycle.
+- [Memory curation plan](MEMORY_CURATION_PLAN.md) — `memory_curate` lane behavior and proposal lifecycle.
 - [Pair reflection and work memory plan](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — pair-local memory sharing boundary.
 
 ---

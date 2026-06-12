@@ -315,7 +315,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         DEN_SKILL_PROPOSE | DEN_SKILL_APPROVE_PROPOSAL | DEN_SKILL_REJECT_PROPOSAL => {
             Some(ToolDescriptorGuidance {
                 scope: ToolScopeKind::CurrentSession,
-                side_effect: ToolSideEffectKind::SkillGovernance,
+                side_effect: ToolSideEffectKind::SkillReview,
                 orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
             })
         }

@@ -68,7 +68,7 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `pair` is API-direct and uses Den-hosted memory tools. `memory_write_entry` writes pair-local entries; `memory_request_review` asks Reflection/`curate` to review role-local memory.
 - `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
-- `curate` owns cross-role memory governance and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+- `curate` owns cross-role memory curation and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
 
 ## Worktree safety (mandatory)
 

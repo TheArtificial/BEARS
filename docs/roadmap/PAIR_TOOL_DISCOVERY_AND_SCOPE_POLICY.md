@@ -47,7 +47,7 @@ The central problem is that Bear conversations contain layered context: platform
 
 | Layer | Examples | Preferred placement | Not allowed |
 |---|---|---|---|
-| Den baseline | safety, privacy, attribution, memory governance | Den-managed baseline/system prompt | user message |
+| Den baseline | safety, privacy, attribution, memory curation | Den-managed baseline/system prompt | user message |
 | Bear identity | charter, durable purpose, broad boundaries | Bear managed context / system blocks | per-turn user suffix |
 | Role / Workplace contract | pair Collaboration Space, work Execution Space | role managed prompt block | user message |
 | Work surface | repo, service, deployment, Mission, project | memory anchors, `session_info`, work-surface tools | unscoped memory assumptions |

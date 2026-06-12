@@ -126,7 +126,7 @@ Suggested intervals match your other BEARS services (for example 30s interval, g
 
 ### 8. Persistent storage (native runtime)
 
-When `AGENT_RUNTIME=native`, Den keeps **bear-canonical memory** (role-local notes, proposals, promotions, governance) in one SQLite file per Bear under `BEAR_SQLITE_DATA_DIR`. This is **separate from** `DATABASE_URL` (Den Postgres control-plane).
+When `AGENT_RUNTIME=native`, Den keeps **bear-canonical memory** (role-local notes, proposals, promotions, curation) in one SQLite file per Bear under `BEAR_SQLITE_DATA_DIR`. This is **separate from** `DATABASE_URL` (Den Postgres control-plane).
 
 - **Docker Compose (repo root):** `bears-den` mounts the named volume `bears-den-sqlite-data` at `/var/lib/den/bear-sqlite` and sets `BEAR_SQLITE_DATA_DIR` accordingly.
 - **Coolify Docker Image resource:** add a **persistent storage** volume mounted at `/var/lib/den/bear-sqlite` and set `BEAR_SQLITE_DATA_DIR=/var/lib/den/bear-sqlite`. The image entrypoint (`docker-entrypoint.sh`) creates the directory and assigns ownership to the `appuser` runtime user before starting `/bin/server`.

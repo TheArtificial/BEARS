@@ -133,6 +133,8 @@ governance.changed {
 
 Do not reuse `Mode` for human-identity trust, channel selection, or work-surface resolution state.
 
+**"Governance" is reserved for runtime context/run supervision** (this ADR). The `curate` role's review/promotion of durable memory is **memory curation**, not "memory governance"; the code module is `core/memory/curation.rs` (`uses_sqlite_curation`) and the skill-proposal side effect is `ToolSideEffectKind::SkillReview`. The memory-curation roadmap lives at [`MEMORY_CURATION_PLAN.md`](../roadmap/MEMORY_CURATION_PLAN.md). Remaining "governance" uses are intentional: runtime governance mode (this ADR), RBAC/cost governance, and BearWire control-plane diagnostics.
+
 ## Consequences
 
 - **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.

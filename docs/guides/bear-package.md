@@ -29,7 +29,7 @@ The boundary matches [den-native-runtime storage](../architecture/den-native-run
 ```
 bear-package/
   manifest.yaml          # identity, slug, models, role profiles, provisioning_version, schema versions
-  memory.sqlite          # canonical memory + governance audit trail (per-Bear SQLite per ADR-0031)
+  memory.sqlite          # canonical memory + curation audit trail (per-Bear SQLite per ADR-0031)
   artifacts/             # optional: skill trees, exported policies (git-shaped)
 ```
 
@@ -47,7 +47,7 @@ YAML is the canonical interchange format (not JSON). It carries:
 
 ### `memory.sqlite`
 
-Single SQLite file per Bear, named **`memory.sqlite`** (not `cognition.sqlite`). It is the authoritative store for append-only memory and governance audit per [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md).
+Single SQLite file per Bear, named **`memory.sqlite`** (not `cognition.sqlite`). It is the authoritative store for append-only memory and curation audit per [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md).
 
 Tables included in a standard cognition export (see `services/den/src/core/memory/store/schema.sql`):
 

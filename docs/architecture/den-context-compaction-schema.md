@@ -222,7 +222,7 @@ The schema should therefore support efficient queries for:
 
 No compaction table should double as durable memory storage.
 
-If a memory-governance workflow promotes facts from a compacted session into durable memory, that should happen through a separate memory subsystem with only reference-level linkage back to transcript or compaction artifacts.
+If a memory-curation workflow promotes facts from a compacted session into durable memory, that should happen through a separate memory subsystem with only reference-level linkage back to transcript or compaction artifacts.
 
 ## Minimum v1 schema bar
 

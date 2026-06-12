@@ -22,7 +22,7 @@ use crate::{
     errors::CustomError,
 };
 
-pub fn uses_sqlite_governance(config: &Config) -> bool {
+pub fn uses_sqlite_curation(config: &Config) -> bool {
     config.uses_native_agent_runtime()
 }
 
@@ -32,7 +32,7 @@ pub async fn create_proposal(
     stores: &MemoryStoreManager,
     params: CreateMemoryProposal<'_>,
 ) -> Result<MemoryProposalRow, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return memory_proposals::create(pool, params).await;
     }
     let store = stores.store_for_bear(params.bear_id).await?;
@@ -69,7 +69,7 @@ pub async fn create_observation(
     stores: &MemoryStoreManager,
     params: CreateBearObservation<'_>,
 ) -> Result<BearObservationRow, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return bear_observations::create(pool, params).await;
     }
     let store = stores.store_for_bear(params.bear_id).await?;
@@ -93,7 +93,7 @@ pub async fn get_observation(
     bear_id: Uuid,
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return bear_observations::get_for_bear(pool, bear_id, observation_id).await;
     }
     let store = stores.store_for_bear(bear_id).await?;
@@ -108,7 +108,7 @@ pub async fn mark_observation_review_queued_for_bear(
     observation_id: &str,
     proposal_id: Uuid,
 ) -> Result<(), CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return Ok(());
     }
     let store = stores.store_for_bear(bear_id).await?;
@@ -123,7 +123,7 @@ pub async fn list_proposals(
     status: Option<&str>,
     limit: i64,
 ) -> Result<Vec<MemoryProposalRow>, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return memory_proposals::list_for_bear(pool, bear_id, status, limit).await;
     }
     let store = stores.store_for_bear(bear_id).await?;
@@ -147,7 +147,7 @@ pub async fn get_proposal(
     bear_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<Option<MemoryProposalRow>, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return memory_proposals::get_for_bear(pool, bear_id, proposal_id).await;
     }
     let proposals = list_proposals(pool, config, stores, bear_id, None, 500).await?;
@@ -160,7 +160,7 @@ pub async fn resolve_proposal(
     stores: &MemoryStoreManager,
     params: ProposalResolutionParams<'_>,
 ) -> Result<MemoryProposalRow, CustomError> {
-    if !uses_sqlite_governance(config) {
+    if !uses_sqlite_curation(config) {
         return memory_proposals::resolve_for_bear(pool, params).await;
     }
     let store = stores.store_for_bear(params.bear_id).await?;

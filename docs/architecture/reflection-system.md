@@ -35,7 +35,7 @@ Use narrower terms underneath Reflection:
 
 | Term | Use |
 |---|---|
-| Curation | Memory governance and `core/` maintenance. |
+| Curation | Memory curation and `core/` maintenance. |
 | Introspection | Reviewing role behavior, tool use, failures, and performance. |
 | Adaptation | Proposing or applying behavior, skill, prompt, or workflow changes. |
 | Maintenance | Internal scheduler/run infrastructure where a dry operational term is useful. |
@@ -290,5 +290,5 @@ Avoid:
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Reflection system implementation plan](../planning/REFLECTION_SYSTEM_PLAN.md)
-- [Review memory governance plan](../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Memory curation plan](../roadmap/MEMORY_CURATION_PLAN.md)
 - [Memory automation roadmap](../planning/MEMORY_AUTOMATION_ROADMAP.md)

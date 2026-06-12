@@ -28,7 +28,7 @@ pub enum ToolSideEffectKind {
     ActiveWorkState,
     ConversationMetadata,
     ExternalNetwork,
-    SkillGovernance,
+    SkillReview,
 }
 
 impl ToolSideEffectKind {
@@ -102,8 +102,8 @@ pub fn render_tool_descriptor_guidance(guidance: ToolDescriptorGuidance) -> Stri
         ToolSideEffectKind::ExternalNetwork => {
             "Side effect: may call external network/search providers through Den policy."
         }
-        ToolSideEffectKind::SkillGovernance => {
-            "Side effect: updates skill proposal/governance state for review, not immediate agent behavior unless explicitly approved and reconciled."
+        ToolSideEffectKind::SkillReview => {
+            "Side effect: updates skill proposal/review state, not immediate agent behavior unless explicitly approved and reconciled."
         }
     };
 

@@ -198,7 +198,7 @@ If semantic tools such as `remember` are introduced later, they should be docume
 
 - Use read-only MemFS Manager and Letta diagnostics for Den memory UI and health views.
 - Prefer asynchronous observation for native memory changes where full synchronous mediation is unnecessary.
-- Introduce Den-mediated memory proposal/approval tools only for workflows that actually require governance.
+- Introduce Den-mediated memory proposal/approval tools only for workflows that actually require curation.
 - Keep Cabinet separate from per-bear MemFS for shared, human-editable knowledge.
 - Document whether a tool is **native memory editing**, **Den product metadata**, **Cabinet shared knowledge**, or **governed memory workflow**.
 
