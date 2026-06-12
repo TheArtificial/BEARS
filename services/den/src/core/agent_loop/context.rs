@@ -24,8 +24,19 @@ struct TranscriptRow {
     content_json: Value,
 }
 
+fn assistant_has_tool_call(messages: &[ChatMessage], tool_call_id: &str) -> bool {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant")
+        .and_then(|message| message.tool_calls.as_ref())
+        .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id))
+}
+
 fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
+    let mut pending_tool_results: std::collections::HashMap<String, ChatMessage> =
+        std::collections::HashMap::new();
     for row in rows {
         match row.message_type.as_str() {
             "user" if !row.content_text.trim().is_empty() => {
@@ -71,7 +82,7 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Default::default()));
                 let call = ChatToolCall {
-                    id: tool_call_id,
+                    id: tool_call_id.clone(),
                     call_type: "function".to_string(),
                     function: ChatToolCallFunction {
                         name: tool_name,
@@ -83,6 +94,9 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                         last.tool_calls
                             .get_or_insert_with(Vec::new)
                             .push(call);
+                        if let Some(pending) = pending_tool_results.remove(&tool_call_id) {
+                            messages.push(pending);
+                        }
                         continue;
                     }
                 }
@@ -93,6 +107,9 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     name: None,
                     tool_calls: Some(vec![call]),
                 });
+                if let Some(pending) = pending_tool_results.remove(&tool_call_id) {
+                    messages.push(pending);
+                }
             }
             "tool_result" => {
                 let Some(event) = row.content_json.get("event").and_then(Value::as_str) else {
@@ -128,17 +145,26 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                 if content.is_none() && tool_call_id.is_none() {
                     continue;
                 }
-                messages.push(ChatMessage {
+                let tool_message = ChatMessage {
                     role: "tool".to_string(),
                     content,
-                    tool_call_id,
+                    tool_call_id: tool_call_id.clone(),
                     name: row
                         .content_json
                         .get("tool_name")
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     tool_calls: None,
-                });
+                };
+                if let Some(tool_call_id) = tool_call_id {
+                    if assistant_has_tool_call(&messages, &tool_call_id) {
+                        messages.push(tool_message);
+                    } else {
+                        pending_tool_results.insert(tool_call_id, tool_message);
+                    }
+                } else {
+                    messages.push(tool_message);
+                }
             }
             _ => {}
         }
@@ -201,6 +227,15 @@ pub fn repair_tool_call_message_chain(messages: Vec<ChatMessage>) -> Vec<ChatMes
                     "dropping incomplete assistant tool-call turn from LLM context"
                 );
             }
+            continue;
+        }
+
+        if message.role == "tool" {
+            tracing::debug!(
+                tool_call_id = ?message.tool_call_id,
+                "dropping orphan tool message from LLM context"
+            );
+            index += 1;
             continue;
         }
 
@@ -355,7 +390,10 @@ pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMes
         .first()
         .filter(|message| message.role == "system")
         .cloned();
-    let tail_start = messages.len().saturating_sub(MAX_TAIL_MESSAGES - 1);
+    let mut tail_start = messages.len().saturating_sub(MAX_TAIL_MESSAGES - 1);
+    while tail_start < messages.len() && messages[tail_start].role == "tool" {
+        tail_start += 1;
+    }
     let mut pruned = Vec::with_capacity(MAX_TAIL_MESSAGES);
     if let Some(system_message) = system {
         pruned.push(system_message);
@@ -572,6 +610,70 @@ mod tests {
         ];
         let repaired = repair_tool_call_message_chain(messages);
         assert!(repaired.is_empty());
+    }
+
+    #[test]
+    fn repair_tool_call_message_chain_drops_orphan_tool_messages() {
+        let messages = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some(r#"{"ok":false}"#.to_string()),
+                tool_call_id: Some("call_orphan".to_string()),
+                name: Some("den_capabilities_list_self".to_string()),
+                tool_calls: None,
+            },
+        ];
+        let repaired = repair_tool_call_message_chain(messages);
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(repaired[0].role, "user");
+    }
+
+    #[test]
+    fn reconstruct_transcript_defers_tool_result_until_tool_call() {
+        let rows = vec![
+            TranscriptRow {
+                message_type: "user".to_string(),
+                content_text: "list tools".to_string(),
+                content_json: Value::Null,
+            },
+            TranscriptRow {
+                message_type: "tool_result".to_string(),
+                content_text: r#"{"ok":false}"#.to_string(),
+                content_json: serde_json::json!({
+                    "event": "tool_result",
+                    "tool_call_id": "call_1",
+                    "tool_name": "den_capabilities_list_self",
+                    "status": "error",
+                    "content": r#"{"ok":false}"#,
+                }),
+            },
+            TranscriptRow {
+                message_type: "tool_call".to_string(),
+                content_text: "den_capabilities_list_self".to_string(),
+                content_json: serde_json::json!({
+                    "event": "tool_request",
+                    "tool_call_id": "call_1",
+                    "tool_name": "den_capabilities_list_self",
+                    "args": {},
+                }),
+            },
+        ];
+        let messages = reconstruct_transcript_messages(rows);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "user");
+        assert!(messages[1]
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls[0].id == "call_1"));
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_1"));
     }
 
     #[test]
