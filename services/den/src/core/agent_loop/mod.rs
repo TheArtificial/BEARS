@@ -13,8 +13,15 @@ mod session_store;
 mod session_stream;
 mod step;
 mod strategy;
+mod tool_outcome;
 mod tool_policy;
 mod transcript;
+
+pub use tool_outcome::{
+    is_legacy_synthetic_interrupted_tool_result, tool_result_content_indicates_error,
+    tool_result_persistence_status, user_visible_tool_error_summary,
+    LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
+};
 
 pub use approvals::{
     create_native_approval, decide_native_approval, NativeApprovalDecision, NativeApprovalRow,

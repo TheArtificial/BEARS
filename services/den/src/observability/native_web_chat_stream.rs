@@ -23,7 +23,24 @@ pub fn runtime_semantic_to_bear_channel_events(
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
             vec![serde_json::json!({ "type": "assistant_delta", "text": text })]
         }
-        RuntimeSemanticEvent::StatusText { text } | RuntimeSemanticEvent::RunProgress {
+        RuntimeSemanticEvent::StatusText { text } => {
+            vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
+        }
+        RuntimeSemanticEvent::RunProgress {
+            kind,
+            text,
+            phase,
+            ..
+        } if kind == "tool_finished" => {
+            let tool = phase.unwrap_or_else(|| "tool".to_string());
+            let summary = text.unwrap_or_default();
+            vec![serde_json::json!({
+                "type": "server_tool_finished",
+                "tool": tool,
+                "summary": summary,
+            })]
+        }
+        RuntimeSemanticEvent::RunProgress {
             text: Some(text),
             ..
         } => vec![serde_json::json!({ "type": "reasoning_delta", "text": text })],
@@ -238,6 +255,22 @@ mod tests {
             None,
         );
         assert_eq!(events[0]["type"], "done");
+    }
+
+    #[test]
+    fn maps_tool_finished_to_server_tool_finished() {
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::RunProgress {
+                kind: "tool_finished".to_string(),
+                text: Some("memory_read failed: not found".to_string()),
+                phase: Some("memory_read".to_string()),
+                detail: None,
+            },
+            None,
+        );
+        assert_eq!(events[0]["type"], "server_tool_finished");
+        assert_eq!(events[0]["tool"], "memory_read");
+        assert_eq!(events[0]["summary"], "memory_read failed: not found");
     }
 
     #[test]

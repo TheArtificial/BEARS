@@ -3,7 +3,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
+    core::{
+        agent_loop::tool_outcome::{
+            is_legacy_synthetic_interrupted_tool_result, LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
+        },
+        llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
+    },
     errors::CustomError,
 };
 
@@ -129,53 +134,64 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
     messages
 }
 
-const SYNTHETIC_TOOL_RESULT_UNAVAILABLE: &str =
-    "Tool result unavailable (prior turn interrupted).";
-
-/// Ensures every assistant `tool_calls` entry is followed by matching `role: tool` messages
-/// before the next non-tool message. Injects synthetic tool results for missing ids.
+/// Drops assistant tool-call turns that never completed (interrupted turns, legacy synthetic
+/// placeholders). Keeps only fully-resolved tool-call chains so future turns are not poisoned.
 pub fn repair_tool_call_message_chain(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     let mut repaired = Vec::with_capacity(messages.len());
     let mut index = 0;
     while index < messages.len() {
-        let message = messages[index].clone();
+        let message = &messages[index];
+        if message.role == "assistant"
+            && message
+                .tool_calls
+                .as_ref()
+                .is_some_and(|calls| !calls.is_empty())
+        {
+            let assistant = message.clone();
+            let required_ids: Vec<String> = assistant
+                .tool_calls
+                .as_ref()
+                .expect("checked above")
+                .iter()
+                .map(|call| call.id.clone())
+                .collect();
+            index += 1;
+            let mut tool_messages = Vec::new();
+            let mut responded_ids = std::collections::HashSet::new();
+            let mut has_legacy_synthetic = false;
+            while index < messages.len() && messages[index].role == "tool" {
+                let tool_message = messages[index].clone();
+                if is_legacy_synthetic_interrupted_tool_result(
+                    tool_message.content.as_deref(),
+                ) {
+                    has_legacy_synthetic = true;
+                }
+                if let Some(tool_call_id) = tool_message.tool_call_id.as_deref() {
+                    responded_ids.insert(tool_call_id.to_string());
+                }
+                tool_messages.push(tool_message);
+                index += 1;
+            }
+            let complete = !has_legacy_synthetic
+                && required_ids
+                    .iter()
+                    .all(|tool_call_id| responded_ids.contains(tool_call_id));
+            if complete {
+                repaired.push(assistant);
+                repaired.extend(tool_messages);
+            } else {
+                tracing::debug!(
+                    required_tool_results = required_ids.len(),
+                    responded_tool_results = responded_ids.len(),
+                    has_legacy_synthetic,
+                    "dropping incomplete assistant tool-call turn from LLM context"
+                );
+            }
+            continue;
+        }
+
         repaired.push(message.clone());
         index += 1;
-
-        let Some(tool_calls) = message
-            .tool_calls
-            .as_ref()
-            .filter(|calls| !calls.is_empty())
-        else {
-            continue;
-        };
-        if message.role != "assistant" {
-            continue;
-        }
-
-        let required_ids: Vec<String> = tool_calls.iter().map(|call| call.id.clone()).collect();
-        let mut responded_ids = std::collections::HashSet::new();
-        while index < messages.len() && messages[index].role == "tool" {
-            let tool_message = messages[index].clone();
-            if let Some(tool_call_id) = tool_message.tool_call_id.as_deref() {
-                responded_ids.insert(tool_call_id.to_string());
-            }
-            repaired.push(tool_message);
-            index += 1;
-        }
-
-        for tool_call_id in required_ids {
-            if responded_ids.contains(&tool_call_id) {
-                continue;
-            }
-            repaired.push(ChatMessage {
-                role: "tool".to_string(),
-                content: Some(SYNTHETIC_TOOL_RESULT_UNAVAILABLE.to_string()),
-                tool_call_id: Some(tool_call_id),
-                name: None,
-                tool_calls: None,
-            });
-        }
     }
     repaired
 }
@@ -363,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_tool_call_message_chain_injects_missing_tool_results() {
+    fn repair_tool_call_message_chain_drops_incomplete_tool_turns() {
         let messages = vec![
             ChatMessage {
                 role: "user".to_string(),
@@ -390,13 +406,65 @@ mod tests {
             },
         ];
         let repaired = repair_tool_call_message_chain(messages);
-        assert_eq!(repaired.len(), 3);
-        assert_eq!(repaired[1].role, "assistant");
-        assert_eq!(repaired[2].role, "tool");
-        assert_eq!(repaired[2].tool_call_id.as_deref(), Some("call_orphan"));
-        assert_eq!(
-            repaired[2].content.as_deref(),
-            Some(super::SYNTHETIC_TOOL_RESULT_UNAVAILABLE)
-        );
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(repaired[0].role, "user");
+    }
+
+    #[test]
+    fn repair_tool_call_message_chain_drops_legacy_synthetic_tool_results() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: "call_1".to_string(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "memory_read".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some(LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE.to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: None,
+                tool_calls: None,
+            },
+        ];
+        let repaired = repair_tool_call_message_chain(messages);
+        assert!(repaired.is_empty());
+    }
+
+    #[test]
+    fn repair_tool_call_message_chain_keeps_complete_tool_turns() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: "call_1".to_string(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "memory_read".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some(r#"{"ok":true}"#.to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: Some("memory_read".to_string()),
+                tool_calls: None,
+            },
+        ];
+        let repaired = repair_tool_call_message_chain(messages);
+        assert_eq!(repaired.len(), 2);
     }
 }

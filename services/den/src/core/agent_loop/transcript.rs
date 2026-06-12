@@ -10,7 +10,10 @@ use crate::core::{
     llm::{ChatMessage, ChatToolCall},
 };
 
-use super::tool_policy::provider_tool_requires_approval;
+use super::{
+    tool_outcome::tool_result_persistence_status,
+    tool_policy::provider_tool_requires_approval,
+};
 
 pub fn spawn_persist_native_agent_step(
     pool: PgPool,
@@ -139,12 +142,13 @@ pub fn spawn_persist_web_chat_turn(
                 let Some(tool_call_id) = message.tool_call_id.clone() else {
                     continue;
                 };
+                let status = tool_result_persistence_status(message.content.as_deref());
                 spawn_persist_tool_result(
                     context.clone(),
                     message.name.clone(),
                     tool_call_id,
                     None,
-                    "ok".to_string(),
+                    status.to_string(),
                     message.content.clone(),
                     Value::Null,
                     serde_json::json!({

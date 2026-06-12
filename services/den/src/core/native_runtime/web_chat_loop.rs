@@ -17,8 +17,9 @@ use crate::{
     core::{
         agent_loop::{
             pending_tool_calls, run_agent_step_stream, provider_tool_requires_approval,
-            spawn_persist_web_chat_turn,
-            AgentLoopSessionStore, NativeToolDispatchMode, SessionTrackingStream,
+            spawn_persist_web_chat_turn, tool_result_content_indicates_error,
+            user_visible_tool_error_summary, AgentLoopSessionStore, NativeToolDispatchMode,
+            SessionTrackingStream,
         },
         bears::BearProfile,
         llm::{ChatMessage, ChatToolCall, LlmClient},
@@ -103,6 +104,31 @@ fn status_event(text: impl Into<String>) -> RuntimeStreamEvent {
         text: Some(text.into()),
         phase: None,
         detail: None,
+    })
+}
+
+fn tool_finished_event(call: &ChatToolCall, summary: &str) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "tool_finished".to_string(),
+        text: Some(summary.to_string()),
+        phase: Some(call.function.name.clone()),
+        detail: Some(serde_json::json!({
+            "tool_call_id": call.id,
+            "tool_name": call.function.name,
+        })),
+    })
+}
+
+fn tool_error_event(call: &ChatToolCall, message: String, request_id: &str) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+        message,
+        detail: Some(format!("Tool `{}` returned an error.", call.function.name)),
+        error_type: Some("tool_execution_error".to_string()),
+        request_id: Some(request_id.to_string()),
+        context: Some(serde_json::json!({
+            "tool_call_id": call.id,
+            "tool_name": call.function.name,
+        })),
     })
 }
 
@@ -248,6 +274,23 @@ impl NativeWebChatLoopStream {
         };
         match fut.as_mut().poll(cx) {
             Poll::Ready(Ok(message)) => {
+                let call = calls[*index].clone();
+                let content = message.content.as_deref();
+                if tool_result_content_indicates_error(content) {
+                    let summary = user_visible_tool_error_summary(&call.function.name, content);
+                    self.pending_out
+                        .push_back(tool_finished_event(&call, &summary));
+                    self.pending_out.push_back(tool_error_event(
+                        &call,
+                        summary,
+                        &self.runtime.request_id,
+                    ));
+                } else {
+                    self.pending_out.push_back(tool_finished_event(
+                        &call,
+                        &format!("Finished {}", call.function.name),
+                    ));
+                }
                 results.push(message);
                 *index += 1;
                 *active = None;
@@ -255,8 +298,26 @@ impl NativeWebChatLoopStream {
                 Poll::Pending
             }
             Poll::Ready(Err(error)) => {
-                self.phase = LoopPhase::Finished;
-                Poll::Ready(Some(Err(error)))
+                let call = calls[*index].clone();
+                let summary = format!("{} failed: {error}", call.function.name);
+                self.pending_out
+                    .push_back(tool_finished_event(&call, &summary));
+                self.pending_out.push_back(tool_error_event(
+                    &call,
+                    summary.clone(),
+                    &self.runtime.request_id,
+                ));
+                results.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: Some(format!("error: {error}")),
+                    tool_call_id: Some(call.id),
+                    name: Some(call.function.name),
+                    tool_calls: None,
+                });
+                *index += 1;
+                *active = None;
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
             Poll::Pending => Poll::Pending,
         }
