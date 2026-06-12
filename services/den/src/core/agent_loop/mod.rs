@@ -6,6 +6,7 @@ mod context;
 mod key_memory_projection;
 #[cfg(test)]
 mod key_memory_projection_tests;
+mod pending_tools;
 mod policy;
 mod runtime_context;
 mod session_store;
@@ -25,7 +26,8 @@ pub use assembler::{
 pub use key_memory_projection::{project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult};
 pub use context::{assemble_agent_messages, repair_tool_call_message_chain};
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
-pub use session_stream::SessionTrackingStream;
+pub use pending_tools::pending_tool_calls;
+pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
 pub use step::run_agent_step_stream;
 pub use policy::{select_strategy_profile, StrategyPolicyInput};
 pub use strategy::StrategyProfile;

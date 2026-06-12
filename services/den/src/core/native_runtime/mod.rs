@@ -15,6 +15,7 @@ mod profile;
 mod profile_briefing;
 mod tools;
 mod turn;
+mod web_chat_loop;
 
 pub use openai_stream::openai_byte_stream_to_event_stream;
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};

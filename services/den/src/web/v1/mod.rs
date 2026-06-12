@@ -982,7 +982,11 @@ async fn chat_send_native_inner(
         crate::core::native_runtime::NativeWebChatTurnParams {
             deps: &deps,
             bear_id: bear.id,
+            bear_slug: &bear.slug,
+            chat_binding_id,
             user_id,
+            username: Some(username),
+            membership_role: membership_role.as_deref(),
             conversation_id: &conv_id,
             session_id: &session_id,
             prompt: &upstream_message,

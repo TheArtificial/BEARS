@@ -20,6 +20,15 @@ use crate::{
 use super::session_store::AgentLoopSession;
 use super::transcript::spawn_persist_native_agent_step;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NativeToolDispatchMode {
+    /// ACP and similar clients execute tools and continue via `/tool-results`.
+    #[default]
+    DeferToClient,
+    /// Browser web chat executes Den server tools in-process and continues the loop.
+    ServerSideInProcess,
+}
+
 type ApprovalPauseFuture =
     Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
 
@@ -40,6 +49,7 @@ pub struct SessionTrackingStream {
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
+    dispatch_mode: NativeToolDispatchMode,
 }
 
 impl SessionTrackingStream {
@@ -53,6 +63,7 @@ impl SessionTrackingStream {
         conversation_id: String,
         acp_session_id: String,
         request_id: Option<String>,
+        dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
         Self {
             inner,
@@ -71,6 +82,7 @@ impl SessionTrackingStream {
             pending_approval: None,
             pending_tool_event: None,
             pending_pause_after_tool: None,
+            dispatch_mode,
         }
     }
 
@@ -262,7 +274,7 @@ impl Stream for SessionTrackingStream {
                     },
                     run_id: None,
                 });
-                if approval_required {
+                if approval_required && self.dispatch_mode == NativeToolDispatchMode::DeferToClient {
                     let pool = self.pool.clone();
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();

@@ -1,8 +1,10 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use futures::StreamExt;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     config::Config,
@@ -11,7 +13,7 @@ use crate::{
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
-            SessionTrackingStream,
+            NativeToolDispatchMode, SessionTrackingStream,
         },
         bears::BearProfile,
         conversation_persistence,
@@ -185,6 +187,7 @@ fn wrap_session_stream(
         conversation_id.to_string(),
         acp_session_id.to_string(),
         request_id,
+        NativeToolDispatchMode::DeferToClient,
     ))
 }
 
@@ -315,7 +318,11 @@ pub async fn run_native_profile_turn_collect_assistant_text(
 pub struct NativeWebChatTurnParams<'a> {
     pub deps: &'a NativeRuntimeDeps<'a>,
     pub bear_id: Uuid,
+    pub bear_slug: &'a str,
+    pub chat_binding_id: &'a str,
     pub user_id: i32,
+    pub username: Option<&'a str>,
+    pub membership_role: Option<&'a str>,
     pub conversation_id: &'a str,
     pub session_id: &'a str,
     pub prompt: &'a str,
@@ -353,16 +360,25 @@ pub async fn start_native_web_chat_turn_event_stream(
     .await?;
     let llm = LlmClient::new(params.deps.config);
     let stream = run_agent_step_stream(&llm, &session).await?;
-    Ok(wrap_session_stream(
-        stream,
-        &session,
-        params.deps.pool.clone(),
-        params.bear_id,
-        Some(params.user_id),
-        params.conversation_id,
-        params.session_id,
-        Some(params.request_id.to_string()),
-    ))
+    let runtime = NativeWebChatLoopRuntime {
+        pool: params.deps.pool.clone(),
+        config: Arc::new(params.deps.config.clone()),
+        stores: params.deps.stores.clone(),
+        llm,
+        session_key: session.session_key.clone(),
+        bear_id: params.bear_id,
+        bear_slug: params.bear_slug.to_string(),
+        chat_binding_id: params.chat_binding_id.to_string(),
+        user_id: params.user_id,
+        username: params.username.map(str::to_string),
+        membership_role: params.membership_role.map(str::to_string),
+        conversation_id: params.conversation_id.to_string(),
+        session_id: params.session_id.to_string(),
+        request_id: params.request_id.to_string(),
+        session_store: SESSION_STORE.clone(),
+    };
+    let step_stream = NativeWebChatLoopStream::wrap_step_stream(&runtime, stream, &session);
+    Ok(Box::pin(NativeWebChatLoopStream::new(runtime, step_stream)))
 }
 
 pub async fn start_native_acp_turn_event_stream(
