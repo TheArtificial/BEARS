@@ -135,6 +135,18 @@ Do not reuse `Mode` for human-identity trust, channel selection, or work-surface
 
 **"Governance" is reserved for runtime context/run supervision** (this ADR). The `curate` role's review/promotion of durable memory is **memory curation**, not "memory governance"; the code module is `core/memory/curation.rs` (`uses_sqlite_curation`) and the skill-proposal side effect is `ToolSideEffectKind::SkillReview`. The memory-curation roadmap lives at [`MEMORY_CURATION_PLAN.md`](../roadmap/MEMORY_CURATION_PLAN.md). Remaining "governance" uses are intentional: runtime governance mode (this ADR), RBAC/cost governance, and BearWire control-plane diagnostics.
 
+## Relationship to continuation supervision and acceptance criteria
+
+The "keep the loop on-task" machinery from [ADR-0023 (Task focus supervisor)](adr-0023-task-focus-supervisor.md) and the acceptance criteria from [ADR-0034 (Jobs and tasks)](adr-0034-jobs-and-tasks-work-management.md) are **not** a separate, orthogonal supervision system. They split cleanly along this ADR's axes:
+
+| Question | Owner |
+|----------|-------|
+| What counts as finished / on-task? | **Acceptance criteria** (`bear_job_criteria`, ADR-0034) — durable definition of done; `command` criteria are hard completion gates. |
+| How hard to drive, when to yield, who is watching? | **Governance mode** (this ADR) — `interactive` yields/asks, `autonomous_continuation` drives to completion, `grace` transitions, `frozen` stops, `observational` never nudges. |
+| Is *this* candidate yield premature right now? | **Task focus** — an ephemeral projection of `(governance mode × acceptance-criteria state × run/task status)`, evaluated as a phase of the native loop, **not** a fourth state machine. |
+
+Consequently, continuation bias is **governance-mode-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-mode-aware and reference acceptance criteria as the success contract.
+
 ## Consequences
 
 - **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.
