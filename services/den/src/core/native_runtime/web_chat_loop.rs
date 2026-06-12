@@ -16,8 +16,8 @@ use crate::{
     config::Config,
     core::{
         agent_loop::{
-            pending_tool_calls, run_agent_step_stream, spawn_persist_web_chat_interrupted_turn,
-            spawn_persist_web_chat_turn,
+            pending_tool_calls, provider_tool_supports_unilateral_execution, run_agent_step_stream,
+            spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
             tool_call_finished_event, tool_call_finished_event_for_content,
             tool_call_finished_event_for_incomplete,
             AgentLoopSessionStore, NativeToolDispatchMode,
@@ -425,7 +425,13 @@ async fn execute_one_web_chat_den_tool(
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| provider_name.clone());
     let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default()));
-    let content = if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
+    let content = if !provider_tool_supports_unilateral_execution(&provider_name) {
+        serde_json::json!({
+            "ok": false,
+            "error": "This tool requires interactive approval, which web chat does not support yet."
+        })
+        .to_string()
+    } else if builtin_den_tool_descriptor_for_provider_name(&provider_name).is_none() {
         format!("unsupported server tool: {provider_name}")
     } else {
         let tool_context = DenToolInvocationContext {

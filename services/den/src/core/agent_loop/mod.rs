@@ -41,7 +41,10 @@ pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
 pub use step::run_agent_step_stream;
 pub use policy::{select_strategy_profile, StrategyPolicyInput};
 pub use strategy::StrategyProfile;
-pub use tool_policy::{maybe_pause_for_tool_approval, provider_tool_requires_approval, record_approval_decision};
+pub use tool_policy::{
+    maybe_pause_for_tool_approval, provider_tool_requires_approval,
+    provider_tool_supports_unilateral_execution, record_approval_decision,
+};
 pub use transcript::{
     spawn_persist_incomplete_acp_tool_results, spawn_persist_web_chat_interrupted_turn,
     spawn_persist_web_chat_turn,

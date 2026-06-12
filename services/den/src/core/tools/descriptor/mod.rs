@@ -413,7 +413,7 @@ pub fn den_tool_policy_json_for_provider(provider_name: &str) -> Option<Value> {
         } else {
             "mutating"
         },
-        "approval_required": false,
+        "approval_required": descriptor.approval_policy != "never",
         "canonical_tool": descriptor.name,
         "provider_tool": descriptor.provider_name,
     }))

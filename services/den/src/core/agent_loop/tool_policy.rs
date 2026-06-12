@@ -2,17 +2,23 @@ use crate::core::{
     acp_tools::{acp_tool_policy, acp_tool_policy_json_for_provider, AcpToolName},
     agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
     runtime_contracts::RuntimeSemanticEvent,
-    tools::descriptor::den_tool_policy_json_for_provider,
+    tools::descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// Whether web chat (and other surfaces without interactive approval UI) may run this tool
+/// without an explicit human approval step.
+pub fn provider_tool_supports_unilateral_execution(provider_name: &str) -> bool {
+    if let Some(descriptor) = builtin_den_tool_descriptor_for_provider_name(provider_name) {
+        return descriptor.approval_policy == "never";
+    }
+    !provider_tool_requires_approval(provider_name)
+}
+
 pub fn provider_tool_requires_approval(provider_name: &str) -> bool {
-    if let Some(policy) = den_tool_policy_json_for_provider(provider_name) {
-        return policy
-            .get("approval_required")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
+    if let Some(descriptor) = builtin_den_tool_descriptor_for_provider_name(provider_name) {
+        return descriptor.approval_policy != "never";
     }
     acp_tool_policy_json_for_provider(provider_name)
         .get("approval_required")
@@ -78,8 +84,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn den_capabilities_list_self_does_not_require_approval() {
+    fn den_capabilities_list_self_supports_unilateral_execution() {
+        assert!(provider_tool_supports_unilateral_execution("den_capabilities_list_self"));
+        assert!(provider_tool_supports_unilateral_execution("den.capabilities.list_self"));
         assert!(!provider_tool_requires_approval("den_capabilities_list_self"));
-        assert!(!provider_tool_requires_approval("den.capabilities.list_self"));
+    }
+
+    #[test]
+    fn acp_mutating_tools_do_not_support_unilateral_execution() {
+        assert!(!provider_tool_supports_unilateral_execution("fs_edit_file"));
+        assert!(provider_tool_requires_approval("fs_edit_file"));
     }
 }
