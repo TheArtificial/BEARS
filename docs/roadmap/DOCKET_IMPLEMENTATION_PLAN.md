@@ -11,7 +11,7 @@ For the storage boundary rationale (memory is bear-canonical SQLite; tasks/jobs 
 Den is the container. Both the bear runtime and Docket live inside Den. The separation is three subsystems with enforced seams, not three processes:
 
 1. **Docket** — Postgres-canonical task/job orchestration. Owns its tables, migrations, and a service API.
-2. **Bear memory** — SQLite-canonical cognition (per ADR-0031; not yet implemented, still Letta-backed).
+2. **Bear memory** — SQLite-canonical cognition (per ADR-0031). **Native today**: implemented as per-Bear SQLite under `core/memory/` (`store/`, `curation.rs`); no longer Letta-backed.
 3. **Bear runtime** — role harnesses (`role_runtime`, `pair_turn`, the `work` dispatch loop) that *consume* Docket and bear memory through service interfaces.
 
 Two invariants the source tree must make hard to violate:
@@ -19,9 +19,9 @@ Two invariants the source tree must make hard to violate:
 - Docket code never reaches into bear-memory storage, and vice versa (no shared DB handle, no cross-module direct table access).
 - Execution flows through the bear role runtime, never Docket executing task bodies directly (the ADR-0034 execution invariant).
 
-## Phase 1 (now): module boundary — "Option A"
+## Module boundary (now)
 
-Land Docket as a self-contained module within the existing `den` crate, with a trait seam designed so a later crate split is a mechanical move rather than a redesign.
+Land Docket as a self-contained module within the existing `den` crate, with a trait seam designed so a later crate split is a mechanical move rather than a redesign. The crate split itself is a separate effort tracked in [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md); this plan only needs to land the module and its `DocketService`/`TaskDispatcher` trait seams.
 
 - Create `core/docket/`, absorbing and evolving the current `core/work_plans.rs`:
   - `db.rs` — Postgres access, **internal** (`pub(crate)` at most; not exported past the module).
@@ -43,31 +43,16 @@ The one runtime touch-point between Docket and the bear is task dispatch. The de
 - Docket emits "task T is ready to dispatch" and invokes the dispatcher; it never imports or holds an executor and never runs a task `body` itself.
 - This direction-of-dependency mechanically prevents Docket from executing task content, enforcing the ADR-0034 execution invariant at compile time within the module structure.
 
-### Symmetric treatment for bear memory (when SQLite lands)
+### Symmetric treatment for bear memory
 
-When the ADR-0031 SQLite memory store is implemented, give it the symmetric shape: `core/bear_memory/` with its own SQLite handle (internal) and a `MemoryStore` trait as its public face. The runtime depends on the `DocketService` and `MemoryStore` *traits*, not on either subsystem's internals.
+Bear memory already has the symmetric shape this seam assumes: `core/memory/` holds the per-Bear SQLite store (`store/`) and curation (`curation.rs`). Giving it a `MemoryStore` trait as its public face — so the runtime depends on the `DocketService` and `MemoryStore` *traits*, not on either subsystem's internals — is available now and is a prerequisite for the `den-memory` crate in [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md).
 
-## Phase 2 (future): crate boundary — "Option B"
+## Crate boundary (separate effort)
 
-Promote the subsystem seams to compile-time crate boundaries once both sides of the protected boundary exist (i.e. after the SQLite bear-memory store is built). Splitting only Docket today would leave the most important boundary — memory — unmodeled, so the crate split is intentionally deferred until both halves can be isolated together.
-
-Target workspace shape (illustrative, names TBD):
-
-- `den-docket` — Postgres-canonical jobs/tasks; depends on no bear-memory crate.
-- `den-bear-memory` — SQLite-canonical memory; depends on no Docket crate.
-- `den-runtime` — role harnesses; depends on the `DocketService` and `MemoryStore` traits.
-- `den` (binary/control plane) — wiring.
-
-The compile-time guarantee: Docket literally cannot import bear-memory types because it does not depend on that crate, and vice versa. Because Phase 1 already routes all cross-subsystem access through traits, this phase is a move-and-rename, not a redesign.
-
-### Trigger for Phase 2
-
-Revisit the crate split when **both** are true:
-
-- the SQLite bear-memory store (ADR-0031) is implemented, and
-- the trait seams from Phase 1 have stabilized in practice.
+Promoting these module seams to compile-time **crate** boundaries — turning the single `den` crate into a Cargo workspace, motivated by build and test time (and used as a Rust-idiom refactor) — is tracked separately in [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md). It depends on the trait seams above (`DocketService`, `TaskDispatcher`) being in place, but is otherwise out of scope for Docket. Note that across crate boundaries the `TaskDispatcher` trait is defined by `den-docket` (the caller) and implemented by `den-runtime`, so Docket calls out without depending on the runtime crate — the same dependency direction described in the dispatch-direction seam, now enforced at the crate level.
 
 ## Relationship to existing plans
 
 - Supersedes the schema/CRUD/handoff portions of [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) (phases 1–4); its runtime-dispatch and operator/UX phases (5–6) remain valid, read through ADR-0034 and this plan.
+- [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) consumes this plan's `DocketService`/`TaskDispatcher` trait seams and promotes them (and the `MemoryStore` seam) to Cargo workspace crate boundaries, motivated by build/test time.
 - The MemFS intent/approved-task pipeline remains the unattended, `review`-gated path and is out of Docket's scope.
