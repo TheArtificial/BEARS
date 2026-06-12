@@ -62,6 +62,10 @@ See [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profil
 
 **`chat`** remains appropriate when the user is not entering an execution context — Q&A, priorities, task intents, references to a project by name without checkout/sandbox work.
 
+### Trust profile vs governance mode
+
+`chat`/`pair`/`curate`/`work`/`watch` are **trust profiles** (`Profile` in code) — durable trust-and-memory contracts. *How a run is supervised right now* is a separate **governance mode** (`Mode` in code) on the run / workspace session: `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. When a remote `pair` session loses its client, the run transitions `interactive → grace → autonomous_continuation` on the **same** work surface and workspace session — it does not flip the trust profile from `pair` to `work`. See [ADR-0039 — Trust profiles and governance modes](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
+
 ## Rules of thumb for builders
 
 1. **New execution context → new conversation bound to a surface** (or explicit “switch work surface” flow), not an implicit re-point mid-thread.

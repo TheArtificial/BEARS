@@ -12,6 +12,8 @@ This is the durable conceptual source for the five Bear profiles: what they are,
 
 For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-profiles-and-role-axes.md`](interactive-profiles-and-role-axes.md).
 
+The five profiles are **trust profiles** (`Profile` in code): durable trust-and-memory contracts. How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance mode** (`Mode` in code) on the run / workspace session. A Bear going offline mid-session is a governance-mode transition, not a switch from `pair` to `work`. See [ADR-0039 — Trust profiles and governance modes](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
+
 For how **work surfaces** relate to **conversations** (including “start a conversation with this repository”), see [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
 
 It is not the implementation spec for provisioning, prompt hashes, tool ids, runtime lifecycle, or database reconciliation. Those details live in the Den spec. It is also not the decision record explaining why the architecture was chosen. That rationale lives in ADRs.
