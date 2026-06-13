@@ -1,5 +1,5 @@
 //! Typed conversation message storage values aligned with Postgres CHECK constraints
-//! on `conversation_messages` ([`super::conversation_persistence`]).
+//! on `conversation_messages` ([`super::persistence`]).
 
 use serde_json::Value;
 
@@ -135,7 +135,7 @@ impl ConversationMessageRole {
     }
 }
 
-/// Typed write payload for [`super::conversation_persistence::append_message`].
+/// Typed write payload for [`super::persistence::append_message`].
 #[derive(Debug, Clone)]
 pub struct ConversationMessageWrite {
     pub message_type: ConversationMessageType,

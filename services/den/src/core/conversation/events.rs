@@ -10,11 +10,9 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    acp_runtime::is_acp_history_target,
-    conversation_persistence::{
-        append_message, ensure_conversation_for_external_id, list_messages_page,
-    },
+use crate::core::acp_runtime::is_acp_history_target;
+use super::persistence::{
+    append_message, ensure_conversation_for_external_id, list_messages_page,
 };
 
 pub fn canonical_persistence_enabled_for_conversation(external_conversation_id: &str) -> bool {

@@ -20,7 +20,6 @@ pub mod acp_turn_runner_test {
     }
 }
 pub mod api_utils;
-pub mod archived_conversations;
 pub mod bears;
 pub mod llm;
 pub use llm::bifrost;
@@ -31,34 +30,11 @@ pub mod role_runtime_registry;
 pub mod sandbox;
 pub mod migration;
 pub mod codepool;
-pub mod conversation_events;
-pub mod conversation_message_types;
-pub mod conversation_persistence;
-pub mod conversation {
-    pub mod events {
-        pub use super::super::conversation_events::*;
-
-        #[cfg(test)]
-        mod tests {
-            include!("conversation_events_tests.rs");
-        }
-    }
-
-    pub mod persistence {
-        pub use super::super::conversation_message_types::*;
-        pub use super::super::conversation_persistence::*;
-
-        #[cfg(test)]
-        mod non_acp_integration_tests {
-            include!("conversation_persistence_non_acp_integration_tests.rs");
-        }
-
-        #[cfg(test)]
-        mod idempotency_integration_tests {
-            include!("conversation_idempotency_integration_tests.rs");
-        }
-    }
-}
+pub mod conversation;
+pub use conversation::archived as archived_conversations;
+pub use conversation::events as conversation_events;
+pub use conversation::message_types as conversation_message_types;
+pub use conversation::persistence as conversation_persistence;
 pub mod tools;
 pub mod email;
 pub mod letta;
