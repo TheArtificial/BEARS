@@ -275,3 +275,53 @@ crates return `DenError`; HTTP handlers convert for free through `?`.
 descriptor/registry/executors), then extract `den-tools`; (3) do the
 loose-`core/*.rs` triage feeding `den-runtime`; (4) extract `den-runtime`, then
 the `den-acp`/`den-api`/`den-web` edges, collapsing `den` to the thin binary.
+
+## `den-tools` triage (proposed, 2026-06)
+
+Read-only investigation of `core/tools/` (~8.7k LOC) ahead of extraction. **Key
+finding: `den-tools` is an integration layer *above* most subsystems, not a
+leaf.** The dispatcher (`core/tools/session/mod.rs::invoke_den_tool`) already
+threads dependencies explicitly — `pool`, `config`, `stores`, plus a serializable
+`DenToolInvocationContext` — into free executor functions. That separates two
+concerns the seam should preserve:
+
+- **`DenToolInvocationContext` = per-call data** (ids, `BearProfile`, channel).
+  Needs only `BearProfile` + `serde_json::Value`, so it moves into `den-tools`
+  trivially.
+- **Capabilities** (`pool`/`config`/`stores` + a pile of `crate::core::*`
+  functions) = what must be inverted behind a trait.
+
+**Coupling map (executor → subsystem):**
+
+- Already crates / `den-core` types: `config::Config`, `bears::BearProfile`,
+  `core::docket` (`DocketService`), `core::memory` store.
+- `den`-resident subsystems needing inversion: `bears::db` + `user` (Postgres
+  directory), `acp_sessions` / `acp_tools` / `acp_plan_mode`, memory curation
+  (`memory::tools` + `MemoryStoreManager`), `memory_manager_head` (memfs HTTP),
+  `prompt_memory_block_store` / `prompt_memory_blocks`, `conversation_events`,
+  `turn_state`, `bear_observations`, `web_policy`.
+
+A single `ToolContext` over all of that would be a ~30-method god trait — the
+wrong shape.
+
+**Proposed seam — two phases, composed capability sub-traits:**
+
+- **Phase A (low-risk): extract the static surface as `den-tools`.** Move
+  `constants` / `aliases` / `arguments` / `descriptor/` + the
+  `DenToolInvocationContext` data type. Prerequisite: relocate
+  `tool_descriptor_guidance` (already dependency-free) and split
+  `AcpToolDisplayDescriptor` out of `acp_tools` into `den-core` (descriptor's
+  only non-tools deps). Result: a `den-core`-only crate owning the descriptor /
+  model-facing **naming authority** (serves AGENTS.md "descriptor-owned names").
+  Executors stay in `den` and call the registry. Mostly data + pure fns.
+- **Phase B (incremental): define `ToolContext` as composed sub-traits and
+  invert executors group-by-group.** e.g. `BearDirectory`, `MemoryTools`,
+  `PromptMemory`, `PlanModeOps`, `WorkSurfaceOps`, `WebFetcher` — plus the
+  existing `DocketService` as the template. `den-runtime` (the `den` binary
+  today) implements each by delegating to current `crate::core::*` fns. Move one
+  tool-group at a time behind its sub-trait, green per step. This is where
+  `den-runtime` gets unblocked, and follows "define traits where they are used".
+
+Recommended first concrete step: Phase A (descriptor/registry extraction + the
+`tool_descriptor_guidance` / `AcpToolDisplayDescriptor` relocation it needs).
+Hard gate: workspace green + clippy advisory.
