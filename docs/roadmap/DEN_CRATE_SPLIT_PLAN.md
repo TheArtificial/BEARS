@@ -2,7 +2,7 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06):** v0/v1 groundwork has begun on the `clippy` branch — workspace + lint table are in, `den-core` is seeded (`config`, `metrics`), and a re-export extraction technique is validated. A blocker (the web-coupled shared error type) gates the service-crate extractions. See *Execution log* at the end.
+> **Status update (2026-06):** v1 underway on the `clippy` branch — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`); the error-decoupling gate is resolved (option 2, `DenError`); `den-llm` extracted as the first service-layer leaf. See *Execution log* at the end.
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -190,10 +190,23 @@ surfaced the real gating prerequisite for the service-crate extractions.
   Cargo workspace root (root package stays the `den` binary; members live under
   `crates/`). A `[workspace.lints.clippy]` table sets pedantic/nursery to
   advisory `warn` with the noisy lints allow-listed.
-- **`den-core` seeded.** Extracted two clean leaves into `crates/den-core`:
-  `config` (only `url`/`tracing`/`dotenvy`/std) and `metrics` (std-only,
-  formerly `observability::metrics`). `Config::test_stub` is exposed via a
-  `den-core` `test-util` feature.
+- **`den-core` seeded.** `config` (only `url`/`tracing`/`dotenvy`/std), `metrics`
+  (std-only, formerly `observability::metrics`), and `DenError` (the shared
+  web-free error). `Config::test_stub` is exposed via a `den-core` `test-util`
+  feature.
+- **Error gate resolved — option 2 (`DenError`).** `den-core::DenError` is the
+  shared web-free error (variants mirror `CustomError`; infra `From` impls for
+  anyhow/io/sqlx incl. pool handling/serde_json/reqwest). `den`'s `CustomError`
+  stays the HTTP/web adapter (`IntoResponse`, auth conversions) and gains
+  `From<DenError>`, so service code returns `DenError` and still bubbles up via
+  `?` in handlers. Landed additively (existing `CustomError` impls untouched);
+  `CustomError`'s infra `From` impls can be slimmed to delegate as callers
+  migrate.
+- **`den-llm` extracted.** First service-layer leaf: LLM client + idle byte
+  stream, depending only on `den-core`, returning `DenError`. The SSE ->
+  `RuntimeStreamEvent` mapping (`stream.rs`) stays in `den` to avoid a
+  `llm -> runtime` cycle; `core::llm` re-exports `den-llm` so call sites are
+  unchanged. `cargo test -p den-llm` builds/runs against only `den-core`.
 - **Default-level clippy machine-fixes** applied across core/api/web.
 
 **Validated technique — re-export shim for low-churn extraction.** Moving a
@@ -205,35 +218,29 @@ move rather than a repo-wide path rewrite. **Recommended as the standard
 extraction mechanic** (replaces the "replace intra-crate `crate::` paths"
 step in *Migration mechanics* for the common case).
 
-**Blocker found — the shared error type gates service-crate extraction.**
-`crate::errors::CustomError` is the de-facto shared error across nearly every
-module, but it is **web-coupled**: it implements `axum::IntoResponse` by
-rendering the `error.html` minijinja template (dev: `path_loader`; prod:
-`minijinja_embed::load_templates!`, which embeds from the `den` crate's build
-context), and it carries `From<auth_backend::…>` impls. It therefore cannot
-move into the `den-core` leaf without dragging axum + minijinja + embedded
-templates into the foundation, and the orphan rule forbids keeping the
-`IntoResponse` impl in `den` once the type moves. Because `den-llm`,
-`den-memory`, `den-docket`, and `den-tools` all return `CustomError` today,
-**none of them can be extracted to depend only on `den-core` until this is
-resolved.**
+**Resolved gate — the shared error type (now `DenError`).** `CustomError` was
+the de-facto shared error but is **web-coupled** (`axum::IntoResponse` rendering
+`error.html`; `From<auth_backend::…>`), so it could not move into the `den-core`
+leaf and the orphan rule forbade keeping `IntoResponse` in `den` if the type
+moved. Resolved via **option 2**: a web-free `DenError` now lives in `den-core`;
+`CustomError` stays the HTTP adapter and bridges via `From<DenError>`. Service
+crates return `DenError`; HTTP handlers convert for free through `?`.
 
-This makes error decoupling the **true v0 gate** for the service crates (ahead
-of, or alongside, the module triage). Options, needing a decision:
+**Extraction recipe (validated on `den-llm`), for the remaining service crates:**
 
-1. **Per-crate `thiserror` errors (plan's stated direction).** Each subsystem
-   defines its own typed error; the HTTP surfaces (`den-api`/`den-acp`/`den-web`)
-   map those into responses. Most idiomatic; largest diff.
-2. **`den-core` error + `den-web` response adapter.** Move a web-free
-   `CoreError` enum (Display/`Error` + infra `From` impls) into `den-core`;
-   keep `IntoResponse`/template rendering in a `den`/`den-web` layer (newtype or
-   local wrapper to satisfy the orphan rule). Smaller diff; keeps one shared
-   error.
+1. Move the subsystem's modules into `crates/den-<name>/`; keep runtime/web-
+   coupled sub-modules behind in `den` (split the module if needed to avoid a
+   cycle — e.g. llm's `stream.rs` stayed because it maps to runtime contracts).
+2. In the moved code, rewrite `crate::config`/`crate::errors::CustomError` to
+   `den_core::config`/`den_core::DenError` (and other `crate::` foundation refs).
+3. Make the old `core::<name>` module a re-export shim (`pub use den_<name>::…`)
+   so existing `crate::core::<name>::…` paths compile unchanged.
+4. At the few boundaries where a moved fn now yields `DenError` but a den caller
+   expects `CustomError`, add `.into()` / `.map_err(CustomError::from)`.
+5. Add the crate to `[workspace].members` and den's `[dependencies]`; verify
+   `cargo test -p den-<name>` builds in isolation.
 
-Both are behavior-sensitive (error-page rendering), so this was intentionally
-**not** done autonomously and is left for explicit direction.
-
-**Suggested next steps:** (a) pick an error-decoupling option above; (b) then
-extract `den-llm` (next clean-ish leaf once its error dependency is typed);
-(c) proceed with module triage co-locating the loose `core/*.rs` files per the
-v0 plan.
+**Suggested next steps:** extract `den-memory` (native per-Bear SQLite; give
+`core/memory/` a `MemoryStore` trait face first), then `den-docket` (after the
+Docket module/trait lands) and `den-tools`; interleave the loose-`core/*.rs`
+triage. `den-runtime` and the `den-acp`/`den-api`/`den-web` edges come last.
