@@ -4,14 +4,11 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 
-use crate::{
-    core::{bears::BearProfile, prompt_memory_blocks::PromptMemoryBlockScope},
-    errors::CustomError,
-};
+use crate::{core::bears::BearProfile, errors::CustomError};
 
 use super::{
     constants::DEN_MEMORY_WRITE_ENTRY,
@@ -20,21 +17,10 @@ use super::{
     session::DenToolInvocationContext,
 };
 
-pub(crate) fn validate_prompt_memory_scope(
-    scope: PromptMemoryBlockScope,
-    work_surface: Option<&str>,
-    session_id: Option<&str>,
-) -> Result<(), CustomError> {
-    match scope {
-        PromptMemoryBlockScope::WorkSurface if work_surface.is_none() => Err(CustomError::ValidationError(
-            "prompt memory scope `work_surface` requires `work_surface`".to_string(),
-        )),
-        PromptMemoryBlockScope::Session if session_id.is_none() => Err(CustomError::ValidationError(
-            "prompt memory scope `session` requires `session_id`".to_string(),
-        )),
-        _ => Ok(()),
-    }
-}
+// Shared tool-argument validators now live in `den-tools`; re-exported here so
+// existing `support::*` call sites keep resolving. They return `DenError`, which
+// `?` converts to `CustomError` at the (still web-coupled) executor boundary.
+pub(crate) use den_tools::validation::{validate_bounded_text, validate_optional_object};
 
 pub(crate) fn validate_memory_write_entry_semantics(
     args: &MemoryWriteEntryArguments,
@@ -176,29 +162,8 @@ pub(crate) fn assess_unlabeled_memory_misuse(
     Ok(ToolPreflight::Proceed)
 }
 
-pub(crate) fn validate_bounded_text(field: &str, value: &str, min_chars: usize, max_chars: usize) -> Result<String, CustomError> {
-    let trimmed = value.trim();
-    let char_count = trimmed.chars().count();
-    if char_count < min_chars {
-        return Err(CustomError::ValidationError(format!("{field} must not be empty")));
-    }
-    if char_count > max_chars {
-        return Err(CustomError::ValidationError(format!("{field} must be at most {max_chars} characters")));
-    }
-    Ok(trimmed.to_string())
-}
-
 pub(crate) fn clean_limited_strings(values: Vec<String>, max_items: usize, max_chars: usize) -> Vec<String> {
     values.into_iter().map(|value| value.trim().to_string()).filter(|value| !value.is_empty()).map(|value| value.chars().take(max_chars).collect::<String>()).take(max_items).collect()
-}
-
-pub(crate) fn validate_optional_object(field: &str, value: &Option<Value>) -> Result<(), CustomError> {
-    if let Some(value) = value {
-        if !value.is_object() {
-            return Err(CustomError::ValidationError(format!("{field} must be an object")));
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn memory_read_scopes(role: BearProfile) -> Vec<&'static str> {

@@ -614,3 +614,35 @@ Two design refinements learned here, applicable to the remaining groups:
 
 Verified: `cargo check --workspace --all-targets` green; `den-tools` clippy-clean;
 `cargo test -p den-tools` green (no behavior change — pure relocation).
+
+### Phase B — `prompt_memory/` landed (2026-06, `test` branch)
+
+Second executor group inverted. `den_tools::prompt_memory` now owns the
+`prompt_memory_upsert` / `prompt_memory_list` / `prompt_memory_patch`
+orchestration (pair-role gating, argument structs/parsing, validation, write/patch
+construction, conflict/supersede archiving sequencing, result shaping). The
+prompt-memory domain types — `PromptMemoryBlockType` / `Scope` / `State`,
+`PromptMemoryBlock`, `PromptMemoryBlockWrite`, `PromptMemoryBlockPatch` — moved
+into `den_tools::prompt_memory::types` (serde-only; no sqlx) and are re-exported
+from `core::prompt_memory_blocks` / `core::prompt_memory_block_store` so the
+Postgres store and prompt-assembly code keep their paths. Capabilities are behind
+`PromptMemoryStore` (`list_blocks`, `upsert_block`, `patch_block`,
+`archive_conflicting`, `archive_superseded_by`); `den` implements it as
+`DenPromptMemoryStore { pool }` over `prompt_memory_block_store`, and
+`core/tools/prompt_memory` is now just that impl + thin `CustomError`-mapping
+wrappers (signatures unchanged, so the dispatcher and existing tests are
+untouched).
+
+Also lifted the **shared tool-argument validators** to a new
+`den_tools::validation` module (`validate_bounded_text`, `validate_optional_object`)
+plus `validate_prompt_memory_scope` in the `prompt_memory` module. They now return
+`DenError`; `support` re-exports the two generic ones, and the change is
+`?`-transparent for the remaining in-`den` executors (`DenError → CustomError` via
+`From`). This pre-stages validation for the rest of Phase B.
+
+Notes carried forward: executors again take primitives (`bear_id`, `user_id`,
+`BearProfile`) rather than `DenToolInvocationContext`; runtime impl uses
+`CustomError::into_den()` at the seam; `PromptMemoryStore: Send + Sync`.
+
+Verified: `cargo build -p den` green (only pre-existing dead-code warnings);
+`cargo test -p den -p den-tools --no-run` green; `den-tools` clippy-clean.

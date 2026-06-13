@@ -10,33 +10,9 @@ use crate::{
     errors::CustomError,
 };
 
-#[derive(Debug, Clone)]
-pub(crate) struct PromptMemoryBlockWrite {
-    pub(crate) block_id: String,
-    pub(crate) bear_id: Option<uuid::Uuid>,
-    pub(crate) profile_slug: Option<String>,
-    pub(crate) scope: PromptMemoryBlockScope,
-    pub(crate) block_type: PromptMemoryBlockType,
-    pub(crate) state: PromptMemoryBlockState,
-    pub(crate) work_surface: Option<String>,
-    pub(crate) session_id: Option<String>,
-    pub(crate) title: String,
-    pub(crate) body: String,
-    pub(crate) priority: i32,
-    pub(crate) created_by_user_id: Option<i32>,
-    pub(crate) supersedes_block_id: Option<String>,
-    pub(crate) metadata: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PromptMemoryBlockPatch {
-    pub(crate) state: PromptMemoryBlockState,
-    pub(crate) title: String,
-    pub(crate) body: String,
-    pub(crate) priority: i32,
-    pub(crate) supersedes_block_id: Option<String>,
-    pub(crate) metadata: serde_json::Value,
-}
+// Write/patch DTOs now live alongside the prompt-memory tool executors in
+// `den-tools`; re-exported here so the Postgres store keeps a stable path.
+pub(crate) use den_tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
 
 #[derive(Debug, Clone)]
 pub(crate) struct PromptMemoryBlockQuery<'a> {

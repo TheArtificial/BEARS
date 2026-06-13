@@ -1,45 +1,11 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PromptMemoryBlockType {
-    RoleGuidance,
-    WorkSurfaceContext,
-    SessionFocus,
-    UserInstruction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PromptMemoryBlockScope {
-    BearWide,
-    RoleLocal,
-    WorkSurface,
-    Session,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PromptMemoryBlockState {
-    Draft,
-    Active,
-    Superseded,
-    Archived,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PromptMemoryBlock {
-    pub(crate) id: String,
-    pub(crate) block_type: PromptMemoryBlockType,
-    pub(crate) scope: PromptMemoryBlockScope,
-    pub(crate) state: PromptMemoryBlockState,
-    pub(crate) role: Option<String>,
-    pub(crate) work_surface: Option<String>,
-    pub(crate) session_id: Option<String>,
-    pub(crate) title: String,
-    pub(crate) body: String,
-    pub(crate) priority: i32,
-}
+// Prompt-memory domain types now live in `den-tools` (the tool-executor crate);
+// re-exported here so existing `crate::core::prompt_memory_blocks::*` paths keep
+// resolving. The runtime prompt-compilation logic below stays in `den`.
+pub(crate) use den_tools::prompt_memory::{
+    PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromptMemoryCompilationInput<'a> {
