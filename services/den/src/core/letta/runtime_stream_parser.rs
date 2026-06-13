@@ -1,5 +1,3 @@
-use futures::StreamExt;
-
 use crate::{
     core::runtime_contracts::{
         RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,

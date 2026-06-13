@@ -29,7 +29,6 @@ use crate::{
             session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
         },
         docket::{DocketService, PgDocketService},
-        letta::sanitize_visible_transcript_text,
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,

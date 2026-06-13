@@ -26,7 +26,6 @@ pub mod tools;
 pub mod email;
 pub mod letta;
 pub use letta::runtime_stream_parser as letta_runtime_stream_parser;
-pub use memory::manager_head as memory_manager_head;
 pub use memory::bear_observations;
 pub use memory::curate_executor as memory_curate_executor;
 pub use memory::proposals as memory_proposals;

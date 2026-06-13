@@ -29,7 +29,7 @@ use crate::{
             },
             provision, Bear, BearProfileBinding, BearProfile,
         },
-        memory_manager_head::{fetch_memfs_role_memory_file, fetch_memfs_role_memory_tree},
+        memory::tools::sqlite_collect_role_logical_paths,
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection, user,
         user::db as user_db,
@@ -616,11 +616,19 @@ impl BearRoleViewRow {
     }
 }
 
-fn memfs_http_client(context: &str) -> Result<reqwest::Client, CustomError> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| CustomError::System(format!("{context}: {e}")))
+async fn read_native_memory_content(
+    store: &crate::core::memory::BearMemoryStore,
+    logical_path: &str,
+) -> Result<Option<String>, CustomError> {
+    let value = crate::core::memory::tools::sqlite_memory_read(store, logical_path).await?;
+    let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !ok {
+        return Ok(None);
+    }
+    Ok(value
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string))
 }
 
 fn parse_work_surface_display_name(index_content: &str, slug: &str) -> String {
@@ -665,96 +673,58 @@ async fn bear_work_surface_rows(
     config: &Config,
     bear_id: Uuid,
 ) -> Result<Vec<BearWorkSurfaceRow>, CustomError> {
-    let http = memfs_http_client("MemFS work-surface detail client build failed")?;
     let mut rows = Vec::new();
-    let core_tree = fetch_memfs_role_memory_tree(
-        &http,
-        &config.letta_memfs_service_url,
-        bear_id,
-        BearProfile::Pair.as_str(),
-    )
-    .await?;
-    let Some(core_tree) = core_tree else {
-        return Ok(rows);
-    };
-    let root = core_tree.files.as_array().cloned().unwrap_or_default();
-    let work_surfaces_dir = root.iter().find(|node| {
-        node.get("path") == Some(&serde_json::Value::String("core/work_surfaces".to_string()))
-    });
-    let Some(work_surfaces_dir) = work_surfaces_dir else {
-        return Ok(rows);
-    };
-    let children = work_surfaces_dir
-        .get("children")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    for child in children {
-        let slug = match child.get("name").and_then(|v| v.as_str()) {
-            Some("index.md") | None => continue,
-            Some(value) if !value.trim().is_empty() => value.trim().to_string(),
-            _ => continue,
-        };
+    let manager = crate::core::memory::MemoryStoreManager::new(config);
+    let store = manager.store_for_bear(bear_id).await?;
+
+    let core_paths =
+        sqlite_collect_role_logical_paths(&store, BearProfile::Pair.as_str()).await?;
+    let pair_paths = &core_paths;
+    let work_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Work.as_str()).await?;
+
+    // Work surfaces are canonical core memory under `core/work_surfaces/{slug}/...`.
+    let mut slugs: Vec<String> = core_paths
+        .iter()
+        .filter_map(|path| {
+            let rest = path.strip_prefix("core/work_surfaces/")?;
+            let slug = rest.split('/').next()?.trim();
+            if slug.is_empty() || slug == "index.md" {
+                None
+            } else {
+                Some(slug.to_string())
+            }
+        })
+        .collect();
+    slugs.sort();
+    slugs.dedup();
+
+    for slug in slugs {
         let slug_path_prefix = format!("core/work_surfaces/{slug}/");
-        let child_nodes = child
-            .get("children")
-            .and_then(|value| value.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let child_paths = child_nodes
+        let child_paths = core_paths
             .iter()
-            .filter_map(|node| {
-                node.get("path")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-            })
+            .filter(|path| path.starts_with(&slug_path_prefix))
+            .cloned()
             .collect::<Vec<_>>();
         let canonical_path_count = child_paths.len();
         let index_path = format!("{slug_path_prefix}index.md");
         let overview_path = format!("{slug_path_prefix}overview.md");
         let glossary_path = format!("{slug_path_prefix}glossary.md");
-        let index_file = fetch_memfs_role_memory_file(
-            &http,
-            &config.letta_memfs_service_url,
-            bear_id,
-            BearProfile::Pair.as_str(),
-            &index_path,
-        )
-        .await?;
-        let overview_file = fetch_memfs_role_memory_file(
-            &http,
-            &config.letta_memfs_service_url,
-            bear_id,
-            BearProfile::Pair.as_str(),
-            &overview_path,
-        )
-        .await?;
-        let display_name = index_file
-            .as_ref()
-            .map(|file| parse_work_surface_display_name(&file.content, &slug))
+        let index_content = read_native_memory_content(&store, &index_path).await?;
+        let overview_content = read_native_memory_content(&store, &overview_path).await?;
+        let display_name = index_content
+            .as_deref()
+            .map(|content| parse_work_surface_display_name(content, &slug))
             .unwrap_or_else(|| slug.clone());
-        let summary = overview_file
-            .as_ref()
-            .and_then(|file| first_nonempty_markdown_paragraph(&file.content));
+        let summary = overview_content
+            .as_deref()
+            .and_then(first_nonempty_markdown_paragraph);
         let glossary_present = child_paths.iter().any(|path| path == &glossary_path);
-        let pair_current_understanding_present = fetch_memfs_role_memory_file(
-            &http,
-            &config.letta_memfs_service_url,
-            bear_id,
-            BearProfile::Pair.as_str(),
-            &format!("pair/work_surfaces/{slug}/current-understanding.md"),
-        )
-        .await?
-        .is_some();
-        let work_current_understanding_present = fetch_memfs_role_memory_file(
-            &http,
-            &config.letta_memfs_service_url,
-            bear_id,
-            BearProfile::Work.as_str(),
-            &format!("work/work_surfaces/{slug}/current-understanding.md"),
-        )
-        .await?
-        .is_some();
+        let pair_understanding_path = format!("pair/work_surfaces/{slug}/current-understanding.md");
+        let work_understanding_path = format!("work/work_surfaces/{slug}/current-understanding.md");
+        let pair_current_understanding_present =
+            pair_paths.iter().any(|path| path == &pair_understanding_path);
+        let work_current_understanding_present =
+            work_paths.iter().any(|path| path == &work_understanding_path);
         let workplace_labels = [
             (BearProfile::Pair, pair_current_understanding_present),
             (BearProfile::Work, work_current_understanding_present),
