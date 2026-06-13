@@ -48,16 +48,18 @@ ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=di
 ARG SQLX_OFFLINE=false
 ARG CARGO_BUILD_JOBS=2
 ENV GIT_SHA=${GIT_SHA}
-COPY --from=cacher /app/target target
+COPY --from=cacher /app/target chef-target
 COPY . .
 # Same registry/git cache mount IDs as cacher so this step does not re-download
-# crates.io sources that chef already populated in one build. The target dir is
-# copied from the dependency layer above, so dependencies should be `Fresh`; only
-# the Den crate itself should rebuild when source files or GIT_SHA change.
+# crates.io sources that chef already populated in one build. The persistent
+# target cache lets first-party crate artifacts survive when Coolify invalidates
+# this RUN layer; seed it from cargo-chef output on first use.
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=den-target,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
     echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && \
+    if [ ! -d target/release/deps ]; then cp -a chef-target/. target/; fi && \
     CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --locked --release --features=production --message-format=short && \
     cp "./target/release/${APP_NAME}" /bin/server
 
