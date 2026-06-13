@@ -2,7 +2,7 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` Phase A landed — the static tool surface (constants/aliases/arguments/descriptor/guidance) is a `den-core`-only crate; executors stay in `den` pending the `ToolContext` seam (Phase B). Remaining service crates (`den-runtime`, edges) are gated on that seam + the v0 module triage. See *Execution log* at the end.
+> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` **Phase A + Phase B complete** — the static tool surface *and* every executor group now live in `den-tools` behind the composed `ToolContext` seam; `den` provides `DenToolContext` (the capability impls) and a thin `invoke_den_tool` wrapper. Dead wrappers removed and their tests migrated. The remaining service crates (`den-runtime`, then the `den-acp`/`den-api`/`den-web` edges) are now gated only on the **v0 loose-`core/*.rs` triage** (plus legacy deletion / de-stringify). See *Execution log* at the end.
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -811,9 +811,41 @@ mapping `DenError → CustomError`.
 Workspace green; `den-tools` clippy-clean; the 13 `core::tools::tests` (which
 exercise `invoke_den_tool` end-to-end) pass.
 
-**Known follow-ups (cleanup, not blocking):** the per-tool `den` wrapper functions
-(`web_fetch`, `memory_read`, `prompt_memory_*`, …) are now only used by `den`'s
-own `#[cfg(test)]` tests, so non-test builds emit `dead_code` warnings for them;
-remove them (and migrate those tests onto `invoke_den_tool` / `DenToolContext`)
-when convenient. The coarse `WorkPlanOps` seam should be tightened after the
-`work_plans`/docket domain types migrate to shared crates.
+**Known follow-ups (cleanup, not blocking):** ~~the per-tool `den` wrapper
+functions are only used by `#[cfg(test)]` tests, so non-test builds emit
+`dead_code` warnings; remove them and migrate those tests~~ **done** (see *wrapper
+cleanup + test migration* below). The coarse `WorkPlanOps` seam should still be
+tightened after the `work_plans`/docket domain types migrate to shared crates.
+
+### Phase B — wrapper cleanup + test migration (2026-06, `clippy` branch)
+
+Closed out the dispatcher follow-up. The now-dead per-tool `den` wrapper
+functions (`web_fetch`/`web_search`, `memory_browse`/`read`/`search`, the
+`prompt_memory_*` trio, the five `memory_review` fns, `write_observation`, the
+five `plan_mode` fns, `orient`/`create_work_surface_scaffold`, the identity +
+`environment` fns, `merge_memory_entry_source_with_human`/`write_memory_entry`)
+were deleted — the dispatcher reaches the executors through `DenToolContext`, so
+the wrappers had no non-test callers. Removed the modules that became empty shims
+(`observations.rs`, `payloads.rs`, `prompt_memory_diagnostics.rs`,
+`preflight.rs`). Also de-duplicated `patch_letta_conversation_summary` (the
+`session/mod.rs` copy now delegates to the canonical `letta.rs` one).
+
+Tests were migrated per the "sibling module when reasonable" preference:
+
+- **Pure unit tests moved into `den-tools` as sibling `#[cfg(test)]` modules:**
+  the `session_info`/`bear_environment` payload tests → `environment/payloads.rs`;
+  `infer_work_surface_hint` → `work_surface/`; `merge_memory_entry_source_with_human`
+  → `memory/`.
+- **DB-backed tests stay in `den`** (they need the `#[sqlx::test]` harness +
+  migrations): the `prompt_memory` tests now construct `DenPromptMemoryStore`
+  directly; the `preflight` test imports from `den_tools::preflight`.
+- **Resurrected the orphaned `core::tools::memory` test module** — four
+  `#[sqlx::test]` projection tests (`apply_core_update` / `request_review` /
+  `resolve_proposal`) that were never wired into the build. Re-pointed their
+  imports to current paths, fixed the `invoke_den_tool` call to the 6-arg
+  signature (`&MemoryStoreManager`), and wired `#[cfg(test)] mod memory;` into
+  `core/tools/mod.rs`.
+
+Verified: `cargo clippy -p den -p den-tools --lib --tests` clean of the targeted
+`dead_code` warnings; relocated `den-tools` unit tests and the resurrected `den`
+projection tests pass.
