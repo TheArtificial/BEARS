@@ -16,7 +16,9 @@ pub mod prompt_memory;
 pub mod session;
 pub mod workflow;
 pub mod support;
+pub mod tool_descriptor_guidance;
 pub mod web;
+pub mod web_policy;
 pub mod work_surface;
 
 #[cfg(test)]

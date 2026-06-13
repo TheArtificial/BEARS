@@ -131,8 +131,8 @@ pub mod docket;
 #[path = "runtime/provider/mod.rs"]
 pub mod runtime_provider;
 pub mod s3;
-pub mod tool_descriptor_guidance;
+pub use tools::tool_descriptor_guidance;
 pub mod turn_state;
 pub mod user;
-pub mod web_policy;
+pub use tools::web_policy;
 pub mod work_plans;
