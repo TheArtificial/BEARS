@@ -9,12 +9,8 @@ use serde_json::{json, Value};
 use den_core::BearProfile;
 
 use crate::{
-    constants::{
-        DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_STATUS_PROVIDER,
-        DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-    },
     context::DenToolInvocationContext,
-    descriptor::builtin_den_tool_descriptors_for_profile,
+    descriptor::{builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile},
     identity::{role_is_bear_admin, CurrentUser},
     memory::source_acp_session_id,
     support::{clean_optional, memory_read_scopes, memory_write_scopes},
@@ -368,13 +364,7 @@ pub fn session_info_payload(
         "memory": {
             "read_scopes": memory_read_scopes(role),
             "write_scopes": memory_write_scopes(role),
-            "available_tools": [
-                DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-                DEN_MEMORY_STATUS_PROVIDER,
-                DEN_MEMORY_TREE_PROVIDER,
-                DEN_MEMORY_READ_PROVIDER,
-                DEN_MEMORY_SEARCH_PROVIDER
-            ],
+            "available_tools": memory_tool_provider_names_for_profile(role),
             "status": memory_status
         },
         "policy_notes": [
@@ -389,6 +379,7 @@ pub fn session_info_payload(
 #[cfg(test)]
 mod tests {
     use super::{bear_environment_payload, session_info_payload};
+    use crate::descriptor::builtin_den_tool_descriptors_for_profile;
     use crate::arguments::DenToolChannelContext;
     use crate::context::DenToolInvocationContext;
     use den_core::BearProfile;
@@ -505,6 +496,61 @@ mod tests {
         );
         assert_eq!(payload["context_budget"]["status"], json!("estimated"));
         assert_eq!(payload["context_budget"]["source"], json!("test"));
+    }
+
+    #[test]
+    fn chat_profile_exposes_memory_read_and_write_tools() {
+        let names: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Chat)
+            .into_iter()
+            .filter(|descriptor| descriptor.domain == "memory")
+            .map(|descriptor| descriptor.provider_name)
+            .collect();
+        assert!(names.contains(&"memory_search".to_string()));
+        assert!(names.contains(&"memory_read".to_string()));
+        assert!(names.contains(&"memory_write_entry".to_string()));
+        assert!(!names.contains(&"memory_list_proposals".to_string()));
+    }
+
+    #[test]
+    fn chat_session_info_available_tools_match_memory_roster() {
+        let context = DenToolInvocationContext {
+            bear_id: uuid::Uuid::nil(),
+            bear_slug: "meta".to_string(),
+            binding_id: "agent-123".to_string(),
+            profile: Some(BearProfile::Chat),
+            user_id: 7,
+            username: Some("gerwitz".to_string()),
+            membership_role: Some("admin".to_string()),
+            conversation_id: "conv-123".to_string(),
+            session_id: "sess-123".to_string(),
+            acp_session_id: None,
+            conversation_selection: Some("conv-123".to_string()),
+            runtime_target: Some("conv-123".to_string()),
+            workspace_roots: Vec::new(),
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: None,
+            channel: Default::default(),
+        };
+        let payload = session_info_payload(
+            &context,
+            BearProfile::Chat,
+            None,
+            2,
+            &json!({ "available": true }),
+        );
+        let tools = payload["memory"]["available_tools"]
+            .as_array()
+            .expect("available_tools array");
+        let names: Vec<_> = tools
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert!(names.contains(&"memory_search"));
+        assert!(names.contains(&"memory_write_entry"));
+        assert!(!names.contains(&"memory_list_proposals"));
     }
 
     #[test]

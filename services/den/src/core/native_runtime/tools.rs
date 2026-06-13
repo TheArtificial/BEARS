@@ -372,6 +372,21 @@ mod tests {
     }
 
     #[test]
+    fn chat_memory_prompt_includes_memory_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Chat,
+            None,
+            Some("search memory for deployment notes"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|tool| tool.name.as_str()).collect();
+        assert!(names.contains(&"memory_search"));
+        assert!(names.contains(&"session_info"));
+    }
+
+    #[test]
     fn chat_memory_prompt_includes_den_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(

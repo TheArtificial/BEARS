@@ -186,7 +186,22 @@ pub fn memory_read_scopes(role: BearProfile) -> Vec<&'static str> {
 
 pub fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
     match role {
-        BearProfile::Pair => vec!["pair/notes/", "pair/logs/", "pair/decisions/", "pair/reflections/", "pair/scratch/", "pair/summaries/"],
+        BearProfile::Pair => vec![
+            "pair/notes/",
+            "pair/logs/",
+            "pair/decisions/",
+            "pair/reflections/",
+            "pair/scratch/",
+            "pair/summaries/",
+        ],
+        BearProfile::Chat => vec![
+            "chat/notes/",
+            "chat/logs/",
+            "chat/decisions/",
+            "chat/reflections/",
+            "chat/scratch/",
+            "chat/summaries/",
+        ],
         _ => Vec::new(),
     }
 }

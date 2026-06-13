@@ -6,7 +6,7 @@ const WORK_PLAN_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
 const WORK_PLAN_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
 const CHAT_AND_PAIR_PROFILES: &[&str] = &["chat", "pair"];
 const PAIR_PROFILES: &[&str] = &["pair"];
-const PAIR_AND_CURATE_PROFILES: &[&str] = &["pair", "curate"];
+const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate"];
 const CURATE_PROFILES: &[&str] = &["curate"];
 const WATCH_PROFILES: &[&str] = &["watch"];
 const WORK_PROFILES: &[&str] = &["work"];
@@ -142,13 +142,13 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(DEN_WEB_FETCH, "Fetch web page", "Fetch an HTTP(S) URL through Den with SSRF guards and return a bounded text excerpt.", "web", &["web.fetch"], PAIR_PROFILES, json!({"type":"object","properties":{"url":{"type":"string","description":"HTTP or HTTPS URL to fetch."},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum characters of extracted text to return. Defaults to 8000."}},"required":["url"],"additionalProperties":false})),
         descriptor(DEN_WEB_SEARCH, "Search web", "Search the web through a configured Den search provider. Returns a clear configuration error when no provider is configured.", "web", &["web.search"], PAIR_PROFILES, json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false})),
         descriptor(DEN_BEAR_ENVIRONMENT, "Bear environment", "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, ACP-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.", "session", &["situation.read"], PAIR_PROFILES, empty_schema()),
-        descriptor(DEN_SITUATION_GET, "Session info", "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.", "session", &["situation.read"], PAIR_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_WRITE_ENTRY, "Write memory entry", "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.", "bear.memory", &["memory.entry.write"], PAIR_PROFILES, memory_write_entry_schema()),
-        descriptor(DEN_MEMORY_STATUS, "Memory status", "Return MemFS memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.", "bear.memory", &["memory.status.read"], PAIR_AND_CURATE_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_TREE, "Browse memory", "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.", "bear.memory", &["memory.tree.read"], PAIR_AND_CURATE_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_READ, "Read memory file", "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.", "bear.memory", &["memory.file.read"], PAIR_AND_CURATE_PROFILES, json!({"type":"object","properties":{"path":{"type":"string","description":"Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md."}},"required":["path"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_SEARCH, "Search memory", "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.", "bear.memory", &["memory.search"], PAIR_AND_CURATE_PROFILES, json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_ORIENT_WORK_SURFACE, "Orient work surface", "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.", "bear.memory", &["memory.tree.read", "memory.file.read"], PAIR_AND_CURATE_PROFILES, empty_schema()),
+        descriptor(DEN_SITUATION_GET, "Session info", "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.", "session", &["situation.read"], CHAT_AND_PAIR_PROFILES, empty_schema()),
+        descriptor(DEN_MEMORY_WRITE_ENTRY, "Write memory entry", "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.", "bear.memory", &["memory.entry.write"], CHAT_AND_PAIR_PROFILES, memory_write_entry_schema()),
+        descriptor(DEN_MEMORY_STATUS, "Memory status", "Return MemFS memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.", "bear.memory", &["memory.status.read"], MEMORY_READ_PROFILES, empty_schema()),
+        descriptor(DEN_MEMORY_TREE, "Browse memory", "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.", "bear.memory", &["memory.tree.read"], MEMORY_READ_PROFILES, empty_schema()),
+        descriptor(DEN_MEMORY_READ, "Read memory file", "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.", "bear.memory", &["memory.file.read"], MEMORY_READ_PROFILES, json!({"type":"object","properties":{"path":{"type":"string","description":"Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md."}},"required":["path"],"additionalProperties":false})),
+        descriptor(DEN_MEMORY_SEARCH, "Search memory", "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.", "bear.memory", &["memory.search"], MEMORY_READ_PROFILES, json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false})),
+        descriptor(DEN_MEMORY_ORIENT_WORK_SURFACE, "Orient work surface", "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.", "bear.memory", &["memory.tree.read", "memory.file.read"], MEMORY_READ_PROFILES, empty_schema()),
         descriptor(DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, "Create work-surface scaffold", "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index. Mutates memory; call session_info and memory_orient_work_surface first unless the user explicitly names the work surface.", "bear.memory", &["memory.write", "memory.core.write"], PAIR_PROFILES, json!({"type":"object","properties":{"work_surface_slug":{"type":"string","minLength":1,"maxLength":80},"work_surface_name":{"type":"string","minLength":1,"maxLength":200},"overview":{"type":"string","minLength":1,"maxLength":20000},"glossary":{"type":"string","maxLength":20000},"current_understanding":{"type":"string","maxLength":20000}},"required":["work_surface_slug", "work_surface_name", "overview"],"additionalProperties":false})),
         descriptor(DEN_MEMORY_REQUEST_REVIEW, "Request memory review", "Request Reflection/curate review of role-local memory without writing shared memory directly. Use for role/Workplace-local material that may deserve broader Bear-global review; call session_info first if scope/provenance is unclear.", "bear.memory", &["memory.review.request"], PAIR_PROFILES, memory_request_review_schema()),
         descriptor(DEN_PROMPT_MEMORY_UPSERT, "Upsert prompt memory block", "Create or replace a Den-owned prompt memory block for the current bear role. Use this for editable runtime prompt memory, not semantic memory notes.", "bear.memory", &["memory.entry.write"], PAIR_PROFILES, prompt_memory_upsert_schema()),
@@ -183,6 +183,15 @@ pub fn builtin_den_tool_descriptors_for_profile(role: BearProfile) -> Vec<DenToo
     builtin_den_tool_descriptors()
         .into_iter()
         .filter(|descriptor| descriptor.allows_profile(role))
+        .collect()
+}
+
+/// Provider names for bear.memory tools exposed to the given trust profile.
+pub fn memory_tool_provider_names_for_profile(role: BearProfile) -> Vec<String> {
+    builtin_den_tool_descriptors_for_profile(role)
+        .into_iter()
+        .filter(|descriptor| descriptor.domain == "memory")
+        .map(|descriptor| descriptor.provider_name)
         .collect()
 }
 
@@ -772,8 +781,12 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_TREE
         | DEN_MEMORY_READ
         | DEN_MEMORY_SEARCH
+        | DEN_MEMORY_ORIENT_WORK_SURFACE
         | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
         | DEN_MEMORY_REQUEST_REVIEW
+        | DEN_PROMPT_MEMORY_UPSERT
+        | DEN_PROMPT_MEMORY_LIST
+        | DEN_PROMPT_MEMORY_PATCH
         | DEN_MEMORY_LIST_PROPOSALS
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
