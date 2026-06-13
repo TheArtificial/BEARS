@@ -8,7 +8,13 @@ mod assistant_display;
 mod client;
 mod conversation_title;
 mod conversations_list;
+pub mod runtime_stream_parser;
 pub mod tool_policy;
+
+#[cfg(test)]
+mod runtime_stream_parser_tests {
+    include!("runtime_stream_parser_tests.rs");
+}
 
 pub use agent_diagnostics::{LettaAgentDiagnostics, LettaBlockRow, LettaToolRow};
 pub use agent_document::unwrap_letta_agent_document;

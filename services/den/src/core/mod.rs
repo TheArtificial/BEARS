@@ -62,13 +62,7 @@ pub mod conversation {
 pub mod tools;
 pub mod email;
 pub mod letta;
-pub mod letta_runtime_stream_parser;
-pub mod letta_runtime_stream_parser_test {
-    #[cfg(test)]
-    mod tests {
-        include!("letta_runtime_stream_parser_tests.rs");
-    }
-}
+pub use letta::runtime_stream_parser as letta_runtime_stream_parser;
 pub mod memory_manager_head;
 #[cfg(test)]
 mod memory_manager_head_append_markdown_tests;
