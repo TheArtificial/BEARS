@@ -28,8 +28,14 @@ use crate::{
 };
 
 /// Postgres-backed [`PromptMemoryStore`] over a pool reference.
-struct DenPromptMemoryStore<'a> {
+pub(crate) struct DenPromptMemoryStore<'a> {
     pool: &'a PgPool,
+}
+
+impl<'a> DenPromptMemoryStore<'a> {
+    pub(crate) fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 }
 
 #[async_trait]
@@ -89,7 +95,7 @@ pub(crate) async fn prompt_memory_upsert(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore { pool };
+    let store = DenPromptMemoryStore::new(pool);
     den_tools::prompt_memory::prompt_memory_upsert(
         &store,
         context.bear_id,
@@ -107,7 +113,7 @@ pub(crate) async fn prompt_memory_list(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore { pool };
+    let store = DenPromptMemoryStore::new(pool);
     den_tools::prompt_memory::prompt_memory_list(&store, context.bear_id, role, arguments)
         .await
         .map_err(CustomError::from)
@@ -119,7 +125,7 @@ pub(crate) async fn prompt_memory_patch(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore { pool };
+    let store = DenPromptMemoryStore::new(pool);
     den_tools::prompt_memory::prompt_memory_patch(&store, role, arguments)
         .await
         .map_err(CustomError::from)

@@ -18,6 +18,7 @@ pub mod arguments;
 pub mod constants;
 pub mod descriptor;
 pub mod display;
+pub mod memory;
 pub mod prompt_memory;
 pub mod tool_descriptor_guidance;
 pub mod validation;

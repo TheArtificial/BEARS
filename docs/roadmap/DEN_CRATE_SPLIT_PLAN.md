@@ -646,3 +646,31 @@ Notes carried forward: executors again take primitives (`bear_id`, `user_id`,
 
 Verified: `cargo build -p den` green (only pre-existing dead-code warnings);
 `cargo test -p den -p den-tools --no-run` green; `den-tools` clippy-clean.
+
+### Phase B — `memory_read/` landed (2026-06, `test` branch)
+
+Read surface inverted. `den_tools::memory` owns `memory_read` / `memory_browse` /
+`memory_search` / `memory_status` (arg structs + parsing, non-empty validation,
+search-limit clamp, and the status prompt-memory diagnostic composition via the
+pure `prompt_memory_diagnostic_summary`). The new `RoleMemoryStore` capability
+seam (`read`, `browse`, `search`, `status_base`) returns already-shaped tool JSON
+(`serde_json::Value`), so no result DTOs were needed — the `sqlite_memory_*`
+helpers already return `Value`. `memory_status` composes `RoleMemoryStore` +
+`PromptMemoryStore` (reusing the prompt-memory seam from the previous group).
+
+`den` implements `DenRoleMemoryStore { config }`, which owns the
+native-vs-legacy branch: the SQLite path via `MemoryStoreManager` +
+`memory::tools::sqlite_*`, and the MemFS HTTP fallback (slated for v0-legacy
+deletion). `status_base` returns the base status **without** the diagnostic; the
+executor layers it on (preserving the native shape; the legacy MemFS
+not-configured fallback now also carries `bear_id`, a harmless addition). Wrapper
+signatures (`memory_status`/`_value`/`browse`/`read`/`search`) are unchanged, so
+the dispatcher, `environment.rs`, and tests are untouched.
+
+Seam note: `store_for_bear` already returns `DenError` (den-memory), so it needs
+no conversion; only the `sqlite_*`/MemFS `CustomError` results use
+`CustomError::into_den()`. `RoleMemoryStore` will grow a write surface as the
+later groups (memory_write / work_surface / plan_mode) migrate.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.
