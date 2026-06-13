@@ -196,7 +196,8 @@ async fn first_bear_post(
         return Ok(Redirect::to("/").into_response());
     }
 
-    let model_context = crate::web::bear_create_support::letta_model_select_context(&state).await;
+    let model_context =
+        crate::web::bear_create_support::model_catalog_select_context(&state).await;
     let letta_fetch = model_context
         .0
         .then_some(Ok::<_, CustomError>(model_context.1));

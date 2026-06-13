@@ -144,7 +144,7 @@ fn smoke_default_model(config: &Config) -> &str {
     }
 }
 
-async fn ensure_bear(pool: &PgPool, slug: &str, config: &Config) -> Result<uuid::Uuid> {
+async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid::Uuid> {
     if let Some(id) = bear_id_by_slug(pool, slug).await? {
         return Ok(id);
     }

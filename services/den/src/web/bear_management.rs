@@ -44,8 +44,8 @@ use crate::{
         bear_create_support::{
             bear_configuration_page_context, bear_new_form_context,
             ensure_stored_model_in_options_for_handle, insert_new_bear_row,
-            validate_default_model_for_letta, BearConfigurationEditForm, BearOverviewEditForm,
-            BearPromptEditForm, NewBearForm,
+            model_catalog_select_context, validate_default_model_for_letta,
+            BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
     },
@@ -1374,15 +1374,13 @@ async fn new_bear_post(
         return Ok(r.into_response());
     }
 
-    let letta_fetch = if state.web_letta_data.is_enabled() {
-        Some(state.letta.list_llm_models().await.map(|opts| {
-            let model_trim = form.default_model.trim();
-            let h = (!model_trim.is_empty()).then_some(model_trim);
-            ensure_stored_model_in_options_for_handle(h, opts)
-        }))
-    } else {
-        None
-    };
+    let (catalog_configured, catalog_models, _catalog_error) =
+        model_catalog_select_context(&state).await;
+    let letta_fetch = catalog_configured.then(|| {
+        let model_trim = form.default_model.trim();
+        let h = (!model_trim.is_empty()).then_some(model_trim);
+        Ok::<_, CustomError>(ensure_stored_model_in_options_for_handle(h, catalog_models))
+    });
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
@@ -2067,15 +2065,13 @@ async fn bear_edit_configuration_post(
         ));
     }
 
-    let letta_fetch = if state.web_letta_data.is_enabled() {
-        Some(state.letta.list_llm_models().await.map(|opts| {
-            let model_trim = form.default_model.trim();
-            let h = (!model_trim.is_empty()).then_some(model_trim);
-            ensure_stored_model_in_options_for_handle(h, opts)
-        }))
-    } else {
-        None
-    };
+    let (catalog_configured, catalog_models, _catalog_error) =
+        model_catalog_select_context(&state).await;
+    let letta_fetch = catalog_configured.then(|| {
+        let model_trim = form.default_model.trim();
+        let h = (!model_trim.is_empty()).then_some(model_trim);
+        Ok::<_, CustomError>(ensure_stored_model_in_options_for_handle(h, catalog_models))
+    });
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {

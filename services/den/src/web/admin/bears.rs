@@ -30,8 +30,7 @@ use crate::{
 use crate::web::bear_create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context,
     ensure_stored_model_in_options_for_handle, model_catalog_select_context,
-    validate_default_model_for_catalog, validate_default_model_for_letta, AdminBearPromptForm,
-    AdminNewBearForm, NewBearForm,
+    validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
 
 use super::bear_domains;
@@ -729,9 +728,8 @@ async fn edit_action(
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    let native_runtime = state.config.uses_native_agent_runtime();
 
-    let model_fetch = if native_runtime {
+    let model_fetch = {
         let (configured, options, _) = model_catalog_select_context(&state).await;
         if !configured {
             None
@@ -740,14 +738,6 @@ async fn edit_action(
             let h = (!model_trim.is_empty()).then_some(model_trim);
             Some(Ok(ensure_stored_model_in_options_for_handle(h, options)))
         }
-    } else if state.letta.is_enabled() {
-        Some(state.letta.list_llm_models().await.map(|opts| {
-            let model_trim = form.default_model.trim();
-            let h = (!model_trim.is_empty()).then_some(model_trim);
-            ensure_stored_model_in_options_for_handle(h, opts)
-        }))
-    } else {
-        None
     };
 
     let mut validation_errors = ValidationErrors::new();
@@ -755,30 +745,10 @@ async fn edit_action(
         validation_errors = e;
     }
 
-    let letta_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let letta_agent_type_db: Option<String> = if native_runtime {
-        bear.letta_agent_type.clone()
-    } else {
-        let t = form.letta_agent_type.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t.to_string())
-        }
-    };
+    let letta_agent_type_db: Option<String> = bear.letta_agent_type.clone();
 
     let default_model_trim = form.default_model.trim();
-    if native_runtime {
-        validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
-    } else {
-        validate_default_model_for_letta(&model_fetch, default_model_trim, &mut validation_errors);
-    }
+    validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
 
     let default_model_opt = if default_model_trim.is_empty() {
         None
@@ -810,11 +780,7 @@ async fn edit_action(
                 default_model: default_model_opt,
                 tools_enabled: None::<Json<serde_json::Value>>,
                 letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: if native_runtime {
-                    Json(bear.letta_tool_ids.0.clone())
-                } else {
-                    Json(letta_tool_ids.clone())
-                },
+                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
                 context_profile: bear.context_profile.clone(),
             },
         )

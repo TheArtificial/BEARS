@@ -63,77 +63,7 @@ pub const LETTA_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
     },
 ];
 
-/// When Bifrost/Letta is enabled, populate the bear model `<select>`.
-///
-/// Bifrost is the BEARS model gateway and owns provider/model metadata, so prefer
-/// its `/bears/models` catalog. Fall back to Letta only for older deployments.
-pub async fn letta_model_select_context(
-    state: &AppState,
-) -> (bool, Vec<LettaModelOption>, Option<String>) {
-    if state.bifrost.is_enabled() {
-        match state.bifrost.list_models().await {
-            Ok(models) if models.is_empty() => {
-                return (
-                    true,
-                    Vec::new(),
-                    Some("Bifrost returned no enabled BEARS models.".into()),
-                )
-            }
-            Ok(models) => {
-                return (
-                    true,
-                    models
-                        .into_iter()
-                        .map(|m| m.to_letta_model_option())
-                        .collect(),
-                    None,
-                )
-            }
-            Err(e) => {
-                if !state.letta.is_enabled() {
-                    return (
-                        true,
-                        Vec::new(),
-                        Some(format!("Could not load models from Bifrost metadata: {e}.")),
-                    );
-                }
-                let fallback_note = format!("Could not load models from Bifrost metadata: {e}. Falling back to Letta model list.");
-                return match state.letta.list_llm_models().await {
-                    Ok(models) if models.is_empty() => (
-                        true,
-                        models,
-                        Some(format!("{fallback_note} Letta returned no LLM models.")),
-                    ),
-                    Ok(models) => (true, models, Some(fallback_note)),
-                    Err(letta_e) => (
-                        true,
-                        Vec::new(),
-                        Some(format!(
-                            "{fallback_note} Could not load models from Letta either: {letta_e}."
-                        )),
-                    ),
-                };
-            }
-        }
-    }
-
-    if !state.letta.is_enabled() {
-        return (false, Vec::new(), None);
-    }
-    match state.letta.list_llm_models().await {
-        Ok(models) if models.is_empty() => (true, models, Some("Letta returned no LLM models.".into())),
-        Ok(models) => (true, models, None),
-        Err(e) => (
-            true,
-            Vec::new(),
-            Some(format!(
-                "Could not load models from Letta: {e}. You can still type a model handle below if you know it."
-            )),
-        ),
-    }
-}
-
-/// If the bear already has a `default_model` not returned by Letta, keep it selectable (legacy / BYOK).
+/// If the bear already has a `default_model` not returned by the catalog, keep it selectable (legacy / BYOK).
 pub fn ensure_stored_model_in_options_for_handle(
     stored_model: Option<&str>,
     mut options: Vec<LettaModelOption>,
@@ -151,46 +81,6 @@ pub fn ensure_stored_model_in_options_for_handle(
             );
         }
     }
-    options
-}
-
-/// When Letta is enabled, `GET /v1/tools/` populates the bear tools `<select multiple>`.
-pub async fn letta_tool_select_context(
-    state: &AppState,
-) -> (bool, Vec<LettaToolOption>, Option<String>) {
-    if !state.letta.is_enabled() {
-        return (false, Vec::new(), None);
-    }
-    match state.letta.list_tools().await {
-        Ok(tools) => (true, tools, None),
-        Err(e) => (
-            true,
-            Vec::new(),
-            Some(format!("Could not load tools from Letta: {e}")),
-        ),
-    }
-}
-
-pub fn ensure_stored_tools_in_options_ids(
-    stored_ids: &[String],
-    mut options: Vec<LettaToolOption>,
-) -> Vec<LettaToolOption> {
-    for id in stored_ids {
-        let id = id.trim();
-        if id.is_empty() {
-            continue;
-        }
-        if !options.iter().any(|t| t.id == id) {
-            options.insert(
-                0,
-                LettaToolOption {
-                    id: id.to_string(),
-                    label: format!("{id} (stored on bear)"),
-                },
-            );
-        }
-    }
-    options.sort_by(|a, b| a.label.cmp(&b.label));
     options
 }
 
@@ -301,7 +191,7 @@ pub async fn bear_configuration_page_context(
     form: &BearConfigurationEditForm,
 ) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
-        letta_model_select_context(state).await;
+        model_catalog_select_context(state).await;
     let model_trim = form.default_model.trim();
     let model_handle = (!model_trim.is_empty()).then_some(model_trim);
     let letta_model_options = if letta_configured {
@@ -309,25 +199,15 @@ pub async fn bear_configuration_page_context(
     } else {
         letta_model_options
     };
-    let form_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let (letta_tools_configured, mut letta_tool_options, letta_tools_fetch_error) =
-        letta_tool_select_context(state).await;
-    if letta_tools_configured {
-        letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
-    }
 
     context! {
+        native_runtime => true,
         letta_configured,
         letta_model_options,
         letta_models_fetch_error,
-        letta_tools_configured,
-        letta_tool_options,
-        letta_tools_fetch_error,
+        letta_tools_configured => false,
+        letta_tool_options => Vec::<LettaToolOption>::new(),
+        letta_tools_fetch_error => Option::<String>::None,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
     }
 }
@@ -424,10 +304,10 @@ pub fn validate_default_model_for_catalog(
     validate_default_model_for_letta(catalog_fetch, default_model_trim, validation_errors);
 }
 
-/// Letta model + tool lists for the new-bear template, merging stored handles like the edit page.
+/// Native model list for the new-bear template, merging stored handles like the edit page.
 pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
-        letta_model_select_context(state).await;
+        model_catalog_select_context(state).await;
     let model_trim = form.default_model.trim();
     let model_handle = (!model_trim.is_empty()).then_some(model_trim);
     let letta_model_options = if letta_configured {
@@ -436,26 +316,14 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
         letta_model_options
     };
 
-    let form_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let (letta_tools_configured, mut letta_tool_options, letta_tools_fetch_error) =
-        letta_tool_select_context(state).await;
-    if letta_tools_configured {
-        letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
-    }
-
     context! {
+        native_runtime => true,
         letta_configured,
         letta_model_options,
         letta_models_fetch_error,
-        letta_tools_configured,
-        letta_tool_options,
-        letta_tools_fetch_error,
+        letta_tools_configured => false,
+        letta_tool_options => Vec::<LettaToolOption>::new(),
+        letta_tools_fetch_error => Option::<String>::None,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
     }
 }
