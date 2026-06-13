@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    core::{letta::LettaClient, memory::MemoryStoreManager},
+    core::memory::MemoryStoreManager,
 };
 
 use super::context_composition::render_role_prompt;
@@ -19,8 +19,6 @@ use crate::errors::CustomError;
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     config: &Config,
-    _letta: &LettaClient,
-    _bifrost: &crate::core::bifrost::BifrostClient,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
     provision_bear_native(pool, config, bear_id).await
@@ -163,16 +161,6 @@ pub async fn provision_missing_bear_profiles(
         return Err(CustomError::System(message));
     }
     Ok(missing_before)
-}
-
-pub async fn reconcile_bear_if_configured(
-    pool: &PgPool,
-    config: &Config,
-    _letta: &LettaClient,
-    _bifrost: &crate::core::bifrost::BifrostClient,
-    bear_id: Uuid,
-) -> Result<crate::core::bears::sync::BearSyncSummary, CustomError> {
-    reconcile_bear_native(pool, config, bear_id).await
 }
 
 pub(crate) async fn profile_prompt_text(

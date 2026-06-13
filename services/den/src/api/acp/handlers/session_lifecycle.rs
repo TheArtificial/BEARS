@@ -67,47 +67,26 @@ pub(super) async fn compact_session_inner(
                 "ACP session has no resolved runtime conversation to compact".to_string(),
             )
         })?;
-    if !state.letta.is_enabled() {
-        tracing::warn!(
-            acp_session_id = %session_id,
-            bear_id = %session.bear_id,
-            conversation_id,
-            "ACP session compact requested but live Letta compaction is unavailable during migration"
-        );
-        return Ok(Json(serde_json::json!({
-            "ok": true,
-            "compacted": false,
-            "acp_session_id": session_id,
-            "conversation_id": conversation_id,
-            "approval_recovery": {
-                "attempted": false,
-                "reason": "compaction_only"
-            },
-            "compact_result": {
-                "status": "unavailable",
-                "reason": "letta_disabled",
-                "diagnostic": "Live Letta compaction is unavailable during ACP migration; canonical transcript history remains intact."
-            }
-        }))
-        .into_response());
-    }
-    let compact_result = state.letta.compact_conversation(conversation_id).await?;
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
         conversation_id,
-        "ACP session compact requested; no stale approval recovery attempted because compaction does not resolve pending runtime approvals"
+        "ACP session compact requested; the Den-native runtime has no live conversation compaction (canonical transcript history is retained)"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
-        "compacted": true,
+        "compacted": false,
         "acp_session_id": session_id,
         "conversation_id": conversation_id,
         "approval_recovery": {
             "attempted": false,
             "reason": "compaction_only"
         },
-        "compact_result": compact_result,
+        "compact_result": {
+            "status": "unavailable",
+            "reason": "native_runtime",
+            "diagnostic": "The Den-native runtime does not perform live conversation compaction; canonical transcript history remains intact."
+        }
     }))
     .into_response())
 }
@@ -269,11 +248,7 @@ pub(super) async fn close_session_inner(
     }
     let archive_target = acp_archive_target_for_session(&session);
     let mut archived = false;
-    if let Some(archive_target) = archive_target.filter(|_| state.letta.is_enabled()) {
-        state
-            .letta
-            .patch_conversation_archived(archive_target, true)
-            .await?;
+    if let Some(archive_target) = archive_target {
         archived_conversations::set_archived(
             &state.sqlx_pool,
             session.bear_id,

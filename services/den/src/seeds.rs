@@ -16,8 +16,6 @@ use crate::{
             provision::{self},
             runtime_plan::default_runtime_plan,
         },
-        bifrost::BifrostClient,
-        letta::LettaClient,
         user::{self, db as user_db, email_settings},
     },
     startup::run_sqlx_migrations,
@@ -194,9 +192,7 @@ async fn ensure_smoke_role_runtimes(
     bear_id: uuid::Uuid,
     config: &Config,
 ) -> Result<()> {
-    let letta = LettaClient::new(config);
-    let bifrost = BifrostClient::new(config);
-    provision::provision_bear_if_configured(pool, config, &letta, &bifrost, bear_id)
+    provision::provision_bear_if_configured(pool, config, bear_id)
         .await
         .context("provision smoke bear native runtimes")
 }

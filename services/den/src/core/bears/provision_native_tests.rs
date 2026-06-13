@@ -6,7 +6,6 @@ use crate::core::bears::{
     model::BearProfile,
     provision::{provision_bear_if_configured, reconcile_bear_native},
 };
-use crate::core::{bifrost::BifrostClient, letta::LettaClient};
 
 #[sqlx::test]
 async fn provision_bear_native_creates_den_native_bindings(
@@ -32,9 +31,7 @@ async fn provision_bear_native_creates_den_native_bindings(
     )
     .await?;
 
-    let letta = LettaClient::new(&config);
-    let bifrost = BifrostClient::new(&config);
-    provision_bear_if_configured(&pool, &config, &letta, &bifrost, bear_id).await?;
+    provision_bear_if_configured(&pool, &config, bear_id).await?;
 
     for role in BearProfile::ALL {
         let row = get_bear_profile_binding(&pool, bear_id, role)

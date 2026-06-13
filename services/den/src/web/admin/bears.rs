@@ -467,8 +467,8 @@ async fn bear_detail_response(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
-    let native_runtime = state.config.uses_native_agent_runtime();
-    let letta_configured = state.letta.is_enabled();
+    let native_runtime = true;
+    let letta_configured = false;
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
     let roles_ready = agent_health_rows
         .iter()
@@ -635,8 +635,6 @@ pub async fn new_action(
         if let Err(e) = provision::provision_bear_if_configured(
             state.sqlx_pool(),
             state.config.as_ref(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
             id,
         )
         .await
@@ -789,8 +787,6 @@ async fn edit_action(
         if let Err(e) = provision::provision_bear_if_configured(
             state.sqlx_pool(),
             state.config.as_ref(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
             id,
         )
         .await
@@ -923,8 +919,6 @@ async fn edit_prompt_action(
         provision::provision_bear_if_configured(
             state.sqlx_pool(),
             state.config.as_ref(),
-            state.letta.as_ref(),
-            state.bifrost.as_ref(),
             id,
         )
         .await?;
