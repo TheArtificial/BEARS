@@ -718,3 +718,20 @@ This seam will also back `memory_review`.
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — `memory_review` landed (2026-06, `test` branch)
+
+The five curate/pair executors (`apply_core_update`, `list_proposals`,
+`read_proposal`, `resolve_proposal`, `request_review`) moved into
+`den_tools::review::memory_review`, owning role gating, argument validation
+(status enum, source-path rules, bounded text), and projection-scope computation.
+`MemoryReviewStore` grew coarse capability methods returning serialized proposal
+JSON (`list_proposals`/`get_proposal`/`resolve_proposal`/`request_review`/
+`apply_core_update`); the `den` impl owns the `create_proposal`/`resolve_proposal`/
+`promote_core_content` calls, the native-vs-MemFS core-update branch, and the
+`conversation_events` projections. The full `DenMemoryReviewStore` (observation +
+review methods) now lives in `core::tools::memory_review`; `observations.rs` is a
+thin wrapper over the same store. Wrapper signatures unchanged.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.
