@@ -1,4 +1,4 @@
-use super::memory_manager_head::append_markdown_section;
+use super::manager_head::append_markdown_section;
 
 #[test]
 fn append_markdown_section_seeds_empty_file() {

@@ -1,8 +1,17 @@
 //! Per-Bear canonical memory ([ADR-0031](../../../docs/decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)).
 
 pub mod admin_inspect;
+pub mod bear_observations;
+pub mod curate_executor;
 pub mod curation;
+pub mod manager_head;
+pub mod prompt_block_store;
+pub mod prompt_blocks;
+pub mod proposals;
 pub mod tools;
+
+#[cfg(test)]
+mod manager_head_append_markdown_tests;
 
 /// Per-Bear SQLite store, extracted to the `den-memory` crate. Re-exported here
 /// so existing `crate::core::memory::store::…` paths keep resolving.

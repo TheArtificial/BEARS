@@ -63,18 +63,16 @@ pub mod tools;
 pub mod email;
 pub mod letta;
 pub use letta::runtime_stream_parser as letta_runtime_stream_parser;
-pub mod memory_manager_head;
-#[cfg(test)]
-mod memory_manager_head_append_markdown_tests;
-pub mod bear_observations;
-pub mod memory_curate_executor;
-pub mod memory_proposals;
+pub use memory::manager_head as memory_manager_head;
+pub use memory::bear_observations;
+pub use memory::curate_executor as memory_curate_executor;
+pub use memory::proposals as memory_proposals;
 pub mod reflection;
 pub use reflection::conversations as reflection_conversations;
 pub mod pair_reflection;
 pub mod pair_turn;
-pub mod prompt_memory_block_store;
-pub mod prompt_memory_blocks;
+pub use memory::prompt_block_store as prompt_memory_block_store;
+pub use memory::prompt_blocks as prompt_memory_blocks;
 pub use reflection::conductor as reflection_conductor;
 pub mod role_runtime;
 pub mod role_runtime_test {
