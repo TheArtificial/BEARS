@@ -1,59 +1,56 @@
+use async_trait::async_trait;
 use reqwest::StatusCode;
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::PgPool;
+
+use den_tools::environment::EnvironmentOps;
 
 use crate::{
     config::Config,
     core::{
-        bears::{db as bears_db, BearProfile},
+        bears::BearProfile,
         tools::{
-            memory_read::memory_status_value,
-            memory_write::source_acp_session_id,
-            payloads::{bear_environment_payload, session_info_payload},
-            session::DenToolInvocationContext,
+            identity::directory, memory_read::memory_status_value,
+            memory_write::source_acp_session_id, session::DenToolInvocationContext,
         },
-        user,
     },
-    errors::CustomError,
+    errors::{CustomError, DenError},
 };
 
-async fn memory_status_for_environment(
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    pool: &PgPool,
-) -> Value {
-    if config.uses_native_agent_runtime() {
-        return memory_status_value(config, context, role, pool)
+/// Concrete [`EnvironmentOps`] over the runtime pool/config.
+struct DenEnvironmentOps<'a> {
+    pool: &'a PgPool,
+    config: &'a Config,
+}
+
+#[async_trait]
+impl EnvironmentOps for DenEnvironmentOps<'_> {
+    fn uses_native_runtime(&self) -> bool {
+        self.config.uses_native_agent_runtime()
+    }
+
+    fn memfs_configured(&self) -> bool {
+        !self.config.letta_memfs_service_url.trim().is_empty()
+    }
+
+    async fn memory_status_value(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError> {
+        memory_status_value(self.config, context, role, self.pool)
             .await
-            .unwrap_or_else(|err| {
-                json!({
-                    "configured": true,
-                    "available": false,
-                    "storage": "sqlite",
-                    "status": "degraded",
-                    "error": err.to_string()
-                })
-            });
+            .map_err(CustomError::into_den)
     }
-    if config.letta_memfs_service_url.trim().is_empty() {
-        return json!({
-            "configured": false,
-            "available": false,
-            "status": "unavailable",
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
-        });
+
+    async fn fetch_acp_adapter_environment(
+        &self,
+        context: &DenToolInvocationContext,
+    ) -> Result<Option<Value>, DenError> {
+        fetch_acp_adapter_environment(self.config, context)
+            .await
+            .map_err(CustomError::into_den)
     }
-    memory_status_value(config, context, role, pool)
-        .await
-        .unwrap_or_else(|err| {
-            json!({
-                "configured": !config.letta_memfs_service_url.trim().is_empty(),
-                "available": false,
-                "status": "degraded",
-                "error": err.to_string()
-            })
-        })
 }
 
 pub(crate) async fn fetch_acp_adapter_environment(
@@ -116,44 +113,11 @@ pub(crate) async fn bear_environment(
     context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, CustomError> {
-    let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
-        Ok(count) => count,
-        Err(err) => {
-            tracing::warn!(
-                bear_id = %context.bear_id,
-                user_id = context.user_id,
-                error = %err,
-                "bear_environment could not count Bear members; returning degraded environment payload"
-            );
-            0
-        }
-    };
-    let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = memory_status_for_environment(config, context, role, pool).await;
-    let adapter_runtime = match fetch_acp_adapter_environment(config, context).await {
-        Ok(Some(value)) => value,
-        Ok(None) => json!({
-            "status": if source_acp_session_id(context).is_some() {
-                "unavailable"
-            } else {
-                "not_applicable"
-            }
-        }),
-        Err(err) => json!({
-            "ok": false,
-            "status": "degraded",
-            "error": err.to_string(),
-        }),
-    };
-    Ok(bear_environment_payload(
-        context,
-        config,
-        role,
-        current_user.as_ref(),
-        member_count,
-        memory_status,
-        adapter_runtime,
-    ))
+    let dir = directory(pool);
+    let env = DenEnvironmentOps { pool, config };
+    den_tools::environment::bear_environment(&dir, &env, context, role)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn session_info(
@@ -162,25 +126,9 @@ pub(crate) async fn session_info(
     context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, CustomError> {
-    let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
-        Ok(count) => count,
-        Err(err) => {
-            tracing::warn!(
-                bear_id = %context.bear_id,
-                user_id = context.user_id,
-                error = %err,
-                "session_info could not count Bear members; returning degraded orientation payload"
-            );
-            0
-        }
-    };
-    let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = memory_status_for_environment(config, context, role, pool).await;
-    Ok(session_info_payload(
-        context,
-        role,
-        current_user.as_ref(),
-        member_count,
-        memory_status,
-    ))
+    let dir = directory(pool);
+    let env = DenEnvironmentOps { pool, config };
+    den_tools::environment::session_info(&dir, &env, context, role)
+        .await
+        .map_err(CustomError::from)
 }
