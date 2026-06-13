@@ -1,24 +1,13 @@
-pub mod acp_letta_events;
-pub mod acp_plan_mode;
-pub mod acp_runtime;
-pub mod acp_runtime_test {
-    #[cfg(test)]
-    mod tests {
-        include!("acp_runtime_tests.rs");
-    }
-}
-pub mod acp_sessions;
-pub mod acp_tokens;
-pub mod acp_tool_turns;
-pub mod acp_tools;
-pub mod acp_turn_controller;
-pub mod acp_turn_runner;
-pub mod acp_turn_runner_test {
-    #[cfg(test)]
-    pub mod stream {
-        include!("acp_turn_runner_stream_tests.rs");
-    }
-}
+pub mod acp;
+pub use acp::letta_events as acp_letta_events;
+pub use acp::plan_mode as acp_plan_mode;
+pub use acp::runtime as acp_runtime;
+pub use acp::sessions as acp_sessions;
+pub use acp::tokens as acp_tokens;
+pub use acp::tool_turns as acp_tool_turns;
+pub use acp::tools as acp_tools;
+pub use acp::turn_controller as acp_turn_controller;
+pub use acp::turn_runner as acp_turn_runner;
 pub mod api_utils;
 pub mod bears;
 pub mod llm;
