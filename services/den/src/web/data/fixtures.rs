@@ -18,8 +18,7 @@ use crate::{
     },
     errors::CustomError,
     web::data::{
-        WebChatTransportDataSource, WebConversationRow, WebConversationSnapshot,
-        WebLettaDataSource, WebMemoryDataSource,
+        WebConversationRow, WebConversationSnapshot, WebLettaDataSource, WebMemoryDataSource,
     },
 };
 
@@ -262,53 +261,14 @@ impl WebMemoryDataSource for FixtureWebMemoryDataSource {
     }
 }
 
-#[derive(Clone)]
-pub struct FixtureWebChatTransportDataSource {
-    profile: UiFixtureProfile,
-}
-
-impl FixtureWebChatTransportDataSource {
-    pub fn new(profile: UiFixtureProfile) -> Self {
-        Self { profile }
-    }
-}
-
-#[async_trait]
-impl WebChatTransportDataSource for FixtureWebChatTransportDataSource {
-    fn is_enabled(&self) -> bool {
-        true
-    }
-
-    async fn post_bear_channel_message_streaming(
-        &self,
-        _session_id: &str,
-        _conversation_id: &str,
-        _bear: &crate::core::bears::Bear,
-        _chat_agent_id: &str,
-        _user_id: i32,
-        _username: Option<&str>,
-        _membership_role: Option<&str>,
-        _message: &str,
-        _runtime_plan: &serde_json::Value,
-        _request_id: uuid::Uuid,
-    ) -> Result<reqwest::Response, CustomError> {
-        Err(CustomError::System(format!(
-            "fixture transport profile '{}' is compiled in but not yet wired for streaming responses",
-            self.profile.as_str()
-        )))
-    }
-}
-
 pub type FixtureDataSources = (
     Arc<dyn WebLettaDataSource>,
     Arc<dyn WebMemoryDataSource>,
-    Arc<dyn WebChatTransportDataSource>,
 );
 
 pub fn build_fixture_data_sources(profile: UiFixtureProfile) -> FixtureDataSources {
     (
         Arc::new(FixtureWebLettaDataSource::new(profile)),
         Arc::new(FixtureWebMemoryDataSource::new(profile)),
-        Arc::new(FixtureWebChatTransportDataSource::new(profile)),
     )
 }
