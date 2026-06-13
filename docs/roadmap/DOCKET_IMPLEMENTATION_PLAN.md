@@ -23,6 +23,8 @@ Two invariants the source tree must make hard to violate:
 
 Land Docket as a self-contained module within the existing `den` crate, with a trait seam designed so a later crate split is a mechanical move rather than a redesign. The crate split itself is a separate effort tracked in [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md); this plan only needs to land the module and its `DocketService`/`TaskDispatcher` trait seams.
 
+> **Status (2026-06): minimal module + crate landed ("Level 1, honest naming").** `core/docket/` exists with a `DocketService` (`PgDocketService`) public face, an internal `db.rs`, and `model.rs`; it was promoted to the `den-docket` crate (`den-core`-only) per the crate-split plan. **Deliberately deferred to the relational realization below:** the `bear_jobs`/`bear_tasks`/`bear_job_runs`/criteria schema, `runs.rs`/`events.rs`/`criteria.rs`, the `bear_work_plans → bear_jobs` migration, and `den.work_plan.* → den.job.*/den.task.*`. The module still wraps the **legacy `bear_work_plans` activity board** and keeps those honest type names rather than minting `Job`/`Task` structs over the JSONB shape (which would mislabel the structure). `TaskDispatcher` is deferred to the `den-runtime` extraction (defined in its consumer per the dispatch-direction seam). The remaining bullets in this section describe the **target** shape.
+
 - Create `core/docket/`, absorbing and evolving the current `core/work_plans.rs`:
   - `db.rs` — Postgres access, **internal** (`pub(crate)` at most; not exported past the module).
   - `model.rs` — `bear_jobs`, `bear_tasks`, `bear_job_runs`, `bear_task_run_state`, `bear_job_criteria`, `bear_job_criteria_state`, events.

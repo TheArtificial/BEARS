@@ -2,7 +2,7 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06):** v1 underway on the `clippy` branch — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`); error gate resolved (option 2, `DenError`); `den-llm` and `den-memory` extracted as leaves. Remaining service crates (`den-docket`, `den-tools`, `den-runtime`, edges) are gated on the Docket module landing and the v0 tools/module triage. See *Execution log* at the end.
+> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. Remaining service crates (`den-tools`, `den-runtime`, edges) are gated on the v0 tools/module triage. See *Execution log* at the end.
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -212,13 +212,25 @@ surfaced the real gating prerequisite for the service-crate extractions.
   only on `den-core`. Higher-level memory **curation/tools/admin** (which reach
   into `bears`/`reflection`) stayed in `den`; `core::memory` re-exports
   `den-memory` as `store`. `cargo check -p den-memory` builds in isolation.
+- **`BearProfile` moved to `den-core`.** The closed-set profile enum (shared by
+  runtime, docket, tools, memory, web/api) now lives in `den-core::profile`;
+  `core::bears::model` re-exports it. Prerequisite for `den-docket` depending
+  only on `den-core`.
+- **`den-docket` extracted.** The Docket subsystem landed as `core::docket`
+  (DocketService/PgDocketService public face; `db` module-internal; `DenError`
+  throughout) and was then promoted to the `den-docket` crate depending only on
+  `den-core`. **Minimal scope ("Level 1, honest naming"):** the legacy
+  `bear_work_plans` activity board keeps its honest pre-ADR-0034 type names — no
+  premature `Job`/`Task` structs over the JSONB shape — while the subsystem
+  boundary + `DocketService` seam lock out non-Docket drift. `TaskDispatcher` is
+  deferred to the `den-runtime` extraction (defined in its consumer). Tool / ACP
+  / web / test callers go through `PgDocketService`; `core::docket` and
+  `core::work_plans` are re-export shims. Crate is clippy-clean (advisory v1);
+  6 model unit tests pass; `cargo check/test -p den-docket` builds in isolation.
 - **Default-level clippy machine-fixes** applied across core/api/web.
 
 **Gating the remaining service crates:**
 
-- **`den-docket`** is not yet extractable: `core/docket/` is an empty placeholder
-  and there is no `DocketService`/`TaskDispatcher` trait yet. Blocked on the
-  Docket plan's module/trait landing (DOCKET_IMPLEMENTATION_PLAN.md).
 - **`den-tools`** (~8.7k, high-churn) is broadly coupled into `crate::core::*`
   (sessions, plan-mode, projections, bears). It needs the v0 tools triage first:
   stabilize the `ToolContext` trait and split descriptor/registry/executors so
@@ -258,9 +270,8 @@ crates return `DenError`; HTTP handlers convert for free through `?`.
 5. Add the crate to `[workspace].members` and den's `[dependencies]`; verify
    `cargo test -p den-<name>` builds in isolation.
 
-**Suggested next steps:** (1) land the Docket module + `DocketService`/
-`TaskDispatcher` traits (Docket plan), then extract `den-docket`; (2) do the v0
-tools triage (stabilize `ToolContext`, split descriptor/registry/executors),
-then extract `den-tools`; (3) do the loose-`core/*.rs` triage feeding
-`den-runtime`; (4) extract `den-runtime`, then the `den-acp`/`den-api`/`den-web`
-edges, collapsing `den` to the thin binary.
+**Suggested next steps:** (1) ~~land the Docket module + extract `den-docket`~~
+**done**; (2) do the v0 tools triage (stabilize `ToolContext`, split
+descriptor/registry/executors), then extract `den-tools`; (3) do the
+loose-`core/*.rs` triage feeding `den-runtime`; (4) extract `den-runtime`, then
+the `den-acp`/`den-api`/`den-web` edges, collapsing `den` to the thin binary.
