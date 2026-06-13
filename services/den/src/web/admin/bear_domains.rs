@@ -221,7 +221,7 @@ async fn roles_view(
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     let bear = load_bear(&state, id).await?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = false;
     let agent_health_rows: Vec<BearProfileBindingHealthRow> =
         bear_agent_health_rows(&state, id, letta_configured).await?;
     web::render_template(
@@ -467,7 +467,7 @@ async fn advanced_view(
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
     let bear = load_bear(&state, id).await?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = false;
     let stats = memory_stats_for_bear(&state, id).await?;
     web::render_template(
         &state,

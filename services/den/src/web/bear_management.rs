@@ -29,12 +29,7 @@ use crate::{
             },
             provision, Bear, BearProfileBinding, BearProfile,
         },
-        letta::{AgentSummary, LettaAgentDiagnostics},
-        memory_manager_head::{
-            delete_memfs_role_memory_entries, fetch_memfs_role_memory_file,
-            fetch_memfs_role_memory_tree, fetch_memory_manager_repository_files,
-            fetch_memory_manager_repository_status,
-        },
+        memory_manager_head::{fetch_memfs_role_memory_file, fetch_memfs_role_memory_tree},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection, user,
         user::db as user_db,
@@ -263,7 +258,7 @@ struct RuntimeBlockRoleRow {
     label: String,
     letta_agent_id: Option<String>,
     block_count: usize,
-    diagnostics: Option<LettaAgentDiagnostics>,
+    diagnostics: Option<serde_json::Value>,
     error: Option<String>,
 }
 
@@ -510,50 +505,6 @@ fn role_memory_rules(role: BearProfile) -> Vec<&'static str> {
             "Does not trigger outbound action directly",
         ],
     }
-}
-
-fn value_object_count_rows(value: &serde_json::Value) -> Vec<BearMemoryEntryCountRow> {
-    let Some(map) = value.as_object() else {
-        return Vec::new();
-    };
-    let mut rows = map
-        .iter()
-        .map(|(kind, count)| BearMemoryEntryCountRow {
-            kind: kind.clone(),
-            count: count
-                .as_u64()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| count.to_string()),
-        })
-        .collect::<Vec<_>>();
-    rows.sort_by(|a, b| a.kind.cmp(&b.kind));
-    rows
-}
-
-fn memory_activity_rows(value: &serde_json::Value) -> Vec<BearMemoryActivityRow> {
-    let Some(items) = value.as_array() else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .rev()
-        .take(10)
-        .filter_map(|item| {
-            let obj = item.as_object()?;
-            let event = obj.get("event").and_then(|v| v.as_str()).unwrap_or("event");
-            let detail = obj
-                .get("path")
-                .or_else(|| obj.get("status"))
-                .or_else(|| obj.get("state"))
-                .or_else(|| obj.get("reason"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            Some(BearMemoryActivityRow {
-                event: event.to_string(),
-                detail: detail.to_string(),
-            })
-        })
-        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1074,62 +1025,31 @@ async fn build_role_detail_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("profile runtime binding not found".to_string()))?;
 
-    let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
-    let mut role_row = BearRoleViewRow::from_agent(agent.clone(), role);
-    if !memfs_url.is_empty() {
-        match state
-            .web_memory_data
-            .fetch_role_view_health(bear.id, role.as_str())
-            .await
-        {
-            Ok(Some(view)) => {
-                role_row.memfs_view_state = Some(view.state);
-                role_row.memfs_view_quarantined = view.quarantined;
-                role_row.memfs_view_diagnostic = view.diagnostic;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                role_row.memfs_view_state = Some("error".to_string());
-                role_row.memfs_view_diagnostic = Some(err.to_string());
-            }
-        }
-    }
+    let role_row = BearRoleViewRow::from_agent(agent.clone(), role);
 
-    let mut memory_status_label = if memfs_url.is_empty() {
-        "MemFS not configured".to_string()
-    } else {
-        "Unavailable".to_string()
-    };
-    let mut memory_file_count = 0usize;
-    let mut memory_entry_counts = Vec::new();
-    let mut memory_allowed_prefixes = Vec::new();
-    let mut memory_recent_activity = Vec::new();
-    if !memfs_url.is_empty() {
-        match state
-            .web_memory_data
-            .fetch_role_memory_status(bear.id, role.as_str())
-            .await
-        {
-            Ok(Some(status)) => {
-                memory_status_label = if status.ok {
-                    "Available"
-                } else {
-                    "Unavailable"
-                }
-                .to_string();
-                memory_file_count = status.file_count;
-                memory_entry_counts = value_object_count_rows(&status.entry_count_by_kind);
-                memory_allowed_prefixes = status.allowed_prefixes;
-                memory_recent_activity = memory_activity_rows(&status.recent_activity);
+    let memory_entry_counts: Vec<BearMemoryEntryCountRow> = Vec::new();
+    let memory_allowed_prefixes: Vec<String> = Vec::new();
+    let memory_recent_activity: Vec<BearMemoryActivityRow> = Vec::new();
+    let (memory_status_label, memory_file_count) = {
+        let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+        let store = manager.store_for_bear(bear.id).await?;
+        match crate::core::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
+            Ok(status) => {
+                let available = status
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .or_else(|| status.get("available").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                let label = if available { "Available" } else { "Unavailable" }.to_string();
+                let file_count = status
+                    .get("file_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                (label, file_count)
             }
-            Ok(None) => {
-                memory_status_label = "MemFS not configured".to_string();
-            }
-            Err(err) => {
-                memory_status_label = format!("Error: {err}");
-            }
+            Err(err) => (format!("Error: {err}"), 0usize),
         }
-    }
+    };
 
     let composed = crate::core::bears::compose_role_context(
         bear,
@@ -1199,32 +1119,12 @@ async fn bear_role_rows(
     bear_id: Uuid,
 ) -> Result<Vec<BearRoleViewRow>, CustomError> {
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
-    let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut rows = Vec::new();
     for agent in bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await? {
         let role = agent
             .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        let mut row = BearRoleViewRow::from_agent(agent, role);
-        if !memfs_url.is_empty() {
-            match state
-                .web_memory_data
-                .fetch_role_view_health(bear_id, role.as_str())
-                .await
-            {
-                Ok(Some(view)) => {
-                    row.memfs_view_state = Some(view.state);
-                    row.memfs_view_quarantined = view.quarantined;
-                    row.memfs_view_diagnostic = view.diagnostic;
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    row.memfs_view_state = Some("error".to_string());
-                    row.memfs_view_diagnostic = Some(err.to_string());
-                }
-            }
-        }
-        rows.push(row);
+        rows.push(BearRoleViewRow::from_agent(agent, role));
     }
     Ok(rows)
 }
@@ -1234,15 +1134,6 @@ async fn chat_agent_id_for_bear(
     bear: &Bear,
 ) -> Result<Option<String>, CustomError> {
     bears_db::profile_binding_id(pool, bear.id, BearProfile::Chat)
-        .await
-        .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-}
-
-async fn pair_agent_id_for_bear(
-    pool: &sqlx::PgPool,
-    bear: &Bear,
-) -> Result<Option<String>, CustomError> {
-    bears_db::profile_binding_id(pool, bear.id, BearProfile::Pair)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
@@ -1493,95 +1384,70 @@ async fn render_bear_details_page(
     members: Vec<BearMemberRow>,
     can_manage_bear: bool,
 ) -> Result<Response, CustomError> {
-    let letta_configured = state.web_letta_data.is_enabled();
+    let letta_configured = true;
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
     let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
-    let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;
     let mut role_details = Vec::new();
     for role in BearProfile::ALL {
         role_details.push(build_role_detail_view(state, &bear, role).await?);
     }
 
-    let (letta_agent_summary, letta_agent_fetch_error) = if letta_configured {
-        if let Some(agent_id) = chat_agent_id.as_deref() {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => {
-                    let summary = AgentSummary::from_letta_agent_state(&v);
-                    (Some(summary), None)
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    (None, Some(msg))
-                }
-            }
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
+    let letta_agent_summary: Option<()> = None;
+    let letta_agent_fetch_error: Option<String> = None;
 
-    let (conversation_rows, archived_conversation_count) = if letta_configured {
+    let (conversation_rows, archived_conversation_count) = {
         let archived_ids =
             archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
+        let records = crate::core::conversation_persistence::list_conversations_for_bear(
+            state.sqlx_pool(),
+            bear.id,
+            200,
+        )
+        .await?;
         let mut rows = Vec::new();
         let mut archived_count = 0usize;
-        if let Some(agent_id) = chat_agent_id.as_deref() {
-            let snap = state
-                .web_letta_data
-                .list_agent_conversations(agent_id)
-                .await?;
-            archived_count += snap
-                .all
-                .iter()
-                .filter(|r| r.archived || archived_ids.contains(&r.id))
-                .count();
-            rows.extend(
-                snap.all
-                    .into_iter()
-                    .filter(|r| !r.archived && !archived_ids.contains(&r.id))
-                    .map(|r| DetailsConvRow {
-                        web_href: web_href_for_conversation(&slug, &r.id),
-                        id: r.id,
-                        title: r.title,
-                        last_message_at: r.last_message_at,
-                        channel_label: "Web",
-                        archived: false,
-                    }),
+        for r in records {
+            let Some(external_id) = r
+                .external_conversation_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            if archived_ids.contains(&external_id) {
+                archived_count += 1;
+                continue;
+            }
+            let last_message_at = Some(
+                r.updated_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
             );
-        }
-        if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = state
-                .web_letta_data
-                .list_agent_conversations(agent_id)
-                .await?;
-            archived_count += snap
-                .all
-                .iter()
-                .filter(|r| r.archived || archived_ids.contains(&r.id))
-                .count();
-            rows.extend(
-                snap.all
-                    .into_iter()
-                    .filter(|r| acp_ids.contains(&r.id))
-                    .filter(|r| !r.archived && !archived_ids.contains(&r.id))
-                    .map(|r| DetailsConvRow {
-                        web_href: web_href_for_conversation(&slug, &r.id),
-                        id: r.id,
-                        title: r.title,
-                        last_message_at: r.last_message_at,
-                        channel_label: "ACP",
-                        archived: false,
-                    }),
-            );
+            let title = r
+                .current_title
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| external_id.clone());
+            let channel_label = if acp_ids.contains(&external_id) {
+                "ACP"
+            } else {
+                "Web"
+            };
+            rows.push(DetailsConvRow {
+                web_href: web_href_for_conversation(&slug, &external_id),
+                id: external_id,
+                title,
+                last_message_at,
+                channel_label,
+                archived: false,
+            });
         }
         rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
         (rows, archived_count)
-    } else {
-        (Vec::new(), 0)
     };
 
     let context_profile = crate::core::bears::context_profile_from_json(&bear.context_profile)?;
@@ -1626,50 +1492,38 @@ async fn render_bear_details_page(
     let web_fetches = bear_web_fetches(state.sqlx_pool(), bear.id).await?;
     let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), bear.id).await?;
 
-    let memfs_url = state.config.letta_memfs_service_url.as_str();
-    let (
-        mem_private_files,
-        mem_private_error,
-        mem_private_skipped,
-        mem_private_no_repo,
-        mem_health,
-        mem_health_error,
-    ) = if !memfs_url.is_empty() && letta_configured {
-        if let Some(agent_id) = chat_agent_id.as_deref() {
-            let mem_health_result =
-                fetch_memory_manager_repository_status(state.letta.http(), memfs_url, agent_id)
-                    .await;
-            let (mem_health, mem_health_error) = match mem_health_result {
-                Ok(status) => (status, None),
-                Err(e) => (None, Some(e.to_string())),
-            };
-            match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
+    let mem_health: Option<serde_json::Value> = {
+        let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+        match manager.store_for_bear(bear.id).await {
+            Ok(store) => {
+                match crate::core::memory::tools::sqlite_memory_status(
+                    &store,
+                    BearProfile::Chat.as_str(),
+                )
                 .await
-            {
-                Ok(None) => (None, None, false, true, mem_health, mem_health_error),
-                Ok(Some(files)) => (
-                    Some(files),
-                    None,
-                    false,
-                    false,
-                    mem_health,
-                    mem_health_error,
-                ),
-                Err(e) => (
-                    None,
-                    Some(e.to_string()),
-                    false,
-                    false,
-                    mem_health,
-                    mem_health_error,
-                ),
+                {
+                    Ok(status) => {
+                        let file_count = status
+                            .get("file_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        Some(serde_json::json!({
+                            "is_ok": true,
+                            "label": "Available",
+                            "state": "native",
+                            "commit_count_display": "—",
+                            "memory_file_count_display": file_count.to_string(),
+                            "file_count_display": file_count.to_string(),
+                            "recent_activity_count": 0,
+                        }))
+                    }
+                    Err(_) => None,
+                }
             }
-        } else {
-            (None, None, true, false, None, None)
+            Err(_) => None,
         }
-    } else {
-        (None, None, true, false, None, None)
     };
+    let mem_health_error: Option<String> = None;
 
     render_template(
         state,
@@ -1696,10 +1550,6 @@ async fn render_bear_details_page(
             conversation_rows,
             archived_conversation_count,
             acp_tool_details,
-            mem_private_files,
-            mem_private_error,
-            mem_private_skipped,
-            mem_private_no_repo,
             mem_health,
             mem_health_error,
             work_surface_rows,
@@ -2250,67 +2100,54 @@ async fn bear_conversations_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.web_letta_data.is_enabled();
 
-    let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
-    let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
-    let (rows, list_error) = if letta_configured {
+    let (rows, list_error) = {
         let archived_ids =
             archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
+        let records = crate::core::conversation_persistence::list_conversations_for_bear(
+            state.sqlx_pool(),
+            bear.id,
+            200,
+        )
+        .await?;
         let mut rows = Vec::new();
-        if let Some(agent_id) = chat_agent_id.as_deref() {
-            let snap = state
-                .web_letta_data
-                .list_agent_conversations(agent_id)
-                .await?;
-            rows.extend(snap.all.into_iter().map(|mut r| {
-                if archived_ids.contains(&r.id) {
-                    r.archived = true;
-                }
-                DetailsConvRow {
-                    web_href: web_href_for_conversation(&bear.slug, &r.id),
-                    id: r.id,
-                    title: r.title,
-                    last_message_at: r.last_message_at,
-                    channel_label: "Web",
-                    archived: r.archived,
-                }
-            }));
-        }
-        if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = state
-                .web_letta_data
-                .list_agent_conversations(agent_id)
-                .await?;
-            rows.extend(
-                snap.all
-                    .into_iter()
-                    .filter(|r| acp_ids.contains(&r.id))
-                    .map(|mut r| {
-                        if archived_ids.contains(&r.id) {
-                            r.archived = true;
-                        }
-                        DetailsConvRow {
-                            web_href: web_href_for_conversation(&bear.slug, &r.id),
-                            id: r.id,
-                            title: r.title,
-                            last_message_at: r.last_message_at,
-                            channel_label: "ACP",
-                            archived: r.archived,
-                        }
-                    }),
+        for r in records {
+            let Some(external_id) = r
+                .external_conversation_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let archived = archived_ids.contains(&external_id);
+            let last_message_at = Some(
+                r.updated_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
             );
+            let title = r
+                .current_title
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| external_id.clone());
+            let channel_label = if acp_ids.contains(&external_id) {
+                "ACP"
+            } else {
+                "Web"
+            };
+            rows.push(DetailsConvRow {
+                web_href: web_href_for_conversation(&bear.slug, &external_id),
+                id: external_id,
+                title,
+                last_message_at,
+                channel_label,
+                archived,
+            });
         }
         rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
-        let list_error = if chat_agent_id.is_none() && pair_agent_id.is_none() {
-            Some("No chat or pair role Letta agent is linked to this bear.".to_string())
-        } else {
-            None
-        };
-        (rows, list_error)
-    } else {
-        (Vec::new(), Some("Letta is not configured.".to_string()))
+        (rows, Option::<String>::None)
     };
 
     render_template(
@@ -2342,8 +2179,9 @@ async fn bear_memory_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.web_letta_data.is_enabled();
-    let memfs_url = state.config.letta_memfs_service_url.as_str();
+    let letta_configured = true;
+    let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let store = manager.store_for_bear(bear.id).await?;
     let requested_role = q.role.as_deref().unwrap_or("pair");
     let selected_role = requested_role
         .parse::<BearProfile>()
@@ -2380,51 +2218,80 @@ async fn bear_memory_get(
             recent_activity: Vec::new(),
             error: None,
         };
-        if !memfs_url.is_empty() {
-            match state
-                .web_memory_data
-                .fetch_role_memory_status(bear.id, role.as_str())
-                .await
-            {
-                Ok(Some(status)) => {
-                    row.status_state = status.canonical_tip.as_ref().map(|_| "ok".to_string());
-                    row.status_label = if status.ok {
-                        "Available"
-                    } else {
-                        "Unavailable"
-                    }
-                    .to_string();
-                    row.file_count = status.file_count;
-                    row.registered_view_count = status.registered_view_count;
-                    row.canonical_tip = status.canonical_tip;
-                    row.allowed_prefixes = status.allowed_prefixes;
-                    row.entry_counts = value_object_count_rows(&status.entry_count_by_kind);
-                    row.recent_activity = memory_activity_rows(&status.recent_activity);
-                }
-                Ok(None) => {
-                    row.status_label = "MemFS not configured".to_string();
-                }
-                Err(err) => {
-                    row.status_label = "Error".to_string();
-                    row.error = Some(err.to_string());
-                }
+        match crate::core::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
+            Ok(status) => {
+                let available = status
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .or_else(|| status.get("available").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                row.status_state = Some(if available { "ok" } else { "unavailable" }.to_string());
+                row.status_label = if available { "Available" } else { "Unavailable" }.to_string();
+                row.file_count = status
+                    .get("file_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
             }
-        } else {
-            row.status_label = "MemFS not configured".to_string();
+            Err(err) => {
+                row.status_label = "Error".to_string();
+                row.error = Some(err.to_string());
+            }
         }
         role_rows.push(row);
     }
 
-    let selected_tree = if !memfs_url.is_empty() {
-        match state
-            .web_memory_data
-            .fetch_role_memory_tree(bear.id, selected_role.as_str())
-            .await
+    let selected_tree =
+        match crate::core::memory::tools::sqlite_memory_browse(&store, selected_role.as_str()).await
         {
-            Ok(Some(tree)) => Some(tree),
-            Ok(None) => None,
+            Ok(v) => {
+                let files = v
+                    .get("children")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                Some(serde_json::json!({ "files": files }))
+            }
             Err(err) => {
                 tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), "Could not load memory tree: {err}");
+                None
+            }
+        };
+
+    let search_results = if let Some(query) = search_query {
+        match crate::core::memory::tools::sqlite_memory_search(
+            &store,
+            selected_role.as_str(),
+            query,
+            50,
+        )
+        .await
+        {
+            Ok(v) => {
+                let hits = v
+                    .get("hits")
+                    .and_then(|h| h.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let results: Vec<serde_json::Value> = hits
+                    .iter()
+                    .map(|h| {
+                        let snippet = h.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                        serde_json::json!({
+                            "path": h.get("path").and_then(|p| p.as_str()).unwrap_or(""),
+                            "title": serde_json::Value::Null,
+                            "snippet": snippet,
+                            "size_bytes": snippet.len(),
+                        })
+                    })
+                    .collect();
+                let result_count = results.len();
+                Some(serde_json::json!({
+                    "results": results,
+                    "result_count": result_count,
+                    "scanned_file_count": result_count,
+                }))
+            }
+            Err(err) => {
+                tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), "Could not search memory: {err}");
                 None
             }
         }
@@ -2432,41 +2299,22 @@ async fn bear_memory_get(
         None
     };
 
-    let search_results = if !memfs_url.is_empty() {
-        if let Some(query) = search_query {
-            match state
-                .web_memory_data
-                .search_role_memory(bear.id, selected_role.as_str(), query, Some(50))
-                .await
-            {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), "Could not search memory: {err}");
+    let selected_file = if let Some(path) = selected_path {
+        match crate::core::memory::tools::sqlite_memory_read(&store, path).await {
+            Ok(v) => {
+                if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    Some(serde_json::json!({
+                        "path": v.get("path").and_then(|p| p.as_str()).unwrap_or(path),
+                        "content": v.get("content").and_then(|c| c.as_str()).unwrap_or(""),
+                    }))
+                } else {
                     None
                 }
             }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let selected_file = if !memfs_url.is_empty() {
-        if let Some(path) = selected_path {
-            match state
-                .web_memory_data
-                .fetch_role_memory_file(bear.id, selected_role.as_str(), path)
-                .await
-            {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), path = path, "Could not read memory file: {err}");
-                    None
-                }
+            Err(err) => {
+                tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), path = path, "Could not read memory file: {err}");
+                None
             }
-        } else {
-            None
         }
     } else {
         None
@@ -2480,19 +2328,7 @@ async fn bear_memory_get(
         .await
         .unwrap_or_default();
 
-    let runtime_block_count = if letta_configured {
-        let mut count = 0usize;
-        for row in &role_rows {
-            if let Some(agent_id) = row.letta_agent_id.as_deref() {
-                if let Ok(v) = state.letta.fetch_agent(agent_id).await {
-                    count += LettaAgentDiagnostics::from_agent_json(&v).blocks.len();
-                }
-            }
-        }
-        Some(count)
-    } else {
-        None
-    };
+    let runtime_block_count: Option<usize> = Some(0);
 
     render_template(
         &state,
@@ -2511,7 +2347,7 @@ async fn bear_memory_get(
             runtime_block_count,
             pair_reflection_runs,
             memory_proposals,
-            memfs_configured => !memfs_url.is_empty(),
+            memfs_configured => true,
             delete_notice,
             review_notice,
             delete_error,
@@ -2634,36 +2470,23 @@ async fn bear_memory_delete_post(
         );
         return Ok(Redirect::to(&target).into_response());
     }
-    let memfs_url = state.config.letta_memfs_service_url.as_str();
-    let deleted = match delete_memfs_role_memory_entries(
-        state.letta.http(),
-        memfs_url,
-        bear.id,
-        role.as_str(),
-        &paths,
-    )
-    .await
-    {
-        Ok(Some(response)) => response.deleted.len(),
-        Ok(None) => {
-            let target = format!(
-                "/bear/{}/details/memory?role={}&error={}",
-                bear.slug,
-                role.as_str(),
-                urlencoding::encode("MemFS Manager is not configured.")
-            );
-            return Ok(Redirect::to(&target).into_response());
+    let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let store = manager.store_for_bear(bear.id).await?;
+    let mut deleted = 0usize;
+    for path in &paths {
+        let result = sqlx::query(
+            "DELETE FROM memory_records WHERE bear_id = ? AND scope_profile = ? AND logical_path = ?",
+        )
+        .bind(bear.id.to_string())
+        .bind(role.as_str())
+        .bind(path)
+        .execute(store.pool())
+        .await
+        .map_err(|err| CustomError::System(format!("delete memory records failed: {err}")))?;
+        if result.rows_affected() > 0 {
+            deleted += 1;
         }
-        Err(err) => {
-            let target = format!(
-                "/bear/{}/details/memory?role={}&error={}",
-                bear.slug,
-                role.as_str(),
-                urlencoding::encode(&err.to_string())
-            );
-            return Ok(Redirect::to(&target).into_response());
-        }
-    };
+    }
     let target = format!(
         "/bear/{}/details/memory?role={}&deleted={}",
         bear.slug,
@@ -2770,7 +2593,7 @@ async fn bear_runtime_blocks_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.web_letta_data.is_enabled();
+    let letta_configured = true;
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
     let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear.id).await?;
     let mut rows = Vec::new();
@@ -2778,27 +2601,14 @@ async fn bear_runtime_blocks_get(
         let role = agent
             .parsed_profile()
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        let mut row = RuntimeBlockRoleRow {
+        rows.push(RuntimeBlockRoleRow {
             profile: role.as_str().to_string(),
             label: role_memory_label(role).to_string(),
             letta_agent_id: agent.letta_agent_id.clone(),
             block_count: 0,
             diagnostics: None,
             error: None,
-        };
-        if letta_configured {
-            if let Some(agent_id) = agent.letta_agent_id.as_deref() {
-                match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => {
-                        let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
-                        row.block_count = diagnostics.blocks.len();
-                        row.diagnostics = Some(diagnostics);
-                    }
-                    Err(err) => row.error = Some(err.to_string()),
-                }
-            }
-        }
-        rows.push(row);
+        });
     }
 
     render_template(
