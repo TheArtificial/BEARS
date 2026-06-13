@@ -27,8 +27,8 @@ use crate::{
         bears::{db as bears_db, BearProfile},
         conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
         prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
+        docket::{DocketService, PgDocketService, WorkPlanLookup},
         role_runtime::{RoleRuntime, RoleTurnScope},
-        work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
 };
@@ -276,18 +276,18 @@ pub(super) async fn get_acp_session_runtime_inner(
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
         acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
-    let activity_plan = work_plans::get_visible_work_plan(
-        &state.sqlx_pool,
-        bear.id,
-        BearProfile::Pair,
-        user_id,
-        WorkPlanLookup {
-            plan_id: None,
-            source_conversation_id: den_canonical_conversation_id(&row),
-            source_acp_session_id: Some(session_id.to_string()),
-        },
-    )
-    .await?;
+    let activity_plan = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_visible_work_plan(
+            bear.id,
+            BearProfile::Pair,
+            user_id,
+            WorkPlanLookup {
+                plan_id: None,
+                source_conversation_id: den_canonical_conversation_id(&row),
+                source_acp_session_id: Some(session_id.to_string()),
+            },
+        )
+        .await?;
     let turn_context = resolve_acp_turn_context(&row, plan_mode.as_ref(), activity_plan.as_ref());
     let role_scope = RoleTurnScope::acp_pair(
         bear.id,

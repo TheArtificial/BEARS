@@ -1,0 +1,21 @@
+//! Docket — Den's control-plane subsystem for work management (ADR-0034).
+//!
+//! Public face is [`DocketService`] / [`PgDocketService`]; `db` is internal.
+//! Today this wraps the **legacy `bear_work_plans` activity board** (JSONB
+//! items); see [`model`] for why the types keep their honest pre-ADR-0034 names.
+//! Promoting this module to the `den-docket` crate is tracked in
+//! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`; the relational jobs/tasks realization
+//! is `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`.
+
+mod db;
+pub mod model;
+pub mod service;
+
+pub use model::{
+    render_workboard_prompt_context, role_can_read_work_plan, role_can_request_work_handoff,
+    role_can_update_work_plan, validate_work_plan_items, validate_work_plan_update,
+    BearWorkPlanRow, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanLookup,
+    WorkPlanProjection, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert, WorkPlanValidationError,
+    WorkPlanVisibility,
+};
+pub use service::{DocketService, PgDocketService};

@@ -127,6 +127,7 @@ pub mod runtime_bearwire_projection;
 #[path = "runtime/contracts/mod.rs"]
 pub mod runtime_contracts;
 pub mod runtime_conversations;
+pub mod docket;
 #[path = "runtime/provider/mod.rs"]
 pub mod runtime_provider;
 pub mod s3;

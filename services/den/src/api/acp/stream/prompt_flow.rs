@@ -31,6 +31,7 @@ use crate::{
         acp_tokens,
         acp_tools::acp_client_tool_descriptors_for_client_context,
         bears::{db as bears_db, BearProfile},
+        docket::{DocketService, PgDocketService},
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -354,19 +355,20 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
-    let current_activity_plan = work_plans::get_visible_work_plan(
-        &state.sqlx_pool,
-        bear.id,
-        BearProfile::Pair,
-        user_id,
-        WorkPlanLookup {
-            plan_id: None,
-            source_conversation_id: None,
-            source_acp_session_id: Some(session_id.to_string()),
-        },
-    )
-    .await
-    .map_err(|err| {
+    let current_activity_plan = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_visible_work_plan(
+            bear.id,
+            BearProfile::Pair,
+            user_id,
+            WorkPlanLookup {
+                plan_id: None,
+                source_conversation_id: None,
+                source_acp_session_id: Some(session_id.to_string()),
+            },
+        )
+        .await
+        .map_err(CustomError::from)
+        .map_err(|err| {
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })?;

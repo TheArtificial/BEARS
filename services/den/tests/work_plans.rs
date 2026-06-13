@@ -8,9 +8,10 @@ use den::{
             constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
             session::{invoke_den_tool, DenToolInvocationContext},
         },
+        docket::{DocketService, PgDocketService},
         work_plans::{
-            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,
-            WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
+            WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus, WorkPlanUpdate,
+            WorkPlanUpsert, WorkPlanVisibility,
         },
     },
     startup::run_sqlx_migrations,
@@ -156,9 +157,8 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     let user_id = create_test_user(&pool).await;
     let bear_id = create_test_bear(&pool).await;
 
-    let created = work_plans::create_or_update_work_plan(
-        &pool,
-        WorkPlanUpsert {
+    let created = PgDocketService::from_pool(&pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id,
             owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
@@ -169,39 +169,37 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
             plan_id: None,
             expected_version: None,
             update: update("Private pair plan", WorkPlanVisibility::PrivateToProfile),
-        },
-    )
-    .await
-    .expect("create work plan");
+        })
+        .await
+        .expect("create work plan");
     assert_eq!(created.version, 1);
 
-    let pair_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearProfile::Pair,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list pair-visible plans");
+    let pair_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Pair,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list pair-visible plans");
     assert_eq!(pair_plans.len(), 1);
     assert_eq!(pair_plans[0].id, created.id);
     assert!(pair_plans[0].current_item.is_some());
 
-    let chat_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearProfile::Chat,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list chat-visible plans");
+    let chat_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Chat,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list chat-visible plans");
     assert!(chat_plans.is_empty());
 
-    let updated = work_plans::create_or_update_work_plan(
-        &pool,
-        WorkPlanUpsert {
+    let updated = PgDocketService::from_pool(&pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id,
             owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
@@ -212,21 +210,20 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
             plan_id: Some(created.id),
             expected_version: Some(created.version),
             update: update("Visible pair plan", WorkPlanVisibility::BearVisible),
-        },
-    )
-    .await
-    .expect("update work plan");
+        })
+        .await
+        .expect("update work plan");
     assert_eq!(updated.version, 2);
 
-    let chat_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearProfile::Chat,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list chat-visible plans after visibility update");
+    let chat_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Chat,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list chat-visible plans after visibility update");
     assert_eq!(chat_plans.len(), 1);
     assert_eq!(chat_plans[0].title, "Visible pair plan");
 

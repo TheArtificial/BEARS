@@ -14,8 +14,9 @@ use den::{
     core::{
         acp_sessions, acp_tokens,
         bears::{db as bears_db, db::BearParams, BearProfile},
+        docket::{DocketService, PgDocketService},
         work_plans::{
-            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
+            WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
         },
     },
@@ -319,9 +320,8 @@ async fn create_acp_session_work_plan(
     user_bear: &TestUserBear,
     session_id: &str,
 ) {
-    work_plans::create_or_update_work_plan(
-        pool,
-        WorkPlanUpsert {
+    PgDocketService::from_pool(pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id: user_bear.bear_id,
             owner_profile: BearProfile::Pair,
             owner_agent_id: Some(user_bear.pair_agent_id.clone()),

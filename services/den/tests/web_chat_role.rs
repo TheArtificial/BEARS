@@ -12,8 +12,9 @@ use den::{
     config::Config,
     core::{
         bears::{db as bears_db, db::BearParams, BearProfile},
+        docket::{DocketService, PgDocketService},
         work_plans::{
-            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
+            WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
         },
     },
@@ -197,9 +198,8 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
 }
 
 async fn create_visible_work_plan(pool: &sqlx::PgPool, user_bear: &TestUserBear) {
-    work_plans::create_or_update_work_plan(
-        pool,
-        WorkPlanUpsert {
+    PgDocketService::from_pool(pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id: user_bear.bear_id,
             owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-web-context".to_string()),

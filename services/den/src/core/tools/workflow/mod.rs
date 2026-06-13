@@ -8,6 +8,7 @@ use crate::{
     core::{
         acp_plan_mode,
         bears::BearProfile,
+        docket::{DocketService, PgDocketService},
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::fetch_memfs_role_plan_artifacts,
         tools::{
@@ -87,18 +88,18 @@ pub(crate) async fn list_work_plans(
     let statuses = args.statuses.or_else(|| {
         (!args.include_completed).then(|| vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked])
     });
-    let activity_rows = work_plans::list_visible_work_plans(
-        pool,
-        context.bear_id,
-        role,
-        context.user_id,
-        WorkPlanListFilter {
-            statuses,
-            owner_profile: args.owner_profile,
-            include_archived: args.include_archived,
-        },
-    )
-    .await?;
+    let activity_rows = PgDocketService::from_pool(pool)
+        .list_visible_work_plans(
+            context.bear_id,
+            role,
+            context.user_id,
+            WorkPlanListFilter {
+                statuses,
+                owner_profile: args.owner_profile,
+                include_archived: args.include_archived,
+            },
+        )
+        .await?;
     let plan_mode_gates = if include_plan_mode {
         acp_plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
     } else {
@@ -196,9 +197,9 @@ pub(crate) async fn get_work_plan_status(
             .source_acp_session_id
             .or_else(|| source_acp_session_id(context)),
     };
-    let plan =
-        work_plans::get_visible_work_plan(pool, context.bear_id, role, context.user_id, lookup)
-            .await?;
+    let plan = PgDocketService::from_pool(pool)
+        .get_visible_work_plan(context.bear_id, role, context.user_id, lookup)
+        .await?;
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
@@ -215,9 +216,8 @@ pub(crate) async fn update_work_plan(
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let args: WorkPlanUpdateArguments = serde_json::from_value(arguments)?;
-    let row = work_plans::create_or_update_work_plan(
-        pool,
-        WorkPlanUpsert {
+    let row = PgDocketService::from_pool(pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id: context.bear_id,
             owner_profile: role,
             owner_agent_id: clean_optional(&context.binding_id),

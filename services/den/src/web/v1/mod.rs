@@ -28,6 +28,7 @@ use crate::{
             constants::DEN_CONVERSATION_SET_TITLE,
             session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
         },
+        docket::{DocketService, PgDocketService},
         letta::sanitize_visible_transcript_text,
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
@@ -735,18 +736,18 @@ async fn web_chat_workboard_prompt_context(
     bear_id: Uuid,
     user_id: i32,
 ) -> Result<String, CustomError> {
-    let plans = work_plans::list_visible_work_plans(
-        pool,
-        bear_id,
-        BearProfile::Chat,
-        user_id,
-        WorkPlanListFilter {
-            statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
-            owner_profile: None,
-            include_archived: false,
-        },
-    )
-    .await?;
+    let plans = PgDocketService::from_pool(pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Chat,
+            user_id,
+            WorkPlanListFilter {
+                statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
+                owner_profile: None,
+                include_archived: false,
+            },
+        )
+        .await?;
     Ok(work_plans::render_workboard_prompt_context(&plans))
 }
 
