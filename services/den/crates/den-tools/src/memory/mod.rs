@@ -15,7 +15,14 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::prompt_memory::{PromptMemoryBlock, PromptMemoryBlockState, PromptMemoryStore};
+use crate::{
+    context::DenToolInvocationContext,
+    prompt_memory::{PromptMemoryBlock, PromptMemoryBlockState, PromptMemoryStore},
+    support::{
+        clean_limited_strings, clean_optional, validate_bounded_text,
+        validate_memory_write_entry_semantics, validate_optional_object,
+    },
+};
 
 #[derive(Debug, Deserialize)]
 pub struct MemoryReadArguments {
@@ -48,6 +55,135 @@ pub struct MemoryWriteEntryArguments {
     pub domain: Option<String>,
     #[serde(default)]
     pub semantic_confirmation_token: Option<String>,
+}
+
+/// A fully-prepared role-memory entry handed to [`RoleMemoryStore::write_entry`].
+///
+/// Carries every field both the native SQLite path and the legacy MemFS request
+/// need; the executor populates it after validation + source merging.
+#[derive(Debug, Clone)]
+pub struct RoleMemoryEntryWrite {
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub refs: Option<Value>,
+    pub lifecycle: Option<Value>,
+    pub source: Option<Value>,
+    pub author: Option<String>,
+    pub conversation_id: Option<String>,
+    pub session_id: Option<String>,
+    pub acp_session_id: Option<String>,
+    pub conversation_selection: Option<String>,
+    pub runtime_target: Option<String>,
+    pub binding_id: Option<String>,
+    pub profile: Option<String>,
+    pub request_id: Option<String>,
+}
+
+/// Merge a caller-supplied `source` object with trusted human + session identity
+/// drawn from the invocation context (author identity is passed as primitives).
+pub fn merge_memory_entry_source_with_human(
+    source: Option<Value>,
+    context: &DenToolInvocationContext,
+    author_username: Option<String>,
+    author_display_name: Option<String>,
+) -> Option<Value> {
+    let mut source_obj = source
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    let display_name = author_display_name.map(Value::from).unwrap_or(Value::Null);
+    source_obj.insert(
+        "human".to_string(),
+        json!({
+            "user_id": context.user_id,
+            "username": author_username.or_else(|| context.username.clone()),
+            "display_name": display_name,
+            "membership_role": context.membership_role,
+            "authenticated_by": "acp_token"
+        }),
+    );
+    source_obj.insert(
+        "session".to_string(),
+        json!({
+            "conversation_id": clean_optional(&context.conversation_id),
+            "session_id": clean_optional(&context.session_id),
+            "acp_session_id": context.acp_session_id,
+            "conversation_selection": context.conversation_selection,
+            "runtime_target": context.runtime_target,
+            "request_id": context.request_id,
+        }),
+    );
+    Some(Value::Object(source_obj))
+}
+
+/// The ACP session id, when the invocation arrived over an ACP channel.
+pub fn source_acp_session_id(context: &DenToolInvocationContext) -> Option<String> {
+    let is_acp = [
+        context.channel.family.as_deref(),
+        context.channel.client.as_deref(),
+        context.channel.protocol.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_ascii_lowercase().contains("acp"));
+    if is_acp {
+        clean_optional(&context.session_id)
+    } else {
+        None
+    }
+}
+
+pub async fn write_memory_entry(
+    memory: &impl RoleMemoryStore,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+    author_username: Option<String>,
+    author_display_name: Option<String>,
+) -> Result<Value, DenError> {
+    if role != BearProfile::Pair {
+        return Err(DenError::Authorization(
+            "den.memory.write_entry is currently available only to the pair role".to_string(),
+        ));
+    }
+    let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
+    let kind = validate_memory_write_entry_semantics(&args, context)?;
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
+    let tags = clean_limited_strings(args.tags, 20, 80);
+    validate_optional_object("refs", &args.refs)?;
+    validate_optional_object("lifecycle", &args.lifecycle)?;
+    validate_optional_object("source", &args.source)?;
+    let source = merge_memory_entry_source_with_human(
+        args.source,
+        context,
+        author_username.clone(),
+        author_display_name,
+    );
+    let author = author_username.or_else(|| context.username.clone());
+    let entry = RoleMemoryEntryWrite {
+        kind,
+        title,
+        body,
+        tags,
+        refs: args.refs,
+        lifecycle: args.lifecycle,
+        source,
+        author,
+        conversation_id: clean_optional(&context.conversation_id),
+        session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        acp_session_id: context
+            .acp_session_id
+            .clone()
+            .or_else(|| source_acp_session_id(context)),
+        conversation_selection: context.conversation_selection.clone(),
+        runtime_target: context.runtime_target.clone(),
+        binding_id: Some(context.binding_id.clone()),
+        profile: context.profile.map(|role| role.as_str().to_string()),
+        request_id: context.request_id.clone(),
+    };
+    memory.write_entry(context.bear_id, role, entry).await
 }
 
 /// Summarize active prompt-memory blocks for the `memory_status` diagnostic.

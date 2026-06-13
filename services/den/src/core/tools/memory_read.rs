@@ -10,17 +10,18 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::memory::RoleMemoryStore;
+use den_tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
 
 use crate::{
     config::Config,
     core::{
         bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
+        memory_manager_head::MemfsWriteRoleMemoryEntryRequest,
         tools::{
             memfs::{
                 fetch_role_memory_file, fetch_role_memory_status, fetch_role_memory_tree,
-                memfs_http_client, search_role_memory,
+                memfs_http_client, search_role_memory, write_role_memory_entry,
             },
             prompt_memory::DenPromptMemoryStore,
             session::DenToolInvocationContext,
@@ -30,12 +31,12 @@ use crate::{
 };
 
 /// Concrete [`RoleMemoryStore`] over the runtime config (native SQLite + legacy MemFS).
-struct DenRoleMemoryStore<'a> {
+pub(crate) struct DenRoleMemoryStore<'a> {
     config: &'a Config,
 }
 
 impl<'a> DenRoleMemoryStore<'a> {
-    fn new(config: &'a Config) -> Self {
+    pub(crate) fn new(config: &'a Config) -> Self {
         Self { config }
     }
 }
@@ -182,6 +183,75 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             "file_count": response.file_count,
             "entry_count_by_kind": response.entry_count_by_kind,
             "registered_view_count": response.registered_view_count,
+        }))
+    }
+
+    async fn write_entry(
+        &self,
+        bear_id: Uuid,
+        role: BearProfile,
+        entry: RoleMemoryEntryWrite,
+    ) -> Result<Value, DenError> {
+        if self.config.uses_native_agent_runtime() {
+            let stores = MemoryStoreManager::new(self.config);
+            return sqlite_memory::sqlite_write_profile_entry(
+                &stores,
+                self.config,
+                bear_id,
+                role.as_str(),
+                &entry.kind,
+                &entry.title,
+                &entry.body,
+                &entry.tags,
+                entry.source,
+                entry.author,
+            )
+            .await
+            .map_err(CustomError::into_den);
+        }
+        let request = MemfsWriteRoleMemoryEntryRequest {
+            kind: entry.kind,
+            title: entry.title,
+            body: entry.body,
+            tags: entry.tags,
+            refs: entry.refs,
+            lifecycle: entry.lifecycle,
+            source: entry.source,
+            author: entry.author,
+            conversation_id: entry.conversation_id,
+            session_id: entry.session_id,
+            acp_session_id: entry.acp_session_id,
+            conversation_selection: entry.conversation_selection,
+            runtime_target: entry.runtime_target,
+            binding_id: entry.binding_id,
+            profile: entry.profile,
+            request_id: entry.request_id,
+        };
+        let http = memfs_http_client("MemFS memory entry client build failed")
+            .map_err(CustomError::into_den)?;
+        let response = write_role_memory_entry(
+            &http,
+            &self.config.letta_memfs_service_url,
+            bear_id,
+            role.as_str(),
+            &request,
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        let Some(response) = response else {
+            return Err(DenError::System(
+                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+            ));
+        };
+        Ok(json!({
+            "bear_id": bear_id,
+            "profile": role.as_str(),
+            "kind": response.kind,
+            "entry_id": response.entry_id,
+            "path": response.path,
+            "commit": response.commit,
+            "canonical_tip": response.canonical_tip,
+            "view": response.view,
         }))
     }
 }

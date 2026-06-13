@@ -11,6 +11,8 @@ use den_core::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::RoleMemoryEntryWrite;
+
 #[async_trait]
 pub trait RoleMemoryStore: Send + Sync {
     /// Read records at a logical path (tool-shaped JSON).
@@ -31,4 +33,12 @@ pub trait RoleMemoryStore: Send + Sync {
     /// Base memory-status JSON **without** the prompt-memory diagnostic; the
     /// `memory_status` executor composes that diagnostic on top.
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError>;
+
+    /// Persist a role-memory entry; returns tool-shaped JSON.
+    async fn write_entry(
+        &self,
+        bear_id: Uuid,
+        role: BearProfile,
+        entry: RoleMemoryEntryWrite,
+    ) -> Result<Value, DenError>;
 }

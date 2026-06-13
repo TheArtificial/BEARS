@@ -674,3 +674,32 @@ later groups (memory_write / work_surface / plan_mode) migrate.
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — foundation: `support` + `preflight` + context relocated (2026-06, `test` branch)
+
+Two enabling moves landed before the context-heavy groups:
+
+1. **`DenToolInvocationContext` → `den-tools::context`** (it is per-call *data*, not
+   a capability). Dropped `#[non_exhaustive]`; the ~17 in-`den` struct-literal
+   construction sites keep working through a re-export at `core::tools::session`.
+2. **`core::tools::support` + `core::tools::preflight` → `den-tools`** (returning
+   `DenError`), re-exported at their former paths. This relocates the shared
+   validators, content-classification heuristics, scope tables, SSRF URL checks,
+   the memory-write semantic-confirmation token machinery, and the preflight gate
+   — everything the remaining memory executors depend on. `MemoryWriteEntryArguments`
+   moved too. `den-tools` gained `base64`/`sha2`/`time`/`url` (pure-compute deps).
+
+### Phase B — `memory_write` landed (2026-06, `test` branch)
+
+`den_tools::memory::write_memory_entry` now owns the executor (pair gating,
+validation, source/human merge, ACP session derivation, entry construction)
+behind `RoleMemoryStore::write_entry` (added to the existing seam). `den` resolves
+the authoring user (`user_by_id`, a capability) in the wrapper and passes the
+identity as primitives; `DenRoleMemoryStore::write_entry` owns the native
+`sqlite_write_profile_entry` path and the legacy MemFS request. Compat shims keep
+`memory_write::source_acp_session_id` (used across workflow/payloads/plan_mode/
+environment/memory_review) and the `&User`-based `merge_memory_entry_source_with_human`
+(used by a test) resolving.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.
