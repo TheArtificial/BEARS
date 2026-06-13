@@ -1,3 +1,8 @@
+//! `den-memory`: per-Bear canonical memory store (per-Bear SQLite), per ADR-0031.
+//!
+//! Service-layer leaf crate (see `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`):
+//! depends only on `den-core`. Higher-level curation/tools live in `den`.
+
 mod links;
 mod logical_path;
 mod manager;
@@ -27,6 +32,3 @@ pub use records::{
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,
 };
-
-#[cfg(test)]
-mod tests;

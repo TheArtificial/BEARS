@@ -1,7 +1,7 @@
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::records::BearMemoryStore;
 
@@ -22,12 +22,12 @@ pub async fn append_memory_link(
     dst_ref_type: &str,
     dst_ref: &str,
     link_type: &str,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let link_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
     let created_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         INSERT INTO memory_links (
@@ -46,7 +46,7 @@ pub async fn append_memory_link(
     .bind(&created_at)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite append memory_link failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite append memory_link failed: {e}")))?;
     Ok(link_id)
 }
 
@@ -54,7 +54,7 @@ pub async fn list_memory_links_for_source(
     store: &BearMemoryStore,
     src_memory_id: &str,
     limit: i64,
-) -> Result<Vec<MemoryLinkRow>, CustomError> {
+) -> Result<Vec<MemoryLinkRow>, DenError> {
     let rows = sqlx::query_as::<_, MemoryLinkSqlRow>(
         r#"
         SELECT link_id, sequence_no, src_memory_id, dst_ref_type, dst_ref, link_type, created_at
@@ -69,14 +69,14 @@ pub async fn list_memory_links_for_source(
     .bind(limit)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite list memory_links failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite list memory_links failed: {e}")))?;
     Ok(rows.into_iter().map(MemoryLinkSqlRow::into_row).collect())
 }
 
 pub async fn list_memory_links_for_bear(
     store: &BearMemoryStore,
     limit: i64,
-) -> Result<Vec<MemoryLinkRow>, CustomError> {
+) -> Result<Vec<MemoryLinkRow>, DenError> {
     let rows = sqlx::query_as::<_, MemoryLinkSqlRow>(
         r#"
         SELECT link_id, sequence_no, src_memory_id, dst_ref_type, dst_ref, link_type, created_at
@@ -90,7 +90,7 @@ pub async fn list_memory_links_for_bear(
     .bind(limit)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite list memory_links failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite list memory_links failed: {e}")))?;
     Ok(rows.into_iter().map(MemoryLinkSqlRow::into_row).collect())
 }
 

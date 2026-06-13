@@ -1,28 +1,28 @@
 use sqlx::SqlitePool;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 /// Upgrade per-Bear SQLite files created before profile vocabulary cleanup (ADR-0036).
-pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), CustomError> {
+pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenError> {
     let columns = sqlx::query_scalar::<_, String>(
         "SELECT name FROM pragma_table_info('memory_records')",
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| CustomError::System(format!("bear sqlite pragma failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("bear sqlite pragma failed: {e}")))?;
     let names = columns;
 
     if names.iter().any(|c| c == "scope_role") && !names.iter().any(|c| c == "scope_profile") {
         sqlx::query("ALTER TABLE memory_records RENAME COLUMN scope_role TO scope_profile")
             .execute(pool)
             .await
-            .map_err(|e| CustomError::System(format!("rename scope_role failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("rename scope_role failed: {e}")))?;
     }
     if names.iter().any(|c| c == "author_role") && !names.iter().any(|c| c == "author_profile") {
         sqlx::query("ALTER TABLE memory_records RENAME COLUMN author_role TO author_profile")
             .execute(pool)
             .await
-            .map_err(|e| CustomError::System(format!("rename author_role failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("rename author_role failed: {e}")))?;
     }
 
     let table_sql: Option<String> = sqlx::query_scalar(
@@ -30,7 +30,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), CustomE
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| CustomError::System(format!("bear sqlite table info failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("bear sqlite table info failed: {e}")))?;
 
     let needs_scope_vocab_rebuild = table_sql
         .as_deref()
@@ -47,16 +47,16 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), CustomE
     )
     .execute(pool)
     .await
-    .map_err(|e| CustomError::System(format!("migrate scope_type values failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("migrate scope_type values failed: {e}")))?;
 
     Ok(())
 }
 
-async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), CustomError> {
+async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), DenError> {
     sqlx::query("BEGIN IMMEDIATE")
         .execute(pool)
         .await
-        .map_err(|e| CustomError::System(format!("bear sqlite migration begin failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("bear sqlite migration begin failed: {e}")))?;
 
     let migration = async {
         sqlx::query(
@@ -83,7 +83,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Cus
         )
         .execute(pool)
         .await
-        .map_err(|e| CustomError::System(format!("create memory_records_new failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("create memory_records_new failed: {e}")))?;
 
         sqlx::query(
             r#"
@@ -114,33 +114,33 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Cus
         )
         .execute(pool)
         .await
-        .map_err(|e| CustomError::System(format!("copy memory_records scope vocab failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("copy memory_records scope vocab failed: {e}")))?;
 
         sqlx::query("DROP TABLE memory_records")
             .execute(pool)
             .await
-            .map_err(|e| CustomError::System(format!("drop legacy memory_records failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("drop legacy memory_records failed: {e}")))?;
 
         sqlx::query("ALTER TABLE memory_records_new RENAME TO memory_records")
             .execute(pool)
             .await
-            .map_err(|e| CustomError::System(format!("rename memory_records_new failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("rename memory_records_new failed: {e}")))?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_memory_records_bear_sequence ON memory_records (bear_id, sequence_no)",
         )
         .execute(pool)
         .await
-        .map_err(|e| CustomError::System(format!("recreate memory_records index failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("recreate memory_records index failed: {e}")))?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_memory_records_logical_path ON memory_records (bear_id, logical_path)",
         )
         .execute(pool)
         .await
-        .map_err(|e| CustomError::System(format!("recreate memory_records logical_path index failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("recreate memory_records logical_path index failed: {e}")))?;
 
-        Ok::<(), CustomError>(())
+        Ok::<(), DenError>(())
     }
     .await;
 
@@ -149,7 +149,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Cus
             sqlx::query("COMMIT")
                 .execute(pool)
                 .await
-                .map_err(|e| CustomError::System(format!("bear sqlite migration commit failed: {e}")))?;
+                .map_err(|e| DenError::System(format!("bear sqlite migration commit failed: {e}")))?;
         }
         Err(err) => {
             let _ = sqlx::query("ROLLBACK").execute(pool).await;

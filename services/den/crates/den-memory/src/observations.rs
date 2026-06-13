@@ -1,7 +1,7 @@
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::records::BearMemoryStore;
 
@@ -24,11 +24,11 @@ pub async fn create_memory_observation(
     salience: &str,
     logical_path: &str,
     source: &Value,
-) -> Result<SqliteMemoryObservation, CustomError> {
+) -> Result<SqliteMemoryObservation, DenError> {
     let sequence_no = store.next_sequence().await?;
     let created_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         INSERT INTO memory_observations (
@@ -47,7 +47,7 @@ pub async fn create_memory_observation(
     .bind(&created_at)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite create observation failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite create observation failed: {e}")))?;
     Ok(SqliteMemoryObservation {
         observation_id: observation_id.to_string(),
         sequence_no,
@@ -63,7 +63,7 @@ pub async fn create_memory_observation(
 pub async fn get_memory_observation(
     store: &BearMemoryStore,
     observation_id: &str,
-) -> Result<Option<SqliteMemoryObservation>, CustomError> {
+) -> Result<Option<SqliteMemoryObservation>, DenError> {
     let row = sqlx::query_as::<_, ObservationSqlRow>(
         r#"
         SELECT observation_id, sequence_no, summary, salience, logical_path, status,
@@ -76,7 +76,7 @@ pub async fn get_memory_observation(
     .bind(observation_id)
     .fetch_optional(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite get observation failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite get observation failed: {e}")))?;
     Ok(row.map(ObservationSqlRow::into_row))
 }
 
@@ -84,7 +84,7 @@ pub async fn mark_observation_review_queued(
     store: &BearMemoryStore,
     observation_id: &str,
     proposal_id: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE memory_observations
@@ -97,7 +97,7 @@ pub async fn mark_observation_review_queued(
     .bind(observation_id)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite mark observation queued failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite mark observation queued failed: {e}")))?;
     Ok(())
 }
 

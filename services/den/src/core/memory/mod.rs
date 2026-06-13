@@ -2,8 +2,14 @@
 
 pub mod admin_inspect;
 pub mod curation;
-pub mod store;
 pub mod tools;
+
+/// Per-Bear SQLite store, extracted to the `den-memory` crate. Re-exported here
+/// so existing `crate::core::memory::store::…` paths keep resolving.
+pub use den_memory as store;
+
+#[cfg(test)]
+mod store_round_trip_tests;
 
 pub use admin_inspect::{
     bear_memory_admin_stats, bear_sqlite_db_path, get_memory_record_by_id, list_all_logical_paths,

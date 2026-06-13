@@ -1,6 +1,6 @@
 use time::OffsetDateTime;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::records::BearMemoryStore;
 
@@ -10,11 +10,11 @@ pub async fn create_reflection_run_outcome(
     lane: &str,
     trigger: &str,
     input_summary: Option<&str>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let sequence_no = store.next_sequence().await?;
     let created_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         INSERT INTO reflection_run_outcomes (
@@ -32,7 +32,7 @@ pub async fn create_reflection_run_outcome(
     .bind(&created_at)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite create reflection outcome failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite create reflection outcome failed: {e}")))?;
     Ok(())
 }
 
@@ -42,12 +42,12 @@ pub async fn complete_reflection_run_outcome(
     status: &str,
     output_summary: Option<&str>,
     proposal_ids: &[String],
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let completed_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     let ids_json = serde_json::to_string(proposal_ids)
-        .map_err(|e| CustomError::System(format!("proposal ids json failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("proposal ids json failed: {e}")))?;
     sqlx::query(
         r#"
         UPDATE reflection_run_outcomes
@@ -63,7 +63,7 @@ pub async fn complete_reflection_run_outcome(
     .bind(run_id)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite complete reflection outcome failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite complete reflection outcome failed: {e}")))?;
     Ok(())
 }
 

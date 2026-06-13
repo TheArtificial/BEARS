@@ -112,7 +112,9 @@ pub async fn mark_observation_review_queued_for_bear(
         return Ok(());
     }
     let store = stores.store_for_bear(bear_id).await?;
-    mark_observation_review_queued(&store, observation_id, &proposal_id.to_string()).await
+    mark_observation_review_queued(&store, observation_id, &proposal_id.to_string())
+        .await
+        .map_err(CustomError::from)
 }
 
 pub async fn list_proposals(
@@ -195,7 +197,9 @@ pub async fn promote_core_content(
     author_profile: &str,
 ) -> Result<(String, String), CustomError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile).await
+    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub async fn record_reflection_outcome_start(
@@ -210,7 +214,9 @@ pub async fn record_reflection_outcome_start(
     if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await {
         return Ok(());
     }
-    create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary).await
+    create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub async fn record_reflection_outcome_complete(
@@ -222,7 +228,9 @@ pub async fn record_reflection_outcome_complete(
     proposal_ids: &[String],
 ) -> Result<(), CustomError> {
     let store = stores.store_for_bear(bear_id).await?;
-    complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids).await
+    complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids)
+        .await
+        .map_err(CustomError::from)
 }
 
 fn sqlite_proposal_to_row(

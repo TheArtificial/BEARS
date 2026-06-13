@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::records::BearMemoryStore;
 
@@ -21,12 +21,12 @@ pub async fn create_memory_proposal(
     sensitivity: &str,
     requires_human: bool,
     payload: &Value,
-) -> Result<SqliteMemoryProposal, CustomError> {
+) -> Result<SqliteMemoryProposal, DenError> {
     let proposal_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
     let created_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         INSERT INTO memory_proposals (
@@ -45,7 +45,7 @@ pub async fn create_memory_proposal(
     .bind(&created_at)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite create proposal failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite create proposal failed: {e}")))?;
     Ok(SqliteMemoryProposal {
         proposal_id,
         sequence_no,
@@ -59,7 +59,7 @@ pub async fn list_memory_proposals(
     store: &BearMemoryStore,
     status: Option<&str>,
     limit: i64,
-) -> Result<Vec<SqliteMemoryProposal>, CustomError> {
+) -> Result<Vec<SqliteMemoryProposal>, DenError> {
     let rows = if let Some(status) = status {
         sqlx::query_as::<_, (String, i64, String, String, String)>(
             r#"
@@ -90,7 +90,7 @@ pub async fn list_memory_proposals(
         .fetch_all(store.pool())
         .await
     }
-    .map_err(|e| CustomError::System(format!("sqlite list proposals failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite list proposals failed: {e}")))?;
     Ok(rows
         .into_iter()
         .map(|(proposal_id, sequence_no, status, payload_json, created_at)| {
@@ -111,7 +111,7 @@ pub async fn resolve_memory_proposal(
     proposal_id: &str,
     status: &str,
     review_payload: &Value,
-) -> Result<SqliteMemoryProposal, CustomError> {
+) -> Result<SqliteMemoryProposal, DenError> {
     let existing = sqlx::query_as::<_, (String,)>(
         "SELECT payload_json FROM memory_proposals WHERE bear_id = ? AND proposal_id = ?",
     )
@@ -119,8 +119,8 @@ pub async fn resolve_memory_proposal(
     .bind(proposal_id)
     .fetch_optional(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite fetch proposal for resolve failed: {e}")))?
-    .ok_or_else(|| CustomError::NotFound("proposal not found".to_string()))?;
+    .map_err(|e| DenError::System(format!("sqlite fetch proposal for resolve failed: {e}")))?
+    .ok_or_else(|| DenError::NotFound("proposal not found".to_string()))?;
     let mut payload: Value = serde_json::from_str(&existing.0).unwrap_or_else(|_| json!({}));
     if let Some(obj) = review_payload.as_object() {
         for (k, v) in obj {
@@ -129,7 +129,7 @@ pub async fn resolve_memory_proposal(
     }
     let reviewed_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         UPDATE memory_proposals
@@ -144,7 +144,7 @@ pub async fn resolve_memory_proposal(
     .bind(proposal_id)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite resolve proposal failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite resolve proposal failed: {e}")))?;
     let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
         r#"
         SELECT proposal_id, sequence_no, status, payload_json, created_at
@@ -155,7 +155,7 @@ pub async fn resolve_memory_proposal(
     .bind(proposal_id)
     .fetch_one(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite fetch proposal failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite fetch proposal failed: {e}")))?;
     Ok(SqliteMemoryProposal {
         proposal_id: row.0,
         sequence_no: row.1,

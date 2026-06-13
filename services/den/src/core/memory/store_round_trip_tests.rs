@@ -2,7 +2,7 @@
 mod tests {
     use uuid::Uuid;
 
-    use crate::config::Config;
+    use den_core::config::Config;
     use crate::core::memory::{
         store::{
             append_memory_link, list_memory_links_for_source, LogicalMemoryPath, MemoryStoreManager,
@@ -13,7 +13,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_memory_round_trip() {
         let mut config = Config::test_stub();
-        config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
+        config.agent_runtime_mode = den_core::config::AgentRuntimeMode::Native;
         config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-test-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();
@@ -51,7 +51,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_memory_links_round_trip() {
         let mut config = Config::test_stub();
-        config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
+        config.agent_runtime_mode = den_core::config::AgentRuntimeMode::Native;
         config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-links-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();

@@ -4,7 +4,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::{config::Config, errors::CustomError};
+use den_core::{config::Config, DenError};
 
 use super::{migrate::migrate_bear_sqlite_schema, records::BearMemoryStore};
 
@@ -25,18 +25,18 @@ impl MemoryStoreManager {
         }
     }
 
-    pub async fn store_for_bear(&self, bear_id: Uuid) -> Result<BearMemoryStore, CustomError> {
+    pub async fn store_for_bear(&self, bear_id: Uuid) -> Result<BearMemoryStore, DenError> {
         let pool = self.pool_for_bear(bear_id).await?;
         Ok(BearMemoryStore::new(bear_id, pool))
     }
 
-    async fn pool_for_bear(&self, bear_id: Uuid) -> Result<SqlitePool, CustomError> {
+    async fn pool_for_bear(&self, bear_id: Uuid) -> Result<SqlitePool, DenError> {
         let mut guard = self.pools.lock().await;
         if let Some(pool) = guard.get(&bear_id) {
             return Ok(pool.clone());
         }
         std::fs::create_dir_all(&self.data_dir).map_err(|e| {
-            CustomError::System(format!("failed to create bear sqlite data dir: {e}"))
+            DenError::System(format!("failed to create bear sqlite data dir: {e}"))
         })?;
         let db_path = self.data_dir.join(format!("{bear_id}.sqlite"));
         let options = SqliteConnectOptions::new()
@@ -49,12 +49,12 @@ impl MemoryStoreManager {
             .max_connections(1)
             .connect_with(options)
             .await
-            .map_err(|e| CustomError::System(format!("bear sqlite connect failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("bear sqlite connect failed: {e}")))?;
         for statement in SCHEMA_SQL.split(';').map(str::trim).filter(|s| !s.is_empty()) {
             sqlx::query(statement)
                 .execute(&pool)
                 .await
-                .map_err(|e| CustomError::System(format!("bear sqlite schema failed: {e}")))?;
+                .map_err(|e| DenError::System(format!("bear sqlite schema failed: {e}")))?;
         }
         migrate_bear_sqlite_schema(&pool).await?;
         guard.insert(bear_id, pool.clone());

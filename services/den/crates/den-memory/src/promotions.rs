@@ -1,7 +1,7 @@
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::{
     links::append_memory_link, logical_path::LogicalMemoryPath, records::BearMemoryStore,
@@ -13,12 +13,12 @@ pub async fn append_memory_promotion(
     target_memory_id: Option<&str>,
     action: &str,
     notes: Option<&str>,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let promotion_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
     let created_at = OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
         r#"
         INSERT INTO memory_promotions (
@@ -37,7 +37,7 @@ pub async fn append_memory_promotion(
     .bind(notes)
     .execute(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite append promotion failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite append promotion failed: {e}")))?;
     Ok(promotion_id)
 }
 
@@ -47,7 +47,7 @@ pub async fn promote_to_shared_core(
     kind: &str,
     content_text: &str,
     author_profile: &str,
-) -> Result<(String, String), CustomError> {
+) -> Result<(String, String), DenError> {
     use super::records::append_memory_record;
     let logical = LogicalMemoryPath::shared_core(kind);
     let row = append_memory_record(

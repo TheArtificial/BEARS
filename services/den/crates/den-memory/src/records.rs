@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::logical_path::{LogicalMemoryPath, MemoryScopeType};
 
@@ -40,17 +40,17 @@ impl BearMemoryStore {
         &self.pool
     }
 
-    pub async fn next_sequence(&self) -> Result<i64, CustomError> {
+    pub async fn next_sequence(&self) -> Result<i64, DenError> {
         sqlx::query("UPDATE bear_sequence SET next_sequence = next_sequence + 1 WHERE id = 1")
             .execute(&self.pool)
             .await
-            .map_err(|e| CustomError::System(format!("bear sequence bump failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("bear sequence bump failed: {e}")))?;
         let row = sqlx::query_scalar::<_, i64>(
             "SELECT next_sequence - 1 FROM bear_sequence WHERE id = 1",
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| CustomError::System(format!("bear sequence alloc failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("bear sequence alloc failed: {e}")))?;
         Ok(row)
     }
 
@@ -63,12 +63,12 @@ impl BearMemoryStore {
         content_text: &str,
         metadata_json: &Value,
         visibility: &str,
-    ) -> Result<MemoryRecordRow, CustomError> {
+    ) -> Result<MemoryRecordRow, DenError> {
         let memory_id = Uuid::new_v4().to_string();
         let sequence_no = self.next_sequence().await?;
         let created_at = OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| CustomError::System(format!("timestamp format failed: {e}")))?;
+            .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
         let logical_path = logical.to_logical_path();
         sqlx::query(
             r#"
@@ -96,7 +96,7 @@ impl BearMemoryStore {
         .bind(&logical.work_surface_ref)
         .execute(&self.pool)
         .await
-        .map_err(|e| CustomError::System(format!("append memory_record failed: {e}")))?;
+        .map_err(|e| DenError::System(format!("append memory_record failed: {e}")))?;
         Ok(MemoryRecordRow {
             memory_id,
             sequence_no,
@@ -120,7 +120,7 @@ pub async fn append_memory_record(
     author_agent_id: Option<&str>,
     content_text: &str,
     metadata_json: &Value,
-) -> Result<MemoryRecordRow, CustomError> {
+) -> Result<MemoryRecordRow, DenError> {
     store
         .append_record(
             logical,
@@ -134,21 +134,21 @@ pub async fn append_memory_record(
         .await
 }
 
-pub async fn memory_sequence_high_water(store: &BearMemoryStore) -> Result<i64, CustomError> {
+pub async fn memory_sequence_high_water(store: &BearMemoryStore) -> Result<i64, DenError> {
     let row = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT MAX(sequence_no) FROM memory_records WHERE bear_id = ?",
     )
     .bind(store.bear_id.to_string())
     .fetch_one(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("memory sequence high water failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory sequence high water failed: {e}")))?;
     Ok(row.unwrap_or(0))
 }
 
 pub async fn head_record_for_logical_path(
     store: &BearMemoryStore,
     logical_path: &str,
-) -> Result<Option<MemoryRecordRow>, CustomError> {
+) -> Result<Option<MemoryRecordRow>, DenError> {
     let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r#"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
@@ -168,14 +168,14 @@ pub async fn head_record_for_logical_path(
     .bind(logical_path)
     .fetch_optional(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("head memory_record lookup failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("head memory_record lookup failed: {e}")))?;
     Ok(row.map(MemoryRecordSqlRow::into_row))
 }
 
 pub async fn has_work_surface_canonical_anchor(
     store: &BearMemoryStore,
     slug: &str,
-) -> Result<bool, CustomError> {
+) -> Result<bool, DenError> {
     for path in [
         format!("core/work_surfaces/{slug}/index.md"),
         format!("core/work_surfaces/{slug}/overview.md"),
@@ -192,7 +192,7 @@ pub async fn list_profile_local_head_records(
     profile: &str,
     work_surface_ref: Option<&str>,
     limit: i64,
-) -> Result<Vec<MemoryRecordRow>, CustomError> {
+) -> Result<Vec<MemoryRecordRow>, DenError> {
     let rows = if let Some(surface) = work_surface_ref {
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r#"
@@ -239,7 +239,7 @@ pub async fn list_profile_local_head_records(
         .fetch_all(store.pool())
         .await
     }
-    .map_err(|e| CustomError::System(format!("list profile_local memory_records failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("list profile_local memory_records failed: {e}")))?;
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
@@ -247,7 +247,7 @@ pub async fn list_records_for_logical_path(
     store: &BearMemoryStore,
     logical_path: &str,
     limit: i64,
-) -> Result<Vec<MemoryRecordRow>, CustomError> {
+) -> Result<Vec<MemoryRecordRow>, DenError> {
     let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r#"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
@@ -263,7 +263,7 @@ pub async fn list_records_for_logical_path(
     .bind(limit)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("list memory_records failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("list memory_records failed: {e}")))?;
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
