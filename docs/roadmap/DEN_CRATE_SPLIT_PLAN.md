@@ -142,13 +142,18 @@ Must complete before any crate is extracted.
      - Ported bear create/edit/onboarding **model catalog** to native Bifrost (`model_catalog_select_context`); dropped Letta tool/agent-type selectors (native tools are descriptor-owned).
      - Ported member `bear_management` **conversation lists** to native `conversation_persistence` (keyed by `bear_id`) and the **memory browser** to native `sqlite_memory_*`; dropped Letta `fetch_agent` diagnostics (native `bear_agent_health_rows` covers it). ACP close now archives natively; compaction is a native no-op.
      - Dropped the dead `letta`/`codepool`/`web_letta_data`/`web_memory_data` `AppState` fields, deleted the `web/data` seam + UI fixtures, and removed every handler-level `state.letta`/`state.codepool` read. `provision_bear_if_configured`/`reconcile_*` lost their dead `letta`/`bifrost` args.
-   - 🔜 **Phase B remainder (well-scoped, intricate — do next).**
-     - Remove the dead `ApiState.letta` field + ~20 construction sites (`api/service.rs`, `api/acp/stream/sse_stream.rs` ×4, `api/acp/tests.rs` ×16) and the stray `let _letta = …` test locals.
-     - `startup.rs`: drop the Codepool/Letta preflight in `validate_upstream_connections` and the `LettaClient`/`CodePoolClient` construction.
-     - **Delete `core/codepool/` entirely** (purely legacy — only `startup.rs` + a doc comment reference it now).
-     - **Surgically extract the HTTP `LettaClient`** from `core/letta/client.rs` while KEEPING the native-used items the module misleadingly hosts: `acp_letta_events` (= `core::acp::letta_events`, the native ACP→adapter SSE event model), `runtime_stream_parser`, `normalize_display_status_text`, `sanitize_visible_transcript_text`, `LettaModelOption`/`LettaToolOption`, `AgentSummary`. Consider renaming these off the `letta` name later.
-     - Delete `tools/memfs` + MemFS-only memory modules (`memory_manager_head` MemFS fns) once unreferenced.
-   - 🔒 **Config + compose (gated).** Remove `AgentRuntimeMode`/`uses_native_agent_runtime()` + Letta/Codepool env vars and tighten `validate_runtime_config`; **flag the `bears-letta`/`bears-codepool` docker-compose service removals for explicit user approval** (do not edit compose unprompted).
+   - ✅ **Phase B remainder — code teardown (done, committed 2026-06, `test`).**
+     - Removed the dead `ApiState.letta` field + all construction sites (`api/service.rs`, `api/acp/stream/sse_stream.rs`, `api/acp/tests.rs`) and the stray `let _letta = …` test locals.
+     - `startup.rs`: dropped the Codepool/Letta preflight in `validate_upstream_connections` and the `LettaClient`/`CodePoolClient` construction.
+     - **Deleted `core/codepool/` entirely.**
+     - **Extracted the HTTP `LettaClient`** out of `core/letta/`: the dead client + Letta-only submodules are gone; the native-used items the module hosted (`runtime_stream_parser`, title/tool-policy/display helpers, `LettaModelOption`/`LettaToolOption`) are retained (rename off the `letta` name is a later cleanup).
+     - **Deleted the MemFS HTTP layer**: `core/memory/manager_head.rs` (MemFS client + view types) removed; `core/tools/memfs.rs` trimmed to the native-runtime guard helpers (`is_memfs_client_tool_name`, `filter_client_tools_for_native_runtime`). The bear detail-page **work-surface listing** was ported from MemFS tree/file fetches to native `sqlite_collect_role_logical_paths` + `sqlite_memory_read`.
+     - **Removed the legacy Letta conversation-summary tool** (`core/tools/letta.rs`) and its `ConversationTitleOps::patch_summary` seam — it errored under `AGENT_RUNTIME=native` (latent bug); native `set_title` is the only path now.
+   - 🔒 **Config + compose (GATED — awaiting user approval).** These are atomically coupled (the config fields, their remaining readers, and `AgentRuntimeMode` must change together):
+     - `den-core/config.rs`: remove the `AgentRuntimeMode` enum, `agent_runtime_mode` field + `uses_native_agent_runtime()`, and the legacy fields `letta_base_url`, `letta_api_key`, `letta_pg_uri` (fully dead), `letta_memfs_service_url`, `codepool_base_url`, `codepool_internal_token` (rename → a native `DEN_INTERNAL_TOKEN`).
+     - Collapse the remaining `uses_native_agent_runtime()` branch readers: `startup.rs` (`validate_runtime_config` Letta/Codepool preflight + the `AGENT_RUNTIME=letta` deprecation warning + test fixtures), `web/admin/bears.rs` (`native_runtime` context, now always `true`), `core/tools/environment.rs`, `core/memory/tools.rs` (`agent_runtime_mode.as_str()` in status payloads), and the dead `letta_configured`/`letta_api_base`/`letta_agent_*` template context in `web/bear_management.rs` + `bear/details.html`.
+     - `.env.example`: drop the commented legacy `LETTA_*`/`CODEPOOL_*` block and the `AGENT_RUNTIME` knob.
+     - **docker-compose:** no `bears-letta`/`bears-codepool`/`bears-memfs` services exist in `docker-compose.yaml` (already comment-only); the only change is dropping the `AGENT_RUNTIME=${AGENT_RUNTIME:-native}` env defaults (2 sites). Flagged for explicit approval; not edited.
 
 ### v1 — Workspace split (extract + idiomatize, leaves→edges)
 
