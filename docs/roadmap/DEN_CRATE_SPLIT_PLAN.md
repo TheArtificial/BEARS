@@ -339,3 +339,245 @@ shims, so no caller changed. `DenToolInvocationContext` and the executors stay i
 `den` for now — they move with their capabilities in Phase B. Verified:
 `cargo check --workspace --all-targets` green, `cargo test -p den-tools` (4
 descriptor-guidance tests) green, `den-tools` clippy-clean.
+
+## Phase B — `ToolContext` sub-trait signatures (draft, 2026-06)
+
+Goal: move the *executor logic* (validation, payload shaping, routing) into
+`den-tools` while leaving *capabilities* (Postgres, the per-Bear SQLite memory
+store, HTTP egress, Letta) behind traits that `den-runtime` (the `den` binary
+today) implements. This is what unblocks `den-runtime` extraction: once the
+executors depend only on traits + `den-core` types, they compile inside
+`den-tools`, and `den-runtime` is the only crate that touches `PgPool` /
+`MemoryStoreManager` / `reqwest`.
+
+### Design rules
+
+- **Composed, not god.** No single `ToolContext` with ~30 methods. Each capability
+  area is its own `#[async_trait]` sub-trait; each executor is generic over only
+  the sub-traits it uses (`async fn write_memory_entry(ctx: &impl RoleMemoryStore, …)`).
+  A blanket `ToolContext` supertrait bundles them for the dispatcher.
+- **Errors at the seam are `den_core::DenError`**, never `CustomError` (web). The
+  `den` adapter keeps `From<DenError> for CustomError` (already in place).
+- **Per-call data is a value, not a capability.** `DenToolInvocationContext` moves
+  into `den-tools` as a plain struct (it already serializes; it only needs
+  `den_core::BearProfile`). Capabilities are the trait methods.
+- **Native (SQLite) path is the modeled contract.** The Letta/MemFS branches
+  (`config.uses_native_agent_runtime()` false) are legacy (v0-legacy deletes
+  `core/letta`); the traits model the canonical SQLite store. Any remaining MemFS
+  fallback stays inside the `den-runtime` impl, not in the trait surface.
+- **Pure helpers don't need traits.** Orientation inference, slug derivation,
+  payload builders, URL/SSRF validation, and text bounding are pure and move into
+  `den-tools` directly.
+- **`WorkSurfaceOps` keeps the name "work surface"** per
+  [ADR-0040](../decisions/adr-0040-connections-and-work-surface-presentation.md):
+  "work surface" is the canonical code/model-facing term (ADR-0024's
+  "→ resource" rename is superseded). The trait is `WorkSurfaceOps`, not
+  `ResourceOps`; user-facing labels (Repository/Design/…) live in the
+  presentation layer, out of scope here.
+
+### Sub-traits
+
+Types named below that still live in `den` (e.g. `Bear`, `BearMember`,
+`PromptMemoryBlock*`, `MemoryProposal*`, `WebPolicyDecision`) must migrate to
+`den-core` (foundation rows/enums) or `den-tools` (tool-shaped types) *before*
+the consuming executor moves. Method shapes mirror today's free functions.
+
+```rust
+use async_trait::async_trait;
+use den_core::{BearProfile, DenError};
+use uuid::Uuid;
+
+/// Identity, membership, and policy lookups. Backs the dispatcher's
+/// authorize_context/context_role and the bear/user/* read tools.
+#[async_trait]
+pub trait BearDirectory {
+    async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError>;
+    /// `bear_profile_bindings` lookup used to resolve + verify the caller's role.
+    async fn registered_profile(&self, bear_id: Uuid, binding_id: &str)
+        -> Result<Option<BearProfile>, DenError>;
+    async fn get_bear(&self, bear_id: Uuid) -> Result<Option<Bear>, DenError>;
+    async fn count_bear_members(&self, bear_id: Uuid) -> Result<i64, DenError>;
+    async fn list_members(&self, bear_id: Uuid) -> Result<Vec<BearMember>, DenError>;
+    async fn user_by_id(&self, user_id: i32) -> Result<UserRecord, DenError>;
+}
+// `role_is_bear_admin(role: Option<&str>) -> bool` is pure → den-tools (or den-core).
+
+/// Conversation metadata (set_conversation_title). The Letta summary patch is
+/// legacy; once core/letta is deleted this trait drops `patch_summary`.
+#[async_trait]
+pub trait ConversationTitleOps {
+    async fn set_title(&self, bear_id: Uuid, conversation_id: &str, title: &str)
+        -> Result<u64, DenError>; // -> synced acp_session count
+    async fn patch_summary(&self, conversation_id: &str, summary: &str) -> Result<(), DenError>;
+}
+
+/// Canonical per-Bear, per-role SQLite memory. Hides MemoryStoreManager +
+/// store_for_bear + the `memory::tools::sqlite_*` family. Backs memory_read/
+/// memory_write/memory_status/memory_browse/search and orientation path listing.
+#[async_trait]
+pub trait RoleMemoryStore {
+    async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str)
+        -> Result<MemoryReadResult, DenError>;
+    async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<MemoryTree, DenError>;
+    async fn search(&self, bear_id: Uuid, role: BearProfile, query: &str)
+        -> Result<Vec<MemorySearchHit>, DenError>;
+    async fn status(&self, bear_id: Uuid, role: BearProfile) -> Result<MemoryStatus, DenError>;
+    async fn list_logical_paths(&self, bear_id: Uuid, role: BearProfile)
+        -> Result<Vec<String>, DenError>;
+    async fn write_entry(&self, bear_id: Uuid, role: BearProfile, entry: RoleMemoryEntryWrite)
+        -> Result<MemoryWriteOutcome, DenError>;
+    /// Used by work-surface scaffold + plan-mode artifacts (sqlite_write_at_path).
+    async fn write_at_path(&self, bear_id: Uuid, role: BearProfile, path: &str, body: &str)
+        -> Result<MemoryWriteOutcome, DenError>;
+    async fn list_plan_artifacts(&self, bear_id: Uuid, role: BearProfile)
+        -> Result<Vec<PlanArtifact>, DenError>;
+}
+
+/// Reflection/curation review surface: proposals + observations + the enqueue +
+/// the conversation-event projections. Backs memory_review.rs and observations.rs.
+#[async_trait]
+pub trait MemoryReviewStore {
+    async fn create_proposal(&self, bear_id: Uuid, params: CreateMemoryProposal)
+        -> Result<MemoryProposal, DenError>;
+    async fn get_proposal(&self, bear_id: Uuid, proposal_id: Uuid)
+        -> Result<Option<MemoryProposal>, DenError>;
+    async fn list_proposals(&self, bear_id: Uuid, query: ProposalQuery)
+        -> Result<Vec<MemoryProposal>, DenError>;
+    async fn resolve_proposal(&self, bear_id: Uuid, params: ProposalResolutionParams)
+        -> Result<MemoryProposal, DenError>;
+    async fn promote_core_content(&self, bear_id: Uuid, params: CorePromotion)
+        -> Result<(), DenError>;
+
+    async fn create_observation(&self, bear_id: Uuid, obs: CreateObservation)
+        -> Result<BearObservationRow, DenError>;
+    async fn get_observation(&self, bear_id: Uuid, observation_id: Uuid)
+        -> Result<Option<BearObservationRow>, DenError>;
+    async fn mark_observation_review_queued(&self, bear_id: Uuid, observation_id: Uuid)
+        -> Result<(), DenError>;
+    async fn enqueue_proposal_review(&self, params: ProposalEnqueueParams) -> Result<(), DenError>;
+
+    /// conversation_events projections (review-requested / proposal-resolved).
+    async fn project_review_event(&self, event: ReviewProjection) -> Result<(), DenError>;
+}
+
+/// Runtime prompt-memory blocks (NOT semantic memory). Backs prompt_memory.rs and
+/// memory_read's block listing. Wraps prompt_memory_block_store::*.
+#[async_trait]
+pub trait PromptMemoryStore {
+    async fn list_blocks(&self, bear_id: Uuid, profile: BearProfile, query: PromptMemoryBlockQuery)
+        -> Result<Vec<PromptMemoryBlock>, DenError>;
+    async fn upsert_block(&self, write: PromptMemoryBlockWrite)
+        -> Result<PromptMemoryBlock, DenError>;
+    async fn patch_block(&self, patch: PromptMemoryBlockPatch)
+        -> Result<PromptMemoryBlock, DenError>;
+    async fn archive_conflicting(&self, write: &PromptMemoryBlockWrite) -> Result<u64, DenError>;
+    async fn archive_superseded_by(&self, block_id: &str) -> Result<u64, DenError>;
+}
+
+/// Plan-mode lifecycle (acp_plan_mode + acp_sessions + turn_state). Plan-mode also
+/// writes a role-memory artifact → executor composes PlanModeOps + RoleMemoryStore.
+#[async_trait]
+pub trait PlanModeOps {
+    async fn enter(&self, params: EnterPlanModeParams) -> Result<PlanModeState, DenError>;
+    async fn submit(&self, params: SubmitPlanModeParams) -> Result<PlanModeState, DenError>;
+    async fn cancel(&self, bear_id: Uuid, session: &str) -> Result<PlanModeState, DenError>;
+    async fn status(&self, bear_id: Uuid, session: &str) -> Result<Option<PlanModeState>, DenError>;
+    async fn record_approval(&self, params: PlanApprovalParams) -> Result<PlanModeState, DenError>;
+    /// Resolved session policy used to render turn_state in responses.
+    async fn resolved_session_policy(&self, bear_id: Uuid, session: &str)
+        -> Result<AcpResolvedSessionPolicy, DenError>;
+}
+
+/// Work-surface orientation + scaffold (ADR-0040: "work surface" is canonical).
+/// The inference/slug/payload builders are pure → den-tools free fns; only the
+/// memory I/O is a capability, mostly delegating to RoleMemoryStore. Kept as a
+/// named trait so the seam stays explicit and future surface-kind/Connection
+/// metadata (ADR-0040 follow-ups) has a home.
+#[async_trait]
+pub trait WorkSurfaceOps {
+    async fn create_scaffold(&self, bear_id: Uuid, role: BearProfile, scaffold: WorkSurfaceScaffold)
+        -> Result<WorkSurfaceScaffoldOutcome, DenError>;
+}
+
+/// External web egress. URL normalization/SSRF checks and HTML→text are pure →
+/// den-tools; the policy decision (DB-backed) and the actual fetch/search are
+/// capabilities.
+#[async_trait]
+pub trait WebFetcher {
+    async fn decide_fetch_approval(&self, bear_id: Uuid, url: &NormalizedWebUrl)
+        -> Result<WebFetchDecision, DenError>;
+    async fn record_fetch_attempt(&self, params: WebFetchAuditParams<'_>) -> Result<(), DenError>;
+    async fn fetch(&self, url: &NormalizedWebUrl, max_chars: usize) -> Result<WebFetchBody, DenError>;
+    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<WebSearchHit>, DenError>;
+    async fn preferred_hosts(&self, bear_id: Uuid) -> Result<Vec<String>, DenError>;
+}
+
+/// Already extracted in den-docket; listed for completeness as the template the
+/// other sub-traits follow. workflow executors also take pure activity-payload
+/// builders → those fn pointers become den-tools free fns.
+// pub trait DocketService { … }  // den-docket
+```
+
+### Umbrella bundle + dispatcher
+
+```rust
+/// Composed bundle so the dispatcher can take one `&impl ToolContext`; individual
+/// executors stay generic over the minimal sub-trait set they need.
+pub trait ToolContext:
+    BearDirectory
+    + ConversationTitleOps
+    + RoleMemoryStore
+    + MemoryReviewStore
+    + PromptMemoryStore
+    + PlanModeOps
+    + WorkSurfaceOps
+    + WebFetcher
+    + den_docket::DocketService
+    + Send
+    + Sync
+{}
+
+pub async fn invoke_den_tool(
+    ctx: &impl ToolContext,
+    tool_name: &str,
+    arguments: serde_json::Value,
+    context: DenToolInvocationContext,
+) -> Result<serde_json::Value, DenError> { /* moved from session/mod.rs */ }
+```
+
+`den-runtime` provides one struct (e.g. `DenRuntimeToolContext { pool, config, stores }`)
+that implements every sub-trait by delegating to today's `crate::core::*` functions.
+
+### Executor → sub-trait map (move order)
+
+Greenest-first; each row is one PR, workspace green per step:
+
+| Executor group | Sub-trait(s) consumed | Pure helpers to den-tools |
+|---|---|---|
+| `web/` | `WebFetcher` | URL/SSRF normalize, html→text, truncate |
+| `prompt_memory` | `PromptMemoryStore` | scope/text validators |
+| `work_surface/` | `WorkSurfaceOps` + `RoleMemoryStore` | hint inference, slug, orientation payload |
+| `memory_read` | `RoleMemoryStore` + `PromptMemoryStore` | — |
+| `memory_write` | `RoleMemoryStore` | write-semantics validators |
+| `observations` | `MemoryReviewStore` | text validators |
+| `memory_review` | `MemoryReviewStore` (+ projections) | text validators |
+| `plan_mode` | `PlanModeOps` + `RoleMemoryStore` | turn_state render is pure-ish |
+| `workflow` | `den_docket::DocketService` | activity-payload builders |
+| dispatcher + `environment` + bear/user/policy | `BearDirectory` + `ConversationTitleOps` + `RoleMemoryStore` | channel/policy payloads |
+
+### Prerequisite type migrations (do these as each group moves)
+
+- **den-core:** `Bear`, `BearMember`, `UserRecord`, `BearObservationRow`, and the
+  proposal/observation param/enum types (`CreateMemoryProposal`,
+  `ProposalResolutionParams`, …) — they are foundation rows shared widely.
+- **den-tools:** the tool-shaped result/arg types (`MemoryReadResult`,
+  `MemoryTree`, `MemoryWriteOutcome`, `PromptMemoryBlock*`, `PlanModeState`,
+  `WorkSurfaceScaffold*`, `WebFetch*`, `NormalizedWebUrl`) and the now-relocated
+  `DenToolInvocationContext`.
+- **Open question:** `AcpResolvedSessionPolicy` / `AcpToolEnablementState` /
+  `turn_state` straddle ACP and tools; decide whether they land in `den-core` or a
+  later `den-acp` before `plan_mode` moves. Until then, `plan_mode` is the last
+  group to migrate.
+
+Hard gate per step: `cargo check --workspace --all-targets` green + `den-tools`
+clippy advisory-clean.
