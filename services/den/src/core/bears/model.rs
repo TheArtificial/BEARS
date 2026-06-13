@@ -4,7 +4,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::FromRow;
-use std::{fmt, str::FromStr};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -47,77 +46,10 @@ fn default_provisioning_version() -> i32 {
     1
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BearProfile {
-    Chat,
-    Pair,
-    Curate,
-    Work,
-    Watch,
-}
-
-impl BearProfile {
-    pub const ALL: [Self; 5] = [
-        Self::Chat,
-        Self::Pair,
-        Self::Curate,
-        Self::Work,
-        Self::Watch,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Chat => "chat",
-            Self::Pair => "pair",
-            Self::Curate => "curate",
-            Self::Work => "work",
-            Self::Watch => "watch",
-        }
-    }
-
-    pub fn is_harness_backed(self) -> bool {
-        matches!(self, Self::Chat | Self::Work)
-    }
-
-    pub fn runtime_family(self) -> &'static str {
-        if self.is_harness_backed() {
-            "letta_code_harness"
-        } else {
-            "letta_api_direct"
-        }
-    }
-
-    pub fn tags_for_bear(self, bear_id: Uuid) -> Vec<String> {
-        vec![
-            format!("bear:{bear_id}"),
-            format!("profile:{}", self.as_str()),
-            format!("bear:{bear_id}:profile:{}", self.as_str()),
-            "git-memory-enabled".to_string(),
-        ]
-    }
-}
-
-impl fmt::Display for BearProfile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for BearProfile {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "chat" => Ok(Self::Chat),
-            "pair" => Ok(Self::Pair),
-            "curate" => Ok(Self::Curate),
-            "work" => Ok(Self::Work),
-            "watch" => Ok(Self::Watch),
-            other => Err(format!("unknown bear profile: {other}")),
-        }
-    }
-}
+// `BearProfile` now lives in the `den-core` foundation crate (shared by runtime,
+// docket, tools, memory, web/api). Re-exported here so existing
+// `crate::core::bears::{BearProfile, model::BearProfile}` paths keep compiling.
+pub use den_core::BearProfile;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct BearProfileBinding {

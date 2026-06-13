@@ -6,5 +6,7 @@
 pub mod config;
 pub mod error;
 pub mod metrics;
+pub mod profile;
 
 pub use error::DenError;
+pub use profile::BearProfile;
