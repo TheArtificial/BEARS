@@ -12,6 +12,8 @@ use crate::{
     errors::CustomError,
 };
 
+use den_tools::workflow::WorkPlanOps;
+
 use crate::core::tools::{
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
     arguments::SetConversationTitleArguments,
@@ -48,7 +50,7 @@ use crate::core::tools::{
     },
     prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
     web::{web_fetch, web_search},
-    workflow::{get_work_plan_status, list_work_plans, update_work_plan},
+    workflow,
     work_surface::{
         build_work_surface_orientation_payload, collect_memory_tree_paths,
         create_work_surface_scaffold, infer_work_surface_hint, work_surface_candidate_slug,
@@ -215,23 +217,22 @@ pub async fn invoke_den_tool(
             apply_core_update(pool, config, stores, &context, role, arguments).await
         }
         DEN_WORK_PLAN_LIST => {
-            list_work_plans(
-                pool,
-                config,
-                stores,
-                &context,
-                role,
-                arguments,
-                crate::core::tools::activity_payloads::activity_payload,
-                crate::core::tools::activity_payloads::plan_mode_workplan_payload,
-            )
-            .await
+            workflow::DenWorkPlanOps { pool, config, stores }
+                .list_work_plans(&context, role, arguments)
+                .await
+                .map_err(CustomError::from)
         }
         DEN_WORK_PLAN_GET_STATUS => {
-            get_work_plan_status(pool, &context, role, arguments, crate::core::tools::activity_payloads::activity_payload).await
+            workflow::DenWorkPlanOps { pool, config, stores }
+                .get_work_plan_status(&context, role, arguments)
+                .await
+                .map_err(CustomError::from)
         }
         DEN_WORK_PLAN_UPDATE => {
-            update_work_plan(pool, &context, role, arguments, crate::core::tools::activity_payloads::activity_payload).await
+            workflow::DenWorkPlanOps { pool, config, stores }
+                .update_work_plan(&context, role, arguments)
+                .await
+                .map_err(CustomError::from)
         }
         DEN_PLAN_MODE_ENTER => {
             enter_plan_mode(pool, &context, arguments, crate::core::tools::activity_payloads::plan_mode_workplan_payload).await

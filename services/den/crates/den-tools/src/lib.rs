@@ -28,6 +28,7 @@ pub mod plan_mode;
 pub mod review;
 pub mod support;
 pub mod work_surface;
+pub mod workflow;
 pub mod tool_descriptor_guidance;
 pub mod validation;
 pub mod web;

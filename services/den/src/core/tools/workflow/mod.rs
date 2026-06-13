@@ -1,7 +1,10 @@
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
+
+use den_tools::workflow::WorkPlanOps;
 
 use crate::{
     config::Config,
@@ -12,6 +15,7 @@ use crate::{
         memory::{tools as sqlite_memory, MemoryStoreManager},
         memory_manager_head::fetch_memfs_role_plan_artifacts,
         tools::{
+            activity_payloads::{activity_payload, plan_mode_workplan_payload},
             memfs::memfs_http_client,
             memory_write::source_acp_session_id,
             session::DenToolInvocationContext,
@@ -22,8 +26,60 @@ use crate::{
             WorkPlanUpsert, WorkPlanVisibility,
         },
     },
-    errors::CustomError,
+    errors::{CustomError, DenError},
 };
+
+/// Concrete [`WorkPlanOps`] over the runtime pool/config/stores.
+pub(crate) struct DenWorkPlanOps<'a> {
+    pub(crate) pool: &'a PgPool,
+    pub(crate) config: &'a Config,
+    pub(crate) stores: &'a MemoryStoreManager,
+}
+
+#[async_trait]
+impl WorkPlanOps for DenWorkPlanOps<'_> {
+    async fn list_work_plans(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        list_work_plans(
+            self.pool,
+            self.config,
+            self.stores,
+            context,
+            role,
+            arguments,
+            activity_payload,
+            plan_mode_workplan_payload,
+        )
+        .await
+        .map_err(CustomError::into_den)
+    }
+
+    async fn get_work_plan_status(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        get_work_plan_status(self.pool, context, role, arguments, activity_payload)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn update_work_plan(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        update_work_plan(self.pool, context, role, arguments, activity_payload)
+            .await
+            .map_err(CustomError::into_den)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkPlanListArguments {
