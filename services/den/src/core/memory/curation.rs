@@ -17,24 +17,17 @@ use crate::{
                 MemoryStoreManager,
             },
         },
-        memory_proposals::{self, CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
+        memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
     },
     errors::CustomError,
 };
 
-pub fn uses_sqlite_curation(config: &Config) -> bool {
-    config.uses_native_agent_runtime()
-}
-
 pub async fn create_proposal(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     params: CreateMemoryProposal<'_>,
 ) -> Result<MemoryProposalRow, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return memory_proposals::create(pool, params).await;
-    }
     let store = stores.store_for_bear(params.bear_id).await?;
     let payload = json!({
         "source_profile": params.source_profile.as_str(),
@@ -64,14 +57,11 @@ pub async fn create_proposal(
 }
 
 pub async fn create_observation(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     params: CreateBearObservation<'_>,
 ) -> Result<BearObservationRow, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return bear_observations::create(pool, params).await;
-    }
     let store = stores.store_for_bear(params.bear_id).await?;
     let logical_path = bear_observations::observation_logical_path(params.observation_id);
     let sqlite = create_memory_observation(
@@ -87,30 +77,24 @@ pub async fn create_observation(
 }
 
 pub async fn get_observation(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return bear_observations::get_for_bear(pool, bear_id, observation_id).await;
-    }
     let store = stores.store_for_bear(bear_id).await?;
     let sqlite = store::get_memory_observation(&store, observation_id).await?;
     Ok(sqlite.map(|row| sqlite_observation_to_row(bear_id, &row)))
 }
 
 pub async fn mark_observation_review_queued_for_bear(
-    config: &Config,
+    _config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     observation_id: &str,
     proposal_id: Uuid,
 ) -> Result<(), CustomError> {
-    if !uses_sqlite_curation(config) {
-        return Ok(());
-    }
     let store = stores.store_for_bear(bear_id).await?;
     mark_observation_review_queued(&store, observation_id, &proposal_id.to_string())
         .await
@@ -118,16 +102,13 @@ pub async fn mark_observation_review_queued_for_bear(
 }
 
 pub async fn list_proposals(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     status: Option<&str>,
     limit: i64,
 ) -> Result<Vec<MemoryProposalRow>, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return memory_proposals::list_for_bear(pool, bear_id, status, limit).await;
-    }
     let store = stores.store_for_bear(bear_id).await?;
     let rows = list_memory_proposals(&store, status, limit).await?;
     Ok(rows
@@ -149,22 +130,16 @@ pub async fn get_proposal(
     bear_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<Option<MemoryProposalRow>, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return memory_proposals::get_for_bear(pool, bear_id, proposal_id).await;
-    }
     let proposals = list_proposals(pool, config, stores, bear_id, None, 500).await?;
     Ok(proposals.into_iter().find(|row| row.id == proposal_id))
 }
 
 pub async fn resolve_proposal(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     params: ProposalResolutionParams<'_>,
 ) -> Result<MemoryProposalRow, CustomError> {
-    if !uses_sqlite_curation(config) {
-        return memory_proposals::resolve_for_bear(pool, params).await;
-    }
     let store = stores.store_for_bear(params.bear_id).await?;
     let review_payload = json!({
         "reviewer_profile": params.reviewer_profile.as_str(),

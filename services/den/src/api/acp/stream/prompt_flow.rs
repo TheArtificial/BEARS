@@ -394,7 +394,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
                 &body.client_context,
                 Some(&resolved_policy),
             ),
-            state.config.uses_native_agent_runtime(),
+            true,
         )
     });
     let auto_title_tool_advertised = merged_client_tool_descriptors

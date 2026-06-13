@@ -16,12 +16,11 @@ use crate::{
 
 pub struct DenNativeProfileRegistry<'a> {
     pool: &'a PgPool,
-    config: &'a Config,
 }
 
 impl<'a> DenNativeProfileRegistry<'a> {
-    pub fn new(pool: &'a PgPool, config: &'a Config) -> Self {
-        Self { pool, config }
+    pub fn new(pool: &'a PgPool, _config: &'a Config) -> Self {
+        Self { pool }
     }
 
     pub async fn resolve_binding(
@@ -29,22 +28,14 @@ impl<'a> DenNativeProfileRegistry<'a> {
         bear_id: Uuid,
         profile: BearProfile,
     ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
-        if self.config.uses_native_agent_runtime() {
-            let binding_id = bears_db::profile_binding_id(self.pool, bear_id, profile)
-                .await?
-                .filter(|id| !id.trim().is_empty())
-                .unwrap_or_else(|| format!("den-native:{bear_id}:{}", profile.as_str()));
-            return Ok(Some(RoleRuntimeBinding {
-                binding_id,
-                compatibility_backend: Some("runtime:native".to_string()),
-            }));
-        }
-        Ok(bears_db::profile_binding_id(self.pool, bear_id, profile)
+        let binding_id = bears_db::profile_binding_id(self.pool, bear_id, profile)
             .await?
-            .map(|binding_id| RoleRuntimeBinding {
-                binding_id,
-                compatibility_backend: Some("runtime:letta".to_string()),
-            }))
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or_else(|| format!("den-native:{bear_id}:{}", profile.as_str()));
+        Ok(Some(RoleRuntimeBinding {
+            binding_id,
+            compatibility_backend: Some("runtime:native".to_string()),
+        }))
     }
 }
 

@@ -27,7 +27,7 @@ pub use admin_inspect::{
 pub use curation::{
     create_observation, create_proposal, get_observation, get_proposal, list_proposals,
     mark_observation_review_queued_for_bear, promote_core_content, record_reflection_outcome_complete,
-    record_reflection_outcome_start, resolve_proposal, uses_sqlite_curation,
+    record_reflection_outcome_start, resolve_proposal,
 };
 pub use store::{
     has_work_surface_canonical_anchor, head_record_for_logical_path, list_profile_local_head_records,

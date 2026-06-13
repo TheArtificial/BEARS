@@ -194,25 +194,13 @@ pub(super) async fn cancel_session_inner(
             "ACP cancel found an active stream but no runtime run_ids; skipped upstream cancel to avoid agent-wide cancellation"
         );
     }
-    let cancel_result = if state.config.uses_native_agent_runtime() {
-        cancel_runtime_runs_by_id_or_skip(
-            &state,
-            pair_agent_id.as_deref().unwrap_or("native"),
-            &run_ids,
-            "explicit_acp_session_cancel",
-        )
-        .await
-    } else if let Some(agent_id) = pair_agent_id.as_deref() {
-        cancel_runtime_runs_by_id_or_skip(
-            &state,
-            agent_id,
-            &run_ids,
-            "explicit_acp_session_cancel",
-        )
-        .await
-    } else {
-        serde_json::json!({ "ok": false, "error": "pair role agent id is missing" })
-    };
+    let cancel_result = cancel_runtime_runs_by_id_or_skip(
+        &state,
+        pair_agent_id.as_deref().unwrap_or("native"),
+        &run_ids,
+        "explicit_acp_session_cancel",
+    )
+    .await;
     state
         .acp_tool_turns
         .cleanup_session(&session.acp_session_id);

@@ -405,18 +405,16 @@ pub async fn run_next_memory_curate_once(
         return Ok(None);
     };
 
-    if config.uses_native_agent_runtime() {
-        let input_summary = run.input_summary.to_string();
-        let _ = record_reflection_outcome_start(
-            stores,
-            bear_id,
-            &run.id.to_string(),
-            &run.lane,
-            &run.trigger,
-            Some(input_summary.as_str()),
-        )
-        .await;
-    }
+    let input_summary = run.input_summary.to_string();
+    let _ = record_reflection_outcome_start(
+        stores,
+        bear_id,
+        &run.id.to_string(),
+        &run.lane,
+        &run.trigger,
+        Some(input_summary.as_str()),
+    )
+    .await;
 
     let proposal_ids = proposal_ids_from_summary(&run.input_summary);
     let output = match execute_memory_curate_run(
@@ -432,43 +430,39 @@ pub async fn run_next_memory_curate_once(
     {
         Ok(output) => output,
         Err(error) => {
-            if config.uses_native_agent_runtime() {
-                let _ = record_reflection_outcome_complete(
-                    stores,
-                    bear_id,
-                    &run.id.to_string(),
-                    "failed",
-                    Some(error.to_string().as_str()),
-                    &proposal_ids
-                        .iter()
-                        .map(|id| id.to_string())
-                        .collect::<Vec<_>>(),
-                )
-                .await;
-            }
+            let _ = record_reflection_outcome_complete(
+                stores,
+                bear_id,
+                &run.id.to_string(),
+                "failed",
+                Some(error.to_string().as_str()),
+                &proposal_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .await;
             let failed_run =
                 mark_memory_curate_failed(pool, run.bear_id, run.id, &error.to_string()).await?;
             return Ok(Some(failed_run));
         }
     };
 
-    if config.uses_native_agent_runtime() {
-        let summary = memory_curate_output_summary(&output).to_string();
-        let _ = record_reflection_outcome_complete(
-            stores,
-            bear_id,
-            &run.id.to_string(),
-            "completed",
-            Some(summary.as_str()),
-            &proposal_ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>(),
-        )
-        .await;
-    }
+    let summary = memory_curate_output_summary(&output).to_string();
+    let _ = record_reflection_outcome_complete(
+        stores,
+        bear_id,
+        &run.id.to_string(),
+        "completed",
+        Some(summary.as_str()),
+        &proposal_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>(),
+    )
+    .await;
 
-    if config.uses_native_agent_runtime() && !output.briefing.is_empty() {
+    if !output.briefing.is_empty() {
         maybe_run_native_curate_briefing_turn(pool, config, stores, bear_id, &run, &output).await;
     }
 

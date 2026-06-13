@@ -9,9 +9,7 @@ use crate::{
         memory::{
             get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
         },
-        memory_manager_head::{write_memfs_core_update, MemfsCoreUpdateRequest},
         memory_proposals::{MemoryProposalRow, ProposalResolutionParams},
-        tools::memfs::memfs_http_client,
     },
     errors::CustomError,
 };
@@ -407,53 +405,21 @@ async fn apply_core_promotion(
     triage: &CurateTriage,
 ) -> Result<(String, Option<String>), CustomError> {
     let target_path = core_target_path(proposal);
-    let (result_path, result_commit) = if config.uses_native_agent_runtime() {
-        let kind = target_path
-            .split('/')
-            .next_back()
-            .unwrap_or("note")
-            .trim_end_matches(".md");
-        let (memory_id, _promotion_id) = promote_core_content(
-            stores,
-            bear_id,
-            &proposal.id.to_string(),
-            kind,
-            &promotion_body(proposal),
-            BearProfile::Curate.as_str(),
-        )
-        .await?;
-        (target_path, Some(memory_id))
-    } else {
-        if config.letta_memfs_service_url.trim().is_empty() {
-            return Err(CustomError::System(
-                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-            ));
-        }
-        let http = memfs_http_client("MemFS memory_curate core update client build failed")?;
-        let request = MemfsCoreUpdateRequest {
-            target_path: target_path.clone(),
-            mode: "append_section".to_string(),
-            title: Some(proposal.title.clone()),
-            body: Some(promotion_body(proposal)),
-            old_text: None,
-            new_text: None,
-            proposal_id: Some(proposal.id),
-            source_paths: proposal.source_paths.clone(),
-        };
-        let response = write_memfs_core_update(
-            &http,
-            &config.letta_memfs_service_url,
-            bear_id,
-            &request,
-        )
-        .await?;
-        let Some(response) = response else {
-            return Err(CustomError::System(
-                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-            ));
-        };
-        (response.path, response.canonical_tip)
-    };
+    let kind = target_path
+        .split('/')
+        .next_back()
+        .unwrap_or("note")
+        .trim_end_matches(".md");
+    let (memory_id, _promotion_id) = promote_core_content(
+        stores,
+        bear_id,
+        &proposal.id.to_string(),
+        kind,
+        &promotion_body(proposal),
+        BearProfile::Curate.as_str(),
+    )
+    .await?;
+    let (result_path, result_commit) = (target_path, Some(memory_id));
     resolve_proposal(
         pool,
         config,

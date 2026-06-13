@@ -136,15 +136,11 @@ async fn ensure_user(pool: &PgPool, username: &str, password: &str) -> Result<i3
 }
 
 fn smoke_default_model(config: &Config) -> &str {
-    if config.uses_native_agent_runtime() {
-        let trimmed = config.default_llm_model.trim();
-        if trimmed.is_empty() {
-            "openai/gpt-4o-mini"
-        } else {
-            trimmed
-        }
+    let trimmed = config.default_llm_model.trim();
+    if trimmed.is_empty() {
+        "openai/gpt-4o-mini"
     } else {
-        "letta/letta-free"
+        trimmed
     }
 }
 
@@ -152,12 +148,6 @@ async fn ensure_bear(pool: &PgPool, slug: &str, config: &Config) -> Result<uuid:
     if let Some(id) = bear_id_by_slug(pool, slug).await? {
         return Ok(id);
     }
-
-    let letta_agent_type = if config.uses_native_agent_runtime() {
-        None
-    } else {
-        Some("letta_v1_agent")
-    };
 
     bears_db::create_bear(
         pool,
@@ -168,7 +158,7 @@ async fn ensure_bear(pool: &PgPool, slug: &str, config: &Config) -> Result<uuid:
             system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
             default_model: None,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type,
+            letta_agent_type: None,
             letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
@@ -179,37 +169,23 @@ async fn ensure_bear(pool: &PgPool, slug: &str, config: &Config) -> Result<uuid:
 
 async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid, config: &Config) -> Result<()> {
     let model = smoke_default_model(config);
-    if config.uses_native_agent_runtime() {
-        sqlx::query(
-            r#"
-            UPDATE bears
-            SET default_model = $2
-            WHERE id = $1
-              AND (
-                default_model IS NULL
-                OR btrim(default_model) = ''
-                OR default_model LIKE 'letta/%'
-                OR strpos(default_model, '/') = 0
-              )
-            "#,
-        )
-        .bind(bear_id)
-        .bind(model)
-        .execute(pool)
-        .await?;
-    } else {
-        sqlx::query(
-            r#"
-            UPDATE bears
-            SET default_model = COALESCE(NULLIF(default_model, ''), $2)
-            WHERE id = $1
-            "#,
-        )
-        .bind(bear_id)
-        .bind(model)
-        .execute(pool)
-        .await?;
-    }
+    sqlx::query(
+        r#"
+        UPDATE bears
+        SET default_model = $2
+        WHERE id = $1
+          AND (
+            default_model IS NULL
+            OR btrim(default_model) = ''
+            OR default_model LIKE 'letta/%'
+            OR strpos(default_model, '/') = 0
+          )
+        "#,
+    )
+    .bind(bear_id)
+    .bind(model)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
