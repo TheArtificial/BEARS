@@ -66,17 +66,6 @@ pub fn requires_jwt_secret(config: &Config) -> bool {
     }
 }
 
-fn allow_standalone_web_from_env() -> bool {
-    std::env::var("DEN_ALLOW_STANDALONE_WEB")
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
     if requires_jwt_secret(config) {
@@ -95,41 +84,11 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if acp_requires_runtime(config)
-        && config.letta_base_url.trim().is_empty()
-        && !config.uses_native_agent_runtime()
-    {
+    if acp_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=letta. \
-             Set AGENT_RUNTIME=native to use the Den in-process agent loop with LLM_API_URL."
+            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true (Den-native agent loop)."
                 .into(),
         ));
-    }
-    if acp_requires_runtime(config)
-        && config.uses_native_agent_runtime()
-        && config.llm_api_url.trim().is_empty()
-    {
-        return Err(StartupError::Message(
-            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=native."
-                .into(),
-        ));
-    }
-    if config.run_web
-        && config.codepool_base_url.trim().is_empty()
-        && !config.uses_native_agent_runtime()
-        && !allow_standalone_web_from_env()
-    {
-        return Err(StartupError::Message(
-            "CODEPOOL_BASE_URL must be set when RUN_WEB=true and AGENT_RUNTIME=letta. \
-             Set AGENT_RUNTIME=native for the Den in-process runtime, or \
-             DEN_ALLOW_STANDALONE_WEB=true for local UI-only runs."
-                .into(),
-        ));
-    }
-    if !config.uses_native_agent_runtime() {
-        tracing::warn!(
-            "AGENT_RUNTIME=letta is deprecated and will be removed in Phase 8; use AGENT_RUNTIME=native"
-        );
     }
     Ok(())
 }
@@ -187,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_api_and_letta_when_acp_enabled() {
+    fn validate_requires_api_and_llm_when_acp_enabled() {
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
@@ -195,13 +154,19 @@ mod tests {
 
         let mut acp_on = Config::test_stub();
         acp_on.acp_gateway_enabled = true;
-        assert!(validate_runtime_config(&acp_on).is_err());
+        assert!(
+            validate_runtime_config(&acp_on).is_err(),
+            "ACP_GATEWAY_ENABLED requires RUN_API"
+        );
 
         acp_on.run_api = true;
-        assert!(validate_runtime_config(&acp_on).is_err());
+        assert!(
+            validate_runtime_config(&acp_on).is_err(),
+            "ACP runtime requires LLM_API_URL"
+        );
 
-        acp_on.letta_base_url = "http://bears-letta:8283".into();
-        validate_runtime_config(&acp_on).expect("ACP with API and Letta should pass");
+        acp_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
+        validate_runtime_config(&acp_on).expect("ACP with API and LLM_API_URL should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },
@@ -210,44 +175,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_codepool_when_run_web_and_letta_runtime() {
+    fn validate_allows_run_web_without_legacy_runtime() {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
-        web_on.agent_runtime_mode = crate::config::AgentRuntimeMode::Letta;
-        web_on.codepool_base_url = String::new();
-        assert!(
-            validate_runtime_config(&web_on).is_err(),
-            "RUN_WEB=true with letta runtime requires CODEPOOL_BASE_URL"
-        );
-        web_on.codepool_base_url = "http://localhost:3030".into();
-        validate_runtime_config(&web_on).expect("RUN_WEB with Codepool should pass");
-    }
-
-    #[test]
-    fn validate_allows_missing_codepool_when_native_runtime() {
-        let mut web_on = Config::test_stub();
-        web_on.run_web = true;
-        web_on.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
-        web_on.codepool_base_url = String::new();
-        web_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
-        validate_runtime_config(&web_on).expect("native runtime does not require Codepool");
-    }
-
-    #[test]
-    fn standalone_web_allows_missing_codepool() {
-        let prev = std::env::var("DEN_ALLOW_STANDALONE_WEB").ok();
-        unsafe {
-            std::env::set_var("DEN_ALLOW_STANDALONE_WEB", "true");
-        }
-
-        let mut web_on = Config::test_stub();
-        web_on.run_web = true;
-        web_on.codepool_base_url = String::new();
-        validate_runtime_config(&web_on).expect("standalone web skips Codepool requirement");
-
-        match prev {
-            Some(v) => unsafe { std::env::set_var("DEN_ALLOW_STANDALONE_WEB", v) },
-            None => unsafe { std::env::remove_var("DEN_ALLOW_STANDALONE_WEB") },
-        }
+        validate_runtime_config(&web_on).expect("RUN_WEB has no legacy runtime requirement");
     }
 }

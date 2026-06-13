@@ -87,7 +87,7 @@ async fn invoke_den_tool(
 }
 
 fn authorize_internal_request(state: &ApiState, headers: &HeaderMap) -> Result<(), Box<Response>> {
-    let expected = state.config.codepool_internal_token.trim();
+    let expected = state.config.den_internal_token.trim();
     if expected.is_empty() {
         return Ok(());
     }

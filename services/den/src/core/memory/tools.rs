@@ -2,7 +2,6 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
     core::memory::store::{
         append_memory_record, list_records_for_logical_path, LogicalMemoryPath, MemoryStoreManager,
     },
@@ -13,7 +12,6 @@ use super::store::BearMemoryStore;
 
 pub async fn sqlite_write_at_path(
     stores: &MemoryStoreManager,
-    config: &Config,
     bear_id: Uuid,
     logical_path: &str,
     author_profile: &str,
@@ -31,10 +29,7 @@ pub async fn sqlite_write_at_path(
     let mut metadata_obj = metadata.as_object().cloned().unwrap_or_default();
     metadata_obj.insert("title".to_string(), json!(title));
     metadata_obj.insert("storage".to_string(), json!("sqlite"));
-    metadata_obj.insert(
-        "runtime".to_string(),
-        json!(config.agent_runtime_mode.as_str()),
-    );
+    metadata_obj.insert("runtime".to_string(), json!("native"));
     let row = append_memory_record(
         &store,
         &logical,
@@ -58,7 +53,6 @@ pub async fn sqlite_write_at_path(
 
 pub async fn sqlite_write_profile_entry(
     stores: &MemoryStoreManager,
-    config: &Config,
     bear_id: Uuid,
     profile: &str,
     kind: &str,
@@ -77,7 +71,7 @@ pub async fn sqlite_write_profile_entry(
         "source": source,
         "author": author,
         "storage": "sqlite",
-        "runtime": config.agent_runtime_mode.as_str(),
+        "runtime": "native",
     });
     let row = append_memory_record(
         &store,

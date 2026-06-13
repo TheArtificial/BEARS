@@ -3757,13 +3757,10 @@ use crate::core::prompt_memory_blocks::{
                 cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::load();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -3945,13 +3942,10 @@ use crate::core::prompt_memory_blocks::{
                 captured: captured.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::load();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4112,13 +4106,10 @@ use crate::core::prompt_memory_blocks::{
                 captured: captured.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::load();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4266,7 +4257,6 @@ use crate::core::prompt_memory_blocks::{
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
-        let config = crate::config::Config::test_stub();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4355,7 +4345,6 @@ use crate::core::prompt_memory_blocks::{
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
-        let config = crate::config::Config::test_stub();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4484,13 +4473,10 @@ use crate::core::prompt_memory_blocks::{
                 cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::test_stub();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4628,13 +4614,11 @@ use crate::core::prompt_memory_blocks::{
                 captured: captured.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
         let mut config = crate::config::Config::load();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4719,7 +4703,6 @@ use crate::core::prompt_memory_blocks::{
         use std::sync::Arc;
 
         let mut config = crate::config::Config::load();
-        config.letta_base_url = "http://127.0.0.1:9".to_string();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4868,15 +4851,12 @@ use crate::core::prompt_memory_blocks::{
                 captured: captured.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
         std::env::set_var("BEARS_ACP_TOOL_TIMEOUT_MS", "20");
 
-        let mut config = crate::config::Config::load();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5331,7 +5311,6 @@ use crate::core::prompt_memory_blocks::{
             "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_cancel\",",
             "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
         )))]);
-        let config = crate::config::Config::test_stub();
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let mut stream = AcpRuntimeSseStream::new(
             acp_test_runtime_event_stream(upstream),
@@ -5415,13 +5394,10 @@ use crate::core::prompt_memory_blocks::{
                 cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::test_stub();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5548,13 +5524,10 @@ use crate::core::prompt_memory_blocks::{
                 cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::test_stub();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5673,13 +5646,10 @@ use crate::core::prompt_memory_blocks::{
                 cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::test_stub();
-        config.letta_base_url = format!("http://{addr}");
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();

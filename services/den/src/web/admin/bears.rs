@@ -852,7 +852,7 @@ async fn edit_prompt_view(
             bear,
             form,
             context_profile_enabled,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
         },
     )
     .await
@@ -934,7 +934,7 @@ async fn edit_prompt_action(
                 form => form,
                 bear,
                 context_profile_enabled,
-                native_runtime => state.config.uses_native_agent_runtime(),
+                native_runtime => true,
             },
         )
         .await

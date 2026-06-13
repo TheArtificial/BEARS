@@ -1353,7 +1353,7 @@ async fn render_bear_details_page(
     can_manage_bear: bool,
 ) -> Result<Response, CustomError> {
     let letta_configured = true;
-    let letta_api_base = state.config.letta_base_url.trim().to_string();
+    let letta_api_base = String::new();
     let slug = bear.slug.clone();
     let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;

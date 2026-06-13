@@ -271,12 +271,10 @@ pub fn merge_den_and_client_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AgentRuntimeMode, Config};
+    use crate::config::Config;
 
     fn native_test_config() -> Config {
-        let mut config = Config::test_stub();
-        config.agent_runtime_mode = AgentRuntimeMode::Native;
-        config
+        Config::test_stub()
     }
 
     #[test]

@@ -82,7 +82,6 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         let stores = MemoryStoreManager::new(self.config);
         sqlite_memory::sqlite_write_profile_entry(
             &stores,
-            self.config,
             bear_id,
             role.as_str(),
             &entry.kind,

@@ -18,31 +18,6 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 /// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
 pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 
-/// Which agent turn backend Den uses for profile runtimes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AgentRuntimeMode {
-    /// Den-native in-process agent loop ([ADR-0035](../../docs/decisions/adr-0035-den-native-in-process-agent-runtime.md)).
-    Native,
-    /// Letta HTTP process (legacy escape hatch only).
-    Letta,
-}
-
-impl AgentRuntimeMode {
-    pub fn parse(raw: &str) -> Self {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "native" | "den" | "den-native" => Self::Native,
-            _ => Self::Letta,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Letta => "letta",
-            Self::Native => "native",
-        }
-    }
-}
-
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
         .map(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -51,20 +26,6 @@ pub fn session_cookie_secure_from_env(default: bool) -> bool {
             _ => default,
         })
         .unwrap_or(default)
-}
-
-fn letta_base_url_from_env() -> String {
-    std::env::var("LETTA_BASE_URL")
-        .unwrap_or_default()
-        .trim_end_matches('/')
-        .to_string()
-}
-
-fn codepool_base_url_from_env() -> String {
-    std::env::var("CODEPOOL_BASE_URL")
-        .unwrap_or_default()
-        .trim_end_matches('/')
-        .to_string()
 }
 
 /// Explicit fixture profiles for feature-gated web UI smoke testing.
@@ -144,23 +105,8 @@ pub struct Config {
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 
-    /// Letta server base URL (no trailing slash), e.g. `http://letta:8283`. Empty = provisioning/chat proxy disabled.
-    pub letta_base_url: String,
-    /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
-    pub letta_api_key: String,
-
-    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bears-codepool:3030`.
-    /// Required when `run_web` is true — `startup::validate_runtime_config` enforces this.
-    pub codepool_base_url: String,
-    /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
-    pub codepool_internal_token: String,
-
-    /// **MemFS Manager** (Letta `LETTA_MEMFS_SERVICE_URL` — git sidecar) base URL (no trailing slash), e.g. `http://bears-memfs-manager:8285`. Empty = skip private-memory readout in Den.
-    pub letta_memfs_service_url: String,
-
-    /// Letta’s Postgres URI when external DB is used (`LETTA_PG_URI`). Empty = not checked on Den.
-    /// Shape rules match deploy docs and `services/preflight` (prefer `postgresql://`).
-    pub letta_pg_uri: String,
+    /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty = internal auth disabled.
+    pub den_internal_token: String,
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
@@ -175,8 +121,6 @@ pub struct Config {
     pub llm_api_key: String,
     /// Default model handle for native runtime turns (`DEFAULT_LLM_MODEL`).
     pub default_llm_model: String,
-    /// Agent turn backend selection (`AGENT_RUNTIME=native|letta`, default `native`).
-    pub agent_runtime_mode: AgentRuntimeMode,
     /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `/var/lib/den/bear-sqlite`).
     pub bear_sqlite_data_dir: String,
 
@@ -230,11 +174,6 @@ impl Config {
     /// Web origin without trailing slash — use for path suffixes: `{}{path}`.
     pub fn web_public_origin(&self) -> String {
         self.web_server_url.trim_end_matches('/').to_string()
-    }
-
-    /// Distinct browser `Origin` values for CORS (scheme + host + port, no path).
-    pub fn uses_native_agent_runtime(&self) -> bool {
-        self.agent_runtime_mode == AgentRuntimeMode::Native
     }
 
     pub fn cors_allowed_origins(&self) -> Vec<String> {
@@ -387,19 +326,7 @@ impl Config {
                 .unwrap_or_else(|| "noreply@bears.artificial.design".to_string())
         });
 
-        let letta_base_url = letta_base_url_from_env();
-        let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
-
-        let codepool_base_url = codepool_base_url_from_env();
-        let codepool_internal_token = std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
-
-        let letta_memfs_service_url = std::env::var("LETTA_MEMFS_SERVICE_URL")
-            .unwrap_or_default()
-            .trim_end_matches('/')
-            .to_string();
-
-        let letta_pg_uri = std::env::var("LETTA_PG_URI").unwrap_or_default();
-        let letta_pg_uri = letta_pg_uri.trim().to_string();
+        let den_internal_token = std::env::var("DEN_INTERNAL_TOKEN").unwrap_or_default();
 
         let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
         let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
@@ -430,9 +357,6 @@ impl Config {
             .unwrap_or_default();
         let default_llm_model =
             std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "openai/gpt-4.1".to_string());
-        let agent_runtime_mode = AgentRuntimeMode::parse(
-            &std::env::var("AGENT_RUNTIME").unwrap_or_else(|_| "native".to_string()),
-        );
         let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
             .unwrap_or_else(|_| "/var/lib/den/bear-sqlite".to_string());
 
@@ -530,18 +454,12 @@ impl Config {
             api_port,
             web_server_url,
             api_server_url,
-            letta_base_url,
-            letta_api_key,
-            codepool_base_url,
-            codepool_internal_token,
-            letta_memfs_service_url,
-            letta_pg_uri,
+            den_internal_token,
             bifrost_base_url,
             bifrost_metadata_url,
             llm_api_url,
             llm_api_key,
             default_llm_model,
-            agent_runtime_mode,
             bear_sqlite_data_dir,
             s3_endpoint,
             s3_bucket,
@@ -606,18 +524,12 @@ impl Config {
             api_port: 3001,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
-            letta_base_url: String::new(),
-            letta_api_key: String::new(),
-            codepool_base_url: String::new(),
-            codepool_internal_token: String::new(),
-            letta_memfs_service_url: String::new(),
-            letta_pg_uri: String::new(),
+            den_internal_token: String::new(),
             bifrost_base_url: String::new(),
             bifrost_metadata_url: String::new(),
             llm_api_url: String::new(),
             llm_api_key: String::new(),
             default_llm_model: "gpt-4.1".into(),
-            agent_runtime_mode: AgentRuntimeMode::Letta,
             bear_sqlite_data_dir: "/var/lib/den/bear-sqlite".into(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),

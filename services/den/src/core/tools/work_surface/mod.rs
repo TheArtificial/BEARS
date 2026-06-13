@@ -46,7 +46,6 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
             let title = request.title.as_deref().unwrap_or(name);
             let written = sqlite_memory::sqlite_write_at_path(
                 self.stores,
-                self.config,
                 bear_id,
                 &request.target_path,
                 role.as_str(),

@@ -33,13 +33,6 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
-def uses_native_agent_runtime() -> bool:
-    raw = os.environ.get("AGENT_RUNTIME", "native").strip().lower()
-    if not raw:
-        return True
-    return raw == "native"
-
-
 def require_non_empty(name: str) -> str:
     raw = os.environ.get(name)
     value = "" if raw is None else str(raw).strip()
@@ -119,23 +112,6 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
         f"{name} host is not reachable at {host}:{port} after {retries} attempts: {last_error}. "
         f"{hint}"
     )
-
-
-def validate_letta_pg_uri(reachable: bool = True) -> None:
-    value = require_non_empty("LETTA_PG_URI")
-    parse_sql_uri("LETTA_PG_URI", value)
-    if urlparse(value).scheme == "postgres":
-        fail(
-            "LETTA_PG_URI uses postgres:// — use postgresql:// so Alembic registers "
-            "the SQLAlchemy driver (see services/letta/COOLIFY_DEPLOY.md)"
-        )
-    info("LETTA_PG_URI parses as PostgreSQL URI")
-    if reachable:
-        validate_sql_tcp_reachable(
-            "LETTA_PG_URI",
-            value,
-            "Deploy/attach Letta's Postgres/pgvector database and set LETTA_PG_URI to its reachable internal URL.",
-        )
 
 
 def validate_http_url(name: str, value: str) -> None:
@@ -262,51 +238,6 @@ def validate_config_shape() -> None:
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
 
-    if uses_native_agent_runtime():
-        info(
-            "AGENT_RUNTIME=native — skipping Letta, Codepool, MemFS, and LETTA_PG_URI checks"
-        )
-    else:
-        letta_pass = os.environ.get("LETTA_SERVER_PASS", "").strip()
-        if letta_pass and letta_pass != "SETME":
-            info("LETTA_SERVER_PASS is set")
-        else:
-            warn(
-                "LETTA_SERVER_PASS is not set — required only when Letta API auth is enabled"
-            )
-        validate_letta_pg_uri(reachable=False)
-
-        letta_base = (
-            os.environ.get("LETTA_BASE_URL", "").strip() or "http://bears-letta:8283"
-        )
-        validate_http_url("LETTA_BASE_URL", letta_base)
-        info(f"LETTA_BASE_URL OK ({letta_base})")
-
-        memfs = (
-            os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip()
-            or "http://bears-memfs-manager:8285"
-        )
-        validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
-        info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
-
-        memfs_org = os.environ.get(
-            "MEMFS_DEFAULT_ORG", "org-00000000-0000-4000-8000-000000000000"
-        ).strip()
-        if memfs_org == "org-default":
-            fail(
-                "MEMFS_DEFAULT_ORG must not use the old placeholder 'org-default'; set it to Letta's org id or leave it unset for the default self-hosted org."
-            )
-        if not memfs_org.startswith("org-"):
-            fail("MEMFS_DEFAULT_ORG must look like a Letta org id (prefix 'org-')")
-        info(f"MEMFS_DEFAULT_ORG OK ({memfs_org})")
-
-        codepool_base = (
-            os.environ.get("CODEPOOL_BASE_URL", "").strip()
-            or "http://bears-codepool:3030"
-        )
-        validate_http_url("CODEPOOL_BASE_URL", codepool_base)
-        info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
-
     web = require_non_empty("WEB_SERVER_URL")
     validate_http_url("WEB_SERVER_URL", web)
     info(f"WEB_SERVER_URL OK ({web})")
@@ -326,23 +257,12 @@ def main() -> None:
         validate_config_shape()
     elif mode == "den-db":
         validate_database_url(reachable=True)
-    elif mode == "letta-pg":
-        if uses_native_agent_runtime():
-            info("AGENT_RUNTIME=native — skipping letta-pg preflight")
-        else:
-            validate_letta_pg_uri(reachable=True)
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        if uses_native_agent_runtime():
-            info("AGENT_RUNTIME=native — skipping letta-pg preflight")
-        else:
-            validate_letta_pg_uri(reachable=True)
         info("all preflight checks passed")
     else:
-        fail(
-            f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all"
-        )
+        fail(f"unknown preflight mode {mode!r}; expected config, den-db, or all")
 
 
 if __name__ == "__main__":

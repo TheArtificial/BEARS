@@ -3,9 +3,9 @@
 # Recommended for Coolify: Add Resource → Docker Compose → this repository,
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
-# Default stack (native runtime): `bears-bifrost`, `bears-den`, optional `bears-postgres` (profile `bundled`).
-# Letta, Codepool, MemFS, and Redis are not part of the default compose file; use the Den-native
-# agent loop (`AGENT_RUNTIME=native`) and per-Bear SQLite (`BEAR_SQLITE_DATA_DIR` / `bears-den-sqlite-data`).
+# Default stack: `bears-bifrost`, `bears-den`, optional `bears-postgres` (profile `bundled`).
+# The Den-native in-process agent loop and per-Bear SQLite (`BEAR_SQLITE_DATA_DIR` /
+# `bears-den-sqlite-data`) are the only runtime; Letta/Codepool/MemFS have been removed.
 #
 # PostgreSQL: set **`DATABASE_URL`** for `bears-den` (managed DB — preferred in Coolify).
 # Optional bundled Den Postgres: `COMPOSE_PROFILES=bundled` then `docker compose --profile bundled up -d`.
@@ -23,7 +23,6 @@ x-preflight-build: &preflight-build
     dockerfile: services/preflight/Dockerfile
 
 x-preflight-environment: &preflight-environment
-    AGENT_RUNTIME: ${AGENT_RUNTIME:-native}
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
@@ -149,7 +148,6 @@ services:
             bears-bifrost:
                 condition: service_healthy
         environment:
-            AGENT_RUNTIME: ${AGENT_RUNTIME:-native}
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}

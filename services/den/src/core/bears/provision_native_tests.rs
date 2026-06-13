@@ -12,7 +12,6 @@ async fn provision_bear_native_creates_den_native_bindings(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = Config::test_stub();
-    config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
     config.bear_sqlite_data_dir = format!("/tmp/bears-provision-native-{}", Uuid::new_v4());
 
     let bear_id = create_bear(

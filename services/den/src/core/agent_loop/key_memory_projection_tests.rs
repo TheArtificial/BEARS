@@ -45,7 +45,6 @@ async fn projects_shared_identity_anchors_without_work_surface() {
     let bear_id = Uuid::new_v4();
     let bear = legacy_test_bear(bear_id);
     let mut config = Config::test_stub();
-    config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
     config.bear_sqlite_data_dir = format!("/tmp/bears-kmp-{}", Uuid::new_v4());
     let stores = MemoryStoreManager::new(&config);
     let store = stores.store_for_bear(bear.id).await.expect("store");
@@ -86,7 +85,6 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
     let bear_id = Uuid::new_v4();
     let bear = legacy_test_bear(bear_id);
     let mut config = Config::test_stub();
-    config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
     config.bear_sqlite_data_dir = format!("/tmp/bears-kmp-anchor-{}", Uuid::new_v4());
     let stores = MemoryStoreManager::new(&config);
     let hints = WorkSurfaceSessionHints {
@@ -151,7 +149,6 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
     let bear_id = Uuid::new_v4();
     let bear = legacy_test_bear(bear_id);
     let mut config = Config::test_stub();
-    config.agent_runtime_mode = crate::config::AgentRuntimeMode::Native;
     config.bear_sqlite_data_dir = format!("/tmp/bears-kmp-resolved-{}", Uuid::new_v4());
     let stores = MemoryStoreManager::new(&config);
     let store = stores.store_for_bear(bear.id).await.expect("store");

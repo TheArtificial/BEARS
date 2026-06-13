@@ -99,7 +99,6 @@ pub(crate) async fn run_pair_reflection_summary(
         let logical_path = format!("pair/summaries/{artifact_id}.md");
         let written = sqlite_memory::sqlite_write_at_path(
             &state.memory_stores,
-            state.config.as_ref(),
             session.bear_id,
             &logical_path,
             BearProfile::Pair.as_str(),

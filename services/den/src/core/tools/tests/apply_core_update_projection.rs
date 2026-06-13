@@ -125,10 +125,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
-    let config = crate::config::Config {
-        letta_memfs_service_url: "http://127.0.0.1:9".to_string(),
-        ..crate::config::Config::test_stub()
-    };
+    let config = crate::config::Config::test_stub();
     let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,

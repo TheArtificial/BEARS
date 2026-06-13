@@ -13,13 +13,11 @@ mod tests {
     #[tokio::test]
     async fn sqlite_memory_round_trip() {
         let mut config = Config::test_stub();
-        config.agent_runtime_mode = den_core::config::AgentRuntimeMode::Native;
         config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-test-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();
         let written = sqlite_tools::sqlite_write_profile_entry(
             &stores,
-            &config,
             bear_id,
             "pair",
             "note",
@@ -51,7 +49,6 @@ mod tests {
     #[tokio::test]
     async fn sqlite_memory_links_round_trip() {
         let mut config = Config::test_stub();
-        config.agent_runtime_mode = den_core::config::AgentRuntimeMode::Native;
         config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-links-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();

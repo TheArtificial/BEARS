@@ -190,9 +190,6 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         title: &str,
         body: &str,
     ) -> Result<PlanModeExitView, DenError> {
-        let config = self.config.ok_or_else(|| {
-            DenError::System("plan mode exit requires runtime config".to_string())
-        })?;
         let stores = self.stores.ok_or_else(|| {
             DenError::System("plan mode exit requires memory stores".to_string())
         })?;
@@ -214,7 +211,6 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             let logical_path = format!("pair/plans/{artifact_id}.md");
             let written = sqlite_memory::sqlite_write_at_path(
                 stores,
-                config,
                 context.bear_id,
                 &logical_path,
                 BearProfile::Pair.as_str(),

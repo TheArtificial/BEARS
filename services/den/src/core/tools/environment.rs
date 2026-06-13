@@ -26,11 +26,11 @@ pub(crate) struct DenEnvironmentOps<'a> {
 #[async_trait]
 impl EnvironmentOps for DenEnvironmentOps<'_> {
     fn uses_native_runtime(&self) -> bool {
-        self.config.uses_native_agent_runtime()
+        true
     }
 
     fn memfs_configured(&self) -> bool {
-        !self.config.letta_memfs_service_url.trim().is_empty()
+        false
     }
 
     async fn memory_status_value(
