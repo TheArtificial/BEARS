@@ -4,7 +4,6 @@ pub mod bear_domains;
 pub mod bears;
 pub mod membership;
 pub mod oauth_clients;
-pub mod ops;
 pub mod users;
 
 use axum::response::Response;
@@ -20,7 +19,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(admin_home))
         .nest("/api", api::router())
-        .merge(ops::router())
         .merge(users::router())
         .merge(oauth_clients::router())
         .merge(bears::router())
@@ -40,10 +38,6 @@ async fn admin_home(
         context! {
             users => users,
             native_runtime => true,
-            letta_status => "native",
-            letta_detail => "AGENT_RUNTIME=native — Letta health checks are skipped.",
-            codepool_status => "native",
-            codepool_detail => "Not used under native runtime.",
         },
     )
     .await

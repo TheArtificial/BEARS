@@ -10,7 +10,6 @@ use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
-use std::collections::HashSet;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -18,7 +17,6 @@ use crate::{
     auth_backend::AuthSession,
     core::{
         bears::{db as bears_db, db::BearParams, provision, BearProfileBinding, BearProfile},
-        letta::{AgentSummary, LettaAgentListItem},
         memory::{
             admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
         },
@@ -41,14 +39,6 @@ use super::bear_domains;
 pub fn router() -> Router<AppState> {
     bear_domains::router().merge(Router::new())
         .route_with_tsr("/bears/", get(list_view))
-        .route_with_tsr(
-            "/bears/unlinked-letta-agents",
-            get(unlinked_letta_agents_view),
-        )
-        .route_with_tsr(
-            "/bears/register-memfs-views",
-            post(register_memfs_views_action),
-        )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
         .route_with_tsr(
@@ -546,61 +536,18 @@ async fn detail_view(
     bear_detail_response(&state, auth_session, id, query.message).await
 }
 
-#[derive(Debug, Deserialize)]
-struct BearsListQuery {
-    #[serde(default)]
-    error: Option<String>,
-    memfs: Option<String>,
-    views: Option<usize>,
-}
-
 async fn list_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Query(query): Query<BearsListQuery>,
 ) -> Result<Response, CustomError> {
     let bears = bears_db::list_bears(state.sqlx_pool()).await?;
-    let native_runtime = state.config.uses_native_agent_runtime();
-    let memfs_message = if native_runtime {
-        None
-    } else {
-        match query.memfs.as_deref() {
-            Some("ok") => Some(format!(
-                "MemFS sidecar role view registration complete: {} view(s) registered/refreshed.",
-                query.views.unwrap_or(0)
-            )),
-            Some("error") => Some(format!(
-                "MemFS sidecar role view registration failed: {}",
-                query
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "unknown error".to_string())
-            )),
-            _ => None,
-        }
-    };
     web::render_template(
         &state,
         "admin/bears/list.html",
         auth_session,
-        context! { bears, memfs_message, native_runtime },
+        context! { bears, native_runtime => true },
     )
     .await
-}
-
-async fn register_memfs_views_action(
-    State(state): State<AppState>,
-) -> Result<Response, CustomError> {
-    match provision::register_existing_role_views(state.sqlx_pool(), state.letta.as_ref()).await {
-        Ok(count) => {
-            Ok(Redirect::to(&format!("/admin/bears/?memfs=ok&views={count}")).into_response())
-        }
-        Err(err) => Ok(Redirect::to(&format!(
-            "/admin/bears/?memfs=error&error={}",
-            urlencoding::encode(&err.to_string())
-        ))
-        .into_response()),
-    }
 }
 
 async fn new_view(
@@ -620,60 +567,6 @@ async fn new_view(
             admin_form => form,
             users,
             ..page
-        },
-    )
-    .await
-}
-
-#[derive(Serialize)]
-struct UnlinkedLettaAgentRow {
-    display_name: String,
-    agent_id: String,
-}
-
-async fn unlinked_letta_agents_view(
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let mut letta_list_error: Option<String> = None;
-    let mut unlinked_rows: Vec<UnlinkedLettaAgentRow> = Vec::new();
-
-    if !state.letta.is_enabled() {
-        letta_list_error = Some(
-            "Letta is not configured (set LETTA_BASE_URL). Listing requires Letta.".to_string(),
-        );
-    } else {
-        match state.letta.list_agents().await {
-            Ok(agents) => {
-                let in_use: HashSet<String> =
-                    bears_db::list_letta_agent_ids_in_use(state.sqlx_pool())
-                        .await?
-                        .into_iter()
-                        .collect();
-                for a in agents {
-                    if in_use.contains(&a.id) {
-                        continue;
-                    }
-                    let LettaAgentListItem { id, name } = a;
-                    let display_name = name.clone().unwrap_or_else(|| id.clone());
-                    unlinked_rows.push(UnlinkedLettaAgentRow {
-                        display_name,
-                        agent_id: id,
-                    });
-                }
-            }
-            Err(e) => letta_list_error = Some(e.to_string()),
-        }
-    }
-
-    web::render_template(
-        &state,
-        "admin/bears/unlinked_letta_agents.html",
-        auth_session,
-        context! {
-            unlinked_rows,
-            letta_list_error,
-            letta_configured => state.letta.is_enabled(),
         },
     )
     .await

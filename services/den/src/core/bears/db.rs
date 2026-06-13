@@ -385,20 +385,6 @@ pub async fn user_may_use_bear(
     Ok(n.0 > 0)
 }
 
-/// Non-empty legacy `letta_agent_id` values assigned to profile bindings (orphan-agent UI).
-pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, CustomError> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        r#"
-        SELECT letta_agent_id
-        FROM bear_profile_bindings
-        WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.0).collect())
-}
-
 pub async fn ensure_bear_profile_binding_rows(
     pool: &PgPool,
     bear_id: Uuid,
@@ -751,30 +737,3 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
-/// One row per `user_bear` for Letta Code harness YAML. The chat profile is authoritative.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct LettaCodeHarnessRow {
-    pub username: String,
-    pub bear_slug: String,
-    pub letta_agent_id: Option<String>,
-}
-
-pub async fn list_letta_code_harness_rows(
-    pool: &PgPool,
-) -> Result<Vec<LettaCodeHarnessRow>, CustomError> {
-    sqlx::query_as::<_, LettaCodeHarnessRow>(
-        r#"
-        SELECT u.username,
-               b.slug AS bear_slug,
-               ba.letta_agent_id AS letta_agent_id
-        FROM user_bear ub
-        INNER JOIN users u ON u.id = ub.user_id
-        INNER JOIN bears b ON b.id = ub.bear_id
-        LEFT JOIN bear_profile_bindings ba ON ba.bear_id = b.id AND ba.profile = 'chat'
-        ORDER BY u.username, b.slug
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
-}

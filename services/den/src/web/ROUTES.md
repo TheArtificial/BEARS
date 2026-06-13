@@ -69,19 +69,11 @@ real-page smoke testing in development.
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and role-agent provisioning defaults)
-- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den role registry reference (`bear_profile_bindings.letta_agent_id`); link to new-bear-from-agent flow
-- `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
-- `POST /admin/bears/register-memfs-views` — register/refresh MemFS sidecar per-agent repo views for existing `bear_profile_bindings` rows with Letta ids; redirects to the bear list with counts
 - `GET /admin/bears/{id}` — operator bear registry detail; no longer the primary bear administration surface, which lives at member-facing `/bear/{slug}/details`
-- `POST /admin/bears/{id}/provision-missing-roles` — create Letta agents only for roles under this Bear that have no recorded role agent id; renders detail with a status line
+- `POST /admin/bears/{id}/provision-missing-profiles` (alias `/provision-missing-roles`) — provision missing Den-native profile bindings; renders detail with a status line
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)
-- `POST /admin/bears/{id}/retry-letta` — create role agents when no role agent ids are recorded (responds with detail HTML including a status line)
+- `POST /admin/bears/{id}/retry-letta` — reconcile Den-native profile bindings (legacy URL name); responds with detail HTML including a status line
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
-- `GET /admin/health/letta` — JSON: Letta reachable + auth (`GET /v1/health` on Letta) (`src/web/admin/ops.rs`)
-- `GET /admin/harness-pool` — **Codepool** warm session / channel listener stats (HTML)
-- `GET /admin/harness-pool.json` — same as JSON (`conversationHandlers`, `channelListeners`)
-- `GET /admin/letta-code` — Letta Code harness deploy preview + checklist (operator HTML)
-- `GET /admin/letta-code.yaml` — download `letta-code.yaml` (`text/yaml`; membership → agents)
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test
 - `GET|POST /admin/oauth_tokens/*` — token admin

@@ -3,7 +3,6 @@
 
 pub mod context_composition;
 pub mod db;
-pub mod letta_code_harness;
 pub mod managed_blocks;
 pub mod model;
 pub mod provision;

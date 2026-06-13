@@ -5,10 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    core::{
-        letta::LettaClient, memory::MemoryStoreManager,
-        memory_manager_head::register_memfs_role_view,
-    },
+    core::{letta::LettaClient, memory::MemoryStoreManager},
 };
 
 use super::context_composition::render_role_prompt;
@@ -17,46 +14,6 @@ use super::managed_blocks::{compile_and_store_managed_config_for_bear, get_compi
 use super::model::{Bear, BearProfile};
 use super::runtime_plan::default_runtime_plan;
 use crate::errors::CustomError;
-
-fn memfs_sidecar_url_from_env() -> String {
-    std::env::var("LETTA_MEMFS_SERVICE_URL")
-        .unwrap_or_default()
-        .trim_end_matches('/')
-        .to_string()
-}
-
-pub async fn register_role_view_if_configured(
-    letta: &LettaClient,
-    bear_id: Uuid,
-    role: BearProfile,
-    agent_id: &str,
-) -> Result<(), CustomError> {
-    let base = memfs_sidecar_url_from_env();
-    if base.trim().is_empty() {
-        return Ok(());
-    }
-    match register_memfs_role_view(letta.http(), &base, agent_id, bear_id, role.as_str()).await {
-        Ok(Some(view)) => {
-            tracing::info!(
-                %bear_id,
-                role = %role,
-                %agent_id,
-                state = %view.state,
-                canonical_tip = view.canonical_tip.as_deref(),
-                view_tip = view.view_tip.as_deref(),
-                "MemFS role view registered"
-            );
-        }
-        Ok(None) => {
-            tracing::debug!(%bear_id, role = %role, %agent_id, "MemFS sidecar not configured; skipped role view registration");
-        }
-        Err(err) => {
-            tracing::warn!(%bear_id, role = %role, %agent_id, error = %err, "MemFS role view registration failed");
-            return Err(err);
-        }
-    }
-    Ok(())
-}
 
 /// Provision profile runtime bindings for a new bear (Den-native SQLite + in-process loop).
 pub async fn provision_bear_if_configured(
@@ -206,37 +163,6 @@ pub async fn provision_missing_bear_profiles(
         return Err(CustomError::System(message));
     }
     Ok(missing_before)
-}
-
-pub async fn register_existing_role_views(
-    pool: &PgPool,
-    letta: &LettaClient,
-) -> Result<usize, CustomError> {
-    let bears = bears_db::list_bears(pool).await?;
-    let mut registered = 0usize;
-    for bear in bears {
-        let agents = bears_db::list_bear_profile_bindings(pool, bear.id).await?;
-        for agent in agents {
-            let role = match agent.parsed_profile() {
-                Ok(role) => role,
-                Err(err) => {
-                    tracing::warn!(bear_id = %bear.id, profile = %agent.profile, error = %err, "skipping MemFS view registration for invalid profile");
-                    continue;
-                }
-            };
-            let Some(agent_id) = agent
-                .letta_agent_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            register_role_view_if_configured(letta, bear.id, role, agent_id).await?;
-            registered += 1;
-        }
-    }
-    Ok(registered)
 }
 
 pub async fn reconcile_bear_if_configured(

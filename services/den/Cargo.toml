@@ -139,7 +139,6 @@ serde_yaml = "0.9"
 uuid = { version = "1", features = ["serde", "v4"] }
 dotenvy = "0.15.7"
 minijinja-embed = "2.7.0"
-axum-embed = "0.1.0"
 memory-serve = "1.2.2"
 url = "2.5.4"
 rand = "0.9.1"
@@ -165,7 +164,5 @@ tower = { version = "0.5.2", features = ["util"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 
 [build-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 minijinja-embed = "2.7.0"
 time = { version = "0.3.37", features = ["formatting"] }
