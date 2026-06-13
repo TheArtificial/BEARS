@@ -22,6 +22,7 @@ pub mod display;
 pub mod memory;
 pub mod preflight;
 pub mod prompt_memory;
+pub mod plan_mode;
 pub mod review;
 pub mod support;
 pub mod work_surface;

@@ -1,190 +1,424 @@
-use serde::Deserialize;
+//! `den`-side wiring for the ACP plan-mode tools.
+//!
+//! Argument parsing/validation and the static response envelopes now live in
+//! `den_tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
+//! implementation (DB rows, mode switches, native/MemFS artifact writes,
+//! `turn_state` rendering) and thin wrappers that the dispatcher calls. See
+//! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
+
+use async_trait::async_trait;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_tools::plan_mode::{
+    PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView,
+};
+
 use crate::{
     config::Config,
     core::{
-        acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
+        acp_plan_mode::{
+            self, AcpPlanModeRequestedBy, AcpPlanModeSessionRow, EnterPlanModeParams,
+            SubmitPlanModeParams,
+        },
         acp_sessions,
+        acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
         bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
-        memory_manager_head::MemfsWriteRoleMemoryEntryRequest,
-        tools::{
-            memfs::memfs_http_client,
-            memory_write::source_acp_session_id,
-            session::DenToolInvocationContext,
-            support::{clean_optional, validate_bounded_text},
-        },
+        memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
+        tools::{memfs::memfs_http_client, session::DenToolInvocationContext, support::clean_optional},
         turn_state,
     },
-    errors::CustomError,
+    errors::{CustomError, DenError},
 };
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PlanModeEnterArguments {
-    #[serde(default)]
-    pub(crate) reason: String,
-    #[serde(default)]
-    pub(crate) previous_permission_mode: Option<String>,
+type WorkplanPayloadFn = fn(&AcpPlanModeSessionRow) -> Value;
+type NoActiveWorkplanFn = fn() -> Value;
+
+fn workflow_state_json(
+    mode_label: &'static str,
+    tool_enablement: AcpToolEnablementState,
+    plan_mode_state: String,
+) -> Value {
+    turn_state::turn_state_json(
+        &AcpResolvedSessionPolicy {
+            mode_label,
+            tool_enablement,
+            plan_mode_state: Some(plan_mode_state),
+        },
+        None,
+    )
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PlanModeRecordApprovalArguments {
-    pub(crate) approval_text: String,
-    #[serde(default)]
-    pub(crate) plan_mode_id: Option<Uuid>,
+/// Concrete [`PlanModeOps`] over the runtime pool/config/stores.
+///
+/// `config`/`stores` are only required by `exit` (artifact write); the dispatcher
+/// supplies them for that path and leaves them `None` for the others.
+struct DenPlanModeOps<'a> {
+    pool: &'a PgPool,
+    config: Option<&'a Config>,
+    stores: Option<&'a MemoryStoreManager>,
+    workplan_payload: WorkplanPayloadFn,
+    no_active_workplan: NoActiveWorkplanFn,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PlanModeExitArguments {
-    pub(crate) title: String,
-    pub(crate) body: String,
-    #[serde(default)]
-    pub(crate) plan_mode_id: Option<Uuid>,
+#[async_trait]
+impl PlanModeOps for DenPlanModeOps<'_> {
+    async fn enter(
+        &self,
+        context: &DenToolInvocationContext,
+        acp_session_id: &str,
+        reason: String,
+        previous_permission_mode: Option<String>,
+    ) -> Result<PlanModeView, DenError> {
+        let row = acp_plan_mode::enter_plan_mode(
+            self.pool,
+            EnterPlanModeParams {
+                user_id: context.user_id,
+                bear_id: context.bear_id,
+                bear_slug: context.bear_slug.clone(),
+                acp_session_id: acp_session_id.to_string(),
+                reason,
+                requested_by: AcpPlanModeRequestedBy::Pair,
+                previous_permission_mode,
+            },
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        acp_sessions::set_current_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            "plan",
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        Ok(PlanModeView {
+            workplan: (self.workplan_payload)(&row),
+            workflow_state: workflow_state_json(
+                "Plan",
+                AcpToolEnablementState::ReadOnly,
+                row.state.clone(),
+            ),
+            plan_mode: serde_json::to_value(&row)?,
+        })
+    }
+
+    async fn status(
+        &self,
+        context: &DenToolInvocationContext,
+        acp_session_id: &str,
+    ) -> Result<PlanModeStatusView, DenError> {
+        let row = acp_plan_mode::active_for_session(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        let workplan = row
+            .as_ref()
+            .map(self.workplan_payload)
+            .unwrap_or_else(self.no_active_workplan);
+        Ok(PlanModeStatusView {
+            workplan,
+            active: row.is_some(),
+            plan_mode: serde_json::to_value(&row)?,
+        })
+    }
+
+    async fn record_approval(
+        &self,
+        context: &DenToolInvocationContext,
+        acp_session_id: &str,
+        plan_mode_id: Option<Uuid>,
+    ) -> Result<PlanModeView, DenError> {
+        let current = acp_plan_mode::get_for_session(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            plan_mode_id,
+        )
+        .await
+        .map_err(CustomError::into_den)?
+        .ok_or_else(|| {
+            DenError::NotFound("submitted ACP plan mode session not found".to_string())
+        })?;
+        if current.state != "submitted" {
+            return Err(DenError::ValidationError(format!(
+                "plan approval requires a submitted plan; current state is {}",
+                current.state
+            )));
+        }
+        let row = acp_plan_mode::approve_plan_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            current.id,
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        acp_sessions::set_current_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            "write",
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        Ok(PlanModeView {
+            workplan: (self.workplan_payload)(&row),
+            workflow_state: workflow_state_json(
+                "Write",
+                AcpToolEnablementState::AllTools,
+                row.state.clone(),
+            ),
+            plan_mode: serde_json::to_value(&row)?,
+        })
+    }
+
+    async fn exit(
+        &self,
+        context: &DenToolInvocationContext,
+        acp_session_id: &str,
+        plan_mode_id: Option<Uuid>,
+        title: &str,
+        body: &str,
+    ) -> Result<PlanModeExitView, DenError> {
+        let config = self.config.ok_or_else(|| {
+            DenError::System("plan mode exit requires runtime config".to_string())
+        })?;
+        let stores = self.stores.ok_or_else(|| {
+            DenError::System("plan mode exit requires memory stores".to_string())
+        })?;
+        let markdown = acp_plan_mode::render_plan_artifact_markdown(title, body);
+        let current_plan = acp_plan_mode::get_for_session(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            plan_mode_id,
+        )
+        .await
+        .map_err(CustomError::into_den)?
+        .ok_or_else(|| {
+            DenError::NotFound("active ACP plan mode session not found".to_string())
+        })?;
+        let artifact_path = if config.uses_native_agent_runtime() {
+            let artifact_id = format!("plan-mode-{}", current_plan.id);
+            let logical_path = format!("pair/plans/{artifact_id}.md");
+            let written = sqlite_memory::sqlite_write_at_path(
+                stores,
+                config,
+                context.bear_id,
+                &logical_path,
+                BearProfile::Pair.as_str(),
+                title,
+                &markdown,
+                json!({
+                    "kind": "plan",
+                    "tags": ["plan-mode", "implementation-plan"],
+                    "content_class": "workplan_artifact",
+                    "source": {
+                        "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
+                        "acp_session_id": acp_session_id,
+                        "conversation_id": clean_optional(&context.conversation_id),
+                    },
+                }),
+            )
+            .await
+            .map_err(CustomError::into_den)?;
+            written
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&logical_path)
+                .to_string()
+        } else {
+            let memory_request = MemfsWriteRoleMemoryEntryRequest {
+                kind: "plan".to_string(),
+                title: title.to_string(),
+                body: markdown,
+                tags: vec!["plan-mode".to_string(), "implementation-plan".to_string()],
+                refs: None,
+                lifecycle: Some(json!({ "scope": "role-local", "retention": "durable" })),
+                source: Some(json!({
+                    "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
+                    "acp_session_id": acp_session_id,
+                    "conversation_id": clean_optional(&context.conversation_id),
+                })),
+                author: context.username.clone(),
+                conversation_id: clean_optional(&context.conversation_id),
+                session_id: Some(acp_session_id.to_string()),
+                acp_session_id: Some(acp_session_id.to_string()),
+                conversation_selection: context.conversation_selection.clone(),
+                runtime_target: context.runtime_target.clone(),
+                binding_id: Some(context.binding_id.clone()),
+                profile: Some(BearProfile::Pair.as_str().to_string()),
+                request_id: context.request_id.clone(),
+            };
+            let http = memfs_http_client("MemFS plan artifact client build failed")
+                .map_err(CustomError::into_den)?;
+            let memfs_response = write_memfs_role_memory_entry(
+                &http,
+                &config.letta_memfs_service_url,
+                context.bear_id,
+                BearProfile::Pair.as_str(),
+                &memory_request,
+            )
+            .await
+            .map_err(CustomError::into_den)?;
+            let Some(memfs_response) = memfs_response else {
+                return Err(DenError::System(
+                    "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+                ));
+            };
+            memfs_response.path
+        };
+        let row = acp_plan_mode::submit_plan_artifact(
+            self.pool,
+            SubmitPlanModeParams {
+                user_id: context.user_id,
+                bear_id: context.bear_id,
+                acp_session_id: acp_session_id.to_string(),
+                plan_mode_id: Some(current_plan.id),
+                title: title.to_string(),
+                body: body.to_string(),
+                artifact_path: artifact_path.clone(),
+                approval_request_id: Some(format!("plan-mode-{}", current_plan.id)),
+            },
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        acp_sessions::set_current_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            "plan",
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        let storage = if config.uses_native_agent_runtime() {
+            "sqlite"
+        } else {
+            "memfs"
+        };
+        Ok(PlanModeExitView {
+            workplan: (self.workplan_payload)(&row),
+            workflow_state: workflow_state_json(
+                "Plan",
+                AcpToolEnablementState::ReadOnly,
+                row.state.clone(),
+            ),
+            submitted_plan: json!({
+                "title": row.plan_title,
+                "body": row.plan_body,
+                "artifact_path": row.plan_artifact_path,
+            }),
+            artifact_path,
+            storage: storage.to_string(),
+            plan_mode: serde_json::to_value(&row)?,
+        })
+    }
+
+    async fn cancel(
+        &self,
+        context: &DenToolInvocationContext,
+        acp_session_id: &str,
+        plan_mode_id: Option<Uuid>,
+    ) -> Result<PlanModeView, DenError> {
+        let row = acp_plan_mode::cancel_plan_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            plan_mode_id,
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        acp_sessions::set_current_mode(
+            self.pool,
+            context.user_id,
+            context.bear_id,
+            acp_session_id,
+            "ask",
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        Ok(PlanModeView {
+            workplan: (self.workplan_payload)(&row),
+            workflow_state: workflow_state_json(
+                "Ask",
+                AcpToolEnablementState::ReadOnly,
+                row.state.clone(),
+            ),
+            plan_mode: serde_json::to_value(&row)?,
+        })
+    }
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PlanModeCancelArguments {
-    #[serde(default)]
-    pub(crate) plan_mode_id: Option<Uuid>,
+fn no_active_placeholder() -> Value {
+    Value::Null
 }
 
 pub(crate) async fn enter_plan_mode(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     arguments: Value,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
+    plan_mode_workplan_payload: WorkplanPayloadFn,
 ) -> Result<Value, CustomError> {
-    let args: PlanModeEnterArguments = serde_json::from_value(arguments)?;
-    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
-        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
-    })?;
-    let row = acp_plan_mode::enter_plan_mode(
+    let runtime = DenPlanModeOps {
         pool,
-        EnterPlanModeParams {
-            user_id: context.user_id,
-            bear_id: context.bear_id,
-            bear_slug: context.bear_slug.clone(),
-            acp_session_id: acp_session_id.clone(),
-            reason: args.reason,
-            requested_by: AcpPlanModeRequestedBy::Pair,
-            previous_permission_mode: args.previous_permission_mode,
-        },
-    )
-    .await?;
-    acp_sessions::set_current_mode(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        "plan",
-    )
-    .await?;
-    Ok(json!({
-        "domain": "workplan",
-        "workplan": plan_mode_workplan_payload(&row),
-        "plan_mode": row,
-        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: "Plan",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
-            plan_mode_state: Some(row.state.clone()),
-        }, None),
-        "mode_update": "plan",
-        "instructions": [
-            "Plan mode is active for this ACP session.",
-            "Inspect, read, search, and use read-only Den tools as needed.",
-            "Do not mutate workspace files, run non-read-only shell commands, or perform external side effects until the submitted plan is approved.",
-            "Call den.plan_mode.exit with a concise markdown implementation plan when ready for user approval."
-        ]
-    }))
+        config: None,
+        stores: None,
+        workplan_payload: plan_mode_workplan_payload,
+        no_active_workplan: no_active_placeholder,
+    };
+    den_tools::plan_mode::enter_plan_mode(&runtime, context, arguments)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn plan_mode_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
-    no_active_workplan_payload: fn() -> Value,
+    plan_mode_workplan_payload: WorkplanPayloadFn,
+    no_active_workplan_payload: NoActiveWorkplanFn,
 ) -> Result<Value, CustomError> {
-    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
-        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
-    })?;
-    let row =
-        acp_plan_mode::active_for_session(pool, context.user_id, context.bear_id, &acp_session_id)
-            .await?;
-    let workplan = row
-        .as_ref()
-        .map(plan_mode_workplan_payload)
-        .unwrap_or_else(no_active_workplan_payload);
-    Ok(json!({
-        "domain": "workplan",
-        "bear_id": context.bear_id,
-        "acp_session_id": acp_session_id,
-        "workplan": workplan,
-        "plan_mode": row,
-        "active": row.is_some(),
-    }))
+    let runtime = DenPlanModeOps {
+        pool,
+        config: None,
+        stores: None,
+        workplan_payload: plan_mode_workplan_payload,
+        no_active_workplan: no_active_workplan_payload,
+    };
+    den_tools::plan_mode::plan_mode_status(&runtime, context)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn record_plan_approval(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     arguments: Value,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
+    plan_mode_workplan_payload: WorkplanPayloadFn,
 ) -> Result<Value, CustomError> {
-    let args: PlanModeRecordApprovalArguments = serde_json::from_value(arguments)?;
-    let approval_text = validate_bounded_text("approval_text", &args.approval_text, 1, 1000)?;
-    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
-        CustomError::ValidationError("ACP session id is required for plan approval".to_string())
-    })?;
-    let current = acp_plan_mode::get_for_session(
+    let runtime = DenPlanModeOps {
         pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        args.plan_mode_id,
-    )
-    .await?
-    .ok_or_else(|| {
-        CustomError::NotFound("submitted ACP plan mode session not found".to_string())
-    })?;
-    if current.state != "submitted" {
-        return Err(CustomError::ValidationError(format!(
-            "plan approval requires a submitted plan; current state is {}",
-            current.state
-        )));
-    }
-    let row = acp_plan_mode::approve_plan_mode(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        current.id,
-    )
-    .await?;
-    acp_sessions::set_current_mode(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        "write",
-    )
-    .await?;
-    Ok(json!({
-        "domain": "workplan",
-        "ok": true,
-        "workplan": plan_mode_workplan_payload(&row),
-        "plan_mode": row,
-        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: "Write",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::AllTools,
-            plan_mode_state: Some(row.state.clone()),
-        }, None),
-        "mode_update": "write",
-        "approval_text": approval_text,
-        "content": "Plan approved by the authenticated human. Write mode is now enabled; implementation may proceed subject to normal ACP tool approvals.",
-    }))
+        config: None,
+        stores: None,
+        workplan_payload: plan_mode_workplan_payload,
+        no_active_workplan: no_active_placeholder,
+    };
+    den_tools::plan_mode::record_plan_approval(&runtime, context, arguments)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn exit_plan_mode(
@@ -193,177 +427,34 @@ pub(crate) async fn exit_plan_mode(
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     arguments: Value,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
+    plan_mode_workplan_payload: WorkplanPayloadFn,
 ) -> Result<Value, CustomError> {
-    let args: PlanModeExitArguments = serde_json::from_value(arguments)?;
-    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
-        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
-    })?;
-    let title = validate_bounded_text("title", &args.title, 1, 200)?;
-    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
-    let markdown = acp_plan_mode::render_plan_artifact_markdown(&title, &body);
-    let current_plan = acp_plan_mode::get_for_session(
+    let runtime = DenPlanModeOps {
         pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        args.plan_mode_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("active ACP plan mode session not found".to_string()))?;
-    let artifact_path = if config.uses_native_agent_runtime() {
-        let artifact_id = format!("plan-mode-{}", current_plan.id);
-        let logical_path = format!("pair/plans/{artifact_id}.md");
-        let written = sqlite_memory::sqlite_write_at_path(
-            stores,
-            config,
-            context.bear_id,
-            &logical_path,
-            BearProfile::Pair.as_str(),
-            &title,
-            &markdown,
-            json!({
-                "kind": "plan",
-                "tags": ["plan-mode", "implementation-plan"],
-                "content_class": "workplan_artifact",
-                "source": {
-                    "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
-                    "acp_session_id": acp_session_id,
-                    "conversation_id": clean_optional(&context.conversation_id),
-                },
-            }),
-        )
-        .await?;
-        written
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&logical_path)
-            .to_string()
-    } else {
-        let memory_request = MemfsWriteRoleMemoryEntryRequest {
-            kind: "plan".to_string(),
-            title: title.clone(),
-            body: markdown,
-            tags: vec!["plan-mode".to_string(), "implementation-plan".to_string()],
-            refs: None,
-            lifecycle: Some(json!({ "scope": "role-local", "retention": "durable" })),
-            source: Some(json!({
-                "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
-                "acp_session_id": acp_session_id,
-                "conversation_id": clean_optional(&context.conversation_id),
-            })),
-            author: context.username.clone(),
-            conversation_id: clean_optional(&context.conversation_id),
-            session_id: Some(acp_session_id.clone()),
-            acp_session_id: Some(acp_session_id.clone()),
-            conversation_selection: context.conversation_selection.clone(),
-            runtime_target: context.runtime_target.clone(),
-            binding_id: Some(context.binding_id.clone()),
-            profile: Some(BearProfile::Pair.as_str().to_string()),
-            request_id: context.request_id.clone(),
-        };
-        let http = memfs_http_client("MemFS plan artifact client build failed")?;
-        let memfs_response = crate::core::memory_manager_head::write_memfs_role_memory_entry(
-            &http,
-            &config.letta_memfs_service_url,
-            context.bear_id,
-            BearProfile::Pair.as_str(),
-            &memory_request,
-        )
-        .await?;
-        let Some(memfs_response) = memfs_response else {
-            return Err(CustomError::System(
-                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-            ));
-        };
-        memfs_response.path
+        config: Some(config),
+        stores: Some(stores),
+        workplan_payload: plan_mode_workplan_payload,
+        no_active_workplan: no_active_placeholder,
     };
-    let row = acp_plan_mode::submit_plan_artifact(
-        pool,
-        SubmitPlanModeParams {
-            user_id: context.user_id,
-            bear_id: context.bear_id,
-            acp_session_id: acp_session_id.clone(),
-            plan_mode_id: Some(current_plan.id),
-            title: title.clone(),
-            body: body.clone(),
-            artifact_path: artifact_path.clone(),
-            approval_request_id: Some(format!("plan-mode-{}", current_plan.id)),
-        },
-    )
-    .await?;
-    acp_sessions::set_current_mode(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        "plan",
-    )
-    .await?;
-    Ok(json!({
-        "domain": "workplan",
-        "workplan": plan_mode_workplan_payload(&row),
-        "plan_mode": row,
-        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: "Plan",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
-            plan_mode_state: Some(row.state.clone()),
-        }, None),
-        "artifact": {
-            "domain": "workplan",
-            "content_class": "workplan_artifact",
-            "path": artifact_path,
-            "storage": if config.uses_native_agent_runtime() { "sqlite" } else { "memfs" },
-        },
-        "approval_required": false,
-        "mode_update": "plan",
-        "submitted_plan": {
-            "title": row.plan_title,
-            "body": row.plan_body,
-            "artifact_path": row.plan_artifact_path,
-        },
-        "instructions": [
-            "Present this plan artifact to the user if useful.",
-            "If the authenticated human clearly approves the plan in chat, call record_plan_approval. Tool use remains governed by Den policy and ACP client approval."
-        ]
-    }))
+    den_tools::plan_mode::exit_plan_mode(&runtime, context, arguments)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn cancel_plan_mode(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     arguments: Value,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
+    plan_mode_workplan_payload: WorkplanPayloadFn,
 ) -> Result<Value, CustomError> {
-    let args: PlanModeCancelArguments = serde_json::from_value(arguments)?;
-    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
-        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
-    })?;
-    let row = acp_plan_mode::cancel_plan_mode(
+    let runtime = DenPlanModeOps {
         pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        args.plan_mode_id,
-    )
-    .await?;
-    acp_sessions::set_current_mode(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-        "ask",
-    )
-    .await?;
-    Ok(json!({
-        "domain": "workplan",
-        "workplan": plan_mode_workplan_payload(&row),
-        "plan_mode": row,
-        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: "Ask",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
-            plan_mode_state: Some(row.state.clone()),
-        }, None),
-        "mode_update": "ask"
-    }))
+        config: None,
+        stores: None,
+        workplan_payload: plan_mode_workplan_payload,
+        no_active_workplan: no_active_placeholder,
+    };
+    den_tools::plan_mode::cancel_plan_mode(&runtime, context, arguments)
+        .await
+        .map_err(CustomError::from)
 }

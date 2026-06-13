@@ -753,3 +753,21 @@ scaffold test suites resolve unchanged.
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — `plan_mode` landed (2026-06, `clippy` branch)
+
+The five ACP plan-mode executors (`enter`, `status`, `record_approval`, `exit`,
+`cancel`) moved into `den_tools::plan_mode`, owning argument parsing/validation,
+the ACP-session-id requirement, the bounded-text checks, and the static response
+envelope (domain marker, `mode_update`, human-facing instruction lists). The new
+`PlanModeOps` seam exposes coarse transition methods returning already-rendered
+`PlanModeView`/`PlanModeStatusView`/`PlanModeExitView` (workplan + plan_mode row
++ `workflow_state`); the `den` impl (`DenPlanModeOps`) owns the `acp_plan_mode`
+DB rows, `acp_sessions::set_current_mode` calls, `turn_state` rendering, and the
+native-SQLite vs. legacy-MemFS plan-artifact write. `config`/`stores` are only
+threaded for the `exit` artifact path. The workplan-payload `fn` pointers are
+held by the `den` impl rather than crossing the crate boundary, so dispatcher
+call sites are unchanged.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.
