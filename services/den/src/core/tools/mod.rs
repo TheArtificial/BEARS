@@ -6,7 +6,6 @@ pub mod context;
 pub mod descriptor;
 pub mod environment;
 pub mod identity;
-pub mod letta;
 pub mod memfs;
 pub mod memory_read;
 pub mod memory_review;

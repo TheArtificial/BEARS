@@ -2,8 +2,7 @@
 //!
 //! Argument parsing, title normalization, and the "conversation not saved yet"
 //! guards are pure and owned here; persistence flows through the
-//! [`ConversationTitleOps`] seam. The Letta summary patch is legacy and drops out
-//! once `core/letta` is removed (v0-legacy).
+//! [`ConversationTitleOps`] seam (native Bear-conversation title store).
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -15,9 +14,6 @@ use crate::{arguments::SetConversationTitleArguments, context::DenToolInvocation
 
 #[async_trait]
 pub trait ConversationTitleOps: Send + Sync {
-    /// Patch the (legacy Letta) conversation summary.
-    async fn patch_summary(&self, conversation_id: &str, summary: &str) -> Result<(), DenError>;
-
     /// Set the title on the Bear conversation; returns synced ACP-session count.
     async fn set_title(
         &self,
@@ -51,7 +47,6 @@ pub async fn set_conversation_title(
                 .to_string(),
         ));
     }
-    ops.patch_summary(&conversation_id, &title).await?;
     let synced_acp_sessions = ops.set_title(context.bear_id, &conversation_id, &title).await?;
     Ok(json!({
         "ok": true,

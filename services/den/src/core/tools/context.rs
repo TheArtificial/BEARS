@@ -124,7 +124,6 @@ impl<'a> DenToolContext<'a> {
     fn conversation(&self) -> DenConversationTitleOps<'a> {
         DenConversationTitleOps {
             pool: self.pool,
-            config: self.config,
         }
     }
 
@@ -436,10 +435,6 @@ impl EnvironmentOps for DenToolContext<'_> {
 
 #[async_trait]
 impl ConversationTitleOps for DenToolContext<'_> {
-    async fn patch_summary(&self, conversation_id: &str, summary: &str) -> Result<(), DenError> {
-        self.conversation().patch_summary(conversation_id, summary).await
-    }
-
     async fn set_title(
         &self,
         bear_id: Uuid,

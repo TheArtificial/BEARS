@@ -29,25 +29,10 @@ pub async fn invoke_den_tool(
 
 pub(crate) struct DenConversationTitleOps<'a> {
     pub(crate) pool: &'a PgPool,
-    pub(crate) config: &'a Config,
 }
 
 #[async_trait::async_trait]
 impl den_tools::conversation::ConversationTitleOps for DenConversationTitleOps<'_> {
-    async fn patch_summary(
-        &self,
-        conversation_id: &str,
-        summary: &str,
-    ) -> Result<(), crate::errors::DenError> {
-        crate::core::tools::letta::patch_letta_conversation_summary(
-            self.config,
-            conversation_id,
-            summary,
-        )
-        .await
-        .map_err(CustomError::into_den)
-    }
-
     async fn set_title(
         &self,
         bear_id: uuid::Uuid,
