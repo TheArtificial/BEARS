@@ -534,6 +534,7 @@ dependencies = [
  "base64",
  "bytes",
  "den-core",
+ "den-docket",
  "den-llm",
  "den-memory",
  "dotenvy",
@@ -586,6 +587,19 @@ dependencies = [
  "sqlx",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "den-docket"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "den-core",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "time",
  "uuid",
 ]
 

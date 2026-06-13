@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::FromRow;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -413,19 +413,16 @@ pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
         "\n\n<system-reminder>\nDen activity context for this Bear. Use `den.work_plan.update` to keep live activity/status current. Use `den.work_plan.request_handoff` when channel work should become a durable task intent.\n",
     );
     for plan in plans.iter().take(5) {
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "- plan_id={} owner={} status={} visibility={} title={}",
             plan.id, plan.owner_profile, plan.status, plan.visibility, plan.title
-        ));
+        );
         if let Some(current) = plan.current_item.as_ref() {
-            out.push_str(&format!(
-                " current_item={} ({})",
-                current.title,
-                current.status.as_str()
-            ));
+            let _ = write!(out, " current_item={} ({})", current.title, current.status);
         }
         if !plan.summary.trim().is_empty() {
-            out.push_str(&format!(" summary={}", plan.summary.trim()));
+            let _ = write!(out, " summary={}", plan.summary.trim());
         }
         out.push('\n');
     }

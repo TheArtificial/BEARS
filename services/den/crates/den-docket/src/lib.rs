@@ -1,11 +1,12 @@
-//! Docket — Den's control-plane subsystem for work management (ADR-0034).
+//! `den-docket` — Den's control-plane subsystem for work management (ADR-0034).
 //!
-//! Public face is [`DocketService`] / [`PgDocketService`]; `db` is internal.
+//! Public face is [`DocketService`] / [`PgDocketService`]; `db` is crate-internal.
 //! Today this wraps the **legacy `bear_work_plans` activity board** (JSONB
 //! items); see [`model`] for why the types keep their honest pre-ADR-0034 names.
-//! Promoting this module to the `den-docket` crate is tracked in
-//! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`; the relational jobs/tasks realization
-//! is `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`.
+//! This crate is a service-layer leaf: it depends only on `den-core`. The
+//! relational jobs/tasks realization is tracked in
+//! `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`; the crate split itself in
+//! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 mod db;
 pub mod model;

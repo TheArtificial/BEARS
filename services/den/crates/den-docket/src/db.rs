@@ -78,7 +78,7 @@ async fn find_existing_plan_id(
     source_acp_session_id: Option<&str>,
 ) -> Result<Option<Uuid>, DenError> {
     let row: Option<(Uuid,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT id
         FROM bear_work_plans
         WHERE bear_id = $1
@@ -88,7 +88,7 @@ async fn find_existing_plan_id(
           AND status <> 'archived'
         ORDER BY updated_at DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(owner_profile.as_str())
@@ -104,7 +104,7 @@ async fn insert_new_plan(
     params: &WorkPlanUpsert,
 ) -> Result<BearWorkPlanRow, DenError> {
     sqlx::query_as::<_, BearWorkPlanRow>(
-        r#"
+        r"
         INSERT INTO bear_work_plans (
             bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
             source_conversation_id, source_acp_session_id, source_channel, workspace_context,
@@ -115,7 +115,7 @@ async fn insert_new_plan(
                   source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.update.title.trim())
@@ -141,7 +141,7 @@ async fn update_existing_plan(
     params: &WorkPlanUpsert,
 ) -> Result<BearWorkPlanRow, DenError> {
     let row = sqlx::query_as::<_, BearWorkPlanRow>(
-        r#"
+        r"
         UPDATE bear_work_plans
         SET title = $4,
             summary = $5,
@@ -161,7 +161,7 @@ async fn update_existing_plan(
                   source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(plan_id)
     .bind(params.bear_id)
@@ -199,12 +199,12 @@ async fn append_event(
     params: WorkPlanEventParams<'_>,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_work_plan_events (
             plan_id, bear_id, actor_role, actor_agent_id, actor_user_id, event_type, event_payload
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        "#,
+        ",
     )
     .bind(params.plan_id)
     .bind(params.bear_id)
@@ -226,7 +226,7 @@ pub(super) async fn list_visible_work_plans(
     filter: WorkPlanListFilter,
 ) -> Result<Vec<WorkPlanProjection>, DenError> {
     let rows = sqlx::query_as::<_, BearWorkPlanRow>(
-        r#"
+        r"
         SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
                source_conversation_id, source_acp_session_id, source_channel, workspace_context,
                visibility, status, items, version, handoff_intent_path, handoff_task_id,
@@ -235,7 +235,7 @@ pub(super) async fn list_visible_work_plans(
         WHERE bear_id = $1
         ORDER BY updated_at DESC
         LIMIT 50
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -298,16 +298,16 @@ pub(super) async fn get_visible_work_plan(
     }
 }
 
-const SELECT_WORK_PLAN_BY_ID: &str = r#"
+const SELECT_WORK_PLAN_BY_ID: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
     FROM bear_work_plans
     WHERE bear_id = $1 AND id = $2
-"#;
+";
 
-const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r#"
+const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
@@ -316,9 +316,9 @@ const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r#"
     WHERE bear_id = $1 AND source_acp_session_id = $2
     ORDER BY updated_at DESC
     LIMIT 1
-"#;
+";
 
-const SELECT_WORK_PLAN_BY_CONVERSATION: &str = r#"
+const SELECT_WORK_PLAN_BY_CONVERSATION: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
@@ -327,4 +327,4 @@ const SELECT_WORK_PLAN_BY_CONVERSATION: &str = r#"
     WHERE bear_id = $1 AND source_conversation_id = $2
     ORDER BY updated_at DESC
     LIMIT 1
-"#;
+";
