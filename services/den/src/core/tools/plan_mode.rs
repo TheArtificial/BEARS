@@ -55,12 +55,12 @@ fn workflow_state_json(
 ///
 /// `config`/`stores` are only required by `exit` (artifact write); the dispatcher
 /// supplies them for that path and leaves them `None` for the others.
-struct DenPlanModeOps<'a> {
-    pool: &'a PgPool,
-    config: Option<&'a Config>,
-    stores: Option<&'a MemoryStoreManager>,
-    workplan_payload: WorkplanPayloadFn,
-    no_active_workplan: NoActiveWorkplanFn,
+pub(crate) struct DenPlanModeOps<'a> {
+    pub(crate) pool: &'a PgPool,
+    pub(crate) config: Option<&'a Config>,
+    pub(crate) stores: Option<&'a MemoryStoreManager>,
+    pub(crate) workplan_payload: WorkplanPayloadFn,
+    pub(crate) no_active_workplan: NoActiveWorkplanFn,
 }
 
 #[async_trait]

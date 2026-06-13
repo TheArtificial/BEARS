@@ -18,9 +18,9 @@ use crate::{
 };
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.
-struct DenEnvironmentOps<'a> {
-    pool: &'a PgPool,
-    config: &'a Config,
+pub(crate) struct DenEnvironmentOps<'a> {
+    pub(crate) pool: &'a PgPool,
+    pub(crate) config: &'a Config,
 }
 
 #[async_trait]

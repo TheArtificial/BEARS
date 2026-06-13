@@ -23,6 +23,7 @@ pub mod memory;
 pub mod preflight;
 pub mod prompt_memory;
 pub mod conversation;
+pub mod dispatch;
 pub mod environment;
 pub mod identity;
 pub mod plan_mode;

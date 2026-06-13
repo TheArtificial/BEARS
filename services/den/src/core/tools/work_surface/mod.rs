@@ -47,9 +47,9 @@ fn scaffold_to_core_update(request: ScaffoldRequest) -> MemfsCoreUpdateRequest {
 }
 
 /// Concrete [`WorkSurfaceOps`] over the runtime config/stores.
-struct DenWorkSurfaceOps<'a> {
-    config: &'a Config,
-    stores: &'a MemoryStoreManager,
+pub(crate) struct DenWorkSurfaceOps<'a> {
+    pub(crate) config: &'a Config,
+    pub(crate) stores: &'a MemoryStoreManager,
 }
 
 #[async_trait]

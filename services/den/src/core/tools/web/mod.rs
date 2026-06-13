@@ -5,7 +5,7 @@
 //! (`runtime`) and thin wrappers that build it and map `DenError` to the
 //! web-boundary `CustomError`. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase B).
 
-mod runtime;
+pub(crate) mod runtime;
 
 use serde_json::Value;
 use sqlx::PgPool;
