@@ -79,7 +79,7 @@ impl WebFetcher for DenWebFetcher<'_> {
     }
 
     async fn http_get(&self, url: &str) -> Result<WebHttpResponse, DenError> {
-        let parsed = validate_public_http_url(url).map_err(CustomError::into_den)?;
+        let parsed = validate_public_http_url(url)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -93,7 +93,7 @@ impl WebFetcher for DenWebFetcher<'_> {
             .await
             .map_err(|e| DenError::System(format!("web fetch request failed: {e}")))?;
         let final_url = resp.url().clone();
-        validate_public_http_url(final_url.as_str()).map_err(CustomError::into_den)?;
+        validate_public_http_url(final_url.as_str())?;
         let status = resp.status();
         let content_type = resp
             .headers()

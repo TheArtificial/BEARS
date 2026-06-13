@@ -637,9 +637,13 @@ name = "den-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "den-core",
  "serde",
  "serde_json",
+ "sha2",
+ "time",
+ "url",
  "uuid",
 ]
 

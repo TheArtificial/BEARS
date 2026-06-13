@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -21,26 +20,7 @@ use crate::{
     errors::CustomError,
 };
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct MemoryWriteEntryArguments {
-    pub(crate) kind: String,
-    pub(crate) title: String,
-    pub(crate) body: String,
-    #[serde(default)]
-    pub(crate) tags: Vec<String>,
-    #[serde(default)]
-    pub(crate) refs: Option<Value>,
-    #[serde(default)]
-    pub(crate) lifecycle: Option<Value>,
-    #[serde(default)]
-    pub(crate) source: Option<Value>,
-    #[serde(default)]
-    pub(crate) content_class: Option<String>,
-    #[serde(default)]
-    pub(crate) domain: Option<String>,
-    #[serde(default)]
-    pub(crate) semantic_confirmation_token: Option<String>,
-}
+pub(crate) use den_tools::memory::MemoryWriteEntryArguments;
 
 pub(crate) fn merge_memory_entry_source_with_human(
     source: Option<Value>,

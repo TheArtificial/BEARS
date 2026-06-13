@@ -29,6 +29,27 @@ pub struct MemorySearchArguments {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MemoryWriteEntryArguments {
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub refs: Option<Value>,
+    #[serde(default)]
+    pub lifecycle: Option<Value>,
+    #[serde(default)]
+    pub source: Option<Value>,
+    #[serde(default)]
+    pub content_class: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub semantic_confirmation_token: Option<String>,
+}
+
 /// Summarize active prompt-memory blocks for the `memory_status` diagnostic.
 pub fn prompt_memory_diagnostic_summary(blocks: &[PromptMemoryBlock]) -> Value {
     let active_blocks = blocks
