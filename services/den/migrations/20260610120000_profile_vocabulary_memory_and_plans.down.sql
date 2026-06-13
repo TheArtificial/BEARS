@@ -16,9 +16,12 @@ DROP INDEX IF EXISTS idx_bear_work_plans_owner;
 CREATE INDEX IF NOT EXISTS idx_bear_work_plans_owner
     ON bear_work_plans (bear_id, owner_role, updated_at DESC);
 
+ALTER TABLE bear_work_plans DROP CONSTRAINT IF EXISTS bear_work_plans_visibility_check;
+
+-- Revert the value BEFORE re-adding the old-vocabulary constraint, otherwise the
+-- UPDATE violates whichever constraint is currently in force.
 UPDATE bear_work_plans SET visibility = 'private_to_role' WHERE visibility = 'private_to_profile';
 
-ALTER TABLE bear_work_plans DROP CONSTRAINT IF EXISTS bear_work_plans_visibility_check;
 ALTER TABLE bear_work_plans
     ADD CONSTRAINT bear_work_plans_visibility_check
     CHECK (visibility IN ('private_to_role', 'same_user', 'bear_visible', 'handoff_requested'));

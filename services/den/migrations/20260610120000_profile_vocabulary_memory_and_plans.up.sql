@@ -27,11 +27,14 @@ ALTER TABLE bear_work_plans
     CHECK (owner_profile IN ('chat', 'pair', 'curate', 'work', 'watch'));
 
 ALTER TABLE bear_work_plans DROP CONSTRAINT IF EXISTS bear_work_plans_visibility_check;
+
+-- Migrate the legacy value BEFORE enforcing the new vocabulary, otherwise the
+-- ADD CONSTRAINT fails on any database that still holds pre-vocabulary rows.
+UPDATE bear_work_plans SET visibility = 'private_to_profile' WHERE visibility = 'private_to_role';
+
 ALTER TABLE bear_work_plans
     ADD CONSTRAINT bear_work_plans_visibility_check
     CHECK (visibility IN ('private_to_profile', 'same_user', 'bear_visible', 'handoff_requested'));
-
-UPDATE bear_work_plans SET visibility = 'private_to_profile' WHERE visibility = 'private_to_role';
 
 DROP INDEX IF EXISTS idx_bear_work_plans_owner;
 CREATE INDEX IF NOT EXISTS idx_bear_work_plans_owner
