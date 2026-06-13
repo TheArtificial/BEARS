@@ -4,7 +4,7 @@ use crate::core::runtime_conversations::{
     RuntimeCompactionArtifactRef, RuntimeCompactionBoundary, RuntimeCompactionTriggerKind,
 };
 
-use super::runtime_compaction::{RuntimeCompactionDecision, RuntimeCompactionPolicy};
+use super::compaction::{RuntimeCompactionDecision, RuntimeCompactionPolicy};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeCompactionEventStatus {

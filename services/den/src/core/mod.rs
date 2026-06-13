@@ -26,7 +26,6 @@ pub use llm::bifrost;
 pub mod memory;
 pub mod agent_loop;
 pub mod native_runtime;
-pub mod role_runtime_registry;
 pub mod sandbox;
 pub mod migration;
 pub mod codepool;
@@ -46,62 +45,24 @@ pub use memory::proposals as memory_proposals;
 pub mod reflection;
 pub use reflection::conversations as reflection_conversations;
 pub mod pair_reflection;
-pub mod pair_turn;
 pub use memory::prompt_block_store as prompt_memory_block_store;
 pub use memory::prompt_blocks as prompt_memory_blocks;
 pub use reflection::conductor as reflection_conductor;
-pub mod role_runtime;
-pub mod role_runtime_test {
-    #[cfg(test)]
-    mod tests {
-        include!("role_runtime_tests.rs");
-    }
-}
-pub mod runtime_test {}
-pub mod runtime {
-    pub mod bearwire_projection {
-        pub use super::super::runtime_bearwire_projection::*;
-    }
-
-    pub mod compaction {
-        pub use super::super::runtime_compaction::*;
-    }
-
-    pub mod compaction_observability {
-        pub use super::super::runtime_compaction_observability::*;
-    }
-
-    pub mod compaction_store {
-        pub use super::super::runtime_compaction_store::*;
-    }
-
-    pub mod contracts {
-        pub use super::super::runtime_contracts::*;
-    }
-
-    pub mod conversations {
-        pub use super::super::runtime_conversations::*;
-    }
-
-    pub mod provider {
-        pub use super::super::runtime_provider::*;
-    }
-}
-#[path = "runtime/compaction/mod.rs"]
-pub mod runtime_compaction;
-pub mod runtime_compaction_observability;
-pub mod runtime_compaction_store;
-#[path = "runtime/bearwire_projection/mod.rs"]
-pub mod runtime_bearwire_projection;
-#[path = "runtime/contracts/mod.rs"]
-pub mod runtime_contracts;
-pub mod runtime_conversations;
+pub mod runtime;
+pub use runtime::bearwire_projection as runtime_bearwire_projection;
+pub use runtime::compaction as runtime_compaction;
+pub use runtime::compaction_observability as runtime_compaction_observability;
+pub use runtime::compaction_store as runtime_compaction_store;
+pub use runtime::contracts as runtime_contracts;
+pub use runtime::conversations as runtime_conversations;
+pub use runtime::pair_turn;
+pub use runtime::provider as runtime_provider;
+pub use runtime::role as role_runtime;
+pub use runtime::role_registry as role_runtime_registry;
 pub mod docket;
-#[path = "runtime/provider/mod.rs"]
-pub mod runtime_provider;
 pub mod s3;
 pub use tools::tool_descriptor_guidance;
-pub mod turn_state;
+pub use runtime::turn_state;
 pub mod user;
 pub use tools::web_policy;
 pub mod work_plans;
