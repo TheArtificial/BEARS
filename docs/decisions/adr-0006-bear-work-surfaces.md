@@ -4,6 +4,8 @@
 **Date:** 2026-05-17
 **Deciders:** Hans
 
+> **User-facing naming (2026-06):** "work surface" is the **architecture and model-facing** term decided here; it is **not** shown to human users. The UI presents externally-connected resources as typed cards (Repository, Design, Server, Document, …) under **Connections** (provider auth). See [ADR-0040](adr-0040-connections-and-work-surface-presentation.md).
+
 ## Context
 
 BEARS has several planning-related objects:

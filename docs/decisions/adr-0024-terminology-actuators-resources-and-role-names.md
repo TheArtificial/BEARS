@@ -1,6 +1,8 @@
 # Terminology: Actuators, Resources, and Role Names — Architecture Decision Record
 
-## Status: Proposed
+## Status: Proposed (partially superseded)
+
+> **Superseded in part.** §2 ("work surface → resource") is **not adopted**: "work surface" remains the architecture/model-facing term and the UI uses Connections + typed resource cards instead of a "resource" umbrella — see [ADR-0040](adr-0040-connections-and-work-surface-presentation.md). §4's role renames (`pair`→`code`, `curate`→`review`) are also not adopted; the canonical trust-profile names `chat`/`pair`/`curate`/`work`/`watch` stand per [ADR-0036](adr-0036-bear-profile-registry.md) and [ADR-0039](adr-0039-trust-profiles-and-governance-modes.md). Treat the remaining items (e.g. actuator, role-not-agent framing) as still proposed.
 
 ## Date: 2026-05-23
 

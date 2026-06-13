@@ -21,7 +21,19 @@ sandbox tools, plus the channel signals the
 supervisor can observe. See ADR-0039.
 
 **work surface**
-the resource a runtime session is able to act upon
+the durable resource a runtime session is able to
+act upon. **Internal / model-facing term only** — not
+shown to users; the UI presents typed cards
+(Repository, Design, Server, Document, …) under
+Connections. See ADR-0006 and ADR-0040.
+
+**connection**
+a Den-level, owner-scoped authenticated link to an
+external provider (GitHub, Figma, Google, SSH).
+Set up once, reusable across resources, Bears, trust
+profiles, and governance modes. A work surface is
+reached through a connection when externally backed.
+See ADR-0037 and ADR-0040.
 
 **acceptance criteria**
 a job's durable definition of done

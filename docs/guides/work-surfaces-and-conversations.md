@@ -13,6 +13,8 @@ How **durable work resources** relate to **interactive sessions**, and why produ
 
 A work surface is **not** role-owned and **not** an authorization boundary by itself ([ADR-0006](../decisions/adr-0006-bear-work-surfaces.md)). Roles (`chat`, `pair`, …) describe **trust and armature**; the surface describes **what resource** the Bear is reasoning about or manipulating.
 
+> **User-facing naming.** "Work surface" is an internal/model-facing term — do **not** put it in product copy. In the UI, externally-connected resources appear as typed cards (Repository, Design, Server, Document, …) under **Connections** (the Den-level provider auth). See [ADR-0040](../decisions/adr-0040-connections-and-work-surface-presentation.md).
+
 ## Active surface binding belongs on the conversation
 
 For **execution armature** (anything that will touch files, sandboxes, checkouts, or scoped retrieval), the **primary work surface should be bound to the conversation**, not inferred turn-by-turn from casual language.
