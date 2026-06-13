@@ -34,7 +34,10 @@ def fail(msg: str) -> None:
 
 
 def uses_native_agent_runtime() -> bool:
-    return os.environ.get("AGENT_RUNTIME", "native").strip().lower() == "native"
+    raw = os.environ.get("AGENT_RUNTIME", "native").strip().lower()
+    if not raw:
+        return True
+    return raw == "native"
 
 
 def require_non_empty(name: str) -> str:
@@ -264,8 +267,13 @@ def validate_config_shape() -> None:
             "AGENT_RUNTIME=native — skipping Letta, Codepool, MemFS, and LETTA_PG_URI checks"
         )
     else:
-        require_non_empty("LETTA_SERVER_PASS")
-        info("LETTA_SERVER_PASS is set")
+        letta_pass = os.environ.get("LETTA_SERVER_PASS", "").strip()
+        if letta_pass and letta_pass != "SETME":
+            info("LETTA_SERVER_PASS is set")
+        else:
+            warn(
+                "LETTA_SERVER_PASS is not set — required only when Letta API auth is enabled"
+            )
         validate_letta_pg_uri(reachable=False)
 
         letta_base = (
