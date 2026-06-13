@@ -735,3 +735,21 @@ thin wrapper over the same store. Wrapper signatures unchanged.
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — `work_surface` landed (2026-06, `clippy` branch)
+
+`create_work_surface_scaffold` and all of its orientation/builder helpers
+(`infer_work_surface_hint`, slug normalization, `WorkSurfaceSessionHints`,
+`WorkSurfaceProjectionStatus`, candidate-slug + scaffold-path builders, index/entry
+body rendering, anchor-path collection) moved into `den_tools::work_surface`. The
+executor gates by role, validates args, builds runtime-neutral `ScaffoldRequest`s,
+and delegates persistence to the new `WorkSurfaceOps::write_scaffold` seam. The
+`den` impl (`DenWorkSurfaceOps`) owns the native SQLite path
+(`sqlite_write_at_path`) and the legacy MemFS path, including the special
+`core/work_surfaces/index.md` append/replace logic and `MemfsCoreUpdateResponse`
+→ JSON serialization. `core::tools::work_surface` is now a re-export shim plus the
+concrete ops impl and a thin wrapper; existing call sites and the orientation +
+scaffold test suites resolve unchanged.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.

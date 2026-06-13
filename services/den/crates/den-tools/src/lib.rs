@@ -24,6 +24,7 @@ pub mod preflight;
 pub mod prompt_memory;
 pub mod review;
 pub mod support;
+pub mod work_surface;
 pub mod tool_descriptor_guidance;
 pub mod validation;
 pub mod web;
