@@ -2,6 +2,7 @@
 //!
 //! Emits [`crate::core::runtime_contracts::RuntimeStreamEvent`] directly — no Letta JSON intermediate.
 
+pub mod bifrost;
 mod stream;
 
 pub(crate) use den_llm::byte_stream_with_idle_timeout;

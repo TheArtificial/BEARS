@@ -22,8 +22,8 @@ pub mod acp_turn_runner_test {
 pub mod api_utils;
 pub mod archived_conversations;
 pub mod bears;
-pub mod bifrost;
 pub mod llm;
+pub use llm::bifrost;
 pub mod memory;
 pub mod agent_loop;
 pub mod native_runtime;
