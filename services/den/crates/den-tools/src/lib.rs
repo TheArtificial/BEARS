@@ -16,6 +16,7 @@
 pub mod aliases;
 pub mod arguments;
 pub mod constants;
+pub mod context;
 pub mod descriptor;
 pub mod display;
 pub mod memory;

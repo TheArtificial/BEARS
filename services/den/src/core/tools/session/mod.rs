@@ -1,7 +1,5 @@
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use uuid::Uuid;
 
 use crate::{
     config::Config,
@@ -17,7 +15,7 @@ use crate::{
 
 use crate::core::tools::{
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
-    arguments::{DenToolChannelContext, SetConversationTitleArguments},
+    arguments::SetConversationTitleArguments,
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS,
         DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
@@ -153,38 +151,11 @@ async fn patch_letta_conversation_summary(
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[non_exhaustive]
-pub struct DenToolInvocationContext {
-    pub bear_id: Uuid,
-    pub bear_slug: String,
-    pub binding_id: String,
-    pub profile: Option<BearProfile>,
-    pub user_id: i32,
-    pub username: Option<String>,
-    pub membership_role: Option<String>,
-    pub conversation_id: String,
-    pub session_id: String,
-    #[serde(default)]
-    pub acp_session_id: Option<String>,
-    #[serde(default)]
-    pub conversation_selection: Option<String>,
-    #[serde(default)]
-    pub runtime_target: Option<String>,
-    #[serde(default)]
-    pub workspace_roots: Vec<String>,
-    #[serde(default)]
-    pub session_policy: Option<Value>,
-    #[serde(default)]
-    pub activity: Option<Value>,
-    #[serde(default)]
-    pub runtime: Option<Value>,
-    #[serde(default)]
-    pub context_budget: Option<Value>,
-    pub request_id: Option<String>,
-    #[serde(default)]
-    pub channel: DenToolChannelContext,
-}
+// The per-call context value now lives in `den-tools` (it is data, not a
+// capability), so tool executors can move there. Re-exported here so existing
+// `core::tools::session::DenToolInvocationContext` paths and the ~17 in-`den`
+// construction sites keep resolving unchanged.
+pub use den_tools::context::DenToolInvocationContext;
 
 pub async fn invoke_den_tool(
     pool: &PgPool,
