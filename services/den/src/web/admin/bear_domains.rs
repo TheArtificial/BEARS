@@ -162,7 +162,7 @@ async fn access_view(
             members,
             users,
             message => query.message,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "access"),
         },
     )
@@ -207,7 +207,7 @@ async fn persona_view(
             compiled,
             compiled_roles,
             block_bindings,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "persona"),
         },
     )
@@ -232,7 +232,7 @@ async fn roles_view(
             agent_health_rows,
             letta_configured,
             message => query.message,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "roles"),
         },
     )
@@ -285,7 +285,7 @@ async fn memory_view(
             proposals,
             path_content,
             selected_path => query.path,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
         },
     )
@@ -309,7 +309,7 @@ async fn memory_record_view(
         context! {
             record,
             memory_id,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
         },
     )
@@ -347,7 +347,7 @@ async fn conversations_view(
         auth_session,
         context! {
             conversations,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "conversations"),
         },
     )
@@ -388,7 +388,7 @@ async fn conversation_detail_view(
         context! {
             conv,
             message_rows,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "conversations"),
         },
     )
@@ -425,7 +425,7 @@ async fn context_view(
         auth_session,
         context! {
             prompt_blocks,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "context"),
         },
     )
@@ -453,7 +453,7 @@ async fn policy_view(
             web_fetches,
             plan_mode_rows,
             message => query.message,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "policy"),
         },
     )
@@ -478,7 +478,7 @@ async fn advanced_view(
             letta_configured,
             message => query.message,
             letta_retry_message => query.message,
-            native_runtime => state.config.uses_native_agent_runtime(),
+            native_runtime => true,
             ..bear_nav_context(&bear, "advanced"),
         },
     )

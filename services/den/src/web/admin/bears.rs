@@ -22,7 +22,6 @@ use crate::{
         memory::{
             admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
         },
-        memory_manager_head::fetch_memfs_role_view_health,
         user::db as user_db,
         web_policy,
     },
@@ -235,104 +234,6 @@ impl BearProfileBindingHealthRow {
         }
     }
 
-    fn not_configured(agent: &BearProfileBinding, role: BearProfile) -> Self {
-        Self {
-            profile: role.as_str().to_string(),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            branch: role.as_str().to_string(),
-            letta_agent_id: agent.letta_agent_id.clone(),
-            provisioning_status: agent.provisioning_status.clone(),
-            last_provisioned_version: agent.last_provisioned_version,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            health_status: "unknown".to_string(),
-            health_label: "Not checked".to_string(),
-            health_detail: Some("Letta is not configured on this Den instance.".to_string()),
-            letta_name: None,
-            letta_model: None,
-            letta_agent_type: None,
-            letta_tool_count: None,
-            letta_memory_block_count: None,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
-        }
-    }
-
-    fn missing(agent: &BearProfileBinding, role: BearProfile) -> Self {
-        Self {
-            profile: role.as_str().to_string(),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            branch: role.as_str().to_string(),
-            letta_agent_id: None,
-            provisioning_status: agent.provisioning_status.clone(),
-            last_provisioned_version: agent.last_provisioned_version,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            health_status: "missing".to_string(),
-            health_label: "No agent id".to_string(),
-            health_detail: agent
-                .last_provisioning_error
-                .clone()
-                .or_else(|| Some("No Letta agent id is recorded for this role.".to_string())),
-            letta_name: None,
-            letta_model: None,
-            letta_agent_type: None,
-            letta_tool_count: None,
-            letta_memory_block_count: None,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
-        }
-    }
-
-    fn ok(agent: &BearProfileBinding, role: BearProfile, summary: AgentSummary) -> Self {
-        Self {
-            profile: role.as_str().to_string(),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            branch: role.as_str().to_string(),
-            letta_agent_id: agent.letta_agent_id.clone(),
-            provisioning_status: agent.provisioning_status.clone(),
-            last_provisioned_version: agent.last_provisioned_version,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            health_status: "ok".to_string(),
-            health_label: "OK".to_string(),
-            health_detail: None,
-            letta_name: summary.name,
-            letta_model: summary.model,
-            letta_agent_type: summary.agent_type,
-            letta_tool_count: summary.tool_count,
-            letta_memory_block_count: summary.memory_block_count,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
-        }
-    }
-
-    fn error(agent: &BearProfileBinding, role: BearProfile, error: String) -> Self {
-        Self {
-            profile: role.as_str().to_string(),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            branch: role.as_str().to_string(),
-            letta_agent_id: agent.letta_agent_id.clone(),
-            provisioning_status: agent.provisioning_status.clone(),
-            last_provisioned_version: agent.last_provisioned_version,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            health_status: "error".to_string(),
-            health_label: "Fetch failed".to_string(),
-            health_detail: Some(error),
-            letta_name: None,
-            letta_model: None,
-            letta_agent_type: None,
-            letta_tool_count: None,
-            letta_memory_block_count: None,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
-        }
-    }
 }
 
 pub(super) async fn bear_web_sources(
@@ -553,68 +454,17 @@ pub(super) async fn bear_plan_mode_rows(
 pub(super) async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
-    letta_configured: bool,
+    _letta_configured: bool,
 ) -> Result<Vec<BearProfileBindingHealthRow>, CustomError> {
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
     let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await?;
-    if state.config.uses_native_agent_runtime() {
-        return Ok(agents
-            .into_iter()
-            .map(|agent| {
-                let role = agent.parsed_profile().unwrap_or(BearProfile::Chat);
-                BearProfileBindingHealthRow::native(&agent, role)
-            })
-            .collect());
-    }
-
-    let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
-    let mut rows = Vec::with_capacity(agents.len());
-    for agent in agents {
-        let role = agent
-            .parsed_profile()
-            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        let mut row = if !letta_configured {
-            BearProfileBindingHealthRow::not_configured(&agent, role)
-        } else if let Some(agent_id) = agent
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => {
-                    BearProfileBindingHealthRow::ok(&agent, role, AgentSummary::from_letta_agent_state(&v))
-                }
-                Err(err) => BearProfileBindingHealthRow::error(&agent, role, err.to_string()),
-            }
-        } else {
-            BearProfileBindingHealthRow::missing(&agent, role)
-        };
-
-        if !memfs_url.is_empty() {
-            match fetch_memfs_role_view_health(
-                state.letta.http(),
-                &memfs_url,
-                bear_id,
-                role.as_str(),
-            )
-            .await
-            {
-                Ok(Some(view)) => {
-                    row.memfs_view_state = Some(view.state);
-                    row.memfs_view_quarantined = view.quarantined;
-                    row.memfs_view_diagnostic = view.diagnostic;
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    row.memfs_view_state = Some("error".to_string());
-                    row.memfs_view_diagnostic = Some(err.to_string());
-                }
-            }
-        }
-        rows.push(row);
-    }
-    Ok(rows)
+    Ok(agents
+        .into_iter()
+        .map(|agent| {
+            let role = agent.parsed_profile().unwrap_or(BearProfile::Chat);
+            BearProfileBindingHealthRow::native(&agent, role)
+        })
+        .collect())
 }
 
 async fn bear_detail_response(

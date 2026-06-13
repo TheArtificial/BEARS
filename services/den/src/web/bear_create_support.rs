@@ -382,7 +382,7 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
         model_catalog_configured,
         model_options,
         models_fetch_error,
-        native_runtime => state.config.uses_native_agent_runtime(),
+        native_runtime => true,
     }
 }
 
@@ -474,55 +474,20 @@ pub async fn admin_bear_edit_page_context(
     state: &AppState,
     form: &NewBearForm,
 ) -> minijinja::Value {
-    let native_runtime = state.config.uses_native_agent_runtime();
-    if native_runtime {
-        let (model_catalog_configured, model_options, models_fetch_error) =
-            model_catalog_select_context(state).await;
-        let model_trim = form.default_model.trim();
-        let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-        let model_options = if model_catalog_configured {
-            ensure_stored_model_in_options_for_handle(model_handle, model_options)
-        } else {
-            model_options
-        };
-        return context! {
-            native_runtime,
-            model_catalog_configured,
-            model_options,
-            models_fetch_error,
-        };
-    }
-
-    let (letta_configured, letta_model_options, letta_models_fetch_error) =
-        letta_model_select_context(state).await;
+    let (model_catalog_configured, model_options, models_fetch_error) =
+        model_catalog_select_context(state).await;
     let model_trim = form.default_model.trim();
     let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let letta_model_options = if letta_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, letta_model_options)
+    let model_options = if model_catalog_configured {
+        ensure_stored_model_in_options_for_handle(model_handle, model_options)
     } else {
-        letta_model_options
+        model_options
     };
-    let form_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let (letta_tools_configured, mut letta_tool_options, letta_tools_fetch_error) =
-        letta_tool_select_context(state).await;
-    if letta_tools_configured {
-        letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
-    }
-
     context! {
-        native_runtime,
-        letta_configured,
-        letta_model_options,
-        letta_models_fetch_error,
-        letta_tools_configured,
-        letta_tool_options,
-        letta_tools_fetch_error,
-        letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
+        native_runtime => true,
+        model_catalog_configured,
+        model_options,
+        models_fetch_error,
     }
 }
 

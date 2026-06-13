@@ -7,8 +7,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::Value;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use tokio::time::timeout;
 use url::Url;
@@ -67,26 +66,13 @@ pub struct StackHealthTemplateRow {
     pub detail: String,
 }
 
-fn skipped_check(id: &'static str, label: &'static str, detail: impl Into<String>) -> HealthCheck {
-    HealthCheck {
-        id,
-        label,
-        state: CheckState::Skipped,
-        detail: detail.into(),
-    }
-}
-
 pub async fn gather(state: &AppState) -> StackHealthReport {
     let cfg = state.config.as_ref();
-    let native_runtime = cfg.uses_native_agent_runtime();
 
     let mut checks: Vec<HealthCheck> = Vec::new();
 
     checks.push(jwt_check(cfg));
     checks.push(den_database_url_shape(cfg));
-    if !native_runtime && !cfg.letta_pg_uri.is_empty() {
-        checks.push(letta_pg_uri_shape(&cfg.letta_pg_uri));
-    }
     if let Some(c) = llm_api_url_shape() {
         checks.push(c);
     }
@@ -98,39 +84,6 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
         check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url).await;
 
     checks.push(den_pg);
-    if native_runtime {
-        checks.push(skipped_check(
-            "letta_postgres",
-            "Letta PostgreSQL",
-            "AGENT_RUNTIME=native — LETTA_PG_URI not probed",
-        ));
-        checks.push(skipped_check(
-            "codepool",
-            "Codepool",
-            "AGENT_RUNTIME=native — Codepool not used",
-        ));
-        checks.push(skipped_check(
-            "letta_api",
-            "Letta API",
-            "AGENT_RUNTIME=native — Letta API not used",
-        ));
-        checks.push(skipped_check(
-            "memfs_views",
-            "MemFS role views",
-            "AGENT_RUNTIME=native — MemFS sidecar not used",
-        ));
-    } else {
-        let (letta_pg, codepool_h, letta_h, memfs_views_h) = tokio::join!(
-            check_letta_postgres(&cfg.letta_pg_uri),
-            check_codepool(state),
-            check_letta_api(state),
-            check_memfs_sidecar_views(&cfg.letta_memfs_service_url),
-        );
-        checks.push(letta_pg);
-        checks.push(codepool_h);
-        checks.push(letta_h);
-        checks.push(memfs_views_h);
-    }
     checks.push(bifrost_h);
 
     StackHealthReport::from_checks(checks)
@@ -197,44 +150,6 @@ fn den_database_url_shape(cfg: &crate::config::Config) -> HealthCheck {
         Err(e) => HealthCheck {
             id: "database_url_shape",
             label: "DATABASE_URL (shape)",
-            state: CheckState::Warn,
-            detail: format!("parse error: {e}"),
-        },
-    }
-}
-
-fn letta_pg_uri_shape(uri: &str) -> HealthCheck {
-    match Url::parse(uri) {
-        Ok(u) => {
-            if u.scheme() == "postgres" {
-                HealthCheck {
-                    id: "letta_pg_uri_shape",
-                    label: "LETTA_PG_URI (shape)",
-                    state: CheckState::Warn,
-                    detail: "uses postgres:// — use postgresql:// for Alembic/SQLAlchemy (see services/letta/COOLIFY_DEPLOY.md; preflight fails on this)".into(),
-                }
-            } else if u.scheme() == "postgresql" {
-                HealthCheck {
-                    id: "letta_pg_uri_shape",
-                    label: "LETTA_PG_URI (shape)",
-                    state: CheckState::Ok,
-                    detail: "scheme acceptable".into(),
-                }
-            } else {
-                HealthCheck {
-                    id: "letta_pg_uri_shape",
-                    label: "LETTA_PG_URI (shape)",
-                    state: CheckState::Warn,
-                    detail: format!(
-                        "expected postgres or postgresql scheme, got {:?}",
-                        u.scheme()
-                    ),
-                }
-            }
-        }
-        Err(e) => HealthCheck {
-            id: "letta_pg_uri_shape",
-            label: "LETTA_PG_URI (shape)",
             state: CheckState::Warn,
             detail: format!("parse error: {e}"),
         },
@@ -342,254 +257,6 @@ async fn check_den_postgres(pool: &PgPool) -> HealthCheck {
             state: CheckState::Fail,
             detail: e.to_string(),
         },
-    }
-}
-
-async fn check_letta_postgres(uri: &str) -> HealthCheck {
-    if uri.is_empty() {
-        return HealthCheck {
-            id: "letta_postgres",
-            label: "Letta PostgreSQL",
-            state: CheckState::Skipped,
-            detail: "LETTA_PG_URI unset — optional; Letta may use embedded defaults (preflight)"
-                .into(),
-        };
-    }
-
-    let pool = match PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(4))
-        .connect(uri)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            return HealthCheck {
-                id: "letta_postgres",
-                label: "Letta PostgreSQL",
-                state: CheckState::Fail,
-                detail: format!("connect: {e}"),
-            };
-        }
-    };
-
-    let result = sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&pool)
-        .await;
-    pool.close().await;
-    match result {
-        Ok(_) => HealthCheck {
-            id: "letta_postgres",
-            label: "Letta PostgreSQL",
-            state: CheckState::Ok,
-            detail: "SELECT 1 on LETTA_PG_URI succeeded".into(),
-        },
-        Err(e) => HealthCheck {
-            id: "letta_postgres",
-            label: "Letta PostgreSQL",
-            state: CheckState::Fail,
-            detail: e.to_string(),
-        },
-    }
-}
-
-async fn check_codepool(state: &AppState) -> HealthCheck {
-    if !state.codepool.is_enabled() {
-        return HealthCheck {
-            id: "codepool",
-            label: "Codepool",
-            state: CheckState::Skipped,
-            detail: "CODEPOOL_BASE_URL empty".into(),
-        };
-    }
-    match timeout(HTTP_PROBE_TIMEOUT, state.codepool.check_health()).await {
-        Err(_) => HealthCheck {
-            id: "codepool",
-            label: "Codepool",
-            state: CheckState::Fail,
-            detail: format!(
-                "timeout after {}s (GET /health)",
-                HTTP_PROBE_TIMEOUT.as_secs()
-            ),
-        },
-        Ok(Ok(body)) => HealthCheck {
-            id: "codepool",
-            label: "Codepool",
-            state: CheckState::Ok,
-            detail: truncate_detail(body),
-        },
-        Ok(Err(e)) => HealthCheck {
-            id: "codepool",
-            label: "Codepool",
-            state: CheckState::Fail,
-            detail: e.to_string(),
-        },
-    }
-}
-
-async fn check_letta_api(state: &AppState) -> HealthCheck {
-    if !state.letta.is_enabled() {
-        return HealthCheck {
-            id: "letta_api",
-            label: "Letta API",
-            state: CheckState::Skipped,
-            detail: "LETTA_BASE_URL empty".into(),
-        };
-    }
-    match timeout(HTTP_PROBE_TIMEOUT, state.letta.check_health()).await {
-        Err(_) => HealthCheck {
-            id: "letta_api",
-            label: "Letta API",
-            state: CheckState::Fail,
-            detail: format!(
-                "timeout after {}s (GET /v1/health)",
-                HTTP_PROBE_TIMEOUT.as_secs()
-            ),
-        },
-        Ok(Ok(body)) => HealthCheck {
-            id: "letta_api",
-            label: "Letta API",
-            state: CheckState::Ok,
-            detail: truncate_detail(body),
-        },
-        Ok(Err(e)) => HealthCheck {
-            id: "letta_api",
-            label: "Letta API",
-            state: CheckState::Fail,
-            detail: e.to_string(),
-        },
-    }
-}
-
-async fn check_memfs_sidecar_views(base: &str) -> HealthCheck {
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return HealthCheck {
-            id: "memfs_views",
-            label: "MemFS role views",
-            state: CheckState::Skipped,
-            detail: "LETTA_MEMFS_SERVICE_URL empty".into(),
-        };
-    }
-    let client = match reqwest::Client::builder()
-        .timeout(HTTP_PROBE_TIMEOUT)
-        .connect_timeout(Duration::from_secs(4))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return HealthCheck {
-                id: "memfs_views",
-                label: "MemFS role views",
-                state: CheckState::Fail,
-                detail: format!("reqwest client: {e}"),
-            };
-        }
-    };
-    let url = format!("{base}/v1/management/bears");
-    let resp = match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
-        Err(_) => {
-            return HealthCheck {
-                id: "memfs_views",
-                label: "MemFS role views",
-                state: CheckState::Fail,
-                detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
-            };
-        }
-        Ok(Err(e)) => {
-            return HealthCheck {
-                id: "memfs_views",
-                label: "MemFS role views",
-                state: CheckState::Fail,
-                detail: e.to_string(),
-            };
-        }
-        Ok(Ok(resp)) => resp,
-    };
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return HealthCheck {
-            id: "memfs_views",
-            label: "MemFS role views",
-            state: CheckState::Fail,
-            detail: format!("HTTP {status} from {url}: {}", truncate_detail(text)),
-        };
-    }
-    let value: Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(e) => {
-            return HealthCheck {
-                id: "memfs_views",
-                label: "MemFS role views",
-                state: CheckState::Fail,
-                detail: format!("JSON parse failed: {e}"),
-            };
-        }
-    };
-    let views = value
-        .get("views")
-        .and_then(|v| v.as_object())
-        .map(|m| m.values().collect::<Vec<_>>())
-        .unwrap_or_default();
-    if views.is_empty() {
-        return HealthCheck {
-            id: "memfs_views",
-            label: "MemFS role views",
-            state: CheckState::Warn,
-            detail: "sidecar reachable but no registered role views".into(),
-        };
-    }
-    let mut quarantined = 0usize;
-    let mut drift = 0usize;
-    let mut missing = 0usize;
-    let mut errors = 0usize;
-    let mut stale = 0usize;
-    let now = OffsetDateTime::now_utc().unix_timestamp() as f64;
-    for view in &views {
-        let state = view
-            .get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        if view
-            .get("quarantined")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-            || state == "quarantined"
-        {
-            quarantined += 1;
-        }
-        if state == "drift" {
-            drift += 1;
-        }
-        if matches!(state, "missing_view" | "missing_canonical") {
-            missing += 1;
-        }
-        if matches!(state, "error" | "git_error") {
-            errors += 1;
-        }
-        if let Some(ts) = view.get("last_reconciled_at").and_then(|v| v.as_f64()) {
-            if now - ts > 600.0 {
-                stale += 1;
-            }
-        }
-    }
-    let total = views.len();
-    let detail = format!(
-        "{total} view(s); quarantined={quarantined}, drift={drift}, missing={missing}, stale_reconcile={stale}, errors={errors}"
-    );
-    let state = if quarantined > 0 || missing > 0 || errors > 0 {
-        CheckState::Fail
-    } else if drift > 0 || stale > 0 {
-        CheckState::Warn
-    } else {
-        CheckState::Ok
-    };
-    HealthCheck {
-        id: "memfs_views",
-        label: "MemFS role views",
-        state,
-        detail,
     }
 }
 
@@ -716,12 +383,4 @@ async fn check_bifrost_metadata(
             }
         }
     }
-}
-
-fn truncate_detail(s: String) -> String {
-    const MAX: usize = 240;
-    if s.len() <= MAX {
-        return s;
-    }
-    format!("{}…", &s[..MAX.saturating_sub(1)])
 }

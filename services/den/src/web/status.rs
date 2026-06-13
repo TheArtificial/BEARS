@@ -226,24 +226,9 @@ pub async fn json_endpoint(State(state): State<AppState>) -> impl IntoResponse {
 async fn gather_status(state: &AppState) -> StatusPayload {
     let health = stack_health::gather(state).await;
     let den_version = build_info::snapshot();
-    let native_runtime = state.config.uses_native_agent_runtime();
 
-    let (codepool_version, codepool_error) = if native_runtime {
-        (None, None)
-    } else if state.codepool.is_enabled() {
-        match state.codepool.fetch_version_json().await {
-            Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
-                Ok(v) => (Some(v), None),
-                Err(e) => (
-                    None,
-                    Some(format!("invalid JSON from Codepool /version: {e}")),
-                ),
-            },
-            Err(e) => (None, Some(e.to_string())),
-        }
-    } else {
-        (None, None)
-    };
+    let (codepool_version, codepool_error): (Option<serde_json::Value>, Option<String>) =
+        (None, None);
 
     let cfg = state.config.as_ref();
     let mut ghcr_config_note: Option<String> = None;
@@ -266,11 +251,7 @@ async fn gather_status(state: &AppState) -> StatusPayload {
                 let owner = cfg.ghcr_packages_owner.trim();
                 let kind = cfg.ghcr_packages_owner_kind.as_str();
                 let (d, err_d) = fetch_ghcr_package(&client, token, kind, owner, "den").await;
-                let (c, err_c) = if native_runtime {
-                    (None, None)
-                } else {
-                    fetch_ghcr_package(&client, token, kind, owner, "codepool").await
-                };
+                let (c, err_c): (Option<GhcrPackageRow>, Option<String>) = (None, None);
                 let mut notes = Vec::new();
                 if let Some(e) = err_d {
                     notes.push(format!("den GHCR: {e}"));

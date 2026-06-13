@@ -33,55 +33,17 @@ async fn admin_home(
 ) -> Result<Response, CustomError> {
     let users = user::db::get_users(&state.sqlx_pool).await?;
 
-    let native_runtime = state.config.uses_native_agent_runtime();
-
-    let (letta_status, letta_detail) = if native_runtime {
-        (
-            "native",
-            "AGENT_RUNTIME=native — Letta health checks are skipped.".to_string(),
-        )
-    } else if !state.letta.is_enabled() {
-        (
-            "not_configured",
-            "Set LETTA_BASE_URL (and LETTA_API_KEY if required) for provisioning and chat."
-                .to_string(),
-        )
-    } else {
-        match state.letta.check_health().await {
-            Ok(_) => (
-                "ok",
-                "GET /v1/health succeeded — same check Den uses before provisioning.".to_string(),
-            ),
-            Err(e) => ("error", e.to_string()),
-        }
-    };
-
-    let (codepool_status, codepool_detail) = if native_runtime {
-        ("native", "Not used under native runtime.".to_string())
-    } else if !state.codepool.is_enabled() {
-        (
-            "not_configured",
-            "Set CODEPOOL_BASE_URL for Letta Code SDK streaming (required when RUN_WEB=true)."
-                .to_string(),
-        )
-    } else {
-        match state.codepool.check_health().await {
-            Ok(_) => ("ok", "GET /health on Codepool succeeded.".to_string()),
-            Err(e) => ("error", e.to_string()),
-        }
-    };
-
     web::render_template(
         &state,
         "admin/menu.html",
         auth_session,
         context! {
             users => users,
-            native_runtime,
-            letta_status => letta_status,
-            letta_detail => letta_detail,
-            codepool_status => codepool_status,
-            codepool_detail => codepool_detail,
+            native_runtime => true,
+            letta_status => "native",
+            letta_detail => "AGENT_RUNTIME=native — Letta health checks are skipped.",
+            codepool_status => "native",
+            codepool_detail => "Not used under native runtime.",
         },
     )
     .await
