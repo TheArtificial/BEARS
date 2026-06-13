@@ -576,7 +576,11 @@ dependencies = [
 name = "den-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dotenvy",
+ "reqwest 0.12.28",
+ "serde_json",
+ "sqlx",
  "tracing",
  "url",
 ]

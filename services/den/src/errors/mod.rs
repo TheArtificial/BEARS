@@ -7,6 +7,15 @@ use minijinja::context;
 
 use std::fmt;
 
+pub use den_core::DenError;
+
+/// Web-boundary error adapter for the `den` binary.
+///
+/// `CustomError` is the HTTP-facing error: it adds `axum::IntoResponse`
+/// (rendering the `error.html` page) and the auth-layer conversions on top of
+/// the shared, web-free [`DenError`] from `den-core`. Service-layer code should
+/// prefer `DenError`; it converts here for free via [`From<DenError>`] when it
+/// bubbles up through `?` in an HTTP handler.
 #[derive(Debug)]
 pub enum CustomError {
     Anyhow(anyhow::Error),
@@ -133,6 +142,25 @@ impl IntoResponse for CustomError {
             format!("Catastrophic error: [{error_name}] {error_message}"),
         )
             .into_response()
+    }
+}
+
+impl From<DenError> for CustomError {
+    fn from(err: DenError) -> CustomError {
+        match err {
+            DenError::Anyhow(cause) => CustomError::Anyhow(cause),
+            DenError::System(cause) => CustomError::System(cause),
+            DenError::Database(cause) => CustomError::Database(cause),
+            DenError::DatabaseUnavailable(cause) => CustomError::DatabaseUnavailable(cause),
+            DenError::Session(cause) => CustomError::Session(cause),
+            DenError::Authentication(cause) => CustomError::Authentication(cause),
+            DenError::Authorization(cause) => CustomError::Authorization(cause),
+            DenError::Render(cause) => CustomError::Render(cause),
+            DenError::Parsing(cause) => CustomError::Parsing(cause),
+            DenError::Email(cause) => CustomError::Email(cause),
+            DenError::NotFound(cause) => CustomError::NotFound(cause),
+            DenError::ValidationError(cause) => CustomError::ValidationError(cause),
+        }
     }
 }
 
