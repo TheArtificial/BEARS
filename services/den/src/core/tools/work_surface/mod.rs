@@ -218,30 +218,5 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
     }
 }
 
-pub(crate) async fn orient_work_surface(
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-) -> Result<Value, CustomError> {
-    let ops = DenWorkSurfaceOps { config, stores };
-    den_tools::work_surface::orient_work_surface(&ops, context, role)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn create_work_surface_scaffold(
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let ops = DenWorkSurfaceOps { config, stores };
-    den_tools::work_surface::create_work_surface_scaffold(&ops, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
 #[cfg(test)]
 mod test;

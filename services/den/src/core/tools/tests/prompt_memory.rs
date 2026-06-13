@@ -9,14 +9,63 @@ use crate::{
         tools::{
             arguments::DenToolChannelContext,
             memory_read::memory_status_value,
-            prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
+            prompt_memory::DenPromptMemoryStore,
             session::DenToolInvocationContext,
         },
     },
+    errors::CustomError,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
 use uuid::Uuid;
+
+// Sibling test helpers: these mirror the dispatcher's `DenToolContext` wiring
+// (concrete `DenPromptMemoryStore` + the relocated `den-tools` executors) so the
+// store-backed round-trips below stay covered without a production-side wrapper.
+async fn prompt_memory_upsert(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    den_tools::prompt_memory::prompt_memory_upsert(
+        &DenPromptMemoryStore::new(pool),
+        context.bear_id,
+        context.user_id,
+        role,
+        arguments,
+    )
+    .await
+    .map_err(CustomError::from)
+}
+
+async fn prompt_memory_list(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    den_tools::prompt_memory::prompt_memory_list(
+        &DenPromptMemoryStore::new(pool),
+        context.bear_id,
+        role,
+        arguments,
+    )
+    .await
+    .map_err(CustomError::from)
+}
+
+async fn prompt_memory_patch(
+    pool: &PgPool,
+    _context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    den_tools::prompt_memory::prompt_memory_patch(&DenPromptMemoryStore::new(pool), role, arguments)
+        .await
+        .map_err(CustomError::from)
+}
 
 #[tokio::test]
 async fn prompt_memory_tools_round_trip_through_store() {

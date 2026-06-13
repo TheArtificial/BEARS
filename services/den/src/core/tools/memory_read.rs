@@ -278,37 +278,3 @@ pub(crate) async fn memory_status_value(
     memory_status(pool, config, context, role).await
 }
 
-pub(crate) async fn memory_browse(
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-) -> Result<Value, CustomError> {
-    let memory = DenRoleMemoryStore::new(config);
-    den_tools::memory::memory_browse(&memory, context.bear_id, role)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn memory_read(
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let memory = DenRoleMemoryStore::new(config);
-    den_tools::memory::memory_read(&memory, context.bear_id, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn memory_search(
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let memory = DenRoleMemoryStore::new(config);
-    den_tools::memory::memory_search(&memory, context.bear_id, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}

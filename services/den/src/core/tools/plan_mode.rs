@@ -3,7 +3,7 @@
 //! Argument parsing/validation and the static response envelopes now live in
 //! `den_tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
 //! implementation (DB rows, mode switches, native/MemFS artifact writes,
-//! `turn_state` rendering) and thin wrappers that the dispatcher calls. See
+//! `turn_state` rendering), wired into the dispatcher via `DenToolContext`. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
 use async_trait::async_trait;
@@ -363,98 +363,3 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     }
 }
 
-fn no_active_placeholder() -> Value {
-    Value::Null
-}
-
-pub(crate) async fn enter_plan_mode(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    arguments: Value,
-    plan_mode_workplan_payload: WorkplanPayloadFn,
-) -> Result<Value, CustomError> {
-    let runtime = DenPlanModeOps {
-        pool,
-        config: None,
-        stores: None,
-        workplan_payload: plan_mode_workplan_payload,
-        no_active_workplan: no_active_placeholder,
-    };
-    den_tools::plan_mode::enter_plan_mode(&runtime, context, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn plan_mode_status(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    plan_mode_workplan_payload: WorkplanPayloadFn,
-    no_active_workplan_payload: NoActiveWorkplanFn,
-) -> Result<Value, CustomError> {
-    let runtime = DenPlanModeOps {
-        pool,
-        config: None,
-        stores: None,
-        workplan_payload: plan_mode_workplan_payload,
-        no_active_workplan: no_active_workplan_payload,
-    };
-    den_tools::plan_mode::plan_mode_status(&runtime, context)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn record_plan_approval(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    arguments: Value,
-    plan_mode_workplan_payload: WorkplanPayloadFn,
-) -> Result<Value, CustomError> {
-    let runtime = DenPlanModeOps {
-        pool,
-        config: None,
-        stores: None,
-        workplan_payload: plan_mode_workplan_payload,
-        no_active_workplan: no_active_placeholder,
-    };
-    den_tools::plan_mode::record_plan_approval(&runtime, context, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn exit_plan_mode(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    arguments: Value,
-    plan_mode_workplan_payload: WorkplanPayloadFn,
-) -> Result<Value, CustomError> {
-    let runtime = DenPlanModeOps {
-        pool,
-        config: Some(config),
-        stores: Some(stores),
-        workplan_payload: plan_mode_workplan_payload,
-        no_active_workplan: no_active_placeholder,
-    };
-    den_tools::plan_mode::exit_plan_mode(&runtime, context, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn cancel_plan_mode(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    arguments: Value,
-    plan_mode_workplan_payload: WorkplanPayloadFn,
-) -> Result<Value, CustomError> {
-    let runtime = DenPlanModeOps {
-        pool,
-        config: None,
-        stores: None,
-        workplan_payload: plan_mode_workplan_payload,
-        no_active_workplan: no_active_placeholder,
-    };
-    den_tools::plan_mode::cancel_plan_mode(&runtime, context, arguments)
-        .await
-        .map_err(CustomError::from)
-}

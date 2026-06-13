@@ -10,8 +10,8 @@ use crate::{
     core::{
         bears::BearProfile,
         tools::{
-            identity::directory, memory_read::memory_status_value,
-            memory_write::source_acp_session_id, session::DenToolInvocationContext,
+            memory_read::memory_status_value, memory_write::source_acp_session_id,
+            session::DenToolInvocationContext,
         },
     },
     errors::{CustomError, DenError},
@@ -107,28 +107,3 @@ pub(crate) async fn fetch_acp_adapter_environment(
     }
 }
 
-pub(crate) async fn bear_environment(
-    pool: &PgPool,
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-) -> Result<Value, CustomError> {
-    let dir = directory(pool);
-    let env = DenEnvironmentOps { pool, config };
-    den_tools::environment::bear_environment(&dir, &env, context, role)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn session_info(
-    pool: &PgPool,
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-) -> Result<Value, CustomError> {
-    let dir = directory(pool);
-    let env = DenEnvironmentOps { pool, config };
-    den_tools::environment::session_info(&dir, &env, context, role)
-        .await
-        .map_err(CustomError::from)
-}

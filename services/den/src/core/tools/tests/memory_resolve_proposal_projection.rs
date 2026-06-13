@@ -4,11 +4,12 @@ use uuid::Uuid;
 
 use crate::core::{
     bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    den_tools::{
-        invoke_den_tool, DenToolChannelContext, DenToolInvocationContext,
-        DEN_MEMORY_RESOLVE_PROPOSAL,
-    },
     memory_proposals::{create, CreateMemoryProposal},
+    tools::{
+        arguments::DenToolChannelContext,
+        constants::DEN_MEMORY_RESOLVE_PROPOSAL,
+        session::{invoke_den_tool, DenToolInvocationContext},
+    },
     user::db::create_user,
 };
 
@@ -124,9 +125,12 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
+    let config = crate::config::Config::test_stub();
+    let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
-        &crate::config::Config::test_stub(),
+        &config,
+        &stores,
         DEN_MEMORY_RESOLVE_PROPOSAL,
         json!({
             "proposal_id": proposal.id,

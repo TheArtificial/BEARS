@@ -4,11 +4,12 @@ use uuid::Uuid;
 
 use crate::core::{
     bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    den_tools::{
-        invoke_den_tool, DenToolChannelContext, DenToolInvocationContext,
-        DEN_MEMORY_APPLY_CORE_UPDATE,
-    },
     memory_proposals::{create, CreateMemoryProposal},
+    tools::{
+        arguments::DenToolChannelContext,
+        constants::DEN_MEMORY_APPLY_CORE_UPDATE,
+        session::{invoke_den_tool, DenToolInvocationContext},
+    },
     user::db::create_user,
 };
 
@@ -124,12 +125,15 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
+    let config = crate::config::Config {
+        letta_memfs_service_url: "http://127.0.0.1:9".to_string(),
+        ..crate::config::Config::test_stub()
+    };
+    let stores = crate::core::memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
-        &crate::config::Config {
-            letta_memfs_service_url: "http://127.0.0.1:9".to_string(),
-            ..crate::config::Config::test_stub()
-        },
+        &config,
+        &stores,
         DEN_MEMORY_APPLY_CORE_UPDATE,
         json!({
             "proposal_id": proposal.id,

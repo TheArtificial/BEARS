@@ -12,8 +12,3 @@ mod request_review_projection_tests {
 mod resolve_proposal_projection_tests {
     include!("../tests/memory_resolve_proposal_projection.rs");
 }
-
-#[cfg(test)]
-mod write_tests {
-    include!("../tests/memory_write.rs");
-}

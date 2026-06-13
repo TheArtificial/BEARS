@@ -3,8 +3,8 @@
 //! Orchestration (gating, validation, projection-scope computation) lives in
 //! `den-tools`; this module provides the concrete [`MemoryReviewStore`] —
 //! composing proposal/observation persistence, the native/legacy core-update
-//! paths, the memory-curate enqueue, and `conversation_events` projections — plus
-//! thin wrappers that map `DenError` back to `CustomError`.
+//! paths, the memory-curate enqueue, and `conversation_events` projections —
+//! wired into the dispatcher via `DenToolContext`.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ use crate::{
         memory_manager_head::{write_memfs_core_update, MemfsCoreUpdateRequest},
         memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
         reflection_conductor::{self, ProposalEnqueueParams},
-        tools::{memfs::memfs_http_client, session::DenToolInvocationContext},
+        tools::memfs::memfs_http_client,
     },
     errors::{CustomError, DenError},
 };
@@ -459,72 +459,3 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     }
 }
 
-pub(crate) async fn apply_core_update(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenMemoryReviewStore::new(pool, config, stores);
-    den_tools::review::apply_core_update(&store, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn list_memory_proposals(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenMemoryReviewStore::new(pool, config, stores);
-    den_tools::review::list_memory_proposals(&store, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn read_memory_proposal(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenMemoryReviewStore::new(pool, config, stores);
-    den_tools::review::read_memory_proposal(&store, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn resolve_memory_proposal(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenMemoryReviewStore::new(pool, config, stores);
-    den_tools::review::resolve_memory_proposal(&store, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn request_memory_review(
-    pool: &PgPool,
-    config: &Config,
-    stores: &MemoryStoreManager,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenMemoryReviewStore::new(pool, config, stores);
-    den_tools::review::request_memory_review(&store, context, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}

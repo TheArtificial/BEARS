@@ -1,12 +1,10 @@
 //! `den`-side wiring for the prompt-memory tools.
 //!
 //! The orchestration (role gating, validation, result shaping) lives in
-//! `den-tools`; here we provide the Postgres-backed [`PromptMemoryStore`] and
-//! thin wrappers that adapt `DenToolInvocationContext` primitives and map
-//! `DenError` back to the web-boundary `CustomError`.
+//! `den-tools`; here we provide the Postgres-backed [`PromptMemoryStore`],
+//! wired into the dispatcher via `DenToolContext`.
 
 use async_trait::async_trait;
-use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -15,14 +13,10 @@ use den_tools::prompt_memory::{
 };
 
 use crate::{
-    core::{
-        bears::BearProfile,
-        prompt_memory_block_store::{
-            archive_conflicting_prompt_memory_blocks,
-            archive_prompt_memory_blocks_superseded_by, list_prompt_memory_blocks_for_bear_profile,
-            patch_prompt_memory_block, upsert_prompt_memory_block,
-        },
-        tools::session::DenToolInvocationContext,
+    core::prompt_memory_block_store::{
+        archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
+        list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
+        upsert_prompt_memory_block,
     },
     errors::{CustomError, DenError},
 };
@@ -89,44 +83,3 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     }
 }
 
-pub(crate) async fn prompt_memory_upsert(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore::new(pool);
-    den_tools::prompt_memory::prompt_memory_upsert(
-        &store,
-        context.bear_id,
-        context.user_id,
-        role,
-        arguments,
-    )
-    .await
-    .map_err(CustomError::from)
-}
-
-pub(crate) async fn prompt_memory_list(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore::new(pool);
-    den_tools::prompt_memory::prompt_memory_list(&store, context.bear_id, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn prompt_memory_patch(
-    pool: &PgPool,
-    _context: &DenToolInvocationContext,
-    role: BearProfile,
-    arguments: Value,
-) -> Result<Value, CustomError> {
-    let store = DenPromptMemoryStore::new(pool);
-    den_tools::prompt_memory::prompt_memory_patch(&store, role, arguments)
-        .await
-        .map_err(CustomError::from)
-}

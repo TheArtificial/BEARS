@@ -33,12 +33,12 @@ use crate::core::{
         },
         descriptor::builtin_den_tool_descriptor_for_provider_name,
         memory_write::MemoryWriteEntryArguments,
-        preflight::{tool_warning_payload, ToolSemanticWarning},
         session::{invoke_den_tool, DenToolInvocationContext},
         support::validate_memory_write_entry_semantics,
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
+use den_tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {

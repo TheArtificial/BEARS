@@ -2,10 +2,9 @@
 //!
 //! The JSON shaping and the dispatcher authorization helpers now live in
 //! `den_tools::identity`; this module provides the concrete [`BearDirectory`]
-//! over the `bears`/`user` DB and thin wrappers used by the dispatcher.
+//! over the `bears`/`user` DB, wired into the dispatcher via `DenToolContext`.
 
 use async_trait::async_trait;
-use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -14,7 +13,6 @@ use den_tools::identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUs
 use crate::{
     core::{
         bears::{db as bears_db, BearProfile},
-        tools::session::DenToolInvocationContext,
         user,
     },
     errors::{CustomError, DenError},
@@ -117,52 +115,3 @@ impl BearDirectory for DenBearDirectory<'_> {
     }
 }
 
-pub(crate) fn directory(pool: &PgPool) -> DenBearDirectory<'_> {
-    DenBearDirectory { pool }
-}
-
-pub(crate) async fn get_bear_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    den_tools::identity::get_bear_self(&directory(pool), context)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn get_current_user(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    den_tools::identity::get_current_user(&directory(pool), context)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn list_bear_members(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    den_tools::identity::list_bear_members(&directory(pool), context)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn policy_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    den_tools::identity::policy_self(&directory(pool), context)
-        .await
-        .map_err(CustomError::from)
-}
-
-pub(crate) async fn list_capabilities_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let role = den_tools::identity::context_role(&directory(pool), context)
-        .await
-        .map_err(CustomError::from)?;
-    Ok(den_tools::identity::list_capabilities_self(context, role))
-}
