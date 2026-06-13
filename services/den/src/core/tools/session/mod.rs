@@ -5,10 +5,9 @@ use crate::{
     config::Config,
     core::{
         acp_sessions,
-        bears::{db as bears_db, db::role_is_bear_admin, BearProfile},
+        bears::{db as bears_db, BearProfile},
         memory::MemoryStoreManager,
-        tools::descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
-        user,
+        tools::descriptor::builtin_den_tool_descriptors,
     },
     errors::CustomError,
 };
@@ -35,6 +34,7 @@ use crate::core::tools::{
     },
     memfs::{fetch_role_memory_tree, memfs_http_client},
     environment::{bear_environment, session_info},
+    identity,
     memory_read::{memory_browse, memory_read, memory_search, memory_status},
     memory_review::{
         apply_core_update, list_memory_proposals, read_memory_proposal,
@@ -112,11 +112,6 @@ async fn memory_orient_work_surface(
     }))
 }
 
-fn format_rfc3339(value: time::OffsetDateTime) -> String {
-    value.format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| value.to_string())
-}
-
 async fn patch_letta_conversation_summary(
     config: &Config,
     conversation_id: &str,
@@ -174,12 +169,12 @@ pub async fn invoke_den_tool(
     let role = authorize_context(pool, &context).await?;
     authorize_tool_for_profile(tool_name, role)?;
     match tool_name {
-        DEN_BEAR_GET_SELF => get_bear_self(pool, &context).await,
-        DEN_USER_GET_CURRENT => get_current_user(pool, &context).await,
-        DEN_BEAR_LIST_MEMBERS => list_bear_members(pool, &context).await,
-        DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
-        DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
-        DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
+        DEN_BEAR_GET_SELF => identity::get_bear_self(pool, &context).await,
+        DEN_USER_GET_CURRENT => identity::get_current_user(pool, &context).await,
+        DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(pool, &context).await,
+        DEN_CAPABILITIES_LIST_SELF => identity::list_capabilities_self(pool, &context).await,
+        DEN_CHANNEL_GET_CONTEXT => Ok(den_tools::identity::channel_context(&context)),
+        DEN_POLICY_GET_SELF => identity::policy_self(pool, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {
             session_info(pool, config, &context, role).await
         }
@@ -344,135 +339,6 @@ pub(crate) fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> 
             "Den tool `{tool_name}` is not available to the `{role}` role"
         )))
     }
-}
-
-async fn get_bear_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let bear = bears_db::get_bear(pool, context.bear_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    let member_count = bears_db::count_bear_members(pool, bear.id).await?;
-    Ok(json!({
-        "bear": {
-            "bear_id": bear.id,
-            "slug": bear.slug,
-            "name": bear.name,
-            "description": bear.description,
-            "default_model": bear.default_model,
-            "letta_agent_type": bear.letta_agent_type,
-            "member_count": member_count,
-            "created_at": format_rfc3339(bear.created_at),
-            "updated_at": format_rfc3339(bear.updated_at)
-        },
-        "viewer": {
-            "user_id": context.user_id,
-            "username": context.username,
-            "membership_role": context.membership_role,
-            "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
-        }
-    }))
-}
-
-async fn get_current_user(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let current = user::user_by_id(pool, context.user_id).await?;
-    Ok(json!({
-        "user": {
-            "user_id": current.id,
-            "username": current.username,
-            "display_name": current.display_name,
-            "email_verified": current.email_verified.unwrap_or(false),
-            "created_at": format_rfc3339(current.created.assume_utc())
-        },
-        "bear_membership": {
-            "bear_id": context.bear_id,
-            "role": context.membership_role,
-            "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
-        }
-    }))
-}
-
-async fn list_bear_members(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let members = bears_db::list_members_for_bear(pool, context.bear_id).await?;
-    let can_manage_members = role_is_bear_admin(context.membership_role.as_deref());
-    let member_values: Vec<Value> = members
-        .into_iter()
-        .map(|member| {
-            json!({
-                "user_id": member.user_id,
-                "username": member.username,
-                "display_name": member.display_name,
-                "role": member.role,
-            })
-        })
-        .collect();
-    Ok(json!({
-        "bear_id": context.bear_id,
-        "members": member_values,
-        "policy": {
-            "viewer_role": context.membership_role,
-            "can_manage_members": can_manage_members,
-            "redacted_fields": ["email"]
-        }
-    }))
-}
-
-async fn list_capabilities_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let role = context_role(pool, context).await?;
-    let descriptors = builtin_den_tool_descriptors_for_profile(role);
-    Ok(json!({
-        "bear_id": context.bear_id,
-        "channel": context.channel,
-        "capabilities": descriptors,
-    }))
-}
-
-fn channel_context(context: &DenToolInvocationContext) -> Value {
-    json!({
-        "bear_id": context.bear_id,
-        "binding_id": context.binding_id,
-        "profile": context.profile,
-        "user_id": context.user_id,
-        "conversation_id": context.conversation_id,
-        "session_id": context.session_id,
-        "request_id": context.request_id,
-        "channel": context.channel,
-    })
-}
-
-async fn policy_self(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-) -> Result<Value, CustomError> {
-    let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
-    let is_bear_admin = role_is_bear_admin(context.membership_role.as_deref());
-    Ok(json!({
-        "bear_id": context.bear_id,
-        "user_id": context.user_id,
-        "membership_role": context.membership_role,
-        "is_bear_admin": is_bear_admin,
-        "can_chat": true,
-        "can_read_bear_profile": true,
-        "can_list_members": true,
-        "can_manage_members": is_bear_admin,
-        "can_list_capabilities": true,
-        "can_read_channel_context": true,
-        "member_count": member_count,
-        "policy_notes": [
-            "Den tool calls are scoped to the current trusted bear/user context.",
-            "Emails and authentication internals are not exposed through these tools."
-        ]
-    }))
 }
 
 async fn set_conversation_title(

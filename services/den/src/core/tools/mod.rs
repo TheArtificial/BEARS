@@ -4,6 +4,7 @@ pub mod arguments;
 pub mod constants;
 pub mod descriptor;
 pub mod environment;
+pub mod identity;
 pub mod letta;
 pub mod memfs;
 pub mod memory_read;
