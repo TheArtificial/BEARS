@@ -2,7 +2,7 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` **Phase A + Phase B complete** — the static tool surface *and* every executor group now live in `den-tools` behind the composed `ToolContext` seam; `den` provides `DenToolContext` (the capability impls) and a thin `invoke_den_tool` wrapper. Dead wrappers removed and their tests migrated. The remaining service crates (`den-runtime`, then the `den-acp`/`den-api`/`den-web` edges) are now gated only on the **v0 loose-`core/*.rs` triage** (plus legacy deletion / de-stringify). See *Execution log* at the end.
+> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` **Phase A + Phase B complete** — the static tool surface *and* every executor group now live in `den-tools` behind the composed `ToolContext` seam; `den` provides `DenToolContext` (the capability impls) and a thin `invoke_den_tool` wrapper. Dead wrappers removed and their tests migrated. **The v0 core module triage is also complete** — all 43 loose `core/*.rs` subsystem files are co-located under `acp/`, `runtime/`, `conversation/`, `memory/`, `reflection/`, `llm/`, `letta/`, `tools/` (flat re-export shims keep call sites unchanged). This unblocks **`den-runtime`** and the `den-acp`/`den-api`/`den-web` edges; remaining v0 items are legacy deletion (`core/letta`/`core/codepool`), the clippy `-D warnings` baseline, and shared-core de-stringify. See *Execution log* at the end.
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -130,7 +130,7 @@ The Docket plan was written when bear memory was "still Letta-backed / not yet i
 
 Must complete before any crate is extracted.
 
-1. **Core module triage.** Sort the 43 loose `core/*.rs` files into their intended subsystem modules (`memory`, `docket`, `runtime`, `acp`, `tools`, `llm`, plus `api`/`web`), so each future crate's contents are co-located. This is the gating deliverable.
+1. **Core module triage. ✅ done (2026-06).** Sort the 43 loose `core/*.rs` files into their intended subsystem modules (`acp`, `runtime`, `conversation`, `memory`, `reflection`, `llm`, `letta`, `tools`), so each future crate's contents are co-located. This was the gating deliverable; loose subsystem-file count is now 0 (see *v0 — core module triage* log).
 2. **Trait seams in place.** `DocketService` + `TaskDispatcher` (Docket plan), `MemoryStore`, and `ToolContext` exist as the public faces of their modules; cross-module access goes through them.
 3. **clippy baseline.** Workspace lint table; fix existing warnings; CI `-D warnings`.
 4. **De-stringify the shared core.** Land the id newtypes and enums that will live in `den-core`, plus typed errors/config, so the foundation crate is already idiomatic when extracted.
@@ -849,3 +849,48 @@ Tests were migrated per the "sibling module when reasonable" preference:
 Verified: `cargo clippy -p den -p den-tools --lib --tests` clean of the targeted
 `dead_code` warnings; relocated `den-tools` unit tests and the resurrected `den`
 projection tests pass.
+
+## v0 — core module triage (complete, 2026-06, `test` branch)
+
+The gating v0 deliverable. The 43 loose `core/*.rs` subsystem files (~18k LOC)
+were sorted into their intended subsystem modules **while still a single crate**,
+so each future crate's contents are physically co-located and the extraction
+becomes a directory move. Mechanic (behavior-preserving, one cluster per commit):
+`git mv` each file into its subsystem dir, declare it canonically in that dir's
+`mod.rs`, and keep a **flat re-export shim** in `core/mod.rs`
+(`pub use acp::runtime as acp_runtime;`) so every existing `crate::core::<flat>`
+reference compiles unchanged. The handful of intra-file `super::` references that
+broke on reparenting were repointed (to `crate::core::…` or the new sibling).
+
+Co-location landed:
+
+- **`core/acp/`** — all nine `acp_*` modules (`letta_events`, `plan_mode`,
+  `runtime`, `sessions`, `tokens`, `tool_turns`, `tools`, `turn_controller`,
+  `turn_runner`) + the two included test files. ~8.8k LOC; the bulk of the future
+  `den-acp` crate.
+- **`core/runtime/`** — promoted the inline `runtime` module + `#[path]` aliases
+  into a real `runtime/mod.rs`; absorbed `role`(+tests)/`role_registry`,
+  `turn_state`, `pair_turn`, `conversations`, `compaction_observability`,
+  `compaction_store` alongside the existing `compaction`/`contracts`/`provider`/
+  `bearwire_projection` subdirs.
+- **`core/conversation/`** — `events`(+tests), `message_types`,
+  `persistence`(+2 integration tests), `archived` (replaces the prior inline
+  re-export module).
+- **`core/memory/`** — `manager_head`(+tests), `proposals`, `curate_executor`,
+  `bear_observations`, `prompt_blocks`, `prompt_block_store`.
+- **`core/reflection/`** (new) — `conductor`, `conversations`.
+- **`core/llm/`** — `bifrost`. **`core/letta/`** — `runtime_stream_parser`(+tests,
+  legacy). **`core/tools/`** — `web_policy`, `tool_descriptor_guidance`.
+
+Residual flat files (intentionally not moved): `docket.rs` / `work_plans.rs` are
+crate-level re-export shims for the already-extracted `den-docket`; `api_utils.rs`
+is a dependency-free cross-cutting serde util (a future `den-core` leaf candidate,
+not a subsystem file). Loose subsystem `*.rs` count: **43 → 0**.
+
+Verified per cluster: `cargo check -p den --lib`/`--tests` green; finalized with
+`cargo clippy --workspace --all-targets` (no errors; only the pre-existing
+advisory pedantic/nursery + baseline `dead_code` warnings, count unchanged) and a
+relocated unit-test smoke run. **This unblocks `den-runtime`** (and the
+`den-acp`/`den-api`/`den-web` edges): the `ToolContext` seam is stable and the
+subsystem sources are now co-located for mechanical extraction. Resolves the
+*Open question* on loose-file placement between `den-acp` and `den-runtime`.
