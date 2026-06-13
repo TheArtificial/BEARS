@@ -13,10 +13,8 @@ use crate::{
         bears::BearProfile,
         docket::{DocketService, PgDocketService},
         memory::{tools as sqlite_memory, MemoryStoreManager},
-        memory_manager_head::fetch_memfs_role_plan_artifacts,
         tools::{
             activity_payloads::{activity_payload, plan_mode_workplan_payload},
-            memfs::memfs_http_client,
             memory_write::source_acp_session_id,
             session::DenToolInvocationContext,
             support::clean_optional,
@@ -130,7 +128,7 @@ pub(crate) fn empty_json_object() -> Value {
 
 pub(crate) async fn list_work_plans(
     pool: &PgPool,
-    config: &Config,
+    _config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
@@ -162,31 +160,13 @@ pub(crate) async fn list_work_plans(
         Vec::new()
     };
     let plan_artifacts = if include_artifacts {
-        if config.uses_native_agent_runtime() {
-            match stores.store_for_bear(context.bear_id).await {
-                Ok(store) => sqlite_memory::sqlite_list_plan_artifacts(
-                    &store,
-                    BearProfile::Pair.as_str(),
-                    50,
-                )
-                .await
-                .unwrap_or_else(|err| json!({ "error": err.to_string() })),
-                Err(err) => json!({ "error": err.to_string() }),
+        match stores.store_for_bear(context.bear_id).await {
+            Ok(store) => {
+                sqlite_memory::sqlite_list_plan_artifacts(&store, BearProfile::Pair.as_str(), 50)
+                    .await
+                    .unwrap_or_else(|err| json!({ "error": err.to_string() }))
             }
-        } else {
-            let http = memfs_http_client("MemFS plan artifact list client build failed")?;
-            match fetch_memfs_role_plan_artifacts(
-                &http,
-                &config.letta_memfs_service_url,
-                context.bear_id,
-                BearProfile::Pair.as_str(),
-            )
-            .await
-            {
-                Ok(Some(response)) => response.results,
-                Ok(None) => json!([]),
-                Err(err) => json!({ "error": err.to_string() }),
-            }
+            Err(err) => json!({ "error": err.to_string() }),
         }
     } else {
         json!([])

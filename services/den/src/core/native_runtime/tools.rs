@@ -71,16 +71,15 @@ fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> 
     }
 }
 
-pub fn den_tools_for_profile(config: &Config, role: BearProfile) -> Vec<LlmToolDefinition> {
-    let compact = config.uses_native_agent_runtime();
-    let descriptors = if config.uses_native_agent_runtime() && role == BearProfile::Pair {
+pub fn den_tools_for_profile(_config: &Config, role: BearProfile) -> Vec<LlmToolDefinition> {
+    let descriptors = if role == BearProfile::Pair {
         builtin_den_tool_descriptors_for_pair_acp_surface()
     } else {
         builtin_den_tool_descriptors_for_profile(role)
     };
     descriptors
         .into_iter()
-        .map(|descriptor| den_tool_to_llm_definition(&descriptor, compact))
+        .map(|descriptor| den_tool_to_llm_definition(&descriptor, true))
         .collect()
 }
 
@@ -180,7 +179,7 @@ pub fn merge_den_and_client_tools(
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, CustomError> {
-    let mut merged = if config.uses_native_agent_runtime() && role == BearProfile::Chat {
+    let mut merged = if role == BearProfile::Chat {
         if chat_turn_needs_full_tool_surface(pair_turn_prompt) {
             den_tools_for_profile(config, role)
         } else {
@@ -193,7 +192,7 @@ pub fn merge_den_and_client_tools(
     } else {
         den_tools_for_profile(config, role)
     };
-    let include_client_tools = if config.uses_native_agent_runtime() && role == BearProfile::Pair {
+    let include_client_tools = if role == BearProfile::Pair {
         pair_turn_needs_workspace_client_tools(pair_turn_prompt)
     } else {
         role != BearProfile::Chat
@@ -206,15 +205,11 @@ pub fn merge_den_and_client_tools(
         );
         return Ok(merged);
     }
-    let filtered_client_tools = if config.uses_native_agent_runtime() {
-        filter_client_tools_for_native_runtime(client_tools)
-    } else {
-        client_tools.cloned()
-    };
+    let filtered_client_tools = filter_client_tools_for_native_runtime(client_tools);
     let Some(client_tools) = filtered_client_tools.as_ref().and_then(|v| v.as_array()) else {
         return Ok(merged);
     };
-    let compact = config.uses_native_agent_runtime();
+    let compact = true;
     let mut seen = std::collections::HashSet::<String>::new();
     let mut seen_mcp_actions = std::collections::HashSet::<String>::new();
     for tool in &merged {
@@ -230,7 +225,7 @@ pub fn merge_den_and_client_tools(
         let Some(name) = name else {
             continue;
         };
-        if config.uses_native_agent_runtime() && is_memfs_client_tool_name(name) {
+        if is_memfs_client_tool_name(name) {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {

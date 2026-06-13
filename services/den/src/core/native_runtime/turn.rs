@@ -282,11 +282,6 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     session_id: &str,
     prompt: &str,
 ) -> Result<String, CustomError> {
-    if !deps.config.uses_native_agent_runtime() {
-        return Err(CustomError::System(
-            "native runtime requested but AGENT_RUNTIME is not native".to_string(),
-        ));
-    }
     let profile = NativeCapabilityProfile::for_profile(role);
     let session = build_session(
         deps,
@@ -336,11 +331,6 @@ pub struct NativeWebChatTurnParams<'a> {
 pub async fn start_native_web_chat_turn_event_stream(
     params: NativeWebChatTurnParams<'_>,
 ) -> Result<RuntimeEventStream, CustomError> {
-    if !params.deps.config.uses_native_agent_runtime() {
-        return Err(CustomError::System(
-            "native runtime requested but AGENT_RUNTIME is not native".to_string(),
-        ));
-    }
     let assembly_started = std::time::Instant::now();
     let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
@@ -409,11 +399,6 @@ pub async fn start_native_profile_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
     role: BearProfile,
 ) -> Result<RuntimeEventStream, CustomError> {
-    if !request.state.config.uses_native_agent_runtime() {
-        return Err(CustomError::System(
-            "native runtime requested but AGENT_RUNTIME is not native".to_string(),
-        ));
-    }
     let profile = NativeCapabilityProfile::for_profile(role);
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.state.sqlx_pool.clone());

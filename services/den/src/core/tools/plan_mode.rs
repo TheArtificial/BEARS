@@ -2,7 +2,7 @@
 //!
 //! Argument parsing/validation and the static response envelopes now live in
 //! `den_tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
-//! implementation (DB rows, mode switches, native/MemFS artifact writes,
+//! implementation (DB rows, mode switches, native SQLite artifact writes,
 //! `turn_state` rendering), wired into the dispatcher via `DenToolContext`. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
@@ -26,8 +26,7 @@ use crate::{
         acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
         bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
-        memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
-        tools::{memfs::memfs_http_client, session::DenToolInvocationContext, support::clean_optional},
+        tools::{session::DenToolInvocationContext, support::clean_optional},
         turn_state,
     },
     errors::{CustomError, DenError},
@@ -210,7 +209,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         .ok_or_else(|| {
             DenError::NotFound("active ACP plan mode session not found".to_string())
         })?;
-        let artifact_path = if config.uses_native_agent_runtime() {
+        let artifact_path = {
             let artifact_id = format!("plan-mode-{}", current_plan.id);
             let logical_path = format!("pair/plans/{artifact_id}.md");
             let written = sqlite_memory::sqlite_write_at_path(
@@ -239,46 +238,6 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 .and_then(|v| v.as_str())
                 .unwrap_or(&logical_path)
                 .to_string()
-        } else {
-            let memory_request = MemfsWriteRoleMemoryEntryRequest {
-                kind: "plan".to_string(),
-                title: title.to_string(),
-                body: markdown,
-                tags: vec!["plan-mode".to_string(), "implementation-plan".to_string()],
-                refs: None,
-                lifecycle: Some(json!({ "scope": "role-local", "retention": "durable" })),
-                source: Some(json!({
-                    "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
-                    "acp_session_id": acp_session_id,
-                    "conversation_id": clean_optional(&context.conversation_id),
-                })),
-                author: context.username.clone(),
-                conversation_id: clean_optional(&context.conversation_id),
-                session_id: Some(acp_session_id.to_string()),
-                acp_session_id: Some(acp_session_id.to_string()),
-                conversation_selection: context.conversation_selection.clone(),
-                runtime_target: context.runtime_target.clone(),
-                binding_id: Some(context.binding_id.clone()),
-                profile: Some(BearProfile::Pair.as_str().to_string()),
-                request_id: context.request_id.clone(),
-            };
-            let http = memfs_http_client("MemFS plan artifact client build failed")
-                .map_err(CustomError::into_den)?;
-            let memfs_response = write_memfs_role_memory_entry(
-                &http,
-                &config.letta_memfs_service_url,
-                context.bear_id,
-                BearProfile::Pair.as_str(),
-                &memory_request,
-            )
-            .await
-            .map_err(CustomError::into_den)?;
-            let Some(memfs_response) = memfs_response else {
-                return Err(DenError::System(
-                    "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-                ));
-            };
-            memfs_response.path
         };
         let row = acp_plan_mode::submit_plan_artifact(
             self.pool,
@@ -304,11 +263,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         )
         .await
         .map_err(CustomError::into_den)?;
-        let storage = if config.uses_native_agent_runtime() {
-            "sqlite"
-        } else {
-            "memfs"
-        };
+        let storage = "sqlite";
         Ok(PlanModeExitView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(

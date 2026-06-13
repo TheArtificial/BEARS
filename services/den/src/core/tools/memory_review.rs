@@ -32,10 +32,8 @@ use crate::{
             mark_observation_review_queued_for_bear, promote_core_content,
             resolve_proposal as db_resolve_proposal, MemoryStoreManager,
         },
-        memory_manager_head::{write_memfs_core_update, MemfsCoreUpdateRequest},
         memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
         reflection_conductor::{self, ProposalEnqueueParams},
-        tools::memfs::memfs_http_client,
     },
     errors::{CustomError, DenError},
 };
@@ -212,30 +210,18 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             .enqueue_observation_review(&request, &observation, &salience)
             .await?;
 
-        if self.config.uses_native_agent_runtime() {
-            mark_observation_review_queued_for_bear(
-                self.config,
-                self.stores,
-                request.bear_id,
-                &observation.observation_id,
-                proposal.id,
-            )
-            .await
-            .map_err(CustomError::into_den)?;
-            let mut observation = observation;
-            observation.status = "review_queued".to_string();
-            observation.proposal_id = Some(proposal.id);
-            return Ok(observation_record(&observation));
-        }
-
-        let observation = bear_observations::mark_review_queued(
-            self.pool,
+        mark_observation_review_queued_for_bear(
+            self.config,
+            self.stores,
             request.bear_id,
-            observation.id,
+            &observation.observation_id,
             proposal.id,
         )
         .await
         .map_err(CustomError::into_den)?;
+        let mut observation = observation;
+        observation.status = "review_queued".to_string();
+        observation.proposal_id = Some(proposal.id);
         Ok(observation_record(&observation))
     }
 
@@ -343,94 +329,28 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         .map_err(CustomError::into_den)?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
-        if self.config.uses_native_agent_runtime() {
-            let content = request.body.clone().unwrap_or_else(|| {
-                format!(
-                    "Applied from proposal `{}` via native SQLite promotion.",
-                    proposal.id
-                )
-            });
-            let kind = request
-                .target_path
-                .split('/')
-                .next_back()
-                .unwrap_or("note")
-                .trim_end_matches(".md");
-            let (memory_id, promotion_id) = promote_core_content(
-                self.stores,
-                request.bear_id,
-                &proposal.id.to_string(),
-                kind,
-                &content,
-                request.reviewer_profile.as_str(),
-            )
-            .await
-            .map_err(CustomError::into_den)?;
-            let resolved = db_resolve_proposal(
-                self.pool,
-                self.config,
-                self.stores,
-                ProposalResolutionParams {
-                    bear_id: request.bear_id,
-                    proposal_id: proposal.id,
-                    reviewer_profile: request.reviewer_profile,
-                    reviewer_agent_id: Some(request.binding_id.as_str()),
-                    status: "approved",
-                    review_notes: request.review_notes.as_deref(),
-                    decision_summary: Some("Applied reviewed memory proposal to core (SQLite)."),
-                    result_path: Some(request.target_path.as_str()),
-                    result_commit: None,
-                    project_to_conversation: false,
-                },
-            )
-            .await
-            .map_err(CustomError::into_den)?;
-            self.project_resolved(&request.projection, &resolved);
-            return Ok(json!({
-                "bear_id": request.bear_id,
-                "proposal": resolved,
-                "core_update": {
-                    "path": request.target_path,
-                    "memory_id": memory_id,
-                    "promotion_id": promotion_id,
-                },
-            }));
-        }
-
-        let http = memfs_http_client("MemFS core update client build failed")
-            .map_err(CustomError::into_den)?;
-        let body = request.body.clone().map(|body| {
+        let content = request.body.clone().unwrap_or_else(|| {
             format!(
-                "{}\n\n---\nSource proposal: `{}`\nSource role: `{}`\nSource paths: {}\n",
-                body.trim(),
-                proposal.id,
-                proposal.source_profile,
-                proposal.source_paths.join(", ")
+                "Applied from proposal `{}` via native SQLite promotion.",
+                proposal.id
             )
         });
-        let core_request = MemfsCoreUpdateRequest {
-            target_path: request.target_path.clone(),
-            mode: request.mode.clone(),
-            title: request.title.clone().or_else(|| Some(proposal.title.clone())),
-            body,
-            old_text: request.old_text.clone(),
-            new_text: request.new_text.clone(),
-            proposal_id: Some(proposal.id),
-            source_paths: proposal.source_paths.clone(),
-        };
-        let response = write_memfs_core_update(
-            &http,
-            &self.config.letta_memfs_service_url,
+        let kind = request
+            .target_path
+            .split('/')
+            .next_back()
+            .unwrap_or("note")
+            .trim_end_matches(".md");
+        let (memory_id, promotion_id) = promote_core_content(
+            self.stores,
             request.bear_id,
-            &core_request,
+            &proposal.id.to_string(),
+            kind,
+            &content,
+            request.reviewer_profile.as_str(),
         )
         .await
         .map_err(CustomError::into_den)?;
-        let Some(response) = response else {
-            return Err(DenError::System(
-                "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
-            ));
-        };
         let resolved = db_resolve_proposal(
             self.pool,
             self.config,
@@ -442,9 +362,9 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 reviewer_agent_id: Some(request.binding_id.as_str()),
                 status: "approved",
                 review_notes: request.review_notes.as_deref(),
-                decision_summary: Some("Applied reviewed memory proposal to core."),
-                result_path: Some(response.path.as_str()),
-                result_commit: response.canonical_tip.as_deref(),
+                decision_summary: Some("Applied reviewed memory proposal to core (SQLite)."),
+                result_path: Some(request.target_path.as_str()),
+                result_commit: None,
                 project_to_conversation: false,
             },
         )
@@ -454,7 +374,11 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         Ok(json!({
             "bear_id": request.bear_id,
             "proposal": resolved,
-            "core_update": response,
+            "core_update": {
+                "path": request.target_path,
+                "memory_id": memory_id,
+                "promotion_id": promotion_id,
+            },
         }))
     }
 }
