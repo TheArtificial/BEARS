@@ -22,6 +22,7 @@ pub mod display;
 pub mod memory;
 pub mod preflight;
 pub mod prompt_memory;
+pub mod review;
 pub mod support;
 pub mod tool_descriptor_guidance;
 pub mod validation;

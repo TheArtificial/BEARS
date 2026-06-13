@@ -703,3 +703,18 @@ environment/memory_review) and the `&User`-based `merge_memory_entry_source_with
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — `observations` landed (2026-06, `test` branch)
+
+`den_tools::review::write_observation` owns the executor (watch gating, validation,
+salience/id normalization, idempotency branch, payload shaping) behind a new
+`MemoryReviewStore` seam. Because the den proposal/observation row + param types
+carry lifetimes and span three modules (`bear_observations`, `memory_proposals`,
+`reflection_conductor`), the seam uses **owned** value types
+(`ObservationWriteRequest`, `ObservationRecord`); the `den` impl
+(`DenMemoryReviewStore`) composes `create_observation` + `create_proposal` +
+curate enqueue + native/legacy `mark_review_queued`. Wrapper signature unchanged.
+This seam will also back `memory_review`.
+
+Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
+green; `den-tools` clippy-clean.
