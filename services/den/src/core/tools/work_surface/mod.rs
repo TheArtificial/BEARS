@@ -25,7 +25,10 @@ use crate::{
             append_markdown_section, fetch_memfs_role_memory_file, write_memfs_core_update,
             MemfsCoreUpdateRequest,
         },
-        tools::{memfs::memfs_http_client, session::DenToolInvocationContext},
+        tools::{
+            memfs::{fetch_role_memory_tree, memfs_http_client},
+            session::DenToolInvocationContext,
+        },
     },
     errors::{CustomError, DenError},
 };
@@ -158,6 +161,73 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
             updates: responses,
         })
     }
+
+    async fn orient(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError> {
+        let hint_payload = infer_work_surface_hint(context, role);
+        let candidate_slug = work_surface_candidate_slug(context);
+        if self.config.uses_native_agent_runtime() {
+            let store = self.stores.store_for_bear(context.bear_id).await?;
+            let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str())
+                .await
+                .map_err(CustomError::into_den)?;
+            let orientation =
+                build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+            return Ok(json!({
+                "ok": true,
+                "configured": true,
+                "storage": "sqlite",
+                "bear_id": context.bear_id,
+                "profile": role.as_str(),
+                "orientation": orientation,
+            }));
+        }
+        let http = memfs_http_client("MemFS work-surface orientation client build failed")
+            .map_err(CustomError::into_den)?;
+        let tree = fetch_role_memory_tree(
+            &http,
+            &self.config.letta_memfs_service_url,
+            context.bear_id,
+            role.as_str(),
+        )
+        .await
+        .map_err(CustomError::into_den)?;
+        let Some(tree) = tree else {
+            return Ok(json!({
+                "ok": false,
+                "configured": false,
+                "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)",
+                "orientation": build_work_surface_orientation_payload(role, &hint_payload, &[], candidate_slug),
+            }));
+        };
+        let mut files = Vec::new();
+        collect_memory_tree_paths(&tree.files, &mut files);
+        let orientation =
+            build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+        Ok(json!({
+            "ok": tree.ok,
+            "configured": true,
+            "bear_id": context.bear_id,
+            "profile": role.as_str(),
+            "canonical_tip": tree.canonical_tip,
+            "orientation": orientation,
+        }))
+    }
+}
+
+pub(crate) async fn orient_work_surface(
+    config: &Config,
+    stores: &MemoryStoreManager,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+) -> Result<Value, CustomError> {
+    let ops = DenWorkSurfaceOps { config, stores };
+    den_tools::work_surface::orient_work_surface(&ops, context, role)
+        .await
+        .map_err(CustomError::from)
 }
 
 pub(crate) async fn create_work_surface_scaffold(

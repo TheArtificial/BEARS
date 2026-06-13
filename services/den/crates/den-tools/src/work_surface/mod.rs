@@ -371,6 +371,14 @@ pub fn collect_memory_tree_paths(files: &Value, out: &mut Vec<String>) {
     }
 }
 
+pub async fn orient_work_surface(
+    ops: &impl WorkSurfaceOps,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+) -> Result<Value, DenError> {
+    ops.orient(context, role).await
+}
+
 pub async fn create_work_surface_scaffold(
     ops: &impl WorkSurfaceOps,
     context: &DenToolInvocationContext,

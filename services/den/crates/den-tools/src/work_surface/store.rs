@@ -10,6 +10,8 @@ use den_core::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::context::DenToolInvocationContext;
+
 /// One scaffold file to write (runtime-neutral; `proposal_id`/`source_paths`
 /// don't apply to scaffolds, so they are omitted here).
 #[derive(Debug, Clone)]
@@ -40,4 +42,14 @@ pub trait WorkSurfaceOps: Send + Sync {
         name: &str,
         requests: Vec<ScaffoldRequest>,
     ) -> Result<WorkSurfaceScaffoldOutcome, DenError>;
+
+    /// Render the work-surface orientation payload (native + legacy MemFS paths).
+    ///
+    /// The native vs. MemFS listing/shaping differs enough that this stays a
+    /// coarse capability returning the finished payload.
+    async fn orient(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError>;
 }

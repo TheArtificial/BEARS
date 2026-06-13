@@ -16,7 +16,6 @@ use den_tools::workflow::WorkPlanOps;
 
 use crate::core::tools::{
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
-    arguments::SetConversationTitleArguments,
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS,
         DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
@@ -34,7 +33,6 @@ use crate::core::tools::{
         DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_SEARCH, DEN_WORK_PLAN_GET_STATUS,
         DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
     },
-    memfs::{fetch_role_memory_tree, memfs_http_client},
     environment::{bear_environment, session_info},
     identity,
     memory_read::{memory_browse, memory_read, memory_search, memory_status},
@@ -51,68 +49,8 @@ use crate::core::tools::{
     prompt_memory::{prompt_memory_list, prompt_memory_patch, prompt_memory_upsert},
     web::{web_fetch, web_search},
     workflow,
-    work_surface::{
-        build_work_surface_orientation_payload, collect_memory_tree_paths,
-        create_work_surface_scaffold, infer_work_surface_hint, work_surface_candidate_slug,
-    },
+    work_surface::{create_work_surface_scaffold, orient_work_surface},
 };
-
-fn clean_optional(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-async fn memory_orient_work_surface(
-    config: &Config,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
-) -> Result<Value, CustomError> {
-    let hint_payload = infer_work_surface_hint(context, role);
-    let candidate_slug = work_surface_candidate_slug(context);
-    if config.uses_native_agent_runtime() {
-        let stores = MemoryStoreManager::new(config);
-        let store = stores.store_for_bear(context.bear_id).await?;
-        let files =
-            crate::core::memory::tools::sqlite_collect_role_logical_paths(&store, role.as_str())
-                .await?;
-        let orientation =
-            build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
-        return Ok(json!({
-            "ok": true,
-            "configured": true,
-            "storage": "sqlite",
-            "bear_id": context.bear_id,
-            "profile": role.as_str(),
-            "orientation": orientation,
-        }));
-    }
-    let http = memfs_http_client("MemFS work-surface orientation client build failed")?;
-    let tree = fetch_role_memory_tree(&http, &config.letta_memfs_service_url, context.bear_id, role.as_str()).await?;
-    let Some(tree) = tree else {
-        return Ok(json!({
-            "ok": false,
-            "configured": false,
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)",
-            "orientation": build_work_surface_orientation_payload(role, &hint_payload, &[], candidate_slug),
-        }));
-    };
-    let mut files = Vec::new();
-    collect_memory_tree_paths(&tree.files, &mut files);
-    let orientation =
-        build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
-    Ok(json!({
-        "ok": tree.ok,
-        "configured": true,
-        "bear_id": context.bear_id,
-        "profile": role.as_str(),
-        "canonical_tip": tree.canonical_tip,
-        "orientation": orientation,
-    }))
-}
 
 async fn patch_letta_conversation_summary(
     config: &Config,
@@ -193,7 +131,7 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
-            memory_orient_work_surface(config, &context, role).await
+            orient_work_surface(config, stores, &context, role).await
         }
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
             create_work_surface_scaffold(config, stores, &context, role, arguments).await
@@ -342,46 +280,45 @@ pub(crate) fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> 
     }
 }
 
+struct DenConversationTitleOps<'a> {
+    pool: &'a PgPool,
+    config: &'a Config,
+}
+
+#[async_trait::async_trait]
+impl den_tools::conversation::ConversationTitleOps for DenConversationTitleOps<'_> {
+    async fn patch_summary(
+        &self,
+        conversation_id: &str,
+        summary: &str,
+    ) -> Result<(), crate::errors::DenError> {
+        patch_letta_conversation_summary(self.config, conversation_id, summary)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn set_title(
+        &self,
+        bear_id: uuid::Uuid,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<u64, crate::errors::DenError> {
+        acp_sessions::set_title_for_bear_conversation(self.pool, bear_id, conversation_id, title)
+            .await
+            .map_err(CustomError::into_den)
+    }
+}
+
 async fn set_conversation_title(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let args: SetConversationTitleArguments = serde_json::from_value(arguments)?;
-    let title = args.title.trim().chars().take(120).collect::<String>();
-    if title.is_empty() {
-        return Err(CustomError::ValidationError(
-            "conversation title cannot be empty".to_string(),
-        ));
-    }
-    let conversation_id = clean_optional(&context.conversation_id).ok_or_else(|| {
-        CustomError::ValidationError(
-            "current conversation is not saved yet; send a message before setting its title"
-                .to_string(),
-        )
-    })?;
-    if conversation_id == "default" || conversation_id.starts_with("new-") {
-        return Err(CustomError::ValidationError(
-            "current conversation is not saved yet; send a message before setting its title"
-                .to_string(),
-        ));
-    }
-    patch_letta_conversation_summary(config, &conversation_id, &title).await?;
-    let synced_acp_sessions = acp_sessions::set_title_for_bear_conversation(
-        pool,
-        context.bear_id,
-        &conversation_id,
-        &title,
-    )
-    .await?;
-    Ok(json!({
-        "ok": true,
-        "conversation_id": conversation_id,
-        "title": title,
-        "synced_acp_sessions": synced_acp_sessions,
-        "content": format!("Conversation title set to {title:?}."),
-    }))
+    let ops = DenConversationTitleOps { pool, config };
+    den_tools::conversation::set_conversation_title(&ops, context, arguments)
+        .await
+        .map_err(CustomError::from)
 }
 
 #[cfg(test)]
