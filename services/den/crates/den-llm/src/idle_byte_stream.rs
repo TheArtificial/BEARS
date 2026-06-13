@@ -7,15 +7,15 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::time::Sleep;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 /// Fails the stream when no upstream bytes arrive within `idle_limit`.
-pub(crate) fn byte_stream_with_idle_timeout<S>(
+pub fn byte_stream_with_idle_timeout<S>(
     inner: S,
     idle_limit: Duration,
-) -> impl Stream<Item = Result<Bytes, CustomError>> + Send + Unpin
+) -> impl Stream<Item = Result<Bytes, DenError>> + Send + Unpin
 where
-    S: Stream<Item = Result<Bytes, CustomError>> + Send + Unpin + 'static,
+    S: Stream<Item = Result<Bytes, DenError>> + Send + Unpin + 'static,
 {
     IdleTimeoutByteStream {
         inner: Box::pin(inner),
@@ -26,7 +26,7 @@ where
 }
 
 struct IdleTimeoutByteStream {
-    inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send + Unpin>>,
+    inner: Pin<Box<dyn Stream<Item = Result<Bytes, DenError>> + Send + Unpin>>,
     idle: Pin<Box<Sleep>>,
     idle_limit: Duration,
     finished: bool,
@@ -37,8 +37,8 @@ impl IdleTimeoutByteStream {
         self.idle = Box::pin(tokio::time::sleep(self.idle_limit));
     }
 
-    fn idle_elapsed_error(&self) -> CustomError {
-        CustomError::System(format!(
+    fn idle_elapsed_error(&self) -> DenError {
+        DenError::System(format!(
             "LLM byte stream produced no data for {}s",
             self.idle_limit.as_secs()
         ))
@@ -46,7 +46,7 @@ impl IdleTimeoutByteStream {
 }
 
 impl Stream for IdleTimeoutByteStream {
-    type Item = Result<Bytes, CustomError>;
+    type Item = Result<Bytes, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.finished {
@@ -87,7 +87,7 @@ mod tests {
 
     use super::*;
 
-    fn empty_pending_stream() -> impl Stream<Item = Result<Bytes, CustomError>> + Send + Unpin {
+    fn empty_pending_stream() -> impl Stream<Item = Result<Bytes, DenError>> + Send + Unpin {
         futures::stream::pending()
     }
 

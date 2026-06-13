@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use futures::Stream;
+use futures::{Stream, TryStreamExt};
 use tokio::time::timeout;
 
 use crate::{
@@ -74,7 +74,7 @@ impl LazyAgentStepStream {
                         error = %err,
                         "LLM chat/completions handshake failed"
                     );
-                    Err(err)
+                    Err(err.into())
                 }
                 Ok(Ok(byte_stream)) => {
                     tracing::info!(
@@ -87,7 +87,8 @@ impl LazyAgentStepStream {
                     let byte_stream = byte_stream_with_idle_timeout(
                         byte_stream,
                         NATIVE_LLM_STREAM_IDLE_TIMEOUT,
-                    );
+                    )
+                    .map_err(CustomError::from);
                     Ok(openai_byte_stream_to_event_stream(byte_stream))
                 }
             }

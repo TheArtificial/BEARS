@@ -5,7 +5,7 @@ use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{config::Config, errors::CustomError};
+use den_core::{config::Config, DenError};
 
 /// Bifrost expects `provider/model`; bare OpenAI-style ids get an `openai/` prefix.
 pub fn normalize_llm_model_handle(model: &str) -> String {
@@ -145,9 +145,9 @@ impl LlmClient {
     pub async fn chat_completions_stream(
         &self,
         request: &ChatCompletionRequest,
-    ) -> Result<Response, CustomError> {
+    ) -> Result<Response, DenError> {
         if !self.is_enabled() {
-            return Err(CustomError::System(
+            return Err(DenError::System(
                 "LLM API is not configured (set LLM_API_URL or BIFROST_BASE_URL)".to_string(),
             ));
         }
@@ -175,7 +175,7 @@ impl LlmClient {
                     error = %e,
                     "LLM chat/completions request failed"
                 );
-                CustomError::System(format!("LLM chat/completions request failed: {e}"))
+                DenError::System(format!("LLM chat/completions request failed: {e}"))
             })?;
         let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
@@ -188,7 +188,7 @@ impl LlmClient {
                 response_body_len = text.len(),
                 "LLM chat/completions returned error status"
             );
-            return Err(CustomError::System(format!(
+            return Err(DenError::System(format!(
                 "LLM chat/completions HTTP {status}: {text}"
             )));
         }
@@ -204,11 +204,11 @@ impl LlmClient {
     pub async fn chat_completions_byte_stream(
         &self,
         request: &ChatCompletionRequest,
-    ) -> Result<impl Stream<Item = Result<bytes::Bytes, CustomError>> + Send + Unpin, CustomError>
+    ) -> Result<impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin, DenError>
     {
         let resp = self.chat_completions_stream(request).await?;
         Ok(resp.bytes_stream().map(|chunk| {
-            chunk.map_err(|e| CustomError::System(format!("LLM stream read failed: {e}")))
+            chunk.map_err(|e| DenError::System(format!("LLM stream read failed: {e}")))
         }))
     }
 }
