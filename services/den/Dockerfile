@@ -18,16 +18,14 @@ FROM rust-base AS chef-base
 RUN cargo install cargo-chef --version 0.1.71 --locked
 
 FROM chef-base AS planner
-# Only copy inputs that affect `cargo metadata` / the dependency recipe. Omitting
-# docs, migrations, .sqlx, templates, assets, etc. keeps this layer (and thus the
-# cacher stage) stable when those files change — so CI reuses compiled deps.
-# Keep Cargo config in the chef stages too: rustflags/linker settings affect
-# Cargo fingerprints, so dependencies cooked without this config are considered
-# stale when the final build runs after `COPY . .`.
-COPY .cargo ./.cargo
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY src ./src
-COPY tests ./tests
+# Workspace-aware recipe: `cargo chef prepare` runs `cargo metadata`, which needs
+# every workspace member's Cargo.toml present, so copy the whole context (minus
+# .dockerignore'd target/.git/etc.). `prepare` is cheap and this layer is not
+# reused across source edits anyway; the expensive dependency compile lives in
+# the `cacher` stage and is gated only by recipe.json, so build-time caching is
+# unaffected. (Per docs/roadmap/DEN_CRATE_SPLIT_PLAN.md the crate split made the
+# previous single-crate selective COPY brittle.)
+COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef-base AS cacher
