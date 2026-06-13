@@ -69,12 +69,13 @@ mod memory_manager_head_append_markdown_tests;
 pub mod bear_observations;
 pub mod memory_curate_executor;
 pub mod memory_proposals;
-pub mod reflection_conversations;
+pub mod reflection;
+pub use reflection::conversations as reflection_conversations;
 pub mod pair_reflection;
 pub mod pair_turn;
 pub mod prompt_memory_block_store;
 pub mod prompt_memory_blocks;
-pub mod reflection_conductor;
+pub use reflection::conductor as reflection_conductor;
 pub mod role_runtime;
 pub mod role_runtime_test {
     #[cfg(test)]
