@@ -1,6 +1,6 @@
 # Den Archival Memory and Ingestion Contract
 
-> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and Cabinet sources ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)), using a **derived Qdrant index** and **platform embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and Cabinet sources ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)), using a **derived Qdrant index** and **platform embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). The engine that *fills* archival memory — extraction-first harvest of session archives plus consolidation by supersession — and the retrieval scoring policy are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
 
 This document defines the implementation-facing contract for Den-owned archival/recall memory and source ingestion during the Letta migration.
 
@@ -75,7 +75,16 @@ Initial source classes should include:
 - imported external documents with explicit provenance,
 - and selected transcript-derived material only when explicitly allowed by policy.
 
-Transcript history should not automatically become archival memory. Any transcript-derived archival source should be an explicit Den-owned decision.
+Transcript history should not automatically become archival memory. Any transcript-derived archival source should be an explicit Den-owned decision. The explicit, Den-owned policy that crosses this boundary is the **`archive_harvest`** Reflection lane ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)): it distills durable candidates from closed sessions into proposals, which `memory_curate` reviews before any canonical write.
+
+## Filling archival memory: harvest and consolidation
+
+Source registration and indexing (below) describe how canonical material becomes retrievable. **What becomes canonical in the first place** is decided by asynchronous curation ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)), which runs off the live turn (sleep-time posture):
+
+- **Harvest (`archive_harvest`)** — an extraction-first pass over un-mined session archives and compaction artifacts distills atomic facts, decisions, preferences, and lessons (discarding filler) into memory proposals. Idempotent via harvest marks; provenance back to source `conversation_messages` is mandatory.
+- **Consolidation (`memory_curate`)** — candidates are deduped against existing canonical memory. Contradictions are resolved by **supersession** (write a new record, set `supersedes_memory_id`, encode the transition), never by overwrite; history is preserved. Low-risk results promote to `core/`; sensitive items escalate to human review.
+
+Only after consolidation writes a canonical record does the source become eligible for indexing into the derived recall index. **Harvest produces canonical memory; `archive_index` indexes it — the two stay separate.**
 
 ## Ingestion lifecycle
 
@@ -115,10 +124,12 @@ Derived chunks/passages should preserve:
 
 Den should define query semantics explicitly:
 
-- query scope filters,
+- query scope filters (ACL by Bear membership and identity scope per [ADR-0015](../decisions/adr-0015-multi-user-memory.md)),
 - provenance returned with matches,
-- ranking behavior where relevant,
+- ranking behavior,
 - and rules for when retrieval results may be injected into runtime prompt assembly.
+
+**Ranking** is hybrid and scored ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)): merge deterministic anchors (key memory projection), vector recall (Qdrant), and keyword (`LIKE`), ranked by `recency × relevance × importance` where importance derives from record `salience`. Retrieval **degrades gracefully** to anchors + `LIKE` when Qdrant is unavailable; turns must not fail.
 
 Retrieval should be work-surface-aware where applicable rather than Bear-global by default.
 

@@ -67,7 +67,8 @@ Candidate sources:
 - explicit proposal from the writing role;
 - `review` finds it during review;
 - a human marks it for review in the Den UI;
-- a future Reflection heartbeat or event-triggered curation run surfaces it.
+- the **`archive_harvest`** Reflection lane mines closed session archives/compaction artifacts via an extraction-first pass ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md));
+- a Reflection heartbeat or event-triggered curation run surfaces it.
 
 ### Proposal
 
@@ -88,6 +89,42 @@ Do not implement a separate `local_final` lifecycle in the first slices. Keeping
 A reviewed action that writes durable shared Bear memory under `core/` or submits/creates a Cabinet update.
 
 Promotion should be a new commit with provenance, not a raw file copy.
+
+---
+
+## Proactive harvest and consolidation
+
+> See [ADR-0041 — Archival recall and asynchronous curation](../decisions/adr-0041-archival-recall-and-async-curation.md) for the decision; this section is the design detail.
+
+Curation must do more than drain a proposal queue. It is the bears equivalent of **sleep-time compute** ([Letta](https://www.letta.com/blog/sleep-time-compute)): a background engine that, off the live turn, turns raw experience into durable, recallable knowledge. Two new responsibilities sit alongside proposal review:
+
+### Harvest (`archive_harvest` lane)
+
+Proactively scan **un-mined** closed sessions and compaction artifacts and run an **extraction-first** pass — distill atomic facts, decisions, preferences, and lessons; discard conversational filler — emitting memory proposals rather than indexing raw messages. This is what fills archival memory.
+
+- **Idempotency:** record processed sources in `memory_harvest_marks` (source kind + ref + hash); never re-harvest unchanged sources.
+- **Triggers:** `session_archived`, `cumulative_salience_threshold`, and a throttled/adaptive heartbeat — not a fixed cron.
+- **Provenance:** every candidate links back to source `conversation_messages`.
+- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation).
+
+### Consolidation
+
+Before writing `core/`, reconcile candidates against existing canonical memory:
+
+- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience).
+- **Supersession, not overwrite** — a contradicting candidate writes a *new* record that sets `supersedes_memory_id` and encodes the transition ("previously X; now Y"); the old record is marked `invalid_at` and preserved as history. This is the bears-native form of temporal fact invalidation, without a graph database.
+- **Synthesis** — when cumulative `salience` over recent records crosses a threshold, synthesize a higher-level `reflection` record (Generative-Agents-style) and store it as retrievable memory.
+
+### Schema deltas (sketch)
+
+Additive; preserves append-only and single-writer-per-Bear ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)):
+
+- `memory_records.salience` — first-class importance on durable memory (today only `memory_observations` has it); drives reflection triggering and recall ranking.
+- `memory_records.valid_from` / `memory_records.invalid_at` — bi-temporal-lite; `created_at` stays transaction time.
+- **Begin writing `supersedes_memory_id`** (present in schema, currently unused).
+- `memory_harvest_marks` — harvest provenance/idempotency.
+
+Recall ranking then becomes `recency × relevance × importance`, degrading to anchors + `LIKE` without Qdrant ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §5, [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
 
 ---
 

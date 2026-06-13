@@ -149,3 +149,4 @@ Three context lanes (see [den-native-runtime](../architecture/den-native-runtime
 ## Related implementation
 
 - [Derived recall index implementation plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)
+- [ADR-0041 — Archival recall and asynchronous curation](adr-0041-archival-recall-and-async-curation.md) — how archival memory is *filled* (harvest + consolidation) and how recall is *scored* (`recency × relevance × importance`).
