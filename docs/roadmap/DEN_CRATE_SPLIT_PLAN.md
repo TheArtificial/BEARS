@@ -771,3 +771,45 @@ call sites are unchanged.
 
 Verified: `cargo build -p den` green; `cargo test -p den -p den-tools --no-run`
 green; `den-tools` clippy-clean.
+
+### Phase B — dispatcher/`ToolContext` umbrella: assessed, deferred (2026-06)
+
+**Decision: do not move `invoke_den_tool` / the dispatcher into `den-tools` yet.**
+
+The Phase B goal — move each tool executor behind a capability seam so the
+runtime can be decomposed — is **complete for the inverted groups** (`web`,
+`memory_read`, `memory_write`, `prompt_memory`, `memory_review`, `observations`,
+`work_surface`, `plan_mode`). Each now lives in `den-tools` behind a trait
+(`WebFetcher`, `RoleMemoryStore`, `PromptMemoryStore`, `MemoryReviewStore`,
+`WorkSurfaceOps`, `PlanModeOps`) with a thin `den` wrapper.
+
+The dispatcher itself, however, is **not** a good candidate for relocation at this
+stage:
+
+- **~13 executors are still `den`-only** and have no seam yet: identity/policy
+  (`bear_get_self`, `user_get_current`, `bear_list_members`,
+  `capabilities_list_self`, `policy_get_self`, `channel_get_context`),
+  `session_info`/`bear_environment` (the `environment` group), the work-plan trio
+  (`workflow`), `memory_orient_work_surface`, `conversation_set_title`, plus eight
+  registered-but-unimplemented stubs (skills/tasks/run summaries).
+- **Authorization is den-DB-coupled**: `authorize_context` → `context_role`
+  reads `bear_profile_bindings`/membership via `sqlx`, and
+  `authorize_tool_for_profile` resolves against `builtin_den_tool_descriptors`.
+- A premature `ToolContext` umbrella trait would therefore need ~20 methods that
+  mostly **forward straight back into `den`** (the DB layer, descriptors,
+  `acp_sessions`, Letta HTTP). That adds indirection and a large unstable trait
+  surface while delivering little decomposition value, and it would entangle
+  `den-tools` with the entire `den` persistence layer — the opposite of the
+  intended boundary.
+
+**Recommended sequencing** (future work, post-Phase B): invert the remaining
+executor groups behind their own seams first — `Identity/PolicyOps` (bears/user
+DB), `EnvironmentOps` (`session_info`/`bear_environment`), `WorkPlanOps`
+(`workflow`), and a `ConversationTitleOps` (Letta + `acp_sessions`). Only once the
+match arms all resolve through seams does an umbrella `ToolContext` (bundling the
+existing traits) and a relocated `invoke_den_tool` become a low-risk, high-value
+move. Until then the dispatcher stays in `den` as the composition root that wires
+concrete `Den*` implementations to the `den-tools` executors.
+
+This completes the planned Phase B inversion work; the capstone is intentionally
+left as documented future work rather than a forced, entangling refactor.
