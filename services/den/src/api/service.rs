@@ -23,11 +23,7 @@ use tracing::info_span;
 use crate::{
     auth_backend::Backend,
     config::Config,
-    core::{
-        bifrost::BifrostClient,
-        letta::LettaClient,
-        memory::MemoryStoreManager,
-    },
+    core::{bifrost::BifrostClient, memory::MemoryStoreManager},
 };
 
 use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
@@ -45,8 +41,6 @@ pub struct ApiState {
     pub sqlx_pool: PgPool,
     /// Shared immutable runtime configuration.
     pub config: Arc<Config>,
-    /// Shared Letta client for API routes that need runtime context.
-    pub letta: Arc<LettaClient>,
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
     /// Process-local active ACP direct tool turns.
@@ -114,7 +108,6 @@ pub async fn create_api_app(
     let api_state = ApiState {
         sqlx_pool: sqlx_pool.clone(),
         config: config.clone(),
-        letta: Arc::new(LettaClient::new(config.as_ref())),
         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
         acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
         acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(

@@ -94,7 +94,6 @@ use crate::core::prompt_memory_blocks::{
         ApiState {
             sqlx_pool: pool,
             config: config.clone(),
-            letta: Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
             bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
             acp_tool_turns: AcpToolTurnCoordinator::new(),
             acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
@@ -2813,7 +2812,6 @@ use crate::core::prompt_memory_blocks::{
         let state = crate::api::service::ApiState {
             sqlx_pool: pool,
             config: config.clone(),
-            letta: std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
             bifrost: std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
             acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
             acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
@@ -3766,7 +3764,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -3955,7 +3952,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4123,7 +4119,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4272,7 +4267,6 @@ use crate::core::prompt_memory_blocks::{
         use std::sync::Arc;
 
         let config = crate::config::Config::test_stub();
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4362,7 +4356,6 @@ use crate::core::prompt_memory_blocks::{
         use std::sync::Arc;
 
         let config = crate::config::Config::test_stub();
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4498,7 +4491,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::test_stub();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4643,7 +4635,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4729,7 +4720,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = "http://127.0.0.1:9".to_string();
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4887,7 +4877,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::load();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5343,7 +5332,6 @@ use crate::core::prompt_memory_blocks::{
             "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
         )))]);
         let config = crate::config::Config::test_stub();
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let mut stream = AcpRuntimeSseStream::new(
             acp_test_runtime_event_stream(upstream),
@@ -5434,7 +5422,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::test_stub();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5568,7 +5555,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::test_stub();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -5694,7 +5680,6 @@ use crate::core::prompt_memory_blocks::{
 
         let mut config = crate::config::Config::test_stub();
         config.letta_base_url = format!("http://{addr}");
-        let _letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();

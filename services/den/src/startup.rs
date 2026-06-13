@@ -1,11 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use crate::core::codepool::CodePoolClient;
-use crate::core::letta::LettaClient;
-use crate::core::runtime_provider::{
-    acp_requires_runtime, RuntimeHealthCheck, RuntimeStartupCapabilities,
-};
+use crate::core::runtime_provider::{acp_requires_runtime, RuntimeStartupCapabilities};
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -140,61 +136,17 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 
 /// Verify configured upstream HTTP services respond before accepting traffic.
 ///
-/// Checks **Codepool** (`GET /health`) when [`Config::codepool_base_url`] is non-empty,
-/// and **Letta** (`GET /v1/health`) when [`Config::letta_base_url`] is non-empty (same auth as runtime).
+/// The Den-native runtime relies only on the LLM inference substrate
+/// ([`Config::llm_api_url`], via Bifrost); there are no Letta/Codepool sidecars to probe.
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    if !config.uses_native_agent_runtime() && !config.codepool_base_url.trim().is_empty() {
-        tracing::info!(
-            url = %config.codepool_base_url,
-            "Checking Codepool connectivity"
-        );
-        CodePoolClient::new(config)
-            .check_health()
-            .await
-            .map_err(|e| StartupError::Message(e.to_string()))?;
-        tracing::info!("Codepool health check passed");
-    } else if config.uses_native_agent_runtime() {
-        tracing::info!("Skipping Codepool health check (AGENT_RUNTIME=native)");
-    }
-
     let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
-    if config.uses_native_agent_runtime() && !config.llm_api_url.trim().is_empty() {
+    if !config.llm_api_url.trim().is_empty() {
         tracing::info!(
             url = %config.llm_api_url,
             compatibility_backend = "native",
             acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
             "Native agent runtime configured (LLM inference substrate)"
         );
-    }
-    if runtime_capabilities.runtime_required_for_acp || !config.letta_base_url.trim().is_empty() {
-        if config.uses_native_agent_runtime() {
-            tracing::info!("Skipping Letta health check (AGENT_RUNTIME=native)");
-        } else {
-        tracing::info!(
-            url = %config.letta_base_url,
-            compatibility_backend = "letta",
-            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
-            "Checking runtime compatibility backend connectivity"
-        );
-        let letta = LettaClient::new(config);
-        let health = letta.compatibility_health_check();
-        if health.enabled() {
-            RuntimeHealthCheck::check_health(&health)
-                .await
-                .map_err(|e| StartupError::Message(e.to_string()))?;
-            tracing::info!(
-                compatibility_backend = RuntimeHealthCheck::compatibility_backend_name(&health),
-                "Runtime compatibility backend health check passed"
-            );
-        } else if runtime_capabilities.runtime_required_for_acp
-            && !config.uses_native_agent_runtime()
-        {
-            return Err(StartupError::Message(
-                "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true and AGENT_RUNTIME=letta."
-                    .into(),
-            ));
-        }
-        }
     }
 
     Ok(())

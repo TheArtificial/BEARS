@@ -853,7 +853,6 @@ impl Stream for AcpRuntimeSseStream {
                                 let cleanup_state = ApiState {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),
-                                    letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                                     acp_tool_turns: this.context.tool_turns.clone(),
                                     acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
@@ -1055,7 +1054,6 @@ impl Stream for AcpRuntimeSseStream {
                     let api_state = ApiState {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
-                        letta: Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
@@ -1113,7 +1111,6 @@ impl Stream for AcpRuntimeSseStream {
                     let cleanup_state = ApiState {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
-                        letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
@@ -1149,7 +1146,6 @@ impl Stream for AcpRuntimeSseStream {
                     let cleanup_state = ApiState {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
-                        letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),

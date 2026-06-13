@@ -17,7 +17,6 @@ pub mod agent_loop;
 pub mod native_runtime;
 pub mod sandbox;
 pub mod migration;
-pub mod codepool;
 pub mod conversation;
 pub use conversation::archived as archived_conversations;
 pub use conversation::events as conversation_events;
