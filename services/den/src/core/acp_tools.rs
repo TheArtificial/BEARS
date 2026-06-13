@@ -447,16 +447,10 @@ pub struct AcpToolDescriptor {
     pub permission_class: &'static str,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct AcpToolDisplayDescriptor {
-    pub label: &'static str,
-    pub category: &'static str,
-    pub progress_verb: &'static str,
-    pub complete_verb: &'static str,
-    pub target_arg_keys: &'static [&'static str],
-    pub sensitive_arg_keys: &'static [&'static str],
-    pub approval_summary: &'static str,
-}
+// `AcpToolDisplayDescriptor` now lives in `den-tools` (the descriptor authority);
+// re-exported here so existing `crate::core::acp_tools::AcpToolDisplayDescriptor`
+// paths keep resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase A).
+pub use den_tools::AcpToolDisplayDescriptor;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpToolPolicy {
@@ -478,20 +472,6 @@ pub struct AcpToolPolicy {
     pub deny_hidden_paths: Option<bool>,
     pub total_timeout_ms: u64,
     pub permission_timeout_ms: u64,
-}
-
-impl AcpToolDisplayDescriptor {
-    pub fn to_json(self) -> serde_json::Value {
-        json!({
-            "label": self.label,
-            "category": self.category,
-            "progress_verb": self.progress_verb,
-            "complete_verb": self.complete_verb,
-            "target_arg_keys": self.target_arg_keys,
-            "sensitive_arg_keys": self.sensitive_arg_keys,
-            "approval_summary": self.approval_summary,
-        })
-    }
 }
 
 impl AcpToolPolicy {

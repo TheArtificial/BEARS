@@ -537,6 +537,7 @@ dependencies = [
  "den-docket",
  "den-llm",
  "den-memory",
+ "den-tools",
  "dotenvy",
  "futures",
  "http-body-util",
@@ -629,6 +630,15 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "den-tools"
+version = "0.1.0"
+dependencies = [
+ "den-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

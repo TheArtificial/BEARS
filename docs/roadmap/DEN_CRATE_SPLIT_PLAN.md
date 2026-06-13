@@ -2,7 +2,7 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. Remaining service crates (`den-tools`, `den-runtime`, edges) are gated on the v0 tools/module triage. See *Execution log* at the end.
+> **Status update (2026-06):** v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` Phase A landed — the static tool surface (constants/aliases/arguments/descriptor/guidance) is a `den-core`-only crate; executors stay in `den` pending the `ToolContext` seam (Phase B). Remaining service crates (`den-runtime`, edges) are gated on that seam + the v0 module triage. See *Execution log* at the end.
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -325,3 +325,17 @@ wrong shape.
 Recommended first concrete step: Phase A (descriptor/registry extraction + the
 `tool_descriptor_guidance` / `AcpToolDisplayDescriptor` relocation it needs).
 Hard gate: workspace green + clippy advisory.
+
+**Phase A landed (2026-06, `test` branch).** `den-tools` exists as a
+`den-core`-only leaf crate owning the static, model-facing tool surface:
+`constants`, `aliases`, `arguments`, `descriptor/` (with its guidance tests),
+and `tool_descriptor_guidance`. `AcpToolDisplayDescriptor` moved into
+`den-tools::display` (kept with the descriptor authority rather than `den-core`,
+since it is a tool-display shape, not foundation); `acp_tools` re-exports it.
+Old paths under `crate::core::tools::{constants,aliases,arguments,descriptor}`,
+`crate::core::tool_descriptor_guidance`, and
+`crate::core::acp_tools::AcpToolDisplayDescriptor` are preserved as re-export
+shims, so no caller changed. `DenToolInvocationContext` and the executors stay in
+`den` for now — they move with their capabilities in Phase B. Verified:
+`cargo check --workspace --all-targets` green, `cargo test -p den-tools` (4
+descriptor-guidance tests) green, `den-tools` clippy-clean.

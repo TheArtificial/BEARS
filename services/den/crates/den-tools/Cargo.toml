@@ -1,0 +1,19 @@
+[package]
+name = "den-tools"
+version = "0.1.0"
+edition = "2021"
+
+# den-tools: the descriptor/registry authority for Den's model-facing tools
+# (Phase A of DEN_CRATE_SPLIT_PLAN.md). This crate owns the static tool surface —
+# canonical/provider names, aliases, argument shapes, descriptor guidance, and the
+# built-in descriptor table — and depends only on den-core. Tool *executors* (which
+# need pool/config/stores) stay in the `den` crate until the ToolContext seam
+# (Phase B) inverts those capabilities behind traits.
+
+[lints]
+workspace = true
+
+[dependencies]
+den-core = { path = "../den-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"

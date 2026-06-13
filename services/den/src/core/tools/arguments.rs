@@ -1,24 +1,3 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct DenToolChannelContext {
-    pub family: Option<String>,
-    pub client: Option<String>,
-    pub protocol: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SetConversationTitleArguments {
-    pub title: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MemoryCreateWorkSurfaceScaffoldArguments {
-    pub work_surface_slug: String,
-    pub work_surface_name: String,
-    pub overview: String,
-    #[serde(default)]
-    pub glossary: Option<String>,
-    #[serde(default)]
-    pub current_understanding: Option<String>,
-}
+//! Re-export shim: tool argument shapes now live in `den-tools`.
+//! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase A).
+pub use den_tools::arguments::*;
