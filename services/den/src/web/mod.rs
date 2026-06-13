@@ -3,7 +3,6 @@ pub mod admin;
 pub mod bear_chat;
 pub mod bear_create_support;
 pub mod bear_management;
-pub mod data;
 pub mod design;
 pub mod filters;
 pub mod home;
@@ -19,9 +18,6 @@ use std::sync::OnceLock;
 
 use crate::build_info;
 use crate::errors::CustomError;
-use crate::web::data::{
-    RealWebLettaDataSource, RealWebMemoryDataSource, WebLettaDataSource, WebMemoryDataSource,
-};
 use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
@@ -55,9 +51,6 @@ use time::Duration;
 use minijinja::Environment;
 use std::sync::Arc;
 
-#[cfg(feature = "web-ui-fixtures")]
-use crate::web::data::fixtures::build_fixture_data_sources;
-
 /// Week start day options (0 = Sunday … 6 = Saturday), for settings UI.
 pub fn day_of_week_names() -> IndexMap<i32, &'static str> {
     [
@@ -90,11 +83,7 @@ pub struct AppState {
     template_env: Environment<'static>,
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
-    pub letta: std::sync::Arc<crate::core::letta::LettaClient>,
     pub bifrost: std::sync::Arc<crate::core::bifrost::BifrostClient>,
-    pub codepool: std::sync::Arc<crate::core::codepool::CodePoolClient>,
-    pub web_letta_data: Arc<dyn WebLettaDataSource>,
-    pub web_memory_data: Arc<dyn WebMemoryDataSource>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
 
@@ -109,26 +98,14 @@ impl AppState {
         template_env: Environment<'static>,
         config: Arc<Config>,
     ) -> Self {
-        let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
         let bifrost =
             std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
-        let codepool =
-            std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
-        let web_letta_data = Arc::new(RealWebLettaDataSource::new(letta.clone()));
-        let web_memory_data = Arc::new(RealWebMemoryDataSource::new(
-            letta.http().clone(),
-            config.letta_memfs_service_url.clone(),
-        ));
         Self {
             sqlx_pool,
             template_env,
             asset_router: Arc::new(Router::new()),
             config,
-            letta,
             bifrost,
-            codepool,
-            web_letta_data,
-            web_memory_data,
             media: None,
         }
     }
@@ -198,34 +175,7 @@ pub async fn server_with_state(
     let memory_serve =
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
-    let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
     let bifrost = std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
-    let codepool = std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
-
-    let web_letta_data: Arc<dyn WebLettaDataSource> =
-        Arc::new(RealWebLettaDataSource::new(letta.clone()));
-    let web_memory_data: Arc<dyn WebMemoryDataSource> = Arc::new(RealWebMemoryDataSource::new(
-        letta.http().clone(),
-        config.letta_memfs_service_url.clone(),
-    ));
-    #[cfg(feature = "web-ui-fixtures")]
-    if let Some(profile) = config.ui_fixture_profile {
-        tracing::warn!(
-            profile = profile.as_str(),
-            "Web UI fixture profile enabled; browser pages will use fixture-backed integration data"
-        );
-        let (fixture_letta, fixture_memory) = build_fixture_data_sources(profile);
-        web_letta_data = fixture_letta;
-        web_memory_data = fixture_memory;
-    }
-
-    #[cfg(not(feature = "web-ui-fixtures"))]
-    if let Some(profile) = config.ui_fixture_profile {
-        tracing::warn!(
-            profile = profile.as_str(),
-            "UI_FIXTURE_PROFILE is set, but this binary was not compiled with the web-ui-fixtures feature; using real integrations instead"
-        );
-    }
 
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
@@ -234,11 +184,7 @@ pub async fn server_with_state(
             template_env: env.clone(),
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
-            letta,
             bifrost,
-            codepool,
-            web_letta_data,
-            web_memory_data,
             media,
         },
         session_store,
