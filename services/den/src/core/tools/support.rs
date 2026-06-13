@@ -249,30 +249,11 @@ pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-pub(crate) fn html_to_text_excerpt(raw: &str) -> String {
-    let mut text = String::with_capacity(raw.len().min(64_000));
-    let mut in_tag = false;
-    for ch in raw.chars() {
-        match ch {
-            '<' => { in_tag = true; text.push(' '); }
-            '>' => in_tag = false,
-            _ if !in_tag => text.push(ch),
-            _ => {}
-        }
-    }
-    text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-        .lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n")
-}
-
-pub(crate) fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
-    let mut out = String::new();
-    let mut truncated = false;
-    for (idx, ch) in value.chars().enumerate() {
-        if idx >= max_chars { truncated = true; break; }
-        out.push(ch);
-    }
-    (out, truncated)
-}
+// `truncate_chars` is a pure text helper that now lives in `den-tools` (the
+// descriptor/tool authority). Re-exported here so existing
+// `crate::core::tools::support::truncate_chars` callers (e.g. agent_loop) keep
+// resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase B).
+pub(crate) use den_tools::web::text::truncate_chars;
 
 pub(crate) fn clean_optional(value: &str) -> Option<String> {
     let trimmed = value.trim();

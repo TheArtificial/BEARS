@@ -215,7 +215,7 @@ pub async fn invoke_den_tool(
         DEN_CONVERSATION_SET_TITLE => {
             set_conversation_title(pool, config, &context, arguments).await
         }
-        DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
+        DEN_WEB_FETCH => web_fetch(pool, config, &context, arguments).await,
         DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
         DEN_MEMORY_WRITE_ENTRY => {
             write_memory_entry(pool, config, &context, role, arguments).await

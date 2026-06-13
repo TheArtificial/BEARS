@@ -581,3 +581,36 @@ Greenest-first; each row is one PR, workspace green per step:
 
 Hard gate per step: `cargo check --workspace --all-targets` green + `den-tools`
 clippy advisory-clean.
+
+### Phase B — `web/` landed (2026-06, `test` branch)
+
+First executor group inverted. `den_tools::web` now owns the `web_fetch` /
+`web_search` orchestration (arg parsing, approval branching, audit construction,
+HTML→text, result re-ranking) plus the pure `text` helpers
+(`html_to_text_excerpt`, `truncate_chars`); `support::truncate_chars` is a
+re-export shim for `agent_loop`. Capabilities are behind `WebFetcher`
+(`decide_fetch_approval`, `record_fetch_attempt`, `http_get`, `preferred_hosts`,
+`normalize_host`, `provider_search`, `default_search_max_results`) with data
+shapes `WebUrl` / `WebApproval` / `WebFetchAudit` / `WebHttpResponse`. The `den`
+crate implements it as `DenWebFetcher { pool, config }` over `web_policy` +
+`reqwest` + the Brave provider; `core/tools/web` is now just that impl + thin
+`CustomError`-mapping wrappers.
+
+Two design refinements learned here, applicable to the remaining groups:
+
+- **Executors take primitives, not `DenToolInvocationContext`.** That struct is
+  `#[non_exhaustive]` and is built by struct-literal in ~17 in-workspace sites, so
+  relocating it would break all of them (can't construct a foreign
+  `#[non_exhaustive]` struct). `web_fetch`/`web_search` instead take `bear_id` /
+  `session_id`. This is better trait hygiene anyway (each executor takes exactly
+  what it needs), and defers the context relocation to a dedicated task (give it a
+  `new(...)`/builder before moving it).
+- **`CustomError::into_den()`** (inherent method on the `den` error) is the
+  boundary converter the runtime impls use, since the orphan rule forbids
+  `impl From<CustomError> for DenError` (both foreign to `From`). Variants mirror
+  1:1, so it is lossless. Reuse it for every Phase B runtime impl.
+- Sub-traits get `: Send + Sync` (so the generic orchestration futures are `Send`
+  for the multi-thread dispatcher) — confirm the `ToolContext` bundle keeps this.
+
+Verified: `cargo check --workspace --all-targets` green; `den-tools` clippy-clean;
+`cargo test -p den-tools` green (no behavior change — pure relocation).

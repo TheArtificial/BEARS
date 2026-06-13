@@ -19,5 +19,6 @@ pub mod constants;
 pub mod descriptor;
 pub mod display;
 pub mod tool_descriptor_guidance;
+pub mod web;
 
 pub use display::AcpToolDisplayDescriptor;

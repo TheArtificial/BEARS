@@ -33,6 +33,32 @@ pub enum CustomError {
     ValidationError(String),
 }
 
+impl CustomError {
+    /// Lossless conversion to the web-free [`DenError`] (variants mirror 1:1).
+    ///
+    /// Used at den-crate boundaries that implement service-layer traits returning
+    /// `DenError` (e.g. the `den-tools` capability seams) while still delegating
+    /// to existing `CustomError`-returning `core::*` functions. The orphan rule
+    /// forbids `impl From<CustomError> for DenError` (both are foreign to the
+    /// trait), so this inherent method fills that gap.
+    pub fn into_den(self) -> DenError {
+        match self {
+            CustomError::Anyhow(cause) => DenError::Anyhow(cause),
+            CustomError::System(cause) => DenError::System(cause),
+            CustomError::Database(cause) => DenError::Database(cause),
+            CustomError::DatabaseUnavailable(cause) => DenError::DatabaseUnavailable(cause),
+            CustomError::Session(cause) => DenError::Session(cause),
+            CustomError::Authentication(cause) => DenError::Authentication(cause),
+            CustomError::Authorization(cause) => DenError::Authorization(cause),
+            CustomError::Render(cause) => DenError::Render(cause),
+            CustomError::Parsing(cause) => DenError::Parsing(cause),
+            CustomError::Email(cause) => DenError::Email(cause),
+            CustomError::NotFound(cause) => DenError::NotFound(cause),
+            CustomError::ValidationError(cause) => DenError::ValidationError(cause),
+        }
+    }
+}
+
 impl std::error::Error for CustomError {}
 
 // Allow the use of "{}" format specifier

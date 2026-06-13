@@ -636,9 +636,11 @@ dependencies = [
 name = "den-tools"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "den-core",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
