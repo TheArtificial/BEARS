@@ -2,7 +2,11 @@
 
 > **Status (2026-06): draft for discussion.** This plan extracts the crate-boundary ("Option B") portion of [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) into its own roadmap item and broadens it. Docket's own work (the `core/docket/` module and `DocketService` trait seam) stays in that plan. This document covers (1) turning the single `den` crate into a Cargo workspace and (2) using that effort as a thorough refactor toward idiomatic Rust — clippy-driven, with "stringy" structured arguments replaced by proper types. Canonical runtime context: [Den-Native Runtime](../architecture/den-native-runtime.md).
 >
-> **Status update (2026-06): v0 hard gate COMPLETE.** All five v0 items are done: core module triage ✅, trait seams verified ✅ (`ToolContext`/`DocketService`/`RoleMemoryStore` + `den-memory` leaf; `TaskDispatcher` deferred to the Docket track by design), clippy baseline ✅ (default lint set warning-clean + CI `-D warnings` gate via `.github/workflows/den-clippy.yml`/`scripts/lint.sh`; pedantic/nursery advisory until v2), de-stringify seeded ✅ (`den-core::ids` newtypes + `den-core::governance` `GovernanceMode`), and legacy deletion ✅ (`core/letta` HTTP client + `core/codepool` + MemFS gone; config/compose native-only). v1 crate extraction is now unblocked. v1 underway — workspace + lint table in; `den-core` seeded (`config`, `metrics`, `DenError`, `BearProfile`, `ids`, `governance`); error gate resolved (option 2, `DenError`); `den-llm`, `den-memory`, and `den-docket` extracted as `den-core`-only leaves. `den-tools` **Phase A + Phase B complete** — the static tool surface *and* every executor group now live in `den-tools` behind the composed `ToolContext` seam; `den` provides `DenToolContext` (the capability impls) and a thin `invoke_den_tool` wrapper. Dead wrappers removed and their tests migrated. **The v0 core module triage is also complete** — all 43 loose `core/*.rs` subsystem files are co-located under `acp/`, `runtime/`, `conversation/`, `memory/`, `reflection/`, `llm/`, `letta/`, `tools/` (flat re-export shims keep call sites unchanged). This unblocks **`den-runtime`** and the `den-acp`/`den-api`/`den-web` edges; remaining v0 items are legacy deletion (`core/letta`/`core/codepool`) — **Phase A branch-collapse done (native-only behavior); Phase B port-then-remove mostly done (dead chat transport, Letta/Codepool admin pages, model catalog, member conversation/memory pages, and dead AppState wiring all removed); remaining: ApiState.letta + startup preflight + surgical HTTP-LettaClient extraction + codepool delete + config/compose (gated)** — the clippy `-D warnings` baseline, and shared-core de-stringify. See *Execution log* at the end.
+> **Status update (2026-06): v0 COMPLETE; v1 through `den-runtime` COMPLETE.** v0 hard gate done (core module triage ✅, trait seams ✅, clippy `-D warnings` baseline ✅ via `.github/workflows/den-clippy.yml`/`scripts/lint.sh` with pedantic/nursery advisory until v2, de-stringify seeded ✅ with `den-core::ids` + `den-core::governance`, legacy deletion ✅ — `core/letta` HTTP client + `core/codepool` + MemFS gone, config/compose native-only). v1 leaves extracted: `den-core` (seeded with `config`, `metrics`, `DenError`, `BearProfile`, `ids`, `governance`), `den-llm`, `den-memory`, `den-docket` as `den-core`-only leaves; error gate resolved (option 2, `DenError`).
+>
+> **`den-runtime` (v1.4) extraction COMPLETE (2026-06).** The native agent runtime — agent loop, native provider/runtime, governance, `bears` provisioning, `conversation` storage, `reflection`/`pair_reflection`, the `acp_sessions`/`acp_*` runtime contracts, and the runtime-side `memory`/`llm` glue — was lifted into the **`den-runtime`** crate across Stages A–E. Tool dispatch was **dependency-inverted** (`den-runtime` defines `RuntimeToolInvoker`; the `den` binary injects the concrete invoker), so the concrete executors stayed in the binary's `core/tools`. The **`den-tools` crate was dissolved** — its static tool surface (descriptors, argument shapes, capability traits, `dispatch`/`context`/`display`/`work_surface`/`support`) folded into **`den-core` as `den_core::tools`**, because the surface must sit *below* `den-runtime` while the executors sit *above* it. The final **flip** dropped the ~40 flat `pub use den_runtime::*` shims from `core/mod.rs` and repointed every call site at `den_runtime::*` / `den_core::tools::*`. Workspace build + the `-D warnings` clippy gate (all targets) are green.
+>
+> **Remaining (v1 edges):** extract **`den-acp`** (residual `core/acp/` + `api/acp/`), then **`den-api`** (`/v1` + admin JSON + OpenAPI), then **`den-web`** (`web/` + templates + `build.rs` + `observability/` + `s3/`), collapsing `den` to a thin binary. See *Execution log* at the end. (Some sections below — the *target* crate DAG/table, the *`den-tools` triage*, and *Phase B sub-trait signatures* — are retained as historical record and predate the `den-tools` dissolution; the live tool surface is now `den_core::tools`.)
 >
 > **Decided:** foundation crate is **`den-core`**; the **binary keeps the name `den`** (see *Crate naming*). The big crates **are split in v1** (no deferral of `den-acp`/`den-tools`/`den-api` sub-splits). **`den-acp` owns its HTTP surface directly.** **clippy strictness is progressive** (advisory in v1, gating in v2). The **`den-core`/`den-db` split is deferred to v2.** **v0 is a hard gate** — no crate is extracted until v0 completes in full.
 
@@ -48,43 +52,43 @@ Secondary motivation: the codebase has accumulated **idiom debt** — stringly-t
 
 ## Proposed crate breakdown (v1 target)
 
-Layered DAG, leaves at the bottom; both former "big crates" are split. Sizes are rough current LOC; "new" does not exist yet. Exact contents of `den-runtime` / `den-acp` / `den-tools` are finalized by the v0 triage.
+Layered DAG, leaves at the bottom; both former "big crates" are split. Sizes are rough current LOC; "new" does not exist yet. **Note (2026-06): the original plan had a separate `den-tools` crate between `den-runtime` and the leaves; it was dissolved during the `den-runtime` lift — the static tool surface folded into `den-core` (`den_core::tools`) and the executors stayed in the `den` binary's `core/tools` behind `RuntimeToolInvoker`. The DAG below reflects the as-built layering.**
 
 ```
-                              den (bin: startup, wiring, anyhow)        ~0.5k
+                              den (bin: startup, wiring, anyhow,        ~0.5k
+                              user/email/auth, core/tools executors)
                   /        |          |            |        \
                  v         v          v            v         v
             den-web    den-api    den-acp     (workspace tests)        ~13.5k / ~10-12k / ~10-15k
                   \        |          /
                    \       |         /
                     v      v        v
-                        den-runtime  (loop, governance, harnesses)      ~12-18k
-                    /     |      |       \
-                   v      v      v        v
-              den-llm  den-tools  (impl ToolContext / TaskDispatcher)
-                   \      |   \      /
-                    \     |    v    v
-                     \    |  den-memory   den-docket                     ~2.2k / ~1-3k(new)
-                      \   |   /              /
-                       v  v  v              v
+                        den-runtime  (loop, governance, harnesses,      ~12-18k  [DONE]
+                                      reflection, RuntimeToolInvoker)
+                    /     |          \
+                   v      v           v
+              den-llm  den-memory   den-docket                          ~2.2k / ~1-3k(new)
+                   \      |           /
+                    v     v          v
                             den-core  (types, errors, config, pool,      ~3-5k (leaf)
-                                       migrations, observability)
+                                       migrations, observability,
+                                       den_core::tools surface)
 ```
 
 | Crate | Role | Depends on | Source today | Churn |
 |-------|------|------------|--------------|-------|
-| **`den-core`** | Foundation leaf: shared domain **newtypes** (bear/job/task/run/session ids) and **enums** (role, trust profile, governance mode, statuses), error types, config, `PgPool`/`SqlitePool` handles, migrations runner, tracing/observability setup. Third-party deps only. | `errors/`, `observability/`, `config.rs`, shared model types | low |
+| **`den-core`** | Foundation leaf: shared domain **newtypes** (bear/job/task/run/session ids) and **enums** (role, trust profile, governance mode, statuses), error types, config, `PgPool`/`SqlitePool` handles, migrations runner, tracing/observability setup, **and the model-facing tool *surface* (`den_core::tools`: descriptors, argument shapes, capability traits, `dispatch`/`context`/`display`/`work_surface`/`support`)** — folded in when `den-tools` was dissolved. Third-party deps only. | `errors/`, `observability/`, `config.rs`, shared model types, former `den-tools` surface | low |
 | **`den-llm`** | Bifrost/LLM gateway client + streaming. Stable, widely depended on. | `den-core` | low |
 | **`den-memory`** | Bear memory: `MemoryStore` trait + per-Bear SQLite impl + curation. **Native today** (see *Memory status*). | `den-core` | medium |
 | **`den-docket`** | Jobs/tasks orchestration (Postgres): `DocketService` + `TaskDispatcher` traits + impl. Never executes task bodies. | `den-core` | medium |
-| **`den-tools`** | Model-facing tool surface: descriptors, registry, executors; defines `ToolContext`. Descriptor-owned names (no scattered alias `match` arms). | `den-core`, `den-memory`, `den-docket`, `den-llm` | high |
-| **`den-runtime`** | Native agent loop, governance/supervision modes, context assembly, role harnesses, reflection. Implements `ToolContext` and `TaskDispatcher`. | `den-core`, `den-llm`, `den-memory`, `den-docket`, `den-tools` | high |
-| **`den-acp`** | ACP protocol runtime + its HTTP surface: turn runner, sessions, adapter event mapping, the loose `core/acp_*.rs`, `api/acp/`. | `den-runtime`, `den-core` | high |
+| ~~**`den-tools`**~~ | **Dissolved (2026-06).** Static surface → `den_core::tools`; concrete executors stayed in the `den` binary's `core/tools` behind `den-runtime`'s `RuntimeToolInvoker` seam (surface and executors sit on opposite sides of `den-runtime`, so they can't share a crate). | — | — |
+| **`den-runtime`** ✅ | Native agent loop, governance/supervision modes, context assembly, role harnesses, reflection, conversation storage, bears provisioning, ACP runtime contracts. Defines `RuntimeToolInvoker`. **Extracted (v1.4).** | `den-core`, `den-llm`, `den-memory`, `den-docket` | high |
+| **`den-acp`** | ACP protocol runtime + its HTTP surface: turn runner, sessions, adapter event mapping, the residual `core/acp/`, `api/acp/`. | `den-runtime`, `den-core` | high |
 | **`den-api`** | Non-ACP HTTP/JSON API (`/v1` chat, bears, admin JSON) + OpenAPI. | `den-runtime` (+ service traits) | high |
-| **`den-web`** | Server-rendered admin UI + minijinja templates + template embedding (`build.rs`). | `den-runtime` (+ service traits) | high |
+| **`den-web`** | Server-rendered admin UI + minijinja templates + template embedding (`build.rs`) + `observability/` + `s3/`. | `den-runtime` (+ service traits) | high |
 | **`den`** | Binary: `main`, startup, dependency injection (constructs concrete services, injects dispatcher + tool context), config load, router composition (mounts api/acp/web). | everything | low |
 
-**Build-time payoff:** `den-web` extraction stops HTML edits from rebuilding logic; `den-acp` and `den-api` isolate the two highest-churn HTTP surfaces from each other and from runtime; `den-tools` isolates the ~8.7k tool surface; `den-core`/`den-llm` are stable leaves most edits never touch; service crates behind stable traits don't cascade. Tests become per-crate; crates compile in parallel.
+**Build-time payoff:** `den-web` extraction stops HTML edits from rebuilding logic; `den-acp` and `den-api` isolate the two highest-churn HTTP surfaces from each other and from runtime; the `den-runtime` lift already moved the ~12–18k-LOC runtime core out of the edges' rebuild path; `den-core`/`den-llm` are stable leaves most edits never touch; service crates behind stable traits don't cascade. Tests become per-crate; crates compile in parallel. *(Caveat from the `den-tools` dissolution: the tool surface now lives in `den-core`, the universal root dep, so tool-surface edits trigger wider rebuilds — accepted trade-off vs. a confusingly-named extra crate.)*
 
 **Deliberately not crates:** legacy `core/letta/` (~3.9k) and `core/codepool/` (~0.5k) are slated for deletion in the native migration ([DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md)); do not crateify them — delete in/around v0.
 
@@ -131,7 +135,7 @@ The Docket plan was written when bear memory was "still Letta-backed / not yet i
 Must complete before any crate is extracted.
 
 1. **Core module triage. ✅ done (2026-06).** Sort the 43 loose `core/*.rs` files into their intended subsystem modules (`acp`, `runtime`, `conversation`, `memory`, `reflection`, `llm`, `letta`, `tools`), so each future crate's contents are co-located. This was the gating deliverable; loose subsystem-file count is now 0 (see *v0 — core module triage* log).
-2. **Trait seams in place. ✅ verified (2026-06).** `den-tools::ToolContext` is the composed capability face (`BearDirectory`, `ConversationTitleOps`, `EnvironmentOps`, `WorkPlanOps`, `WorkSurfaceOps`, `WebFetcher`, `RoleMemoryStore`, `PromptMemoryStore`, `MemoryReviewStore`, `PlanModeOps`); `den` supplies `DenToolContext`. `den-docket::DocketService` is the Docket face. The memory seam is split: the tool-facing `RoleMemoryStore` trait (inversion) plus `den-memory` as a non-inverted storage **leaf** crate with a concrete public face (`MemoryStoreManager` + typed functions) — a trait there would add indirection with a single SQLite impl, so the concrete API is intentional. `TaskDispatcher` is the only deferred seam: `den-docket` is intentionally **level-1 minimal**, so the runtime-facing dispatcher lands with Docket Phase 1 (its own track) and does not gate crate extraction.
+2. **Trait seams in place. ✅ verified (2026-06).** `ToolContext` (now `den_core::tools::dispatch::ToolContext`; originally drafted as `den-tools::ToolContext` before that crate was dissolved) is the composed capability face (`BearDirectory`, `ConversationTitleOps`, `EnvironmentOps`, `WorkPlanOps`, `WorkSurfaceOps`, `WebFetcher`, `RoleMemoryStore`, `PromptMemoryStore`, `MemoryReviewStore`, `PlanModeOps`); the `den` binary supplies `DenToolContext`. `den-docket::DocketService` is the Docket face. The memory seam is split: the tool-facing `RoleMemoryStore` trait (inversion) plus `den-memory` as a non-inverted storage **leaf** crate with a concrete public face (`MemoryStoreManager` + typed functions) — a trait there would add indirection with a single SQLite impl, so the concrete API is intentional. `TaskDispatcher` is the only deferred seam: `den-docket` is intentionally **level-1 minimal**, so the runtime-facing dispatcher lands with Docket Phase 1 (its own track) and does not gate crate extraction.
 3. **clippy baseline. ✅ done (2026-06).** Workspace lint table in place (pedantic/nursery advisory `warn`). The **default lint set** (rustc + clippy default groups) is now warning-clean across the workspace and gated by CI: `.github/workflows/den-clippy.yml` runs `cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic -A clippy::nursery` (mirror locally via `scripts/lint.sh`); pedantic/nursery stay advisory until v2. Cleared ~20 dead-code items revealed by the legacy teardown (legacy `map_acp_history_page`/`map_compaction_status_for_history` + their Letta-body tests deleted; test-only workflow-state/prompt-memory/canonical-persistence helpers gated `#[cfg(test)]`), declared the `production` feature on `den-core`, dropped the unread `salience`/`config` fields, and allow-listed `too_many_arguments` (de-stringify bundles some into typed structs).
 4. **De-stringify the shared core. ✅ seeded (2026-06).** Typed errors (`DenError`) and `Config` already landed; this seeds the remaining foundation vocabulary in `den-core` and adopts it at foundation boundaries only (the wider call-site sweep rides along with each module move in v1, per *idiom tightening for moved modules*):
    - `den-core::ids` — `BearId(Uuid)`, `UserId(i32)`, `SessionId(String)`, `ConversationId(String)`; transparent `serde`/`sqlx` so DTO/row adoption is drop-in. Adopted at the den-core boundary (`BearProfile::tags_for_bear`).
@@ -164,12 +168,12 @@ Must complete before any crate is extracted.
 
 Each step keeps the workspace green and is behavior-free; idiom tightening for moved modules rides along.
 
-1. Workspace skeleton + **`den-core`** (mechanical moves + `crate::` → `den_core::`).
-2. **`den-llm`** (stable leaf).
-3. **`den-memory`** (trait face ready now), **`den-docket`** (after Docket Phase 1 module lands), **`den-tools`**.
-4. **`den-runtime`** (implements the inversion traits). **Scoped 2026-06 — see *v1.4* below.**
-5. **`den-acp`**, then **`den-api`**, **`den-web`** (edges).
-6. The original `den` crate collapses to the thin binary: startup, DI, router composition.
+1. ✅ Workspace skeleton + **`den-core`** (mechanical moves + `crate::` → `den_core::`).
+2. ✅ **`den-llm`** (stable leaf).
+3. ✅ **`den-memory`** + **`den-docket`** leaves. *(The planned standalone `den-tools` was built then dissolved — surface folded into `den-core` as `den_core::tools`, executors stayed in the binary; see v1.4.)*
+4. ✅ **`den-runtime`** (defines `RuntimeToolInvoker`; implements the inversion traits). **Done 2026-06 — see *v1.4* below.**
+5. ⏳ **`den-acp`**, then **`den-api`**, **`den-web`** (edges). *(next)*
+6. ⏳ The original `den` crate collapses to the thin binary: startup, DI, router composition.
 
 #### v1.4 — `den-runtime` extraction plan (scoped 2026-06)
 
@@ -214,7 +218,7 @@ The blob's **only** external (den-stay) tethers, beyond `CustomError` (335 refs 
 
 **Discovered during execution (2026-06) — `core/acp/` is NOT a single edge module; it must be split.** `core/runtime/` cannot move alone: it is knotted to a cluster of shared turn/tool *contracts* that today live under `core/acp/` with a misleading `acp` prefix. These move into `den-runtime` **with** `runtime/` (first cluster move):
 - `acp::events` (`AcpGatewayEvent` + SSE adapter; ~1.5k LOC) — the canonical native event model + its ACP-SSE projection; produced by `runtime/bearwire_projection`, consumed by the edge.
-- `acp::tools` (`AcpToolName`, `AcpResolvedSessionPolicy`, policy/display; ~2.9k LOC) — the ACP projection of the `den-tools` tool surface; depends only on the `den-tools` leaf.
+- `acp::tools` (`AcpToolName`, `AcpResolvedSessionPolicy`, policy/display; ~2.9k LOC) — the ACP projection of the tool surface; depends only on `den_core::tools` (now in `den-runtime` as `acp_tools` after the lift).
 - `acp::plan_mode` (~0.6k) and `acp::tool_turns` (`AcpActiveTurnGuard`; ~1.1k) — turn/plan coordination used by `runtime`.
 - `work_plans` (docket projection).
 
@@ -346,12 +350,16 @@ crates return `DenError`; HTTP handlers convert for free through `?`.
    `cargo test -p den-<name>` builds in isolation.
 
 **Suggested next steps:** (1) ~~land the Docket module + extract `den-docket`~~
-**done**; (2) do the v0 tools triage (stabilize `ToolContext`, split
-descriptor/registry/executors), then extract `den-tools`; (3) do the
-loose-`core/*.rs` triage feeding `den-runtime`; (4) extract `den-runtime`, then
-the `den-acp`/`den-api`/`den-web` edges, collapsing `den` to the thin binary.
+**done**; (2) ~~tools triage + `ToolContext` seam~~ **done** (the standalone
+`den-tools` crate was built then dissolved into `den_core::tools`; executors stay
+in the binary behind `RuntimeToolInvoker`); (3) ~~loose-`core/*.rs` triage feeding
+`den-runtime`~~ **done**; (4) ~~extract `den-runtime`~~ **done (v1.4)** — **next:
+extract the `den-acp`/`den-api`/`den-web` edges, collapsing `den` to the thin
+binary.**
 
 ## `den-tools` triage (proposed, 2026-06)
+
+> **⚠️ Superseded (2026-06).** This triage assumed a standalone `den-tools` crate. That crate was ultimately **dissolved**: the static surface folded into `den-core` (`den_core::tools`) and the executors stayed in the `den` binary's `core/tools` behind `den-runtime`'s `RuntimeToolInvoker`. Retained below as historical analysis (the coupling map and capability decomposition are still accurate); ignore references to extracting a `den-tools` crate.
 
 Read-only investigation of `core/tools/` (~8.7k LOC) ahead of extraction. **Key
 finding: `den-tools` is an integration layer *above* most subsystems, not a
@@ -416,6 +424,8 @@ shims, so no caller changed. `DenToolInvocationContext` and the executors stay i
 descriptor-guidance tests) green, `den-tools` clippy-clean.
 
 ## Phase B — `ToolContext` sub-trait signatures (draft, 2026-06)
+
+> **⚠️ Superseded (2026-06).** Drafted when the plan was to move executors into a `den-tools` crate. The capability sub-traits described here were built and now compose the `den_core::tools` surface; the executors remained in the `den` binary's `core/tools` (implementing those traits) rather than moving to a `den-tools` crate. Retained as historical design notes.
 
 Goal: move the *executor logic* (validation, payload shaping, routing) into
 `den-tools` while leaving *capabilities* (Postgres, the per-Bear SQLite memory
