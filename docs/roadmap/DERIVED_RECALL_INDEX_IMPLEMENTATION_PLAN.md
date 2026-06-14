@@ -23,14 +23,15 @@ Complements existing **key memory projection** (path anchors); does not replace 
 - pgvector on Den Postgres
 - Separate embedding models per source class (unless a future ADR adds e.g. code-only `bears-embed-code-v1`)
 
-## Phase 0 — Platform wiring
+## Phase 0 — Platform wiring  🟡 partially landed (compose + env)
 
-- Add env: `EMBEDDING_STANDARD`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `QDRANT_URL`.
-- Register embedding model in Bifrost `config.json`; Den `embedding` model task calls `/v1/embeddings`.
-- Compose: optional `bears-qdrant` service (profile `recall`) with persistent volume.
-- Preflight: warn when recall enabled but Qdrant unreachable; native runtime works without recall (LIKE fallback).
+- ✅ Add env: `EMBEDDING_STANDARD`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `QDRANT_URL` — set on `bears-den` in `docker-compose.yaml` (+ `.env.example`); `QDRANT_URL` empty = recall disabled (LIKE fallback).
+- ✅ Compose: optional `bears-qdrant` service (profile `recall`) with persistent `bears-qdrant-data` volume. Nothing `depends_on` it; the default stack is unchanged. Enable with `COMPOSE_PROFILES=recall` + `QDRANT_URL=http://bears-qdrant:6333`.
+- ⏳ Register embedding model in Bifrost `config.json`; Den `embedding` model task calls `/v1/embeddings`.
+- ⏳ Den `Config` reads the new env (currently set in-container but not yet consumed).
+- ⏳ Preflight: warn when recall enabled but Qdrant unreachable; native runtime works without recall (LIKE fallback).
 
-**Exit:** smoke embed of fixture text; health check passes.
+**Exit:** smoke embed of fixture text; health check passes. *(Pending: requires Bifrost embedding model + Den config wiring.)*
 
 ## Phase 1 — Passage registry + Bear indexer
 

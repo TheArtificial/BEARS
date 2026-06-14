@@ -84,6 +84,24 @@ services:
             retries: 5
             start_period: 10s
 
+    # Optional derived recall vector store (ADR-0038). Enable with `COMPOSE_PROFILES=recall`
+    # and point Den at it via `QDRANT_URL=http://bears-qdrant:6333`. Den degrades to keyword
+    # (`LIKE`) recall when Qdrant is absent or unreachable, so it stays optional and nothing
+    # `depends_on` it. No healthcheck: the Qdrant image ships no shell HTTP client; operators
+    # add external reachability monitors (see docs/guides/infrastructure-and-ops.md).
+    bears-qdrant:
+        profiles:
+            - recall
+        image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.12.4}
+        restart: unless-stopped
+        environment:
+            QDRANT__LOG_LEVEL: ${QDRANT_LOG_LEVEL:-INFO}
+        volumes:
+            - bears-qdrant-data:/qdrant/storage
+        expose:
+            - "6333"
+            - "6334"
+
     bears-bifrost:
         depends_on:
             <<: *preflight-depends
@@ -176,6 +194,13 @@ services:
             BIFROST_METADATA_URL: ${BIFROST_METADATA_URL:-http://bears-bifrost:8081/bears/models}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
+            # set to http://bears-qdrant:6333 with COMPOSE_PROFILES=recall to enable. Embedding
+            # settings pin the active platform standard and route via Bifrost /v1/embeddings.
+            QDRANT_URL: ${QDRANT_URL:-}
+            EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
+            EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+            EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
             DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
             BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
             DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
@@ -198,3 +223,4 @@ services:
 volumes:
     bears-postgres-data:
     bears-den-sqlite-data:
+    bears-qdrant-data:
