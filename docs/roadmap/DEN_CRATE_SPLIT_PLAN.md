@@ -267,6 +267,8 @@ Risk notes: steps 4–5 are the hardest (ApiState seam, oauth state, 47 `ApiErro
 - **(B) `ApiState` lives in `den-acp`**, and `den-api` (v1/oauth/docs + `create_api_app`) depends on `den-acp` and uses `den_acp::ApiState`. Keeps two crates; semantically odd (service state in the acp crate) but structurally clean (matches "api mounts acp"). *(Recommended if the split is required.)*
 - **(C) `den-acp` is generic over a state trait** (`FromRef`-based), `ApiState` stays in `den-api`. Cleanest layering, most code churn (every acp handler's `State<ApiState>` becomes generic).
 
+Related prep for either (B)/(C): **`ApiError`** (the JSON error adapter) is shared by `api/v1` and `api/acp` (32 refs in acp) and belongs in `den-http` alongside `CustomError`. It lives in `api/auth.rs`, which also holds oauth-coupled bearer auth (`extract_bearer_token`/`authenticate_bearer`/`require_scope`, depending on `api::oauth::{jwt,OAuthScope,error}`), so that file must be **split**: `ApiError` → `den-http`; the bearer-auth helpers stay with `den-api` (oauth).
+
 This fork needs an explicit call (it trades the roadmap's split preference against churn/risk), so it was **not** resolved autonomously. The remaining edge extractions (den-acp/den-api per the chosen option, then den-web with its DI + `requires_jwt_secret` relocation + oauth-model prereqs) are mapped above and de-risked by the foundation + prep work already landed.
 
 **Not yet run:** DB integration/smoke tests (need the live stack). The foundation move is structural/behavior-preserving and the compile + clippy-all-targets gate is green; validate with `./scripts/smoke.sh` against the running stack before merge.
