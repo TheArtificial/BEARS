@@ -88,7 +88,7 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
     assert_eq!(payload["work_surface"]["status"], json!("oriented"));
     assert_eq!(payload["work_surface"]["slug"], json!("builder-bear"));
     assert!(payload["canonical_paths"].as_array().unwrap().len() >= 2);
-    assert!(payload["profile_local_paths"].as_array().unwrap().len() >= 1);
+    assert!(!payload["profile_local_paths"].as_array().unwrap().is_empty());
     assert!(payload["recommended_read_order"].as_array().unwrap().len() >= 3);
 }
 

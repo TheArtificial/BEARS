@@ -424,30 +424,10 @@ impl CanonicalConversationRecord {
         }
     }
 
-    fn storage_text(&self) -> &str {
-        match self {
-            Self::VisibleMessage { text, .. } => text.as_str(),
-            Self::StructuredEvent { content_text, .. } => content_text.as_str(),
-        }
-    }
-
     fn storage_json(&self) -> serde_json::Value {
         match self {
             Self::VisibleMessage { content_json, .. } => content_json.clone(),
             Self::StructuredEvent { content_json, .. } => content_json.clone(),
-        }
-    }
-
-    fn provider_message_id(&self) -> Option<&str> {
-        match self {
-            Self::VisibleMessage {
-                provider_message_id,
-                ..
-            }
-            | Self::StructuredEvent {
-                provider_message_id,
-                ..
-            } => provider_message_id.as_deref(),
         }
     }
 
@@ -530,6 +510,7 @@ pub fn canonical_persistence_context(
     }
 }
 
+#[cfg(test)]
 pub fn normalize_persisted_gateway_record(
     message_type: &str,
     role: Option<&str>,

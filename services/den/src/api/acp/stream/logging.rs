@@ -3,8 +3,6 @@ use serde_json::json;
 
 use crate::api::acp::acp_debug_event_sample_chars;
 
-const SSE_JSON_PREVIEW_MAX: usize = 192;
-
 fn sha256_short(value: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(value.as_bytes());
@@ -114,11 +112,4 @@ pub(super) fn summarize_letta_event_for_log(value: &serde_json::Value) -> serde_
         object.insert("keys".to_string(), json!(keys));
     }
     event
-}
-
-pub(super) fn summarize_json_parse_error_for_log(body: &str) -> serde_json::Value {
-    json!({
-        "utf8_len": body.len(),
-        "sample": preview_str_truncated(body, SSE_JSON_PREVIEW_MAX),
-    })
 }

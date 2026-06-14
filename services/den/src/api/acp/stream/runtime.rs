@@ -162,6 +162,10 @@ pub(in crate::api::acp) fn spawn_persist_acp_tool_request(
     );
 }
 
+/// Test-only helper exercising the canonical gateway-record persistence path
+/// (`normalize_persisted_gateway_record` + spawn). Production persistence goes
+/// through [`persist_stream_event_side_effects`] with specific record constructors.
+#[cfg(test)]
 pub(in crate::api::acp) fn spawn_canonical_gateway_record_persistence(
     context: &AcpStreamContext,
     message_type: &'static str,

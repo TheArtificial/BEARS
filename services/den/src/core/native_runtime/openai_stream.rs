@@ -10,7 +10,7 @@ use crate::{
             find_sse_frame_end, strip_trailing_sse_delimiter_owned,
         },
         llm::{openai_sse_frame_to_runtime_events, OpenAiStreamAccumulator},
-        runtime_contracts::{RuntimeByteStream, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
+        runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
     },
     errors::CustomError,
 };
@@ -106,10 +106,4 @@ pub fn openai_byte_stream_to_event_stream(
         }
     });
     Box::pin(stream)
-}
-
-pub fn openai_byte_stream_to_event_stream_from_box(
-    parsed: RuntimeByteStream,
-) -> RuntimeEventStream {
-    openai_byte_stream_to_event_stream(parsed)
 }

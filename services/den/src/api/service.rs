@@ -340,23 +340,14 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn test_api_state_creation() {
-        // Test that ApiState can be created with minimal dependencies
-        // This would require a test database pool in a real test
-        assert!(true);
-    }
-
-    #[test]
     fn test_cors_layer_creation() {
+        // Exercises CORS layer construction; passes as long as it does not panic.
         let _cors_layer = create_api_cors_layer(&Config::test_stub());
-        // Test that CORS layer can be created without panicking
-        assert!(true);
     }
 
     #[test]
     fn test_tracing_layer_creation() {
+        // Exercises tracing layer construction; passes as long as it does not panic.
         let _tracing_layer = create_tracing_layer();
-        // Test that tracing layer can be created without panicking
-        assert!(true);
     }
 }

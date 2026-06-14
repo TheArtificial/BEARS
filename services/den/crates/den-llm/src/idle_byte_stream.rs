@@ -80,7 +80,6 @@ impl Stream for IdleTimeoutByteStream {
 #[cfg(test)]
 mod tests {
     use std::pin::pin;
-    use std::task::Poll;
 
     use futures::StreamExt;
     use tokio::time::{sleep, Duration};

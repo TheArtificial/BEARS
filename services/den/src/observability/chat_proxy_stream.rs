@@ -355,10 +355,6 @@ pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes>
     Some(Bytes::from(format!("data: {}\n\n", event)))
 }
 
-pub(crate) fn sse_comment_keepalive_bytes() -> Bytes {
-    Bytes::from(": keepalive\n\n")
-}
-
 fn empty_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "type": "error",
@@ -440,25 +436,6 @@ pub(crate) fn deep_chat_sse_body_for_assistant_text(text: &str) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn map_bear_channel_sse_frame(frame: &[u8]) -> Vec<Bytes> {
-    let text = String::from_utf8_lossy(frame);
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-            if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
-                out.push(bytes);
-            }
-        }
-    }
-    out
-}
 
 /// Streams `bear_channel` SSE from Codepool to the browser after translating channel events
 /// into the existing Deep Chat / Letta-shaped SSE payloads consumed by `bear_chat.html`.
@@ -777,16 +754,79 @@ impl Stream for BearChannelSseProxyStream {
     }
 }
 
+impl Stream for ChatSseProxyStream {
+    type Item = Result<Bytes, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.as_mut().get_mut();
+        match ready!(this.inner.as_mut().poll_next(cx)) {
+            Some(Ok(chunk)) => {
+                if this.first_byte_at.is_none() {
+                    this.first_byte_at = Some(Instant::now());
+                    let ttfb = this.started_at.elapsed();
+                    tracing::info!(
+                        request_id = %this.request_id,
+                        user_id = %this.user_id,
+                        bear_id = %this.bear_id,
+                        conversation_id = %this.conversation_id,
+                        ttfb_ms = ttfb.as_millis().min(u128::from(u64::MAX)) as u64,
+                        "chat_send first byte from Codepool"
+                    );
+                }
+                this.total_bytes += chunk.len();
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            Some(Err(e)) => {
+                this.log_and_record_finish(Terminal::ProxyError);
+                tracing::error!(
+                    request_id = %this.request_id,
+                    user_id = %this.user_id,
+                    bear_id = %this.bear_id,
+                    conversation_id = %this.conversation_id,
+                    error = %e,
+                    total_bytes = this.total_bytes,
+                    "chat_send sse proxy chunk error from Codepool"
+                );
+                Poll::Ready(Some(Err(std::io::Error::other(e.to_string()))))
+            }
+            None => {
+                if this.terminal.is_some() {
+                    // Inner may emit Err then None; terminal already recorded.
+                    return Poll::Ready(None);
+                }
+                let outcome = if this.total_bytes == 0 {
+                    Terminal::Empty
+                } else {
+                    Terminal::Ok
+                };
+                this.log_and_record_finish(outcome);
+                Poll::Ready(None)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn mapped_text(frame: &str) -> String {
-        map_bear_channel_sse_frame(frame.as_bytes())
-            .into_iter()
-            .map(|b| String::from_utf8(b.to_vec()).expect("utf8"))
-            .collect::<Vec<_>>()
-            .join("")
+        let mut out = String::new();
+        for line in frame.lines() {
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data.is_empty() || data == "[DONE]" {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
+                    out.push_str(std::str::from_utf8(&bytes).expect("utf8"));
+                }
+            }
+        }
+        out
     }
 
     #[test]
@@ -864,63 +904,5 @@ mod tests {
         let text = String::from_utf8(bytes.to_vec()).expect("utf8");
         assert!(text.contains("stream_empty_terminal") || text.contains("error_message"));
         assert!(text.contains("f42114ea-99bd-48a7-818a-78d4e3d914be"));
-    }
-
-    #[test]
-    fn sse_comment_keepalive_bytes_format() {
-        let bytes = sse_comment_keepalive_bytes();
-        assert_eq!(std::str::from_utf8(&bytes).unwrap(), ": keepalive\n\n");
-    }
-}
-
-impl Stream for ChatSseProxyStream {
-    type Item = Result<Bytes, std::io::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.as_mut().get_mut();
-        match ready!(this.inner.as_mut().poll_next(cx)) {
-            Some(Ok(chunk)) => {
-                if this.first_byte_at.is_none() {
-                    this.first_byte_at = Some(Instant::now());
-                    let ttfb = this.started_at.elapsed();
-                    tracing::info!(
-                        request_id = %this.request_id,
-                        user_id = %this.user_id,
-                        bear_id = %this.bear_id,
-                        conversation_id = %this.conversation_id,
-                        ttfb_ms = ttfb.as_millis().min(u128::from(u64::MAX)) as u64,
-                        "chat_send first byte from Codepool"
-                    );
-                }
-                this.total_bytes += chunk.len();
-                Poll::Ready(Some(Ok(chunk)))
-            }
-            Some(Err(e)) => {
-                this.log_and_record_finish(Terminal::ProxyError);
-                tracing::error!(
-                    request_id = %this.request_id,
-                    user_id = %this.user_id,
-                    bear_id = %this.bear_id,
-                    conversation_id = %this.conversation_id,
-                    error = %e,
-                    total_bytes = this.total_bytes,
-                    "chat_send sse proxy chunk error from Codepool"
-                );
-                Poll::Ready(Some(Err(std::io::Error::other(e.to_string()))))
-            }
-            None => {
-                if this.terminal.is_some() {
-                    // Inner may emit Err then None; terminal already recorded.
-                    return Poll::Ready(None);
-                }
-                let outcome = if this.total_bytes == 0 {
-                    Terminal::Empty
-                } else {
-                    Terminal::Ok
-                };
-                this.log_and_record_finish(outcome);
-                Poll::Ready(None)
-            }
-        }
     }
 }

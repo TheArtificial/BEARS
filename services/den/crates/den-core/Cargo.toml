@@ -11,6 +11,9 @@ edition = "2021"
 # Exposes test-only constructors (e.g. `Config::test_stub`) to dependent
 # crates' test builds.
 test-util = []
+# Production hardening toggles (mirrors the `den` binary's `production` feature,
+# which enables it here). Gates stricter config defaults in `config.rs`.
+production = []
 
 [lints]
 workspace = true

@@ -8,9 +8,8 @@ use crate::{
         conversation_persistence::PersistedConversationMessage,
         letta::sanitize_visible_transcript_text,
         runtime_compaction::{
-            build_runtime_context_envelope, choose_compaction_decision,
-            semantic_groups_from_runtime_messages, RuntimeCompactionDecision,
-            RuntimeCompactionPolicy, RuntimeContextEnvelope, RuntimeContextEnvelopeInput,
+            choose_compaction_decision, semantic_groups_from_runtime_messages,
+            RuntimeCompactionDecision, RuntimeCompactionPolicy,
         },
         runtime_compaction_observability::{
             build_compaction_applied_event, build_compaction_skipped_event,
@@ -23,9 +22,7 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    format_acp_session_timestamp, AcpCompactionStatusResponse, AcpConversationHistoryMessage,
-};
+use super::{format_acp_session_timestamp, AcpConversationHistoryMessage};
 
 pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
@@ -71,54 +68,6 @@ fn runtime_inner_for_acp_history(msg: &serde_json::Value) -> &serde_json::Value 
     }
 }
 
-fn runtime_message_text(inner: &serde_json::Value) -> Option<String> {
-    let content = inner.get("content")?;
-    if let Some(s) = content.as_str() {
-        let s = s.trim();
-        return if s.is_empty() {
-            None
-        } else {
-            Some(s.to_string())
-        };
-    }
-    if let Some(obj) = content.as_object() {
-        if let Some(t) = obj.get("text").and_then(|x| x.as_str()) {
-            let t = t.trim();
-            if !t.is_empty() {
-                return Some(t.to_string());
-            }
-        }
-    }
-    let parts = content.as_array()?;
-    let mut out = String::new();
-    for part in parts {
-        if let Some(t) = part.get("text").and_then(|x| x.as_str()) {
-            out.push_str(t);
-        }
-    }
-    let out = out.trim().to_string();
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
-fn runtime_message_id_string(msg: &serde_json::Value) -> Option<String> {
-    match msg.get("id")? {
-        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
-fn runtime_message_created_at(msg: &serde_json::Value) -> Option<String> {
-    msg.get("date")
-        .or_else(|| msg.get("created_at"))
-        .and_then(|x| x.as_str())
-        .map(str::to_string)
-}
-
 pub(crate) fn runtime_messages_for_compaction(
     body: &serde_json::Value,
 ) -> Vec<serde_json::Value> {
@@ -141,21 +90,6 @@ pub(crate) fn runtime_iterative_summary_for_compaction(
 ) -> RuntimeIterativeSummary {
     let groups = runtime_semantic_groups_for_compaction(body);
     build_iterative_summary_from_groups(&groups)
-}
-
-pub(crate) fn runtime_context_envelope_for_history(
-    body: &serde_json::Value,
-) -> RuntimeContextEnvelope {
-    let groups = runtime_semantic_groups_for_compaction(body);
-    let recent_groups = groups.iter().rev().take(3).cloned().collect::<Vec<_>>();
-    let recent_groups = recent_groups.into_iter().rev().collect::<Vec<_>>();
-    let summary = build_iterative_summary_from_groups(&groups);
-    build_runtime_context_envelope(RuntimeContextEnvelopeInput {
-        active_instructions: vec!["acp-history-context".to_string()],
-        workflow_state: summary.workflow_state_refs.clone(),
-        recent_groups,
-        compacted_summary: Some(summary),
-    })
 }
 
 pub(crate) fn default_runtime_compaction_policy() -> RuntimeCompactionPolicy {
@@ -246,57 +180,6 @@ fn push_unique_summary_value(values: &mut Vec<String>, value: String) {
     }
 }
 
-fn runtime_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
-    for v in [inner, msg] {
-        let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
-            continue;
-        };
-        let r = role.trim();
-        if r.eq_ignore_ascii_case("system") || r.eq_ignore_ascii_case("developer") {
-            return false;
-        }
-    }
-    true
-}
-
-pub(crate) fn map_compaction_status_for_history(
-    conversation_id: &str,
-    body: &serde_json::Value,
-) -> AcpCompactionStatusResponse {
-    let event = runtime_compaction_event_for_history(
-        conversation_id,
-        body,
-        RuntimeCompactionTriggerKind::SemanticGroupCount,
-    );
-    let context_envelope = runtime_context_envelope_for_history(body);
-    let status = match event.status {
-        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Applied => {
-            "applied"
-        }
-        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Skipped => {
-            "skipped"
-        }
-        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Failed => {
-            "failed"
-        }
-    }
-    .to_string();
-    AcpCompactionStatusResponse {
-        status,
-        policy_version: event.policy_version,
-        source_group_start: event.source_group_start,
-        source_group_end: event.source_group_end,
-        diagnostic: event.diagnostic,
-        artifact: event.artifact.and_then(|artifact| serde_json::to_value(artifact).ok()),
-        context_envelope: serde_json::to_value(context_envelope).ok(),
-        prompt_memory_diagnostic: Some(serde_json::json!({
-            "status": "history_projection_only",
-            "source": "prompt_memory_blocks",
-            "note": "history compaction projection does not replay live runtime prompt-memory selection"
-        })),
-    }
-}
-
 pub(super) fn map_canonical_history_page(
     rows: &[PersistedConversationMessage],
     page_limit: u32,
@@ -330,46 +213,6 @@ pub(super) fn map_canonical_history_page(
         })
         .collect();
     (messages, has_more, next_before)
-}
-
-pub(super) fn map_acp_history_page(
-    body: &serde_json::Value,
-    page_limit: u32,
-) -> (Vec<AcpConversationHistoryMessage>, bool, Option<String>) {
-    let raw = runtime_messages_top_array(body);
-    let has_more = raw.len() >= page_limit as usize;
-    let next_before = raw.iter().filter_map(runtime_message_id_string).next_back();
-    let mut rows = Vec::new();
-    for msg in raw.iter().rev() {
-        let inner = runtime_inner_for_acp_history(msg);
-        let message_type = inner
-            .get("message_type")
-            .and_then(|x| x.as_str())
-            .or_else(|| msg.get("message_type").and_then(|x| x.as_str()))
-            .unwrap_or("");
-        let role = match message_type {
-            "user_message" => "user",
-            "assistant_message" => "assistant",
-            _ => continue,
-        };
-        if message_type == "user_message" && !runtime_user_message_role_is_human(inner, msg) {
-            continue;
-        }
-        let Some(text) = runtime_message_text(inner).or_else(|| runtime_message_text(msg)) else {
-            continue;
-        };
-        let text = sanitize_visible_transcript_text(&text);
-        if text.trim().is_empty() {
-            continue;
-        }
-        rows.push(AcpConversationHistoryMessage {
-            id: runtime_message_id_string(msg),
-            role: role.to_string(),
-            text,
-            created_at: runtime_message_created_at(msg),
-        });
-    }
-    (rows, has_more, next_before)
 }
 
 pub(super) async fn pending_session_title_update_event(

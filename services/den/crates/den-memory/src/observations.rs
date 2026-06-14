@@ -66,7 +66,7 @@ pub async fn get_memory_observation(
 ) -> Result<Option<SqliteMemoryObservation>, DenError> {
     let row = sqlx::query_as::<_, ObservationSqlRow>(
         r#"
-        SELECT observation_id, sequence_no, summary, salience, logical_path, status,
+        SELECT observation_id, sequence_no, summary, logical_path, status,
                proposal_id, source_json, created_at
         FROM memory_observations
         WHERE bear_id = ? AND observation_id = ?
@@ -106,7 +106,6 @@ struct ObservationSqlRow {
     observation_id: String,
     sequence_no: i64,
     summary: String,
-    salience: String,
     logical_path: String,
     status: String,
     proposal_id: Option<String>,

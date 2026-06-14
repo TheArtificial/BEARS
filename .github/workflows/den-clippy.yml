@@ -1,0 +1,43 @@
+name: Den – clippy gate
+
+on:
+    push:
+        branches: [main, test, clippy]
+        paths:
+            - "services/den/**"
+            - ".github/workflows/den-clippy.yml"
+    pull_request:
+        paths:
+            - "services/den/**"
+            - ".github/workflows/den-clippy.yml"
+
+env:
+    # The workspace ships a committed `.sqlx` query cache so clippy can compile
+    # sqlx macros without a live database.
+    SQLX_OFFLINE: "true"
+    CARGO_TERM_COLOR: always
+
+jobs:
+    clippy:
+        runs-on: ubuntu-24.04-arm
+        defaults:
+            run:
+                working-directory: services/den
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain (with clippy)
+              run: rustup component add clippy
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: services/den
+
+            # v0 gate (DEN_CRATE_SPLIT_PLAN.md): the default lint set (rustc +
+            # clippy default groups) is denied. pedantic/nursery remain advisory
+            # (`warn` in `[workspace.lints]`) and are silenced here so they do not
+            # gate until v2.
+            - name: Clippy (-D warnings, default lints only)
+              run: >-
+                  cargo clippy --workspace --all-targets --
+                  -D warnings -A clippy::pedantic -A clippy::nursery

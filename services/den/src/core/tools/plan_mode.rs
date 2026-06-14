@@ -16,7 +16,6 @@ use den_tools::plan_mode::{
 };
 
 use crate::{
-    config::Config,
     core::{
         acp_plan_mode::{
             self, AcpPlanModeRequestedBy, AcpPlanModeSessionRow, EnterPlanModeParams,
@@ -50,13 +49,12 @@ fn workflow_state_json(
     )
 }
 
-/// Concrete [`PlanModeOps`] over the runtime pool/config/stores.
+/// Concrete [`PlanModeOps`] over the runtime pool/stores.
 ///
-/// `config`/`stores` are only required by `exit` (artifact write); the dispatcher
-/// supplies them for that path and leaves them `None` for the others.
+/// `stores` is only required by `exit` (artifact write); the dispatcher
+/// supplies it for that path and leaves it `None` for the others.
 pub(crate) struct DenPlanModeOps<'a> {
     pub(crate) pool: &'a PgPool,
-    pub(crate) config: Option<&'a Config>,
     pub(crate) stores: Option<&'a MemoryStoreManager>,
     pub(crate) workplan_payload: WorkplanPayloadFn,
     pub(crate) no_active_workplan: NoActiveWorkplanFn,

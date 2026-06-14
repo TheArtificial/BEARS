@@ -95,7 +95,6 @@ impl<'a> DenToolContext<'a> {
 
     fn work_surface(&self) -> DenWorkSurfaceOps<'a> {
         DenWorkSurfaceOps {
-            config: self.config,
             stores: self.stores,
         }
     }
@@ -103,7 +102,6 @@ impl<'a> DenToolContext<'a> {
     fn plan_mode(&self) -> DenPlanModeOps<'a> {
         DenPlanModeOps {
             pool: self.pool,
-            config: Some(self.config),
             stores: Some(self.stores),
             workplan_payload: plan_mode_workplan_payload,
             no_active_workplan: no_active_workplan_payload,

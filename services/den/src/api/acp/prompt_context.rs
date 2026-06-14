@@ -16,8 +16,7 @@ use crate::{
         },
         prompt_memory_blocks::{
             compile_prompt_memory_blocks, render_prompt_memory_block_context,
-            PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
-            PromptMemoryBlockType, PromptMemoryCompilationInput,
+            PromptMemoryCompilationInput,
         },
         runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
         runtime_compaction_observability::RuntimeCompactionEventStatus,
@@ -28,72 +27,6 @@ use crate::{
 };
 
 
-/// Lightweight direct-tool prompt context used by workflow-state and descriptor-surface tests.
-///
-/// This path intentionally uses synthetic prompt-memory scaffolding rather than persisted
-/// selection from storage. Production/runtime prompt assembly should use
-/// `acp_direct_tool_prompt_context_with_activity`, which consults the prompt-memory store.
-pub(crate) fn acp_direct_tool_prompt_context(
-    session_id: &str,
-    cwd: &str,
-    client_context: &serde_json::Value,
-    _tools_enabled: bool,
-    policy: &AcpResolvedSessionPolicy,
-) -> String {
-    let roots = client_context
-        .get("workspace_roots")
-        .or_else(|| client_context.get("workspaceRoots"))
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .filter(|items| !items.is_empty())
-        .unwrap_or_else(|| vec![cwd.to_string()]);
-    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
-    let den_tool_descriptors = acp_pair_den_tool_descriptors();
-    let den_tool_names = den_tool_descriptors
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let mut guidance = vec![render_turn_state_summary_with_activity(
-        session_id,
-        &roots,
-        &tool_names,
-        &den_tool_names,
-        policy,
-        None,
-    )];
-    guidance.push(format!(
-        "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
-        policy.mode_label,
-        policy.allowed_tool_classes().join(", "),
-    ));
-    guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
-    let prompt_memory_selection = synthetic_prompt_memory_runtime_selection(session_id, &roots);
-    guidance.push(render_prompt_memory_runtime_selection(
-        &prompt_memory_selection,
-        session_id,
-        &roots,
-    ));
-    guidance.push(runtime_compaction_prompt_context(session_id, client_context, None));
-    guidance.extend(maybe_workspace_tool_guidance(&tool_names));
-    guidance.extend(server_memory_tool_guidance());
-    guidance.push(tool_loop_rule_guidance());
-    format!(
-        "\n\n<system-reminder>{}</system-reminder>",
-        guidance.join(" ")
-    )
-}
-
 use super::{
     prompt_guidance::{
         maybe_workspace_tool_guidance, server_memory_tool_guidance, tool_loop_rule_guidance,
@@ -101,75 +34,6 @@ use super::{
     workflow::render_turn_state_summary_with_activity,
 };
 
-
-pub(crate) fn synthetic_prompt_memory_runtime_selection(
-    session_id: &str,
-    roots: &[String],
-) -> PromptMemoryRuntimeSelection {
-    let mut blocks = vec![PromptMemoryBlock {
-        id: "pair-role-guidance".to_string(),
-        block_type: PromptMemoryBlockType::RoleGuidance,
-        scope: PromptMemoryBlockScope::RoleLocal,
-        state: PromptMemoryBlockState::Active,
-        role: Some("pair".to_string()),
-        work_surface: None,
-        session_id: None,
-        title: "pair-role-guidance".to_string(),
-        body: "Prompt memory blocks are Den-owned editable in-context state. Treat them as distinct from transcript history, retrieval results, and compaction artifacts.".to_string(),
-        priority: 50,
-    }];
-    for root in roots {
-        blocks.push(PromptMemoryBlock {
-            id: format!("workspace-surface:{}", root),
-            block_type: PromptMemoryBlockType::WorkSurfaceContext,
-            scope: PromptMemoryBlockScope::WorkSurface,
-            state: PromptMemoryBlockState::Active,
-            role: None,
-            work_surface: Some(root.clone()),
-            session_id: None,
-            title: format!("workspace-surface:{}", root),
-            body: format!("Work-surface-attached prompt context applies to workspace root `{}` and should outrank broader Bear defaults for this surface.", root),
-            priority: 40,
-        });
-    }
-    blocks.push(PromptMemoryBlock {
-        id: format!("session-focus:{}", session_id),
-        block_type: PromptMemoryBlockType::SessionFocus,
-        scope: PromptMemoryBlockScope::Session,
-        state: PromptMemoryBlockState::Active,
-        role: None,
-        work_surface: None,
-        session_id: Some(session_id.to_string()),
-        title: format!("session-focus:{}", session_id),
-        body: "Session-scoped prompt focus may temporarily outrank broader role-local context for the current ACP session.".to_string(),
-        priority: 60,
-    });
-    let compilation = compile_prompt_memory_blocks(
-        &blocks,
-        PromptMemoryCompilationInput {
-            role: "pair",
-            work_surfaces: roots,
-            session_id,
-            max_blocks: 6,
-        },
-    );
-    PromptMemoryRuntimeSelection {
-        diagnostic: serde_json::json!({
-            "source": "synthetic_runtime_slice",
-            "persisted": false,
-            "session_id": session_id,
-            "work_surfaces": roots,
-            "matched_block_ids": compilation
-                .included_blocks
-                .iter()
-                .map(|block| block.id.clone())
-                .collect::<Vec<_>>(),
-            "matched_count": compilation.included_blocks.len(),
-            "omitted_block_ids": compilation.omitted_block_ids
-        }),
-        blocks,
-    }
-}
 
 pub(crate) fn render_prompt_memory_runtime_selection(
     selection: &PromptMemoryRuntimeSelection,
@@ -399,4 +263,149 @@ pub(super) async fn acp_plan_mode_prompt_context(
             .as_deref()
             .unwrap_or("not_submitted")
     ))
+}
+
+#[cfg(test)]
+use crate::core::prompt_memory_blocks::{
+    PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
+};
+
+/// Test-only synthetic direct-tool prompt context (no DB access).
+///
+/// Mirrors the guidance composition of [`acp_direct_tool_prompt_context_with_activity`]
+/// using synthetic prompt-memory scaffolding, so workflow-state/descriptor-surface unit
+/// tests can assert on rendered prompt text without a runtime pool. Production/runtime
+/// prompt assembly uses the persisted `_with_activity` path.
+#[cfg(test)]
+pub(crate) fn acp_direct_tool_prompt_context(
+    session_id: &str,
+    cwd: &str,
+    client_context: &serde_json::Value,
+    _tools_enabled: bool,
+    policy: &AcpResolvedSessionPolicy,
+) -> String {
+    let roots = client_context
+        .get("workspace_roots")
+        .or_else(|| client_context.get("workspaceRoots"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec![cwd.to_string()]);
+    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
+    let den_tool_descriptors = acp_pair_den_tool_descriptors();
+    let den_tool_names = den_tool_descriptors
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut guidance = vec![render_turn_state_summary_with_activity(
+        session_id,
+        &roots,
+        &tool_names,
+        &den_tool_names,
+        policy,
+        None,
+    )];
+    guidance.push(format!(
+        "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
+        policy.mode_label,
+        policy.allowed_tool_classes().join(", "),
+    ));
+    guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
+    let prompt_memory_selection = synthetic_prompt_memory_runtime_selection(session_id, &roots);
+    guidance.push(render_prompt_memory_runtime_selection(
+        &prompt_memory_selection,
+        session_id,
+        &roots,
+    ));
+    guidance.push(runtime_compaction_prompt_context(session_id, client_context, None));
+    guidance.extend(maybe_workspace_tool_guidance(&tool_names));
+    guidance.extend(server_memory_tool_guidance());
+    guidance.push(tool_loop_rule_guidance());
+    format!(
+        "\n\n<system-reminder>{}</system-reminder>",
+        guidance.join(" ")
+    )
+}
+
+/// Test-only synthetic prompt-memory runtime selection (no persistence). See
+/// [`acp_direct_tool_prompt_context`].
+#[cfg(test)]
+pub(crate) fn synthetic_prompt_memory_runtime_selection(
+    session_id: &str,
+    roots: &[String],
+) -> PromptMemoryRuntimeSelection {
+    let mut blocks = vec![PromptMemoryBlock {
+        id: "pair-role-guidance".to_string(),
+        block_type: PromptMemoryBlockType::RoleGuidance,
+        scope: PromptMemoryBlockScope::RoleLocal,
+        state: PromptMemoryBlockState::Active,
+        role: Some("pair".to_string()),
+        work_surface: None,
+        session_id: None,
+        title: "pair-role-guidance".to_string(),
+        body: "Prompt memory blocks are Den-owned editable in-context state. Treat them as distinct from transcript history, retrieval results, and compaction artifacts.".to_string(),
+        priority: 50,
+    }];
+    for root in roots {
+        blocks.push(PromptMemoryBlock {
+            id: format!("workspace-surface:{}", root),
+            block_type: PromptMemoryBlockType::WorkSurfaceContext,
+            scope: PromptMemoryBlockScope::WorkSurface,
+            state: PromptMemoryBlockState::Active,
+            role: None,
+            work_surface: Some(root.clone()),
+            session_id: None,
+            title: format!("workspace-surface:{}", root),
+            body: format!("Work-surface-attached prompt context applies to workspace root `{}` and should outrank broader Bear defaults for this surface.", root),
+            priority: 40,
+        });
+    }
+    blocks.push(PromptMemoryBlock {
+        id: format!("session-focus:{}", session_id),
+        block_type: PromptMemoryBlockType::SessionFocus,
+        scope: PromptMemoryBlockScope::Session,
+        state: PromptMemoryBlockState::Active,
+        role: None,
+        work_surface: None,
+        session_id: Some(session_id.to_string()),
+        title: format!("session-focus:{}", session_id),
+        body: "Session-scoped prompt focus may temporarily outrank broader role-local context for the current ACP session.".to_string(),
+        priority: 60,
+    });
+    let compilation = compile_prompt_memory_blocks(
+        &blocks,
+        PromptMemoryCompilationInput {
+            role: "pair",
+            work_surfaces: roots,
+            session_id,
+            max_blocks: 6,
+        },
+    );
+    PromptMemoryRuntimeSelection {
+        diagnostic: serde_json::json!({
+            "source": "synthetic_runtime_slice",
+            "persisted": false,
+            "session_id": session_id,
+            "work_surfaces": roots,
+            "matched_block_ids": compilation
+                .included_blocks
+                .iter()
+                .map(|block| block.id.clone())
+                .collect::<Vec<_>>(),
+            "matched_count": compilation.included_blocks.len(),
+            "omitted_block_ids": compilation.omitted_block_ids
+        }),
+        blocks,
+    }
 }

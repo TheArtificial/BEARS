@@ -15,7 +15,6 @@ use uuid::Uuid;
 use den_tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
 use crate::{
-    config::Config,
     core::{
         bears::BearProfile,
         memory::{tools as sqlite_memory, MemoryStoreManager},
@@ -24,9 +23,8 @@ use crate::{
     errors::{CustomError, DenError},
 };
 
-/// Concrete [`WorkSurfaceOps`] over the runtime config/stores.
+/// Concrete [`WorkSurfaceOps`] over the runtime memory stores.
 pub(crate) struct DenWorkSurfaceOps<'a> {
-    pub(crate) config: &'a Config,
     pub(crate) stores: &'a MemoryStoreManager,
 }
 

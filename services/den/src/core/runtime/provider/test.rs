@@ -2,11 +2,9 @@ use crate::{
     config::Config,
     core::runtime::provider::{
         acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
-        ContinueTurnRequest, ContinueTurnResult, InteractionRunStore, RetrievalService,
-        RoleProfileRegistry, RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision,
+        ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
         RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory,
         RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeToolResultStatus,
-        ToolActuatorRegistry,
     },
     errors::CustomError,
 };
@@ -55,38 +53,6 @@ fn startup_capabilities_reflect_current_acp_to_letta_requirement() {
     let caps = RuntimeStartupCapabilities::from_config(&config);
     assert!(!caps.acp_gateway_enabled);
     assert!(!caps.runtime_required_for_acp);
-}
-
-struct NoopRegistry;
-
-impl ToolActuatorRegistry for NoopRegistry {}
-
-impl RoleProfileRegistry for NoopRegistry {
-    async fn resolve_compatibility_binding(
-        &self,
-        _bear_id: uuid::Uuid,
-        _role: &str,
-    ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
-        Ok(None)
-    }
-}
-
-impl RoleRunner for NoopRegistry {
-    async fn check_health(&self) -> Result<String, CustomError> {
-        Ok("ok".to_string())
-    }
-}
-
-impl InteractionRunStore for NoopRegistry {
-    async fn check_health(&self) -> Result<String, CustomError> {
-        Ok("ok".to_string())
-    }
-}
-
-impl RetrievalService for NoopRegistry {
-    async fn check_health(&self) -> Result<String, CustomError> {
-        Ok("ok".to_string())
-    }
 }
 
 fn sample_tool_result_continuation() -> RuntimeContinuation {

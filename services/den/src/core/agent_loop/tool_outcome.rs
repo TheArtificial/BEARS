@@ -50,18 +50,6 @@ pub fn tool_result_persistence_status(content: Option<&str>) -> &'static str {
     }
 }
 
-pub fn tool_call_finish_status_from_persisted(status: Option<&str>, content: Option<&str>) -> ToolCallFinishStatus {
-    match status {
-        Some("incomplete") => ToolCallFinishStatus::Incomplete,
-        Some("cancelled") => ToolCallFinishStatus::Cancelled,
-        Some("error") => ToolCallFinishStatus::Error,
-        Some("ok") => ToolCallFinishStatus::Ok,
-        _ if tool_result_content_indicates_error(content) => ToolCallFinishStatus::Error,
-        _ if is_incomplete_tool_result(content) => ToolCallFinishStatus::Incomplete,
-        _ => ToolCallFinishStatus::Ok,
-    }
-}
-
 pub fn user_visible_tool_summary(
     tool_name: &str,
     status: ToolCallFinishStatus,

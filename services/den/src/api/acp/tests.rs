@@ -33,10 +33,7 @@ use crate::core::prompt_memory_blocks::{
         config::Config,
         errors::CustomError,
         api::{acp::{
-            history::{
-                acp_auto_title_instruction, map_acp_history_page,
-                map_canonical_history_page, map_compaction_status_for_history,
-            },
+            history::{acp_auto_title_instruction, map_canonical_history_page},
             prompt_context::{
                 acp_direct_tool_prompt_context_with_activity,
                 render_prompt_memory_runtime_selection,
@@ -2341,30 +2338,6 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[test]
-    fn compaction_status_for_history_includes_context_envelope_projection() {
-        let body = serde_json::json!({
-            "messages": [
-                {"role": "user", "content": "inspect the service"},
-                {"role": "assistant", "content": "I will inspect it"},
-                {"role": "tool", "tool_call_id": "call-1", "tool_name": "fs_read_text_file"},
-                {"role": "assistant", "content": "workflow_state: submitted"},
-                {"role": "assistant", "content": "artifact saved to file:///tmp/output.md"},
-                {"role": "assistant", "content": "follow up next"},
-                {"role": "user", "content": "continue"}
-            ]
-        });
-
-        let status = map_compaction_status_for_history("conv-test", &body);
-        let envelope = status
-            .context_envelope
-            .expect("context envelope should be present");
-        assert!(envelope.get("instructions").is_some());
-        assert!(envelope.get("workflow_state").is_some());
-        assert!(envelope.get("recent_groups").is_some());
-        assert!(envelope.get("compacted_context").is_some());
-    }
-
-    #[test]
     fn prompt_memory_block_compilation_prefers_session_then_surface_then_role_scope() {
         let work_surfaces = vec!["/workspace".to_string()];
         let blocks = vec![
@@ -2438,12 +2411,11 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
-        for reason in [ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON] {
-            assert!(!reason.contains("Denied by BEARS"));
-            assert!(reason.contains("expired ACP approval request"));
-            assert!(reason.contains("not a user or web policy block"));
-            assert!(reason.contains("Retry the tool"));
-        }
+        let reason = ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON;
+        assert!(!reason.contains("Denied by BEARS"));
+        assert!(reason.contains("expired ACP approval request"));
+        assert!(reason.contains("not a user or web policy block"));
+        assert!(reason.contains("Retry the tool"));
     }
 
     #[test]
@@ -2574,32 +2546,6 @@ use crate::core::prompt_memory_blocks::{
     }
 
     #[test]
-    fn acp_history_page_replays_desc_letta_page_chronologically() {
-        let body = serde_json::json!({
-            "messages": [
-                { "id": "m4", "message_type": "assistant_message", "content": "reply 2", "created_at": "2026-01-01T00:00:04Z" },
-                { "id": "m3", "message_type": "user_message", "content": "ask 2", "created_at": "2026-01-01T00:00:03Z" },
-                { "id": "m2", "message_type": "assistant_message", "content": "reply 1", "created_at": "2026-01-01T00:00:02Z" },
-                { "id": "m1", "message_type": "user_message", "content": "ask 1", "created_at": "2026-01-01T00:00:01Z" }
-            ]
-        });
-        let (messages, _has_more, next_before) = map_acp_history_page(&body, 4);
-        assert_eq!(next_before.as_deref(), Some("m1"));
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| (message.role.as_str(), message.text.as_str()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("user", "ask 1"),
-                ("assistant", "reply 1"),
-                ("user", "ask 2"),
-                ("assistant", "reply 2"),
-            ]
-        );
-    }
-
-    #[test]
     fn canonical_history_page_with_only_user_rows_still_returns_den_visible_history() {
         use crate::core::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
@@ -2645,24 +2591,6 @@ use crate::core::prompt_memory_blocks::{
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, "assistant");
         assert_eq!(messages[0].text, "persisted assistant only");
-    }
-
-    #[test]
-    fn letta_history_page_can_fill_visible_history_when_canonical_rows_are_absent() {
-        let body = serde_json::json!({
-            "messages": [
-                { "id": "m2", "message_type": "assistant_message", "content": "runtime reply", "created_at": "2026-01-01T00:00:02Z" },
-                { "id": "m1", "message_type": "user_message", "content": "runtime prompt", "created_at": "2026-01-01T00:00:01Z" }
-            ]
-        });
-        let (messages, has_more, next_before) = map_acp_history_page(&body, 50);
-        assert!(!has_more);
-        assert_eq!(next_before.as_deref(), Some("m1"));
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].text, "runtime prompt");
-        assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].text, "runtime reply");
     }
 
     #[test]
@@ -3869,7 +3797,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             if output.contains("file says hello") {
                 break;
             }
@@ -4038,7 +3966,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             if output.contains("handled error") {
                 break;
             }
@@ -4174,7 +4102,7 @@ use crate::core::prompt_memory_blocks::{
         let mut pre_result_output = String::new();
         let no_terminal = tokio::time::timeout(std::time::Duration::from_millis(50), async {
             while let Some(item) = stream.next().await {
-                pre_result_output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+                pre_result_output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
                 if pre_result_output.contains("\"type\":\"turn_result\"")
                     || pre_result_output.contains("\"type\":\"turn_complete\"")
                 {
@@ -4235,7 +4163,7 @@ use crate::core::prompt_memory_blocks::{
         let mut output = pre_result_output;
         let _post_result = tokio::time::timeout(std::time::Duration::from_millis(500), async {
             while let Some(item) = stream.next().await {
-                output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+                output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             }
         })
         .await;
@@ -4309,7 +4237,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
         }
 
         assert_eq!(
@@ -4396,7 +4324,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
         }
 
         assert_eq!(
@@ -4558,7 +4486,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(output.matches("\"type\":\"turn_result\"").count() >= 1, "{output}");
         assert!(
@@ -4618,7 +4546,7 @@ use crate::core::prompt_memory_blocks::{
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut config = crate::config::Config::load();
+        let config = crate::config::Config::load();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4702,7 +4630,7 @@ use crate::core::prompt_memory_blocks::{
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
-        let mut config = crate::config::Config::load();
+        let config = crate::config::Config::load();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4921,7 +4849,7 @@ use crate::core::prompt_memory_blocks::{
         let mut output = String::new();
         let stream_result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while let Some(item) = stream.next().await {
-                output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+                output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             }
         })
         .await;
@@ -5579,7 +5507,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(!output.contains("status_text"), "{output}");
         assert!(!output.contains("runtime recovery"), "{output}");
@@ -5731,7 +5659,7 @@ use crate::core::prompt_memory_blocks::{
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             if output.contains("\"status\":\"recovered\"")
                 || output.contains("Letta is not configured")
             {
@@ -5750,49 +5678,6 @@ use crate::core::prompt_memory_blocks::{
             "{output}"
         );
         assert!(*cancel_calls.lock().await <= 1);
-    }
-
-    #[test]
-    fn acp_history_filters_system_scoped_user_messages_and_reminder_suffixes() {
-        let body = serde_json::json!({
-            "messages": [
-                {
-                    "id": "msg-system-user",
-                    "date": "2026-05-10T00:00:00Z",
-                    "message_type": "user_message",
-                    "role": "system",
-                    "content": "BEARS ACP direct local workspace tools available this turn: fs_read_text_file."
-                },
-                {
-                    "id": "msg-assistant",
-                    "date": "2026-05-10T00:00:01Z",
-                    "message_type": "assistant_message",
-                    "content": "Done.\n<system-reminder>hidden harness</system-reminder>"
-                },
-                {
-                    "id": "msg-human",
-                    "date": "2026-05-10T00:00:02Z",
-                    "message_type": "user_message",
-                    "content": "Please check this thread.\n<system-reminder>adapter-only instructions</system-reminder>"
-                },
-                {
-                    "id": "msg-human-scaffold",
-                    "date": "2026-05-10T00:00:03Z",
-                    "message_type": "user_message",
-                    "content": "ACP workflow state for this session: workflow_id=123 workflow_state=submitted submitted_plan_present=true approval_status=awaiting_human_approval execution_unlocked=false. Workflow state is authoritative.\n\nPlease only show the real user text."
-                }
-            ]
-        });
-        let (messages, has_more, next_before) = map_acp_history_page(&body, 50);
-        assert!(!has_more);
-        assert_eq!(next_before.as_deref(), Some("msg-human-scaffold"));
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].text, "Please only show the real user text.");
-        assert_eq!(messages[1].role, "user");
-        assert_eq!(messages[1].text, "Please check this thread.");
-        assert_eq!(messages[2].role, "assistant");
-        assert_eq!(messages[2].text, "Done.");
     }
 
     #[test]
@@ -6332,19 +6217,6 @@ data: "hello"}"#;
     }
 
 
-    #[test]
-    fn compaction_status_for_history_includes_prompt_memory_diagnostic_projection() {
-        let body = serde_json::json!({
-            "messages": [],
-            "context_window": {"summary": "ok"}
-        });
-        let status = map_compaction_status_for_history("conv-test", &body);
-        assert!(status.prompt_memory_diagnostic.is_some());
-        assert_eq!(
-            status.prompt_memory_diagnostic.as_ref().unwrap()["source"],
-            "prompt_memory_blocks"
-        );
-    }
 
 
 

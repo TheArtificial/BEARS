@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-production = []
+production = ["den-core/production"]
 web-ui-fixtures = []
 
 # Cargo workspace root. The `den` binary stays the root package; extracted
@@ -44,6 +44,9 @@ cast_possible_truncation = "allow"
 cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
+# Context/builder functions legitimately take many params; de-stringify
+# (DEN_CRATE_SPLIT_PLAN v0 #4) bundles some into typed structs over time.
+too_many_arguments = "allow"
 # Noisy / false-positive-prone nursery lints.
 option_if_let_else = "allow"
 missing_const_for_fn = "allow"

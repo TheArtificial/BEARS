@@ -75,14 +75,9 @@ pub(super) async fn conversations_inner(
         })
         .collect();
 
-    if conversations.is_empty() {
-        conversations.push(AcpConversationRow {
-            id: "default".to_string(),
-            title: "Main chat".to_string(),
-            last_message_at: None,
-            archived: false,
-        });
-    } else if !conversations.iter().any(|row| row.id == "default") && !query.include_archived {
+    let needs_default_row = conversations.is_empty()
+        || (!conversations.iter().any(|row| row.id == "default") && !query.include_archived);
+    if needs_default_row {
         conversations.push(AcpConversationRow {
             id: "default".to_string(),
             title: "Main chat".to_string(),
