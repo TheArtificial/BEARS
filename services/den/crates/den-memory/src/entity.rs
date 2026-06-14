@@ -612,7 +612,7 @@ mod tests {
             &store,
             "person",
             Some("Other Ryan"),
-            &[h_slack.handle_id.clone()],
+            std::slice::from_ref(&h_slack.handle_id),
             ResolutionState::Provisional,
             EntityTrust::Inferred,
         )

@@ -34,8 +34,8 @@ pub(crate) fn strip_ephemeral_status_suffixes(text: &str) -> String {
         let trimmed = out.trim_end();
         let mut stripped = false;
         for suffix in EPHEMERAL_PROGRESS_STATUSES {
-            if trimmed.ends_with(suffix) {
-                out = trimmed[..trimmed.len() - suffix.len()].trim_end().to_string();
+            if let Some(prefix) = trimmed.strip_suffix(suffix) {
+                out = prefix.trim_end().to_string();
                 stripped = true;
                 break;
             }
@@ -407,7 +407,7 @@ fn incomplete_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value
     })
 }
 
-fn browser_terminal_error(request_id: Uuid, event: &serde_json::Value) -> Bytes {
+fn browser_terminal_error(_request_id: Uuid, event: &serde_json::Value) -> Bytes {
     let mapped = serde_json::json!({
         "message_type": "error_message",
         "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),

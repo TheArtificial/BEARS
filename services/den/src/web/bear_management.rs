@@ -1,5 +1,9 @@
 //! Member-facing bear lifecycle: create bears (you become admin), details, membership, edit/delete for bear admins (or site operators).
 //! When changing routes, update `src/web/ROUTES.md`.
+// TODO(den-web extraction): several detail/edit/member handlers here were superseded
+// by `bear_settings.rs` + legacy redirects and are now dead. Remove during the den-web
+// move rather than blind-deleting now. `allow(dead_code)` keeps the clippy gate green.
+#![allow(dead_code)]
 
 use axum::{
     extract::{Path, Query, State},
@@ -49,7 +53,6 @@ use den_runtime::{
 
 use super::bear_settings;
 pub(crate) use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
-pub(crate) use super::bear_profile::build_role_detail_view;
 
 pub fn router() -> Router<AppState> {
     bear_settings::router()

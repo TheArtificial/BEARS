@@ -1,8 +1,11 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
+// TODO(den-web extraction): superseded admin bear-detail handlers below are dead;
+// remove during the den-web move rather than blind-deleting now.
+#![allow(dead_code)]
 use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::get,
     Router,
 };
 use axum_extra::extract::Form;
