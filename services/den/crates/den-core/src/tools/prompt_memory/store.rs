@@ -6,7 +6,7 @@
 //! `prompt_memory_block_store`. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 use async_trait::async_trait;
-use den_core::DenError;
+use crate::DenError;
 use uuid::Uuid;
 
 use super::types::{PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite};

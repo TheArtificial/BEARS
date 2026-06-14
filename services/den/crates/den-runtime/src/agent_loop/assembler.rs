@@ -12,7 +12,7 @@ use crate::{
         llm::ChatMessage,
     },
 };
-use den_tools::work_surface::WorkSurfaceSessionHints;
+use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
     context::{
@@ -212,7 +212,7 @@ pub async fn assemble_native_turn_for_bear(
     }
     if ctx.profile == BearProfile::Chat {
         system_text.push_str("\n\n");
-        system_text.push_str(&den_tools::descriptor::render_profile_tool_surface_blurb(
+        system_text.push_str(&den_core::tools::descriptor::render_profile_tool_surface_blurb(
             ctx.profile,
         ));
     }

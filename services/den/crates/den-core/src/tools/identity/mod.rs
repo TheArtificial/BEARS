@@ -13,9 +13,9 @@ pub use store::{
 
 use serde_json::{json, Value};
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 
-use crate::{
+use crate::tools::{
     context::DenToolInvocationContext,
     descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
 };

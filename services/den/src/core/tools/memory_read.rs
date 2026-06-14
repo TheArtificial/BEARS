@@ -10,7 +10,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
+use den_core::tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
 
 use crate::{
     config::Config,
@@ -104,7 +104,7 @@ pub(crate) async fn memory_status(
 ) -> Result<Value, CustomError> {
     let memory = DenRoleMemoryStore::new(config);
     let prompt = DenPromptMemoryStore::new(pool);
-    den_tools::memory::memory_status(&memory, &prompt, context.bear_id, role)
+    den_core::tools::memory::memory_status(&memory, &prompt, context.bear_id, role)
         .await
         .map_err(CustomError::from)
 }

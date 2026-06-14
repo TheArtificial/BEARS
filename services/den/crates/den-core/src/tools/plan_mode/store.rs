@@ -11,9 +11,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
-use den_core::DenError;
+use crate::DenError;
 
-use crate::context::DenToolInvocationContext;
+use crate::tools::context::DenToolInvocationContext;
 
 /// Common rendered view returned by enter/approve/cancel transitions.
 ///

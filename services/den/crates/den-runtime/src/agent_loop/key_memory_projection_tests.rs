@@ -12,7 +12,7 @@ use crate::{
         },
     },
 };
-use den_tools::work_surface::WorkSurfaceSessionHints;
+use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 fn legacy_test_bear(bear_id: Uuid) -> Bear {
     let now = OffsetDateTime::now_utc();

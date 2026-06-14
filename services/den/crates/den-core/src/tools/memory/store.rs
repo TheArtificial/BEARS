@@ -7,7 +7,7 @@
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 use async_trait::async_trait;
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 

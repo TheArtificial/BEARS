@@ -9,12 +9,12 @@ pub mod store;
 
 pub use store::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::context::DenToolInvocationContext;
-use crate::support::{clean_optional, validate_bounded_text};
+use crate::tools::context::DenToolInvocationContext;
+use crate::tools::support::{clean_optional, validate_bounded_text};
 
 pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearProfile) -> Value {
     let mut candidates = Vec::new();
@@ -530,8 +530,8 @@ pub fn build_work_surface_orientation_payload(
 #[cfg(test)]
 mod tests {
     use super::infer_work_surface_hint;
-    use crate::context::DenToolInvocationContext;
-    use den_core::BearProfile;
+    use crate::tools::context::DenToolInvocationContext;
+    use crate::BearProfile;
     use serde_json::json;
 
     fn pair_context() -> DenToolInvocationContext {

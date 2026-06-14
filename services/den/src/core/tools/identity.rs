@@ -1,14 +1,14 @@
 //! `den`-side wiring for identity/membership/policy tools + authorization.
 //!
 //! The JSON shaping and the dispatcher authorization helpers now live in
-//! `den_tools::identity`; this module provides the concrete [`BearDirectory`]
+//! `den_core::tools::identity`; this module provides the concrete [`BearDirectory`]
 //! over the `bears`/`user` DB, wired into the dispatcher via `DenToolContext`.
 
 use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser};
+use den_core::tools::identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser};
 
 use crate::{
     core::{

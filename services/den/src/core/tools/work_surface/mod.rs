@@ -6,13 +6,13 @@
 //! scaffold writes) and the thin `create_work_surface_scaffold` wrapper. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B, ADR-0040).
 
-pub(crate) use den_tools::work_surface::*;
+pub(crate) use den_core::tools::work_surface::*;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
+use den_core::tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
 use crate::{
     core::{

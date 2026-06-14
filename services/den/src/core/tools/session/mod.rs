@@ -11,7 +11,7 @@ use crate::{
 // capability), so tool executors can move there. Re-exported here so existing
 // `core::tools::session::DenToolInvocationContext` paths and the ~17 in-`den`
 // construction sites keep resolving unchanged.
-pub use den_tools::context::DenToolInvocationContext;
+pub use den_core::tools::context::DenToolInvocationContext;
 
 pub async fn invoke_den_tool(
     pool: &PgPool,
@@ -22,7 +22,7 @@ pub async fn invoke_den_tool(
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
     let ctx = DenToolContext::new(pool, config, stores);
-    den_tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
+    den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
         .await
         .map_err(CustomError::from)
 }
@@ -32,7 +32,7 @@ pub(crate) struct DenConversationTitleOps<'a> {
 }
 
 #[async_trait::async_trait]
-impl den_tools::conversation::ConversationTitleOps for DenConversationTitleOps<'_> {
+impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitleOps<'_> {
     async fn set_title(
         &self,
         bear_id: uuid::Uuid,

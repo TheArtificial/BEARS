@@ -5,9 +5,9 @@
 
 use serde_json::{json, Value};
 
-use den_core::DenError;
+use crate::DenError;
 
-use crate::{
+use crate::tools::{
     constants::DEN_MEMORY_WRITE_ENTRY,
     context::DenToolInvocationContext,
     memory::MemoryWriteEntryArguments,

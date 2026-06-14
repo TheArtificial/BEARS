@@ -1,10 +1,10 @@
 //! Pure, shared validators for tool arguments.
 //!
 //! These return [`DenError`] (the web-free error); the `den` web boundary maps
-//! that to `CustomError`. Re-exported at `crate::core::tools::support::*` in the
+//! that to `CustomError`. Re-exported at `crate::tools::core::tools::support::*` in the
 //! `den` crate so existing callers keep resolving while executors migrate.
 
-use den_core::DenError;
+use crate::DenError;
 use serde_json::Value;
 
 /// Trim `value` and require its character count to be within `[min_chars, max_chars]`.

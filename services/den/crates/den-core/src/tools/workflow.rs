@@ -12,9 +12,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 
-use crate::context::DenToolInvocationContext;
+use crate::tools::context::DenToolInvocationContext;
 
 #[async_trait]
 pub trait WorkPlanOps: Send + Sync {

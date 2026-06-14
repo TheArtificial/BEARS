@@ -3,7 +3,7 @@ use serde::Serialize;
 // Prompt-memory domain types now live in `den-tools` (the tool-executor crate);
 // re-exported here so existing `crate::prompt_memory_blocks::*` paths keep
 // resolving. The runtime prompt-compilation logic below stays in `den`.
-pub use den_tools::prompt_memory::{
+pub use den_core::tools::prompt_memory::{
     PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
 };
 

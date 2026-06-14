@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
-use den_tools::descriptor::{
+use den_core::tools::descriptor::{
     builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
     den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
 };

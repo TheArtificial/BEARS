@@ -1,7 +1,7 @@
 //! `den`-side wiring for the ACP plan-mode tools.
 //!
 //! Argument parsing/validation and the static response envelopes now live in
-//! `den_tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
+//! `den_core::tools::plan_mode`; this module provides the concrete [`PlanModeOps`]
 //! implementation (DB rows, mode switches, native SQLite artifact writes,
 //! `turn_state` rendering), wired into the dispatcher via `DenToolContext`. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::plan_mode::{
+use den_core::tools::plan_mode::{
     PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView,
 };
 

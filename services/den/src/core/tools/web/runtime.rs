@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::DenError;
-use den_tools::web::{
+use den_core::tools::web::{
     max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl,
 };
 

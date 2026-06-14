@@ -10,9 +10,9 @@
 
 use serde_json::Value;
 
-use den_core::DenError;
+use crate::DenError;
 
-use crate::{
+use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY,

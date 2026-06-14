@@ -11,9 +11,9 @@ const CURATE_PROFILES: &[&str] = &["curate"];
 const WATCH_PROFILES: &[&str] = &["watch"];
 const WORK_PROFILES: &[&str] = &["work"];
 
-use den_core::BearProfile;
+use crate::BearProfile;
 
-use crate::{
+use crate::tools::{
     display::AcpToolDisplayDescriptor,
     tool_descriptor_guidance::{
         render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,

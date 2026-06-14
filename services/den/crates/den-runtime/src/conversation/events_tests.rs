@@ -119,7 +119,7 @@ fn projection_memory_review_requested_json_uses_typed_event_shape() {
 
     let json = projection.workflow_content_json();
     assert_eq!(json["event"], "memory_review_requested");
-    assert_eq!(json["source"], "den_tools");
+    assert_eq!(json["source"], "den_core::tools");
     assert_eq!(json["scope_id"], "acp-session-1");
     assert_eq!(json["title"], "Promote note");
     assert_eq!(json["suggested_action"], "promote_to_core");

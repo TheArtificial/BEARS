@@ -705,7 +705,7 @@ impl ProjectionSource {
             Self::MemoryProposals => "memory_proposals",
             Self::PairReflection => "pair_reflection",
             Self::ReflectionConductor => "reflection_conductor",
-            Self::DenTools => "den_tools",
+            Self::DenTools => "den_core::tools",
         }
     }
 }

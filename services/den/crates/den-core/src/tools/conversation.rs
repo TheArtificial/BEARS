@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::DenError;
+use crate::DenError;
 
-use crate::{arguments::SetConversationTitleArguments, context::DenToolInvocationContext, support::clean_optional};
+use crate::tools::{arguments::SetConversationTitleArguments, context::DenToolInvocationContext, support::clean_optional};
 
 #[async_trait]
 pub trait ConversationTitleOps: Send + Sync {

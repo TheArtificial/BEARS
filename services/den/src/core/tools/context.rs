@@ -1,6 +1,6 @@
 //! The unified [`DenToolContext`] — the single runtime type that implements every
-//! `den_tools` capability sub-trait, so the relocated dispatcher
-//! ([`den_tools::dispatch::invoke_den_tool`]) can take one `&impl ToolContext`.
+//! `den_core::tools` capability sub-trait, so the relocated dispatcher
+//! ([`den_core::tools::dispatch::invoke_den_tool`]) can take one `&impl ToolContext`.
 //!
 //! Each impl delegates to the per-capability concrete type already defined in the
 //! sibling tool modules (web/runtime, memory_read, prompt_memory, memory_review,
@@ -12,7 +12,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::{
+use den_core::tools::{
     conversation::ConversationTitleOps,
     dispatch::ToolContext,
     environment::EnvironmentOps,
@@ -30,7 +30,7 @@ use den_tools::{
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
     workflow::WorkPlanOps,
 };
-use den_tools::context::DenToolInvocationContext;
+use den_core::tools::context::DenToolInvocationContext;
 
 use crate::{
     config::Config,

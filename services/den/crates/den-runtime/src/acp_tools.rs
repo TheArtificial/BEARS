@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use den_tools::tool_descriptor_guidance::{
+use den_core::tools::tool_descriptor_guidance::{
     render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy, ToolScopeKind,
     ToolSideEffectKind,
 };
@@ -450,7 +450,7 @@ pub struct AcpToolDescriptor {
 // `AcpToolDisplayDescriptor` now lives in `den-tools` (the descriptor authority);
 // re-exported here so existing `crate::core::acp_tools::AcpToolDisplayDescriptor`
 // paths keep resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase A).
-pub use den_tools::AcpToolDisplayDescriptor;
+pub use den_core::tools::AcpToolDisplayDescriptor;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpToolPolicy {

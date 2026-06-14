@@ -10,12 +10,12 @@ pub mod store;
 
 pub use store::RoleMemoryStore;
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{
+use crate::tools::{
     context::DenToolInvocationContext,
     prompt_memory::{PromptMemoryBlock, PromptMemoryBlockState, PromptMemoryStore},
     support::{
@@ -290,9 +290,9 @@ pub async fn memory_search(
 #[cfg(test)]
 mod tests {
     use super::merge_memory_entry_source_with_human;
-    use crate::arguments::DenToolChannelContext;
-    use crate::context::DenToolInvocationContext;
-    use den_core::BearProfile;
+    use crate::tools::arguments::DenToolChannelContext;
+    use crate::tools::context::DenToolInvocationContext;
+    use crate::BearProfile;
     use serde_json::json;
 
     fn sample_context() -> DenToolInvocationContext {

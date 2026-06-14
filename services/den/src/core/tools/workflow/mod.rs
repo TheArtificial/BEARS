@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::workflow::WorkPlanOps;
+use den_core::tools::workflow::WorkPlanOps;
 
 use crate::{
     config::Config,

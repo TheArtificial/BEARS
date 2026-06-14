@@ -14,9 +14,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::DenError;
+use crate::DenError;
 
-use crate::{context::DenToolInvocationContext, memory::source_acp_session_id, validation};
+use crate::tools::{context::DenToolInvocationContext, memory::source_acp_session_id, validation};
 
 #[derive(Debug, Deserialize)]
 pub struct PlanModeEnterArguments {

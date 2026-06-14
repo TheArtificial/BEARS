@@ -13,12 +13,12 @@ pub use types::{
     PromptMemoryBlockType, PromptMemoryBlockWrite,
 };
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::validation::{validate_bounded_text, validate_optional_object};
+use crate::tools::validation::{validate_bounded_text, validate_optional_object};
 
 /// Validate that a prompt-memory scope carries the qualifier it requires.
 pub fn validate_prompt_memory_scope(

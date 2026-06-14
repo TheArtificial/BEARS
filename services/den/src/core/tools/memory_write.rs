@@ -6,6 +6,6 @@
 //! `DenToolContext`. These re-exports preserve the `den` paths still referenced
 //! across the crate (`source_acp_session_id`) and in tests.
 
-pub(crate) use den_tools::memory::source_acp_session_id;
+pub(crate) use den_core::tools::memory::source_acp_session_id;
 #[cfg(test)]
-pub(crate) use den_tools::memory::MemoryWriteEntryArguments;
+pub(crate) use den_core::tools::memory::MemoryWriteEntryArguments;

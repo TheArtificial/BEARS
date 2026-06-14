@@ -12,8 +12,8 @@ use crate::{
         },
     },
 };
-use den_tools::support::truncate_chars;
-use den_tools::work_surface::{
+use den_core::tools::support::truncate_chars;
+use den_core::tools::work_surface::{
     work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
     work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
 };

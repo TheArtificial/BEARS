@@ -33,9 +33,9 @@ use crate::{
     },
 };
 use den_core::DenError;
-use den_tools::arguments::DenToolChannelContext;
-use den_tools::context::DenToolInvocationContext;
-use den_tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_core::tools::arguments::DenToolChannelContext;
+use den_core::tools::context::DenToolInvocationContext;
+use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
 
 use crate::native_runtime::RuntimeToolInvoker;
 

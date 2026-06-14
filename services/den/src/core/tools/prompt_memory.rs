@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_tools::prompt_memory::{
+use den_core::tools::prompt_memory::{
     PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
 };
 

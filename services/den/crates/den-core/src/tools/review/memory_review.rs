@@ -5,12 +5,12 @@
 //! projection-scope computation over the [`MemoryReviewStore`] seam; the `den`
 //! impl owns the capability calls and `conversation_events` projections.
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{
+use crate::tools::{
     context::DenToolInvocationContext,
     memory::source_acp_session_id,
     support::{clean_optional, validate_bounded_text, validate_optional_object},

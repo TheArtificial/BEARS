@@ -29,7 +29,7 @@ async fn prompt_memory_upsert(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    den_tools::prompt_memory::prompt_memory_upsert(
+    den_core::tools::prompt_memory::prompt_memory_upsert(
         &DenPromptMemoryStore::new(pool),
         context.bear_id,
         context.user_id,
@@ -46,7 +46,7 @@ async fn prompt_memory_list(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    den_tools::prompt_memory::prompt_memory_list(
+    den_core::tools::prompt_memory::prompt_memory_list(
         &DenPromptMemoryStore::new(pool),
         context.bear_id,
         role,
@@ -62,7 +62,7 @@ async fn prompt_memory_patch(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    den_tools::prompt_memory::prompt_memory_patch(&DenPromptMemoryStore::new(pool), role, arguments)
+    den_core::tools::prompt_memory::prompt_memory_patch(&DenPromptMemoryStore::new(pool), role, arguments)
         .await
         .map_err(CustomError::from)
 }

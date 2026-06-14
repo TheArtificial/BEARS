@@ -10,7 +10,7 @@ pub mod text;
 
 pub use fetcher::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl};
 
-use den_core::DenError;
+use crate::DenError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;

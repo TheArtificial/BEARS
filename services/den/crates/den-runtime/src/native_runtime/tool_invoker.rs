@@ -11,7 +11,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use den_core::{config::Config, DenError};
-use den_tools::context::DenToolInvocationContext;
+use den_core::tools::context::DenToolInvocationContext;
 
 use crate::memory::MemoryStoreManager;
 

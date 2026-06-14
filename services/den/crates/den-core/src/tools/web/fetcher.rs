@@ -9,7 +9,7 @@
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
 use async_trait::async_trait;
-use den_core::DenError;
+use crate::DenError;
 use uuid::Uuid;
 
 /// Per-bear policy outcome for a candidate URL. Mirrors `web_policy`'s decision.

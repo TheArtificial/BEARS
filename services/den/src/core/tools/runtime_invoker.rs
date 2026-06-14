@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use den_core::{config::Config, DenError};
 use den_runtime::memory::MemoryStoreManager;
 use den_runtime::native_runtime::RuntimeToolInvoker;
-use den_tools::context::DenToolInvocationContext;
+use den_core::tools::context::DenToolInvocationContext;
 
 use crate::core::tools::session::invoke_den_tool;
 use crate::errors::CustomError;

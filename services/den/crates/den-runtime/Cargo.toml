@@ -5,9 +5,9 @@ edition = "2021"
 
 # den-runtime: the native agent runtime (DEN_CRATE_SPLIT_PLAN.md v1.4). It owns the
 # agent loop, native provider/runtime, governance, bears provisioning, conversation
-# storage, reflection, and the runtime-side memory/llm glue. It implements
-# `den-tools::ToolContext` and consumes the `den-docket`/`den-memory`/`den-llm` leaves,
-# so the edges (acp/api/web) and the thin `den` binary depend on it, not the reverse.
+# storage, reflection, and the runtime-side memory/llm glue. It consumes the tool
+# surface (`den_core::tools`) and the `den-docket`/`den-memory`/`den-llm` leaves, so
+# the edges (acp/api/web) and the thin `den` binary depend on it, not the reverse.
 # Modules are moved in incrementally; see the v1.4 extraction order in the roadmap.
 
 [lints]
@@ -23,7 +23,6 @@ den-core = { path = "../den-core" }
 den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
 den-docket = { path = "../den-docket" }
-den-tools = { path = "../den-tools" }
 anyhow = "1.0"
 async-trait = "0.1.86"
 bytes = "1"

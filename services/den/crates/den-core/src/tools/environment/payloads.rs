@@ -6,9 +6,9 @@
 
 use serde_json::{json, Value};
 
-use den_core::BearProfile;
+use crate::BearProfile;
 
-use crate::{
+use crate::tools::{
     context::DenToolInvocationContext,
     descriptor::{builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile},
     identity::{role_is_bear_admin, CurrentUser},
@@ -379,10 +379,10 @@ pub fn session_info_payload(
 #[cfg(test)]
 mod tests {
     use super::{bear_environment_payload, session_info_payload};
-    use crate::descriptor::builtin_den_tool_descriptors_for_profile;
-    use crate::arguments::DenToolChannelContext;
-    use crate::context::DenToolInvocationContext;
-    use den_core::BearProfile;
+    use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
+    use crate::tools::arguments::DenToolChannelContext;
+    use crate::tools::context::DenToolInvocationContext;
+    use crate::BearProfile;
     use serde_json::json;
 
     fn pair_context() -> DenToolInvocationContext {

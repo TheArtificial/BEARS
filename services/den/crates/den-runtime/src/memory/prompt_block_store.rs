@@ -12,7 +12,7 @@ use crate::{
 
 // Write/patch DTOs now live alongside the prompt-memory tool executors in
 // `den-tools`; re-exported here so the Postgres store keeps a stable path.
-pub use den_tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
+pub use den_core::tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
 
 #[derive(Debug, Clone)]
 pub struct PromptMemoryBlockQuery<'a> {

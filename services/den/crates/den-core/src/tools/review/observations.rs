@@ -4,12 +4,12 @@
 //! payload shaping over the [`MemoryReviewStore`] seam. The `den` impl owns the
 //! proposal creation + curate enqueue.
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{
+use crate::tools::{
     context::DenToolInvocationContext,
     support::{clean_optional, validate_bounded_text, validate_optional_object},
 };

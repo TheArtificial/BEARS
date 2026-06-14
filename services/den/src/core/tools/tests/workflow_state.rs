@@ -38,7 +38,7 @@ use crate::core::{
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
-use den_tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {

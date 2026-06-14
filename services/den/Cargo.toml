@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-tools", "crates/den-runtime"]
+members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime"]
 
 [lints]
 workspace = true
@@ -105,7 +105,6 @@ den-core = { path = "crates/den-core" }
 den-llm = { path = "crates/den-llm" }
 den-memory = { path = "crates/den-memory" }
 den-docket = { path = "crates/den-docket" }
-den-tools = { path = "crates/den-tools" }
 den-runtime = { path = "crates/den-runtime" }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 anyhow = "1.0"

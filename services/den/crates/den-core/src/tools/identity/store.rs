@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 
 /// Membership role string that grants Bear-admin privileges.
 pub const BEAR_ROLE_ADMIN: &str = "admin";

@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_tools::review::{
+use den_core::tools::review::{
     ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
     ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };

@@ -6,11 +6,11 @@
 //! the native SQLite write path or the legacy MemFS core-update request.
 
 use async_trait::async_trait;
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::context::DenToolInvocationContext;
+use crate::tools::context::DenToolInvocationContext;
 
 /// One scaffold file to write (runtime-neutral; `proposal_id`/`source_paths`
 /// don't apply to scaffolds, so they are omitted here).

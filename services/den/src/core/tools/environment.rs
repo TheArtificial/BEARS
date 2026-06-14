@@ -3,7 +3,7 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use den_tools::environment::EnvironmentOps;
+use den_core::tools::environment::EnvironmentOps;
 
 use crate::{
     config::Config,

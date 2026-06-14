@@ -4,4 +4,4 @@
 //! converts to `CustomError` at the (still web-coupled) executor boundary.
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
-pub(crate) use den_tools::support::*;
+pub(crate) use den_core::tools::support::*;

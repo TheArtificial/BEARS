@@ -6,12 +6,12 @@
 //! `core::tools::session::DenToolInvocationContext` for existing call sites and
 //! is responsible for constructing it. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use den_core::BearProfile;
+use crate::BearProfile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::arguments::DenToolChannelContext;
+use crate::tools::arguments::DenToolChannelContext;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DenToolInvocationContext {

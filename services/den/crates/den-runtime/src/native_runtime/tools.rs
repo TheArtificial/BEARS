@@ -5,7 +5,7 @@ use crate::{
     bears::BearProfile,
     llm::LlmToolDefinition,
 };
-use den_tools::descriptor::{
+use den_core::tools::descriptor::{
     builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
     DenToolDescriptor,
 };

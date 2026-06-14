@@ -15,9 +15,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 
-use crate::{
+use crate::tools::{
     constants::DEN_MEMORY_WRITE_ENTRY,
     context::DenToolInvocationContext,
     memory::MemoryWriteEntryArguments,
@@ -26,9 +26,9 @@ use crate::{
 
 // Validators that live in sibling modules, re-exported so the `den` shim can
 // glob-import the whole `support` surface from one place.
-pub use crate::prompt_memory::validate_prompt_memory_scope;
-pub use crate::validation::{validate_bounded_text, validate_optional_object};
-pub use crate::web::text::truncate_chars;
+pub use crate::tools::prompt_memory::validate_prompt_memory_scope;
+pub use crate::tools::validation::{validate_bounded_text, validate_optional_object};
+pub use crate::tools::web::text::truncate_chars;
 
 pub fn validate_memory_write_entry_semantics(
     args: &MemoryWriteEntryArguments,

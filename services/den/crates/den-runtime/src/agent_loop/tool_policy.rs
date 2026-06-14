@@ -3,7 +3,7 @@ use crate::{
     agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
     runtime_contracts::RuntimeSemanticEvent,
 };
-use den_tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
 use sqlx::PgPool;
 use uuid::Uuid;
 

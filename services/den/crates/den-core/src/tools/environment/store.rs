@@ -4,14 +4,14 @@
 //! few runtime-coupled inputs those builders need — the memory-status snapshot,
 //! the optional ACP adapter-runtime fetch, and two config flags. The `den`
 //! implementation owns the DB/HTTP access; membership/user lookups come from
-//! [`crate::identity::BearDirectory`].
+//! [`crate::tools::identity::BearDirectory`].
 
 use async_trait::async_trait;
 use serde_json::Value;
 
-use den_core::{BearProfile, DenError};
+use crate::{BearProfile, DenError};
 
-use crate::context::DenToolInvocationContext;
+use crate::tools::context::DenToolInvocationContext;
 
 #[async_trait]
 pub trait EnvironmentOps: Send + Sync {

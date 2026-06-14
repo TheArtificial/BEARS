@@ -1,7 +1,8 @@
-//! `den-tools`: the descriptor/registry authority for Den's model-facing tools.
+//! `den_core::tools`: the descriptor/registry authority for Den's model-facing tools.
 //!
-//! Phase A of `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`. This crate owns the *static*
-//! tool surface and depends only on `den-core`:
+//! Owns the *static* tool surface plus the capability traits + dispatcher. It lives
+//! in `den-core` (rather than a standalone `den-tools` crate) because it must sit
+//! *below* `den-runtime`, which consumes the descriptor/work-surface/context types:
 //!
 //! - [`constants`]: canonical and provider tool names.
 //! - [`aliases`]: legacy provider aliases and built-in membership.
@@ -10,8 +11,9 @@
 //! - [`display`]: the [`AcpToolDisplayDescriptor`] display shape.
 //! - [`descriptor`]: the built-in Den tool descriptor table and profile gating.
 //!
-//! Tool executors (which need pool/config/stores) remain in the `den` crate until
-//! the `ToolContext` seam (Phase B) inverts those capabilities behind traits.
+//! The concrete executors (which need pool/config/stores and call `bears`/`memory`/
+//! `reflection` in `den-runtime`) live *above* the runtime, in the `den` binary's
+//! `core::tools`, wired in behind the capability traits / `RuntimeToolInvoker` seam.
 
 pub mod aliases;
 pub mod arguments;

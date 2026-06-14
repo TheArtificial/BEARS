@@ -1,6 +1,6 @@
 //! `session_info` / `bear_environment` orientation tool executors.
 //!
-//! Composes [`crate::identity::BearDirectory`] (membership + user) with
+//! Composes [`crate::tools::identity::BearDirectory`] (membership + user) with
 //! [`EnvironmentOps`] (memory-status snapshot, adapter runtime, config flags) and
 //! the pure payload builders in `payloads.rs`.
 
@@ -12,9 +12,9 @@ pub use store::EnvironmentOps;
 
 use serde_json::{json, Value};
 
-use den_core::BearProfile;
+use crate::BearProfile;
 
-use crate::{context::DenToolInvocationContext, identity::BearDirectory, memory::source_acp_session_id};
+use crate::tools::{context::DenToolInvocationContext, identity::BearDirectory, memory::source_acp_session_id};
 
 async fn memory_status_for_environment(
     env: &impl EnvironmentOps,
@@ -60,7 +60,7 @@ pub async fn session_info(
     env: &impl EnvironmentOps,
     context: &DenToolInvocationContext,
     role: BearProfile,
-) -> Result<Value, den_core::DenError> {
+) -> Result<Value, crate::DenError> {
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, context, role).await;
@@ -78,7 +78,7 @@ pub async fn bear_environment(
     env: &impl EnvironmentOps,
     context: &DenToolInvocationContext,
     role: BearProfile,
-) -> Result<Value, den_core::DenError> {
+) -> Result<Value, crate::DenError> {
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, context, role).await;
