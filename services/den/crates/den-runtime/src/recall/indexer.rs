@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use den_core::DenError;
 use den_llm::EmbeddingClient;
@@ -74,7 +75,7 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
         let std = &self.embedding_standard;
 
         if !req.is_indexable() {
-            let removed = self.remove_record(req).await?;
+            let removed = self.remove_record(req.bear_id, &req.memory_id).await?;
             return Ok(IndexOutcome {
                 skipped_not_indexable: true,
                 removed_points: removed,
@@ -84,7 +85,7 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
 
         let chunks = chunk_text(&req.content_text);
         if chunks.is_empty() {
-            let removed = self.remove_record(req).await?;
+            let removed = self.remove_record(req.bear_id, &req.memory_id).await?;
             return Ok(IndexOutcome {
                 removed_points: removed,
                 ..IndexOutcome::default()
@@ -173,11 +174,11 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
     }
 
     /// Remove all passages for a memory record (on supersede/delete). Returns points removed.
-    pub async fn remove_record(&self, req: &IndexRequest) -> Result<usize, DenError> {
+    pub async fn remove_record(&self, bear_id: Uuid, memory_id: &str) -> Result<usize, DenError> {
         let points = registry::delete_passages_for_memory(
             self.pool,
-            req.bear_id,
-            &req.memory_id,
+            bear_id,
+            memory_id,
             &self.embedding_standard,
         )
         .await?;

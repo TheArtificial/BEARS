@@ -34,14 +34,16 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 **Exit:** smoke embed of fixture text; health check passes. *(Health check ✅; live fixture embed pending a real embedding-capable key in the smoke env.)*
 
-## Phase 1 — Passage registry + Bear indexer  🟡 indexer core landed; auto-enqueue pending
+## Phase 1 — Passage registry + Bear indexer  ✅ landed (1a indexer core + 1b auto-enqueue)
 
 - ✅ Migration: `recall_passages` Postgres table (`bear_id` FK, `memory_id`, `logical_path`, `chunk_index`, `content_hash`, `embedding_standard`, `source_class`, `point_id`, `indexed_at`, `deleted_at`; unique on `(bear_id, memory_id, chunk_index, embedding_standard)`). Registry metadata only — vectors in Qdrant, canonical text in SQLite (ADR-0038 §3).
 - ✅ `den-runtime::recall` module: `qdrant` (point upsert/delete/count), `chunking` (~2.4k-char chunks + overlap, SHA-256 `content_hash`), `policy` (indexable decision, deterministic `point_id`, Qdrant payload), `registry` (Postgres CRUD with dedup + soft-delete), `indexer` (`RecallIndexer::index_record` / `remove_record`, embedder-agnostic via `PassageEmbedder`; `EmbeddingClient` impl + `DeterministicEmbedder` test stub).
 - ✅ Indexing policy per ADR-0038: `visibility = normal`; `shared` records indexed; `profile_local` limited to `note`/`decision`/`summary`; `scratch`/`log` excluded. (Head-only selection relies on canonical head queries; supersession writes are still pending in `den-memory`.)
-- 🔲 Async queue: enqueue on successful SQLite append (planned via a `bear_reflection_runs` `recall_index` lane + worker loop, mirroring `memory_curate` — Den has no Docket job queue). **This is Phase 1b.**
+- ✅ **Phase 1b — async queue**: a `bear_reflection_runs` `recall_index` lane + dedicated worker loop, mirroring `memory_curate` (Den has no Docket job queue). `enqueue_recall_index` coalesces (one queued run per Bear); the worker claims with `FOR UPDATE SKIP LOCKED` and calls `recall::reconcile_bear`, which indexes every indexable canonical **head** per logical path and removes passages for memory ids that are no longer heads (supersede/delete). Enqueued on the canonical durable-memory producer — curate **core promotion** (`apply_core_promotion`); the whole-Bear reconcile then picks up all indexable heads (shared + profile-local `note`/`decision`/`summary`). Worker is spawned only when `RUN_WORKERS` **and** `QDRANT_URL` are set; recall-disabled runs are drained as skipped.
 
-**Exit:** ✅ unit tests (chunking/policy/payload/point-id) + a gated **live Postgres + Qdrant** integration test (`tests/recall_indexer.rs`, stub embedder, no API key) proving write memory → one Qdrant point per chunk → idempotent re-index (no duplicates) → `remove_record` deletes the points. Automatic indexing on canonical writes remains in 1b.
+**Exit:** ✅ unit tests (chunking/policy/payload/point-id) + gated **live Postgres + Qdrant** integration test (`tests/recall_indexer.rs`, stub embedder, no API key) proving write memory → one Qdrant point per chunk → idempotent re-index (no duplicates) → `remove_record` deletes the points; plus an infra-free `list_indexable_heads` test proving head-selection + policy filtering (latest-at-path wins, `scratch` excluded).
+
+> **Follow-ups (not blocking):** producer paths without a `PgPool` in scope (work-surface scaffolds, pair `memory_write_entry`) don't yet enqueue directly — they're covered when a curate reconcile runs for the Bear; threading enqueue there (or a periodic reconcile sweep) closes the gap. Supersession is still selected by sequence (no `supersedes_memory_id` writes yet in `den-memory`).
 
 ## Phase 2 — Bear recall in turn context
 

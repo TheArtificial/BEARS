@@ -8,7 +8,11 @@
 //! no-op in environments without the recall stack.
 
 use den::{config::Config, startup::run_sqlx_migrations};
-use den_runtime::recall::{DeterministicEmbedder, IndexRequest, QdrantRecall, RecallIndexer};
+use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
+use den_runtime::recall::{
+    reconcile::list_indexable_heads, DeterministicEmbedder, IndexRequest, QdrantRecall,
+    RecallIndexer,
+};
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -97,11 +101,59 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
     assert_eq!(count_after_reindex, count, "re-index must not duplicate points");
 
     // Remove (supersede/delete): points disappear from Qdrant.
-    let removed = indexer.remove_record(&req).await.expect("remove_record");
+    let removed = indexer
+        .remove_record(req.bear_id, &req.memory_id)
+        .await
+        .expect("remove_record");
     assert_eq!(removed, outcome.embedded_chunks, "removed all chunk points");
     let count_after_remove = qdrant
         .count_with_filter(mem_filter)
         .await
         .expect("count after remove");
     assert_eq!(count_after_remove, 0, "supersede must remove old passages");
+}
+
+/// Head selection + policy filtering for whole-Bear reconcile (Phase 1b). Infra-free: uses a
+/// throwaway temp SQLite store, no Postgres/Qdrant, so it always runs.
+#[tokio::test]
+async fn list_indexable_heads_selects_latest_and_filters_policy() {
+    let tmp = std::env::temp_dir().join(format!("den-recall-heads-{}", Uuid::new_v4()));
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
+
+    let stores = MemoryStoreManager::new(&config);
+    let bear_id = Uuid::new_v4();
+    let store = stores.store_for_bear(bear_id).await.expect("temp store");
+
+    // Two versions of a shared/core summary at the same path → head is the latest.
+    let core_path = LogicalMemoryPath::shared_core("summary");
+    append_memory_record(
+        &store, &core_path, "summary", "curate", None, "old core body", &json!({}),
+    )
+    .await
+    .expect("write old core");
+    let head = append_memory_record(
+        &store, &core_path, "summary", "curate", None, "new core body", &json!({}),
+    )
+    .await
+    .expect("write new core");
+
+    // Ephemeral scratch is excluded by policy.
+    let scratch_path = LogicalMemoryPath::profile_local("pair", "scratch");
+    append_memory_record(
+        &store, &scratch_path, "scratch", "pair", None, "ephemeral junk", &json!({}),
+    )
+    .await
+    .expect("write scratch");
+
+    let heads = list_indexable_heads(&store).await.expect("list heads");
+
+    assert_eq!(heads.len(), 1, "only the shared summary head is indexable: {heads:?}");
+    let req = &heads[0];
+    assert_eq!(req.memory_id, head.memory_id, "head must be the latest at the path");
+    assert_eq!(req.kind, "summary");
+    assert_eq!(req.scope_type, "shared");
+    assert!(req.content_text.contains("new core body"), "{req:?}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
 }

@@ -256,6 +256,27 @@ pub async fn run() -> Result<(), StartupError> {
         tracing::info!("Workers disabled (RUN_WORKERS=false or not set)");
     }
 
+    if let Some(token) = worker_token_opt.clone() {
+        if config.qdrant_url.is_some() {
+            let t = token.clone();
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: recall_index runner loop enabled");
+                den_runtime::reflection_conductor::run_recall_index_worker_loop(
+                    worker_pool,
+                    worker_config,
+                    t,
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        } else {
+            tracing::info!("Workers: recall_index loop disabled (QDRANT_URL unset)");
+        }
+    }
+
     tracing::info!("All services started successfully. Waiting for shutdown signal...");
 
     shutdown_signal().await;

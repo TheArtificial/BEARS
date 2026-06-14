@@ -47,6 +47,28 @@ pub async fn list_passages(
         .collect())
 }
 
+/// Distinct memory ids that currently have live passages for a bear (used by reconcile to
+/// find records that are no longer canonical heads and should be removed).
+pub async fn list_indexed_memory_ids(
+    pool: &PgPool,
+    bear_id: Uuid,
+    embedding_standard: &str,
+) -> Result<Vec<String>, DenError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT memory_id
+        FROM recall_passages
+        WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(bear_id)
+    .bind(embedding_standard)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| DenError::System(format!("recall_passages list memory ids: {e}")))?;
+    Ok(rows)
+}
+
 /// Insert or refresh a passage registry row (idempotent on the chunk identity).
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_passage(
