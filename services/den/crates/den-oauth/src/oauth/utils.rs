@@ -4,7 +4,7 @@
 //! secure random generation, client secret hashing, scope validation,
 //! and redirect URI validation.
 
-use crate::api::oauth::{error::OAuthError, OAuthScope};
+use crate::oauth::{error::OAuthError, OAuthScope};
 use password_auth::{generate_hash, verify_password};
 use std::collections::HashSet;
 use time::{Duration, OffsetDateTime};

@@ -16,23 +16,21 @@ use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
-    api::{
-        oauth::{
-            db,
-            error::OAuthError,
-            jwt::{create_jwt_manager, JwtManager},
-            scopes_from_json, scopes_to_string, utils, AuthorizationRequest, OAuthScope,
-            TokenRequest, TokenResponse, UserInfoResponse,
-        },
-        templates::{
-            generate_csrf_token, parse_scopes, render_authorize_page, render_error_page,
-            AuthorizeContext, ErrorContext, UserContext,
-        },
+    oauth::{
+        db,
+        error::OAuthError,
+        jwt::{create_jwt_manager, JwtManager},
+        scopes_from_json, scopes_to_string, utils, AuthorizationRequest, OAuthScope, TokenRequest,
+        TokenResponse, UserInfoResponse,
     },
-    auth_backend::AuthSession,
-    errors::CustomError,
-    core::user::db as user_db,
+    templates::{
+        generate_csrf_token, parse_scopes, render_authorize_page, render_error_page,
+        AuthorizeContext, ErrorContext, UserContext,
+    },
 };
+use den_http::auth_backend::AuthSession;
+use den_http::errors::CustomError;
+use den_http::user::db as user_db;
 
 /// OAuth authorization request with PKCE support
 ///
@@ -628,7 +626,7 @@ async fn authenticate_client(
     pool: &PgPool,
     token_request: &TokenRequest,
     _headers: &HeaderMap,
-) -> Result<crate::api::oauth::OAuthClient, OAuthError> {
+) -> Result<crate::oauth::OAuthClient, OAuthError> {
     tracing::debug!(
         "Authenticating client: client_id={}",
         token_request.client_id
@@ -745,7 +743,7 @@ async fn authenticate_client(
 /// Ok(()) if PKCE validation passes or is not required, OAuth error otherwise
 async fn validate_pkce(
     token_request: &TokenRequest,
-    auth_code: &crate::api::oauth::OAuthAuthorizationCode,
+    auth_code: &crate::oauth::OAuthAuthorizationCode,
 ) -> Result<(), OAuthError> {
     tracing::debug!(
         "Validating PKCE: has_code_challenge={}, has_code_challenge_method={}, has_code_verifier={}",
@@ -1062,7 +1060,7 @@ fn can_redirect_error(error: &OAuthError) -> bool {
 /// determine if the current user is authenticated.
 fn check_user_authentication(
     auth_session: &AuthSession,
-) -> Option<&crate::auth_backend::SessionUser> {
+) -> Option<&den_http::auth_backend::SessionUser> {
     auth_session.user.as_ref()
 }
 

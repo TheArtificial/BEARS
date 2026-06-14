@@ -3,13 +3,13 @@
 //! This module provides database operations for OAuth clients, authorization codes,
 //! and access tokens using SQLx following the project patterns.
 
-use crate::api::oauth::{
+use crate::oauth::{
     error::OAuthError,
     utils::{is_expired, scopes_to_json},
     AccessTokenWithContext, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient,
     OAuthRefreshToken, OAuthScope, UserAccessToken,
 };
-use crate::errors::CustomError;
+use den_http::errors::CustomError;
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 
@@ -1107,7 +1107,7 @@ pub async fn _cleanup_expired_oauth_data(pool: &PgPool) -> Result<(u64, u64), Cu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::oauth::utils::{
+    use crate::oauth::utils::{
         access_token_expiration, authorization_code_expiration, generate_access_token,
         generate_authorization_code, generate_client_id, hash_client_secret,
     };

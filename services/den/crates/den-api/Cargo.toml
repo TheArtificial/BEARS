@@ -16,12 +16,13 @@ edition = "2021"
 workspace = true
 
 [features]
-production = ["den-core/production", "den-runtime/production", "den-http/production"]
+production = ["den-core/production", "den-runtime/production", "den-http/production", "den-oauth/production"]
 
 [dependencies]
 den-core = { path = "../den-core" }
 den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
+den-oauth = { path = "../den-oauth" }
 den-runtime = { path = "../den-runtime" }
 anyhow = "1.0"
 async-trait = "0.1.86"
@@ -52,9 +53,6 @@ urlencoding = "2.1"
 utoipa = { version = "4.0", features = ["axum_extras"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.20", features = ["derive"] }
-
-[build-dependencies]
-minijinja-embed = "2.7.0"
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }

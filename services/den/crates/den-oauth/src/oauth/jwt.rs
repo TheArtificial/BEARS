@@ -4,7 +4,7 @@
 //! replacing the simple random string tokens with self-contained JWT tokens that
 //! include claims and can be validated without database lookups.
 
-use crate::api::oauth::{error::OAuthError, OAuthScope};
+use crate::oauth::{error::OAuthError, OAuthScope};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

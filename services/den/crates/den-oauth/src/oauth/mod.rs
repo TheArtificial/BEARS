@@ -168,7 +168,7 @@ pub struct AccessTokenWithContext {
 impl AccessTokenWithContext {
     /// Parse scopes from JSON
     #[allow(dead_code)]
-    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::api::oauth::error::OAuthError> {
+    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
         scopes_from_json(&self.scopes)
     }
 }
@@ -197,7 +197,7 @@ pub struct UserAccessToken {
 impl UserAccessToken {
     /// Parse scopes from JSON
     #[allow(dead_code)]
-    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::api::oauth::error::OAuthError> {
+    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
         scopes_from_json(&self.scopes)
     }
 }
@@ -340,8 +340,8 @@ pub struct UserInfoResponse {
 
 impl AuthorizationRequest {
     /// Validate the authorization request parameters
-    pub fn validate(&self) -> Result<(), crate::api::oauth::error::OAuthError> {
-        use crate::api::oauth::error::OAuthError;
+    pub fn validate(&self) -> Result<(), crate::oauth::error::OAuthError> {
+        use crate::oauth::error::OAuthError;
 
         // Validate response_type
         if self.response_type != "code" {
@@ -376,8 +376,8 @@ impl AuthorizationRequest {
     /// Parse and validate requested scopes
     ///
     /// Expects scopes in resource:action format (e.g., "profile:read data:read")
-    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::api::oauth::error::OAuthError> {
-        use crate::api::oauth::error::OAuthError;
+    pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
+        use crate::oauth::error::OAuthError;
 
         let scope_str = self.scope.as_deref().unwrap_or("");
         if scope_str.is_empty() {
@@ -398,8 +398,8 @@ impl AuthorizationRequest {
 
 impl TokenRequest {
     /// Validate the token request parameters
-    pub fn validate(&self) -> Result<(), crate::api::oauth::error::OAuthError> {
-        use crate::api::oauth::error::OAuthError;
+    pub fn validate(&self) -> Result<(), crate::oauth::error::OAuthError> {
+        use crate::oauth::error::OAuthError;
 
         // Validate grant_type
         if self.grant_type != "authorization_code" {
@@ -458,7 +458,7 @@ pub fn _scopes_to_json(scopes: &[OAuthScope]) -> serde_json::Value {
 /// Helper function to parse scopes from JSON value
 pub fn scopes_from_json(
     json: &serde_json::Value,
-) -> Result<Vec<OAuthScope>, crate::api::oauth::error::OAuthError> {
+) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
     match json {
         serde_json::Value::Array(arr) => {
             let mut scopes = Vec::new();
@@ -466,15 +466,15 @@ pub fn scopes_from_json(
                 if let serde_json::Value::String(scope_str) = item {
                     match OAuthScope::from_str(scope_str) {
                         Some(scope) => scopes.push(scope),
-                        None => return Err(crate::api::oauth::error::OAuthError::InvalidScope),
+                        None => return Err(crate::oauth::error::OAuthError::InvalidScope),
                     }
                 } else {
-                    return Err(crate::api::oauth::error::OAuthError::InvalidScope);
+                    return Err(crate::oauth::error::OAuthError::InvalidScope);
                 }
             }
             Ok(scopes)
         }
-        _ => Err(crate::api::oauth::error::OAuthError::InvalidScope),
+        _ => Err(crate::oauth::error::OAuthError::InvalidScope),
     }
 }
 

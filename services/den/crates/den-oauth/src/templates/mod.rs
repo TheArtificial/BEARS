@@ -9,7 +9,7 @@ use minijinja::Environment;
 use serde::Serialize;
 use std::sync::OnceLock;
 
-use crate::errors::CustomError;
+use den_http::errors::CustomError;
 
 /// Template environment singleton for the API module
 static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
@@ -28,7 +28,7 @@ pub fn init_template_env() -> &'static Environment<'static> {
         #[cfg(not(feature = "production"))]
         {
             // In development, load templates from filesystem for hot reload
-            env.set_loader(minijinja::path_loader("crates/den-api/src/templates"));
+            env.set_loader(minijinja::path_loader("crates/den-oauth/src/templates"));
         }
 
         env

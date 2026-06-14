@@ -56,16 +56,18 @@ pub mod acp;
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]
 mod acp_workflow_state_tests;
-pub mod auth;
 // Residual native ACP protocol modules, kept under `crate::core::acp` so the
 // migrated `acp` call sites resolve unchanged (v1.5 den-api extraction).
 pub mod core;
 pub mod docs;
 pub mod internal;
-pub mod oauth;
 pub mod service;
-pub mod templates;
 pub mod v1;
+
+// OAuth + bearer-auth + consent templates moved down to `den-oauth` (v1.5+) so the
+// ACP surface can depend on them without a `den-acp ↔ den-api` cycle. Re-exported
+// here so the migrated `crate::api::{oauth,auth,templates}` paths resolve unchanged.
+pub use den_oauth::{auth, oauth, templates};
 
 // Re-export main API service creation function
 pub use service::create_api_app;

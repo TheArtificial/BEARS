@@ -582,6 +582,7 @@ dependencies = [
  "den-core",
  "den-docket",
  "den-http",
+ "den-oauth",
  "den-runtime",
  "futures",
  "jsonwebtoken",
@@ -695,6 +696,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "den-oauth"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-login",
+ "base64",
+ "bytes",
+ "den-core",
+ "den-http",
+ "jsonwebtoken",
+ "minijinja",
+ "minijinja-embed",
+ "password-auth",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
 name = "den-runtime"
 version = "0.1.0"
 dependencies = [
@@ -737,6 +765,7 @@ dependencies = [
  "den-core",
  "den-docket",
  "den-http",
+ "den-oauth",
  "den-runtime",
  "dotenvy",
  "futures",

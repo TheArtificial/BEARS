@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-api", "crates/den-web"]
+members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-api", "crates/den-web"]
 
 [lints]
 workspace = true

@@ -12,7 +12,7 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::config::Config;
+use den_core::config::Config;
 
 use super::endpoints::{authorize_get, authorize_post, token_post, userinfo_get, OAuthState};
 
@@ -125,7 +125,7 @@ fn create_oauth_cors_layer(config: &Config) -> CorsLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use den_core::config::Config;
 
     #[tokio::test]
     async fn test_oauth_router_creation() {

@@ -160,56 +160,56 @@ impl IntoResponse for OAuthError {
 }
 
 /// Convert OAuthError to CustomError for integration with existing error handling
-impl From<OAuthError> for crate::errors::CustomError {
+impl From<OAuthError> for den_http::errors::CustomError {
     fn from(error: OAuthError) -> Self {
         match error {
-            OAuthError::InvalidRequest(msg) => crate::errors::CustomError::Authentication(msg),
+            OAuthError::InvalidRequest(msg) => den_http::errors::CustomError::Authentication(msg),
             OAuthError::InvalidClient => {
-                crate::errors::CustomError::Authentication("Invalid client".to_string())
+                den_http::errors::CustomError::Authentication("Invalid client".to_string())
             }
             OAuthError::InvalidGrant => {
-                crate::errors::CustomError::Authentication("Invalid grant".to_string())
+                den_http::errors::CustomError::Authentication("Invalid grant".to_string())
             }
             OAuthError::UnauthorizedClient => {
-                crate::errors::CustomError::Authorization("Unauthorized client".to_string())
+                den_http::errors::CustomError::Authorization("Unauthorized client".to_string())
             }
             OAuthError::UnsupportedGrantType => {
-                crate::errors::CustomError::Authentication("Unsupported grant type".to_string())
+                den_http::errors::CustomError::Authentication("Unsupported grant type".to_string())
             }
             OAuthError::InvalidScope => {
-                crate::errors::CustomError::Authentication("Invalid scope".to_string())
+                den_http::errors::CustomError::Authentication("Invalid scope".to_string())
             }
             OAuthError::UnsupportedResponseType => {
-                crate::errors::CustomError::Authentication("Unsupported response type".to_string())
+                den_http::errors::CustomError::Authentication("Unsupported response type".to_string())
             }
-            OAuthError::ServerError(msg) => crate::errors::CustomError::System(msg),
+            OAuthError::ServerError(msg) => den_http::errors::CustomError::System(msg),
             OAuthError::TemporarilyUnavailable => {
-                crate::errors::CustomError::System("Service temporarily unavailable".to_string())
+                den_http::errors::CustomError::System("Service temporarily unavailable".to_string())
             }
             OAuthError::AccessDenied => {
-                crate::errors::CustomError::Authorization("Access denied".to_string())
+                den_http::errors::CustomError::Authorization("Access denied".to_string())
             }
             OAuthError::InvalidToken => {
-                crate::errors::CustomError::Authentication("Invalid token".to_string())
+                den_http::errors::CustomError::Authentication("Invalid token".to_string())
             }
             OAuthError::InsufficientScope => {
-                crate::errors::CustomError::Authorization("Insufficient scope".to_string())
+                den_http::errors::CustomError::Authorization("Insufficient scope".to_string())
             }
         }
     }
 }
 
 /// Convert CustomError to OAuthError where appropriate
-impl From<crate::errors::CustomError> for OAuthError {
-    fn from(error: crate::errors::CustomError) -> Self {
+impl From<den_http::errors::CustomError> for OAuthError {
+    fn from(error: den_http::errors::CustomError) -> Self {
         match error {
-            crate::errors::CustomError::Authentication(_msg) => OAuthError::InvalidClient,
-            crate::errors::CustomError::Authorization(_msg) => OAuthError::AccessDenied,
-            crate::errors::CustomError::Database(msg) => {
+            den_http::errors::CustomError::Authentication(_msg) => OAuthError::InvalidClient,
+            den_http::errors::CustomError::Authorization(_msg) => OAuthError::AccessDenied,
+            den_http::errors::CustomError::Database(msg) => {
                 OAuthError::ServerError(format!("Database error: {msg}"))
             }
-            crate::errors::CustomError::System(msg) => OAuthError::ServerError(msg),
-            crate::errors::CustomError::Parsing(msg) => {
+            den_http::errors::CustomError::System(msg) => OAuthError::ServerError(msg),
+            den_http::errors::CustomError::Parsing(msg) => {
                 OAuthError::InvalidRequest(format!("Parsing error: {msg}"))
             }
             _ => OAuthError::ServerError("Internal server error".to_string()),
@@ -285,10 +285,10 @@ mod tests {
     #[test]
     fn test_custom_error_conversion() {
         let oauth_error = OAuthError::InvalidClient;
-        let custom_error: crate::errors::CustomError = oauth_error.into();
+        let custom_error: den_http::errors::CustomError = oauth_error.into();
 
         match custom_error {
-            crate::errors::CustomError::Authentication(_) => (),
+            den_http::errors::CustomError::Authentication(_) => (),
             _ => panic!("Expected Authentication error"),
         }
     }

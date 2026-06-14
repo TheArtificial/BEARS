@@ -1,7 +1,7 @@
 use axum::http::{header, HeaderMap, StatusCode};
 
-use crate::api::oauth::{error::OAuthError, jwt::create_jwt_manager, OAuthScope};
-use crate::errors::CustomError;
+use crate::oauth::{error::OAuthError, jwt::create_jwt_manager, OAuthScope};
+use den_http::errors::CustomError;
 
 #[derive(Debug, Clone)]
 pub struct BearerPrincipal {

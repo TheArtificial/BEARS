@@ -19,6 +19,7 @@ production = [
     "den-core/production",
     "den-http/production",
     "den-runtime/production",
+    "den-oauth/production",
     "den-api/production",
 ]
 web-ui-fixtures = []
@@ -29,6 +30,7 @@ den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
 den-docket = { path = "../den-docket" }
 den-api = { path = "../den-api" }
+den-oauth = { path = "../den-oauth" }
 ammonia = "4.1.1"
 axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
 axum-extra = { version = "0.10.0", features = ["form", "query"] }

@@ -15,17 +15,18 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use minijinja::context;
 
-use crate::{
-    api::oauth::{
-        db as oauth_db,
-        utils::{
-            generate_access_token, generate_client_id, generate_client_secret,
-            generate_pkce_code_challenge, generate_pkce_code_verifier, hash_client_secret,
-            scopes_from_json, validate_code_challenge_method, validate_pkce, validate_redirect_uri,
-            validate_scopes_with_conflict_detection,
-        },
-        AccessTokenWithContext, OAuthScope,
+use den_oauth::oauth::{
+    db as oauth_db,
+    utils::{
+        generate_access_token, generate_client_id, generate_client_secret,
+        generate_pkce_code_challenge, generate_pkce_code_verifier, hash_client_secret,
+        scopes_from_json, validate_code_challenge_method, validate_pkce, validate_redirect_uri,
+        validate_scopes_with_conflict_detection,
     },
+    AccessTokenWithContext, OAuthScope,
+};
+
+use crate::{
     auth_backend::AuthSession,
     errors::CustomError,
     web::{self, AppState},
@@ -157,10 +158,10 @@ fn validate_scopes(scopes: &[String]) -> Result<(), ValidationError> {
 }
 
 // Convert database record to form
-impl TryFrom<crate::api::oauth::OAuthClient> for OAuthClientForm {
+impl TryFrom<den_oauth::oauth::OAuthClient> for OAuthClientForm {
     type Error = CustomError;
 
-    fn try_from(client: crate::api::oauth::OAuthClient) -> Result<Self, Self::Error> {
+    fn try_from(client: den_oauth::oauth::OAuthClient) -> Result<Self, Self::Error> {
         // Parse redirect URIs from JSON array
         let redirect_uris = match client.redirect_uris.as_array() {
             Some(arr) => arr
@@ -958,7 +959,7 @@ pub async fn generate_token_action(
         let client_scopes = scopes_from_json(&client.scopes)
             .map_err(|_| CustomError::Parsing("Invalid client scopes format".to_string()))?;
 
-        if !crate::api::oauth::utils::validate_scopes_for_client(&scopes, &client_scopes) {
+        if !den_oauth::oauth::utils::validate_scopes_for_client(&scopes, &client_scopes) {
             return Err(CustomError::ValidationError(
                 "Requested scopes exceed client's allowed scopes".to_string(),
             ));
