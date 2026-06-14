@@ -4,9 +4,7 @@ mod tests {
 
     use den_core::config::Config;
     use crate::memory::{
-        store::{
-            append_memory_link, list_memory_links_for_source, LogicalMemoryPath, MemoryStoreManager,
-        },
+        store::{self, LogicalMemoryPath, MemoryStoreManager},
         tools as sqlite_tools,
     };
 
@@ -47,28 +45,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sqlite_memory_links_round_trip() {
+    async fn sqlite_entity_relation_round_trip() {
         let mut config = Config::test_stub();
-        config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-links-{}", Uuid::new_v4());
+        config.bear_sqlite_data_dir = format!("/tmp/bears-sqlite-relations-{}", Uuid::new_v4());
         let stores = MemoryStoreManager::new(&config);
         let bear_id = Uuid::new_v4();
         let store = stores.store_for_bear(bear_id).await.expect("store");
-        let src_id = "src-memory-1";
-        let link_id = append_memory_link(
+
+        let entity_id = match store::resolve(
             &store,
-            src_id,
-            "memory_record",
-            "dst-memory-2",
-            "promotion",
+            "person",
+            Some("Ryan"),
+            &[store::Signal::new("email", "ryan@acme.com")],
+            store::Assertion::Inferred,
         )
         .await
-        .expect("append link");
-        assert!(!link_id.is_empty());
-        let links = list_memory_links_for_source(&store, src_id, 10)
+        .expect("resolve")
+        {
+            store::Resolution::Resolved(e) => e.entity_id,
+            other => panic!("expected Resolved, got {other:?}"),
+        };
+
+        let src_id = "src-memory-1";
+        let rel = store::append_relation(
+            &store,
+            src_id,
+            &entity_id,
+            "subject",
+            &serde_json::json!({ "is_primary": true }),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .expect("append relation");
+        assert_eq!(rel.relation, "den.memory.relation.subject");
+
+        let links = store::list_relations_for_source(&store, src_id, 10)
             .await
-            .expect("list links");
+            .expect("list relations");
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].dst_ref, "dst-memory-2");
-        assert_eq!(links[0].link_type, "promotion");
+        assert_eq!(links[0].entity_id, entity_id);
     }
 }

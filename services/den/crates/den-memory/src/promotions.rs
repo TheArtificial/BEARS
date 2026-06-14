@@ -3,9 +3,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::{
-    links::append_memory_link, logical_path::LogicalMemoryPath, records::BearMemoryStore,
-};
+use super::{logical_path::LogicalMemoryPath, records::BearMemoryStore};
 
 pub async fn append_memory_promotion(
     store: &BearMemoryStore,
@@ -60,20 +58,14 @@ pub async fn promote_to_shared_core(
         &serde_json::json!({ "promoted_from": source_memory_id }),
     )
     .await?;
+    // Provenance lives in `memory_promotions` (source → target); the legacy record→record
+    // `memory_links` row was redundant and is retired with the entity relation layer (ADR-0042 §7).
     let promotion_id = append_memory_promotion(
         store,
         source_memory_id,
         Some(&row.memory_id),
         "promote_to_core",
         None,
-    )
-    .await?;
-    let _ = append_memory_link(
-        store,
-        source_memory_id,
-        "memory_record",
-        &row.memory_id,
-        "promotion",
     )
     .await?;
     Ok((row.memory_id, promotion_id))

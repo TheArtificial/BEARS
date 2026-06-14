@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS memory_records (
     scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'shared')),
     scope_profile TEXT NULL,
     kind TEXT NOT NULL,
-    entity_ref TEXT NULL,
     author_profile TEXT NOT NULL,
     author_agent_id TEXT NULL,
     created_at TEXT NOT NULL,
@@ -31,16 +30,88 @@ CREATE INDEX IF NOT EXISTS idx_memory_records_bear_sequence
 CREATE INDEX IF NOT EXISTS idx_memory_records_logical_path
     ON memory_records (bear_id, logical_path);
 
-CREATE TABLE IF NOT EXISTS memory_links (
+-- Bear entity layer (ADR-0042 §2): the Bear's portable awareness/resolution of entities.
+CREATE TABLE IF NOT EXISTS entities (
+    entity_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    display_name TEXT NULL,
+    resolution TEXT NOT NULL DEFAULT 'observed',
+    trust TEXT NOT NULL DEFAULT 'inferred',
+    canonical_ref TEXT NULL,
+    superseded_by_entity_id TEXT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entities_bear_sequence ON entities (bear_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_entities_bear_type ON entities (bear_id, type);
+
+CREATE TABLE IF NOT EXISTS entity_handles (
+    handle_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    handle_type TEXT NOT NULL,
+    handle_value TEXT NOT NULL,
+    source TEXT NULL,
+    trust TEXT NOT NULL DEFAULT 'inferred',
+    state TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entity_handles_entity ON entity_handles (bear_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_handles_lookup
+    ON entity_handles (bear_id, handle_type, handle_value);
+
+-- Memory–entity relation layer (ADR-0042 §7): two descriptor-routed tables, same shape.
+-- Descriptive relations: filter/boost only, broad write access.
+CREATE TABLE IF NOT EXISTS memory_relations (
     link_id TEXT PRIMARY KEY,
     bear_id TEXT NOT NULL,
     sequence_no INTEGER NOT NULL,
     src_memory_id TEXT NOT NULL,
-    dst_ref_type TEXT NOT NULL,
-    dst_ref TEXT NOT NULL,
-    link_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    qualifiers_json TEXT NOT NULL DEFAULT '{}',
+    author_profile TEXT NOT NULL,
+    author_agent_id TEXT NULL,
+    confidence TEXT NULL,
+    state TEXT NOT NULL DEFAULT 'active',
+    supersedes_link_id TEXT NULL,
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_memory_relations_src ON memory_relations (bear_id, src_memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_entity ON memory_relations (bear_id, entity_id);
+
+-- Access-bearing relations: the ONLY table the recall gate consults (append-only audit surface).
+CREATE TABLE IF NOT EXISTS memory_access_rules (
+    link_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    src_memory_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    qualifiers_json TEXT NOT NULL DEFAULT '{}',
+    author_profile TEXT NOT NULL,
+    author_agent_id TEXT NULL,
+    confidence TEXT NULL,
+    state TEXT NOT NULL DEFAULT 'active',
+    supersedes_link_id TEXT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_access_rules_src ON memory_access_rules (bear_id, src_memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_access_rules_entity ON memory_access_rules (bear_id, entity_id);
+
+-- Cross-cutting read view: descriptive ∪ access-bearing, tagged with class.
+CREATE VIEW IF NOT EXISTS memory_links AS
+    SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
+           qualifiers_json, author_profile, author_agent_id, confidence, state,
+           supersedes_link_id, created_at, 'descriptive' AS class
+    FROM memory_relations
+    UNION ALL
+    SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
+           qualifiers_json, author_profile, author_agent_id, confidence, state,
+           supersedes_link_id, created_at, 'access_bearing' AS class
+    FROM memory_access_rules;
 
 CREATE TABLE IF NOT EXISTS memory_promotions (
     promotion_id TEXT PRIMARY KEY,

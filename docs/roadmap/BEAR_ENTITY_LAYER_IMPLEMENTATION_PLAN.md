@@ -1,6 +1,6 @@
 # Bear Entity Layer — Implementation Plan
 
-**Status:** Planned  
+**Status:** In progress — Phases 0–3 landed in `den-memory` (schema/model core); Phases 4–7 pending  
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
@@ -25,7 +25,7 @@ Work surface and connection become **entity types**; the existing work-surface r
 - **A separate vector store for entities** — semantic recall stays ADR-0038 Qdrant.
 - **`contact` as a type** — a contact is a `person` with address-book provenance.
 
-## Phase 0 — Descriptor foundations
+## Phase 0 — Descriptor foundations  ✅ landed (`den-memory/src/descriptors.rs`)
 
 No schema yet; establish the descriptor-owned vocabularies (per `AGENTS.md`: descriptor-resolved, no scattered `match` arms).
 
@@ -36,7 +36,7 @@ No schema yet; establish the descriptor-owned vocabularies (per `AGENTS.md`: des
 
 **Exit:** registry unit tests; relation→class lookup is deterministic and immutable; adding a type/relation is a descriptor-only change.
 
-## Phase 1 — Entity layer schema + store
+## Phase 1 — Entity layer schema + store  ✅ landed (`den-memory/src/entity.rs`, `schema.sql`)
 
 Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`).
 
@@ -46,7 +46,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** store unit tests including merge (forward-pointer reads resolve to survivor) and split (handle re-home).
 
-## Phase 2 — Resolution engine + first resolver (work surface)
+## Phase 2 — Resolution engine + first resolver (work surface)  ✅ landed (`den-memory/src/resolver.rs`)
 
 - Resolution algorithm (ADR-0042 §11): normalize signals → handles; **strong exact-match ⇒ resolve** (attach handles, raise resolution/trust); **weak-only ⇒** candidate search → `candidate`/`ambiguous` or new `provisional`; **never auto-merge across different strong identities**; conflicting strong matches → `curate`/human queue.
 - Per-type **resolver interface**; implement the **`work_surface` resolver first** by adapting current work-surface resolution (`git_remote` strong, `checkout` weak) onto the shared lifecycle — preserving today's behavior.
@@ -54,7 +54,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** resolver tests — strong match resolves; weak stays provisional; Ryan-style multi-handle stays separate without an authoritative mapping; conflicting strong → review queue. Work-surface parity preserved.
 
-## Phase 3 — Relation layer (two tables + view); retire `entity_ref`
+## Phase 3 — Relation layer (two tables + view); retire `entity_ref`  ✅ landed (`den-memory/src/relations.rs`)
 
 - Migration: `memory_relations` (descriptive) and `memory_access_rules` (access-bearing), identical shape (`link_id`, `bear_id`, `sequence_no`, `src_memory_id`, `entity_id`, `relation`, `qualifiers_json`, `author_profile`, `author_agent_id`, `confidence`, `state`, `supersedes_link_id`, `created_at`); `memory_links` **view** = union with a `class` column.
 - **Descriptor-routed writes**: the relation descriptor's class selects the table; writers never choose. Validate `qualifiers_json` against `allowed_qualifiers`. `memory_access_rules` enforces **target entity `resolution ≥ resolved`**.
@@ -62,7 +62,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** write tests — descriptive vs access routing; misfiling impossible; access-bearing rejects unresolved targets; union view returns both with correct `class`.
 
-## Phase 4 — Enforcement + recall/projection integration
+## Phase 4 — Enforcement + recall/projection integration  ⏳ pending (reaches into the `den` service crate)
 
 - Recall assembler takes a **mandatory `AccessContext`** (the `memory_access_rules` query) — the **only** consumer of the access table; omission is a compile error (fail-closed).
 - Descriptive relations feed recall **boost/filter**; wire entity filters into ADR-0041/0038 recall and carry resolved `entity_id`s in the Qdrant passage payload.

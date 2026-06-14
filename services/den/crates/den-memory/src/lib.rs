@@ -3,7 +3,8 @@
 //! Service-layer leaf crate (see `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`):
 //! depends only on `den-core`. Higher-level curation/tools live in `den`.
 
-mod links;
+pub mod descriptors;
+pub mod entity;
 mod logical_path;
 mod manager;
 mod migrate;
@@ -12,12 +13,27 @@ mod promotions;
 mod proposals;
 mod records;
 pub mod reflection_outcomes;
+pub mod relations;
+pub mod resolver;
 
-pub use links::{
-    append_memory_link, list_memory_links_for_bear, list_memory_links_for_source, MemoryLinkRow,
+#[cfg(test)]
+mod test_support;
+
+pub use descriptors::{
+    EntityTrust, HandleStrength, RecallEffect, RelationClass, ResolutionState,
+};
+pub use entity::{
+    attach_handle, create_entity, detach_handle, find_entity_by_handle, get_entity, list_entities,
+    list_handles, merge_entities, resolve_live_entity, set_canonical_ref, set_resolution,
+    split_entity, EntityHandleRow, EntityRow,
 };
 pub use logical_path::{LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
+pub use relations::{
+    append_relation, list_access_rules_for_source, list_relations_for_entity,
+    list_relations_for_source, RelationRow,
+};
+pub use resolver::{resolve, resolve_work_surface, Assertion, Resolution, Signal};
 pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,
     SqliteMemoryObservation,

@@ -31,7 +31,6 @@ pub struct LogicalMemoryPath {
     pub scope_profile: Option<String>,
     pub work_surface_ref: Option<String>,
     pub kind: String,
-    pub entity_ref: Option<String>,
 }
 
 impl LogicalMemoryPath {
@@ -41,7 +40,6 @@ impl LogicalMemoryPath {
             scope_profile: Some(profile.to_string()),
             work_surface_ref: None,
             kind: kind.to_string(),
-            entity_ref: None,
         }
     }
 
@@ -51,7 +49,6 @@ impl LogicalMemoryPath {
             scope_profile: None,
             work_surface_ref: None,
             kind: kind.to_string(),
-            entity_ref: None,
         }
     }
 
@@ -88,7 +85,6 @@ impl LogicalMemoryPath {
                 scope_profile: None,
                 work_surface_ref: Some(ws),
                 kind,
-                entity_ref: None,
             };
         }
         if trimmed.starts_with("core/") {
@@ -110,7 +106,6 @@ impl LogicalMemoryPath {
                     scope_profile: Some(profile.to_string()),
                     work_surface_ref: Some(ws),
                     kind,
-                    entity_ref: None,
                 };
             }
             let kind = rest.trim_end_matches(".md").to_string();

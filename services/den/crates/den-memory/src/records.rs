@@ -73,10 +73,10 @@ impl BearMemoryStore {
         sqlx::query(
             r#"
             INSERT INTO memory_records (
-                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind, entity_ref,
+                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
                 visibility, logical_path, work_surface_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&memory_id)
@@ -85,7 +85,6 @@ impl BearMemoryStore {
         .bind(logical.scope_type.as_str())
         .bind(&logical.scope_profile)
         .bind(kind)
-        .bind(&logical.entity_ref)
         .bind(author_profile)
         .bind(author_agent_id)
         .bind(&created_at)

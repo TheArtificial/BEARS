@@ -25,6 +25,10 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
             .map_err(|e| DenError::System(format!("rename author_role failed: {e}")))?;
     }
 
+    // Retire the legacy record→record `memory_links` base table; relations now live in
+    // `memory_relations`/`memory_access_rules` with `memory_links` as a read view (ADR-0042 §7).
+    retire_legacy_memory_links_table(pool).await?;
+
     let table_sql: Option<String> = sqlx::query_scalar(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_records'",
     )
@@ -38,6 +42,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
         .unwrap_or(false);
 
     if needs_scope_vocab_rebuild {
+        // The rebuild path already produces a table without `entity_ref`.
         rebuild_memory_records_scope_vocab(pool).await?;
         return Ok(());
     }
@@ -49,6 +54,59 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     .await
     .map_err(|e| DenError::System(format!("migrate scope_type values failed: {e}")))?;
 
+    // Retire the vestigial `entity_ref` column (never populated); relations carry aboutness now.
+    drop_entity_ref_column_if_present(pool, &names).await?;
+
+    Ok(())
+}
+
+/// Drop the legacy `memory_links` base table (record→record provenance, already captured in
+/// `memory_promotions`) and (re)create the descriptive ∪ access-bearing read view.
+async fn retire_legacy_memory_links_table(pool: &SqlitePool) -> Result<(), DenError> {
+    let object_type: Option<String> = sqlx::query_scalar(
+        "SELECT type FROM sqlite_master WHERE name = 'memory_links'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DenError::System(format!("memory_links object lookup failed: {e}")))?;
+
+    if object_type.as_deref() == Some("table") {
+        sqlx::query("DROP TABLE memory_links")
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("drop legacy memory_links failed: {e}")))?;
+        sqlx::query(MEMORY_LINKS_VIEW_SQL)
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("create memory_links view failed: {e}")))?;
+    }
+    Ok(())
+}
+
+/// `memory_links` read view (must mirror `schema.sql`).
+const MEMORY_LINKS_VIEW_SQL: &str = r#"
+CREATE VIEW IF NOT EXISTS memory_links AS
+    SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
+           qualifiers_json, author_profile, author_agent_id, confidence, state,
+           supersedes_link_id, created_at, 'descriptive' AS class
+    FROM memory_relations
+    UNION ALL
+    SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
+           qualifiers_json, author_profile, author_agent_id, confidence, state,
+           supersedes_link_id, created_at, 'access_bearing' AS class
+    FROM memory_access_rules
+"#;
+
+async fn drop_entity_ref_column_if_present(
+    pool: &SqlitePool,
+    record_columns: &[String],
+) -> Result<(), DenError> {
+    if record_columns.iter().any(|c| c == "entity_ref") {
+        sqlx::query("ALTER TABLE memory_records DROP COLUMN entity_ref")
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("drop entity_ref column failed: {e}")))?;
+    }
     Ok(())
 }
 
@@ -68,7 +126,6 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 scope_type TEXT NOT NULL CHECK (scope_type IN ('profile_local', 'shared')),
                 scope_profile TEXT NULL,
                 kind TEXT NOT NULL,
-                entity_ref TEXT NULL,
                 author_profile TEXT NOT NULL,
                 author_agent_id TEXT NULL,
                 created_at TEXT NOT NULL,
@@ -88,7 +145,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
         sqlx::query(
             r#"
             INSERT INTO memory_records_new (
-                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind, entity_ref,
+                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
                 supersedes_memory_id, visibility, logical_path, work_surface_ref
             )
@@ -99,7 +156,6 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 CASE scope_type WHEN 'role_local' THEN 'profile_local' ELSE scope_type END,
                 scope_profile,
                 kind,
-                entity_ref,
                 author_profile,
                 author_agent_id,
                 created_at,
