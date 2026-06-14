@@ -26,6 +26,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
+use den_core::DenError;
 
 use crate::web::bear_create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context,
@@ -985,12 +986,12 @@ async fn revoke_member_action(
             urlencoding::encode("Access removed.")
         ))
         .into_response()),
-        Err(CustomError::NotFound(_)) => Ok(Redirect::to(&format!(
+        Err(DenError::NotFound(_)) => Ok(Redirect::to(&format!(
             "/admin/bears/{id}/access?message={}",
             urlencoding::encode("Membership not found.")
         ))
         .into_response()),
-        Err(err) => Err(err),
+        Err(err) => Err(err.into()),
     }
 }
 

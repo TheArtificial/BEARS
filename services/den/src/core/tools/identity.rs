@@ -34,7 +34,7 @@ impl BearDirectory for DenBearDirectory<'_> {
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError> {
         bears_db::user_may_use_bear(self.pool, user_id, bear_id)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn registered_profile(
@@ -67,7 +67,7 @@ impl BearDirectory for DenBearDirectory<'_> {
     async fn bear_self(&self, bear_id: Uuid) -> Result<Option<BearRecord>, DenError> {
         let bear = bears_db::get_bear(self.pool, bear_id)
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
         Ok(bear.map(|bear| BearRecord {
             id: bear.id,
             slug: bear.slug,
@@ -83,13 +83,13 @@ impl BearDirectory for DenBearDirectory<'_> {
     async fn member_count(&self, bear_id: Uuid) -> Result<i64, DenError> {
         bears_db::count_bear_members(self.pool, bear_id)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn members(&self, bear_id: Uuid) -> Result<Vec<BearMemberRecord>, DenError> {
         let members = bears_db::list_members_for_bear(self.pool, bear_id)
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
         Ok(members
             .into_iter()
             .map(|member| BearMemberRecord {

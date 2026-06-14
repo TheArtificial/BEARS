@@ -5,7 +5,7 @@ use super::{
     managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet},
     Bear, BearProfile,
 };
-use crate::errors::CustomError;
+use den_core::DenError;
 
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;
 pub const DEFAULT_ROLE_CONTRACT_VERSION: &str = "2";
@@ -81,21 +81,21 @@ pub fn den_baseline() -> &'static str {
 
 pub fn context_profile_from_json(
     value: &Option<Json<serde_json::Value>>,
-) -> Result<Option<BearContextProfile>, CustomError> {
+) -> Result<Option<BearContextProfile>, DenError> {
     let Some(value) = value else {
         return Ok(None);
     };
     serde_json::from_value(value.0.clone())
         .map(Some)
-        .map_err(|e| CustomError::Parsing(format!("invalid bear context_profile: {e}")))
+        .map_err(|e| DenError::Parsing(format!("invalid bear context_profile: {e}")))
 }
 
 pub fn context_profile_to_json(
     profile: &BearContextProfile,
-) -> Result<Json<serde_json::Value>, CustomError> {
+) -> Result<Json<serde_json::Value>, DenError> {
     serde_json::to_value(profile)
         .map(Json)
-        .map_err(|e| CustomError::Parsing(format!("serialize bear context_profile: {e}")))
+        .map_err(|e| DenError::Parsing(format!("serialize bear context_profile: {e}")))
 }
 
 fn push_section(out: &mut String, heading: &str, body: &str) {
@@ -116,7 +116,7 @@ pub fn render_managed_role_prompt(
     bear: &Bear,
     role: BearProfile,
     resolved: Option<&ResolvedManagedBlockSet>,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
         return Ok(bear.system_prompt.trim().to_string());
     };
@@ -164,7 +164,7 @@ pub fn compose_role_context(
     bear: &Bear,
     role: BearProfile,
     runtime_context: Option<&str>,
-) -> Result<ComposedRoleContext, CustomError> {
+) -> Result<ComposedRoleContext, DenError> {
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
         let legacy = bear.system_prompt.trim().to_string();
         return Ok(ComposedRoleContext {
@@ -201,7 +201,7 @@ pub fn compose_role_context(
     })
 }
 
-pub fn render_role_prompt(bear: &Bear, role: BearProfile) -> Result<String, CustomError> {
+pub fn render_role_prompt(bear: &Bear, role: BearProfile) -> Result<String, DenError> {
     Ok(compose_role_context(bear, role, None)?.composed_prompt)
 }
 

@@ -1,16 +1,16 @@
+use den_core::DenError;
 use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
-    core::conversation_message_types::{
+    conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
         ConversationMessageWrite,
     },
-    errors::CustomError,
 };
 
-use crate::core::acp_runtime::is_acp_history_target;
+use crate::conversation_ids::is_acp_history_target;
 use super::persistence::{
     append_message, ensure_conversation_for_external_id, list_messages_page,
 };
@@ -444,7 +444,7 @@ async fn canonical_record_already_persisted(
     context: &ConversationPersistenceContext,
     conversation_id: Uuid,
     record: &CanonicalConversationRecord,
-) -> Result<bool, CustomError> {
+) -> Result<bool, DenError> {
     let Some(expected) = record.dedup_key() else {
         return Ok(false);
     };
@@ -462,7 +462,7 @@ async fn canonical_record_already_persisted(
 pub async fn persist_canonical_conversation_record(
     context: &ConversationPersistenceContext,
     record: &CanonicalConversationRecord,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     if context.skip_persistence {
         return Ok(());
     }
@@ -510,7 +510,7 @@ pub fn canonical_persistence_context(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-util"))]
 pub fn normalize_persisted_gateway_record(
     message_type: &str,
     role: Option<&str>,
@@ -599,7 +599,7 @@ pub fn spawn_persist_assistant_output(
 
 pub fn spawn_persist_turn_outcome(
     context: ConversationPersistenceContext,
-    role_result: &crate::core::role_runtime::RoleTurnResult,
+    role_result: &crate::role_runtime::RoleTurnResult,
     provenance: &ConversationEventProvenance,
 ) {
     spawn_persist_canonical_conversation_record(
@@ -1122,7 +1122,7 @@ impl Projection {
 pub async fn persist_projection(
     context: &ConversationPersistenceContext,
     projection: &Projection,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     persist_canonical_conversation_record(context, &projection.workflow_record()).await?;
     if let Some(record) = projection.visible_summary_record() {
         persist_canonical_conversation_record(context, &record).await?;

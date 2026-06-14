@@ -160,6 +160,7 @@ rusty-s3 = "0.8"
 
 [dev-dependencies]
 den-core = { path = "crates/den-core", features = ["test-util"] }
+den-runtime = { path = "crates/den-runtime", features = ["test-util"] }
 serde_json = "1.0.138"
 http-body-util = "0.1"
 minijinja-autoreload = "2.5.0"  # Development-only template reloading

@@ -1,12 +1,12 @@
 //! Routes Bear cognition writes to per-Bear SQLite when `AGENT_RUNTIME=native`.
 
+use den_core::{config::Config, DenError};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
-    core::{
+    {
         bear_observations::{self, BearObservationRow, CreateBearObservation},
         bears::BearProfile,
         memory::{
@@ -19,7 +19,6 @@ use crate::{
         },
         memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
     },
-    errors::CustomError,
 };
 
 pub async fn create_proposal(
@@ -27,7 +26,7 @@ pub async fn create_proposal(
     _config: &Config,
     stores: &MemoryStoreManager,
     params: CreateMemoryProposal<'_>,
-) -> Result<MemoryProposalRow, CustomError> {
+) -> Result<MemoryProposalRow, DenError> {
     let store = stores.store_for_bear(params.bear_id).await?;
     let payload = json!({
         "source_profile": params.source_profile.as_str(),
@@ -61,7 +60,7 @@ pub async fn create_observation(
     _config: &Config,
     stores: &MemoryStoreManager,
     params: CreateBearObservation<'_>,
-) -> Result<BearObservationRow, CustomError> {
+) -> Result<BearObservationRow, DenError> {
     let store = stores.store_for_bear(params.bear_id).await?;
     let logical_path = bear_observations::observation_logical_path(params.observation_id);
     let sqlite = create_memory_observation(
@@ -82,7 +81,7 @@ pub async fn get_observation(
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     observation_id: &str,
-) -> Result<Option<BearObservationRow>, CustomError> {
+) -> Result<Option<BearObservationRow>, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let sqlite = store::get_memory_observation(&store, observation_id).await?;
     Ok(sqlite.map(|row| sqlite_observation_to_row(bear_id, &row)))
@@ -94,11 +93,10 @@ pub async fn mark_observation_review_queued_for_bear(
     bear_id: Uuid,
     observation_id: &str,
     proposal_id: Uuid,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     mark_observation_review_queued(&store, observation_id, &proposal_id.to_string())
         .await
-        .map_err(CustomError::from)
 }
 
 pub async fn list_proposals(
@@ -108,7 +106,7 @@ pub async fn list_proposals(
     bear_id: Uuid,
     status: Option<&str>,
     limit: i64,
-) -> Result<Vec<MemoryProposalRow>, CustomError> {
+) -> Result<Vec<MemoryProposalRow>, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let rows = list_memory_proposals(&store, status, limit).await?;
     Ok(rows
@@ -129,7 +127,7 @@ pub async fn get_proposal(
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal_id: Uuid,
-) -> Result<Option<MemoryProposalRow>, CustomError> {
+) -> Result<Option<MemoryProposalRow>, DenError> {
     let proposals = list_proposals(pool, config, stores, bear_id, None, 500).await?;
     Ok(proposals.into_iter().find(|row| row.id == proposal_id))
 }
@@ -139,7 +137,7 @@ pub async fn resolve_proposal(
     _config: &Config,
     stores: &MemoryStoreManager,
     params: ProposalResolutionParams<'_>,
-) -> Result<MemoryProposalRow, CustomError> {
+) -> Result<MemoryProposalRow, DenError> {
     let store = stores.store_for_bear(params.bear_id).await?;
     let review_payload = json!({
         "reviewer_profile": params.reviewer_profile.as_str(),
@@ -170,11 +168,10 @@ pub async fn promote_core_content(
     kind: &str,
     content_text: &str,
     author_profile: &str,
-) -> Result<(String, String), CustomError> {
+) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
         .await
-        .map_err(CustomError::from)
 }
 
 pub async fn record_reflection_outcome_start(
@@ -184,14 +181,13 @@ pub async fn record_reflection_outcome_start(
     lane: &str,
     trigger: &str,
     input_summary: Option<&str>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await {
         return Ok(());
     }
     create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary)
         .await
-        .map_err(CustomError::from)
 }
 
 pub async fn record_reflection_outcome_complete(
@@ -201,11 +197,10 @@ pub async fn record_reflection_outcome_complete(
     status: &str,
     output_summary: Option<&str>,
     proposal_ids: &[String],
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids)
         .await
-        .map_err(CustomError::from)
 }
 
 fn sqlite_proposal_to_row(

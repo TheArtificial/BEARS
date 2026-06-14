@@ -1,17 +1,16 @@
+use den_core::{config::Config, DenError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
-    core::{
+    {
         bears::BearProfile,
         memory::{
             get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
         },
         memory_proposals::{MemoryProposalRow, ProposalResolutionParams},
     },
-    errors::CustomError,
 };
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
@@ -236,7 +235,7 @@ pub async fn execute_memory_curate_proposals(
     bear_id: Uuid,
     trigger: Option<&str>,
     proposal_ids: &[Uuid],
-) -> Result<MemoryCurateRunOutput, CustomError> {
+) -> Result<MemoryCurateRunOutput, DenError> {
     let mut outcomes = Vec::new();
     for proposal_id in proposal_ids {
         let Some(proposal) = get_proposal(pool, config, stores, bear_id, *proposal_id).await?
@@ -282,7 +281,7 @@ async fn build_curate_briefing(
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     outcomes: &[CurateProposalOutcome],
-) -> Result<Vec<CurateBriefingItem>, CustomError> {
+) -> Result<Vec<CurateBriefingItem>, DenError> {
     let mut briefing = Vec::new();
     for outcome in outcomes {
         if !matches!(
@@ -316,7 +315,7 @@ async fn resolve_curate_proposal(
     bear_id: Uuid,
     proposal: &MemoryProposalRow,
     trigger: Option<&str>,
-) -> Result<CurateProposalOutcome, CustomError> {
+) -> Result<CurateProposalOutcome, DenError> {
     let triage = decide_curate_triage(proposal, trigger);
     let triage_label = triage.triage_label().to_string();
 
@@ -403,7 +402,7 @@ async fn apply_core_promotion(
     bear_id: Uuid,
     proposal: &MemoryProposalRow,
     triage: &CurateTriage,
-) -> Result<(String, Option<String>), CustomError> {
+) -> Result<(String, Option<String>), DenError> {
     let target_path = core_target_path(proposal);
     let kind = target_path
         .split('/')

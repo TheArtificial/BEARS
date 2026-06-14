@@ -1,37 +1,37 @@
 #![allow(dead_code)]
 
+use den_core::DenError;
 use sqlx::{PgPool, Row};
 
 use crate::{
-    core::prompt_memory_blocks::{
+    prompt_memory_blocks::{
         PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
         PromptMemoryBlockType,
     },
-    errors::CustomError,
 };
 
 // Write/patch DTOs now live alongside the prompt-memory tool executors in
 // `den-tools`; re-exported here so the Postgres store keeps a stable path.
-pub(crate) use den_tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
+pub use den_tools::prompt_memory::{PromptMemoryBlockPatch, PromptMemoryBlockWrite};
 
 #[derive(Debug, Clone)]
-pub(crate) struct PromptMemoryBlockQuery<'a> {
-    pub(crate) bear_id: Option<uuid::Uuid>,
-    pub(crate) profile_slug: &'a str,
-    pub(crate) session_id: &'a str,
-    pub(crate) work_surfaces: &'a [String],
+pub struct PromptMemoryBlockQuery<'a> {
+    pub bear_id: Option<uuid::Uuid>,
+    pub profile_slug: &'a str,
+    pub session_id: &'a str,
+    pub work_surfaces: &'a [String],
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PromptMemoryRuntimeSelection {
-    pub(crate) blocks: Vec<PromptMemoryBlock>,
-    pub(crate) diagnostic: serde_json::Value,
+pub struct PromptMemoryRuntimeSelection {
+    pub blocks: Vec<PromptMemoryBlock>,
+    pub diagnostic: serde_json::Value,
 }
 
-pub(crate) async fn upsert_prompt_memory_block(
+pub async fn upsert_prompt_memory_block(
     pool: &PgPool,
     write: &PromptMemoryBlockWrite,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO prompt_memory_blocks (
@@ -85,15 +85,15 @@ pub(crate) async fn upsert_prompt_memory_block(
     .bind(&write.metadata)
     .execute(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("upsert prompt_memory_blocks: {err}")))?;
+    .map_err(|err| DenError::Database(format!("upsert prompt_memory_blocks: {err}")))?;
     Ok(())
 }
 
-pub(crate) async fn patch_prompt_memory_block(
+pub async fn patch_prompt_memory_block(
     pool: &PgPool,
     block_id: &str,
     patch: &PromptMemoryBlockPatch,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let result = sqlx::query(
         r#"
         UPDATE prompt_memory_blocks
@@ -116,19 +116,19 @@ pub(crate) async fn patch_prompt_memory_block(
     .bind(&patch.metadata)
     .execute(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("patch prompt_memory_blocks: {err}")))?;
+    .map_err(|err| DenError::Database(format!("patch prompt_memory_blocks: {err}")))?;
     if result.rows_affected() == 0 {
-        return Err(CustomError::NotFound(format!(
+        return Err(DenError::NotFound(format!(
             "prompt memory block not found: {block_id}"
         )));
     }
     Ok(())
 }
 
-pub(crate) async fn list_prompt_memory_blocks_for_runtime(
+pub async fn list_prompt_memory_blocks_for_runtime(
     pool: &PgPool,
     query: PromptMemoryBlockQuery<'_>,
-) -> Result<Vec<PromptMemoryBlock>, CustomError> {
+) -> Result<Vec<PromptMemoryBlock>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
@@ -150,16 +150,16 @@ pub(crate) async fn list_prompt_memory_blocks_for_runtime(
     .bind(query.work_surfaces)
     .fetch_all(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("select prompt_memory_blocks: {err}")))?;
+    .map_err(|err| DenError::Database(format!("select prompt_memory_blocks: {err}")))?;
 
     rows.into_iter().map(row_to_block).collect()
 }
 
-pub(crate) async fn list_prompt_memory_blocks_for_bear_profile(
+pub async fn list_prompt_memory_blocks_for_bear_profile(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     profile_slug: &str,
-) -> Result<Vec<PromptMemoryBlock>, CustomError> {
+) -> Result<Vec<PromptMemoryBlock>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
@@ -173,17 +173,17 @@ pub(crate) async fn list_prompt_memory_blocks_for_bear_profile(
     .bind(profile_slug)
     .fetch_all(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("list prompt_memory_blocks for bear role: {err}")))?;
+    .map_err(|err| DenError::Database(format!("list prompt_memory_blocks for bear role: {err}")))?;
 
     rows.into_iter().map(row_to_block).collect()
 }
 
-pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
+pub async fn archive_prompt_memory_blocks_superseded_by(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     profile_slug: &str,
     supersedes_block_id: &str,
-) -> Result<u64, CustomError> {
+) -> Result<u64, DenError> {
     let result = sqlx::query(
         r#"
         UPDATE prompt_memory_blocks
@@ -199,14 +199,14 @@ pub(crate) async fn archive_prompt_memory_blocks_superseded_by(
     .bind(supersedes_block_id)
     .execute(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("archive superseded prompt_memory_blocks: {err}")))?;
+    .map_err(|err| DenError::Database(format!("archive superseded prompt_memory_blocks: {err}")))?;
     Ok(result.rows_affected())
 }
 
-pub(crate) async fn archive_conflicting_prompt_memory_blocks(
+pub async fn archive_conflicting_prompt_memory_blocks(
     pool: &PgPool,
     write: &PromptMemoryBlockWrite,
-) -> Result<u64, CustomError> {
+) -> Result<u64, DenError> {
     let result = sqlx::query(
         r#"
         UPDATE prompt_memory_blocks
@@ -230,14 +230,14 @@ pub(crate) async fn archive_conflicting_prompt_memory_blocks(
     .bind(&write.session_id)
     .execute(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("archive conflicting prompt_memory_blocks: {err}")))?;
+    .map_err(|err| DenError::Database(format!("archive conflicting prompt_memory_blocks: {err}")))?;
     Ok(result.rows_affected())
 }
 
-pub(crate) async fn select_prompt_memory_blocks_for_runtime(
+pub async fn select_prompt_memory_blocks_for_runtime(
     pool: &PgPool,
     query: PromptMemoryBlockQuery<'_>,
-) -> Result<PromptMemoryRuntimeSelection, CustomError> {
+) -> Result<PromptMemoryRuntimeSelection, DenError> {
     let blocks = list_prompt_memory_blocks_for_runtime(pool, query.clone()).await?;
     let diagnostic = serde_json::json!({
         "source": "prompt_memory_blocks",
@@ -252,7 +252,7 @@ pub(crate) async fn select_prompt_memory_blocks_for_runtime(
     Ok(PromptMemoryRuntimeSelection { blocks, diagnostic })
 }
 
-fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, CustomError> {
+fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, DenError> {
     Ok(PromptMemoryBlock {
         id: row.try_get("block_id").map_err(db_decode("block_id"))?,
         block_type: block_type_from_db(&row.try_get::<String, _>("block_type").map_err(db_decode("block_type"))?)?,
@@ -267,8 +267,8 @@ fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, CustomE
     })
 }
 
-fn db_decode(field: &'static str) -> impl Fn(sqlx::Error) -> CustomError {
-    move |err| CustomError::Database(format!("decode prompt_memory_blocks {field}: {err}"))
+fn db_decode(field: &'static str) -> impl Fn(sqlx::Error) -> DenError {
+    move |err| DenError::Database(format!("decode prompt_memory_blocks {field}: {err}"))
 }
 
 fn scope_to_db(scope: PromptMemoryBlockScope) -> &'static str {
@@ -298,32 +298,32 @@ fn state_to_db(state: PromptMemoryBlockState) -> &'static str {
     }
 }
 
-fn scope_from_db(value: &str) -> Result<PromptMemoryBlockScope, CustomError> {
+fn scope_from_db(value: &str) -> Result<PromptMemoryBlockScope, DenError> {
     match value {
         "bear_wide" => Ok(PromptMemoryBlockScope::BearWide),
         "profile_local" => Ok(PromptMemoryBlockScope::RoleLocal),
         "work_surface" => Ok(PromptMemoryBlockScope::WorkSurface),
         "session" => Ok(PromptMemoryBlockScope::Session),
-        other => Err(CustomError::Database(format!("unknown prompt memory scope: {other}"))),
+        other => Err(DenError::Database(format!("unknown prompt memory scope: {other}"))),
     }
 }
 
-fn block_type_from_db(value: &str) -> Result<PromptMemoryBlockType, CustomError> {
+fn block_type_from_db(value: &str) -> Result<PromptMemoryBlockType, DenError> {
     match value {
         "profile_guidance" => Ok(PromptMemoryBlockType::RoleGuidance),
         "work_surface_context" => Ok(PromptMemoryBlockType::WorkSurfaceContext),
         "session_focus" => Ok(PromptMemoryBlockType::SessionFocus),
         "user_instruction" => Ok(PromptMemoryBlockType::UserInstruction),
-        other => Err(CustomError::Database(format!("unknown prompt memory block type: {other}"))),
+        other => Err(DenError::Database(format!("unknown prompt memory block type: {other}"))),
     }
 }
 
-fn state_from_db(value: &str) -> Result<PromptMemoryBlockState, CustomError> {
+fn state_from_db(value: &str) -> Result<PromptMemoryBlockState, DenError> {
     match value {
         "draft" => Ok(PromptMemoryBlockState::Draft),
         "active" => Ok(PromptMemoryBlockState::Active),
         "superseded" => Ok(PromptMemoryBlockState::Superseded),
         "archived" => Ok(PromptMemoryBlockState::Archived),
-        other => Err(CustomError::Database(format!("unknown prompt memory block state: {other}"))),
+        other => Err(DenError::Database(format!("unknown prompt memory block state: {other}"))),
     }
 }

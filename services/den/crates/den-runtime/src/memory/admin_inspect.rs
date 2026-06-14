@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::{config::Config, errors::CustomError};
+use den_core::{config::Config, DenError};
 
 use super::store::{
     list_memory_proposals, memory_sequence_high_water, MemoryRecordRow, MemoryScopeType,
@@ -35,7 +35,7 @@ pub async fn bear_memory_admin_stats(
     manager: &MemoryStoreManager,
     config: &Config,
     bear_id: Uuid,
-) -> Result<BearMemoryAdminStats, CustomError> {
+) -> Result<BearMemoryAdminStats, DenError> {
     let db_path = bear_sqlite_db_path(config, bear_id);
     let db_path_display = db_path.display().to_string();
     let db_exists = db_path.exists();
@@ -50,7 +50,7 @@ pub async fn bear_memory_admin_stats(
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory record count failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory record count failed: {e}")))?;
 
     let shared_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'shared'",
@@ -58,7 +58,7 @@ pub async fn bear_memory_admin_stats(
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory shared count failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory shared count failed: {e}")))?;
 
     let profile_local_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'profile_local'",
@@ -66,7 +66,7 @@ pub async fn bear_memory_admin_stats(
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory profile_local count failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory profile_local count failed: {e}")))?;
 
     let distinct_paths: i64 = sqlx::query_scalar(
         "SELECT COUNT(DISTINCT logical_path) FROM memory_records WHERE bear_id = ? AND logical_path IS NOT NULL",
@@ -74,7 +74,7 @@ pub async fn bear_memory_admin_stats(
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory path count failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory path count failed: {e}")))?;
 
     let pending_proposals = list_memory_proposals(&store, Some("pending"), 500)
         .await?
@@ -86,7 +86,7 @@ pub async fn bear_memory_admin_stats(
     .bind(bear_id.to_string())
     .fetch_one(pool)
     .await
-    .map_err(|e| CustomError::System(format!("memory observation count failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("memory observation count failed: {e}")))?;
 
     let sequence_high_water = memory_sequence_high_water(&store).await?;
 
@@ -107,7 +107,7 @@ pub async fn bear_memory_admin_stats(
 pub async fn list_all_logical_paths(
     manager: &MemoryStoreManager,
     bear_id: Uuid,
-) -> Result<Vec<String>, CustomError> {
+) -> Result<Vec<String>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query_scalar::<_, String>(
         r#"
@@ -120,7 +120,7 @@ pub async fn list_all_logical_paths(
     .bind(bear_id.to_string())
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("list memory paths failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("list memory paths failed: {e}")))?;
     Ok(rows)
 }
 
@@ -128,7 +128,7 @@ pub async fn get_memory_record_by_id(
     manager: &MemoryStoreManager,
     bear_id: Uuid,
     memory_id: &str,
-) -> Result<Option<MemoryRecordRow>, CustomError> {
+) -> Result<Option<MemoryRecordRow>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let row = sqlx::query(
         r#"
@@ -142,7 +142,7 @@ pub async fn get_memory_record_by_id(
     .bind(memory_id)
     .fetch_optional(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("get memory record failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("get memory record failed: {e}")))?;
 
     let Some(row) = row else {
         return Ok(None);
@@ -150,26 +150,26 @@ pub async fn get_memory_record_by_id(
 
     let metadata_raw: String = row
         .try_get("metadata_json")
-        .map_err(|e| CustomError::System(format!("decode metadata_json: {e}")))?;
+        .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
     let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
 
     Ok(Some(MemoryRecordRow {
-        memory_id: row.try_get("memory_id").map_err(|e| CustomError::System(e.to_string()))?,
-        sequence_no: row.try_get("sequence_no").map_err(|e| CustomError::System(e.to_string()))?,
+        memory_id: row.try_get("memory_id").map_err(|e| DenError::System(e.to_string()))?,
+        sequence_no: row.try_get("sequence_no").map_err(|e| DenError::System(e.to_string()))?,
         scope_type: MemoryScopeType::parse(
             &row.try_get::<String, _>("scope_type")
-                .map_err(|e| CustomError::System(e.to_string()))?,
+                .map_err(|e| DenError::System(e.to_string()))?,
         )
         .unwrap_or(MemoryScopeType::ProfileLocal),
         scope_profile: row.try_get("scope_profile").ok(),
-        kind: row.try_get("kind").map_err(|e| CustomError::System(e.to_string()))?,
+        kind: row.try_get("kind").map_err(|e| DenError::System(e.to_string()))?,
         content_text: row
             .try_get("content_text")
-            .map_err(|e| CustomError::System(e.to_string()))?,
+            .map_err(|e| DenError::System(e.to_string()))?,
         logical_path: row.try_get("logical_path").ok(),
         work_surface_ref: row.try_get("work_surface_ref").ok(),
         metadata_json,
-        created_at: row.try_get("created_at").map_err(|e| CustomError::System(e.to_string()))?,
+        created_at: row.try_get("created_at").map_err(|e| DenError::System(e.to_string()))?,
     }))
 }
 
@@ -177,7 +177,7 @@ pub async fn list_recent_memory_records(
     manager: &MemoryStoreManager,
     bear_id: Uuid,
     limit: i64,
-) -> Result<Vec<MemoryRecordRow>, CustomError> {
+) -> Result<Vec<MemoryRecordRow>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
         r#"
@@ -193,7 +193,7 @@ pub async fn list_recent_memory_records(
     .bind(limit.clamp(1, 50))
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("list recent memory records failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("list recent memory records failed: {e}")))?;
 
     rows.into_iter()
         .map(|row| {
@@ -217,5 +217,5 @@ pub async fn list_recent_memory_records(
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(|e| CustomError::System(format!("decode memory records: {e}")))
+        .map_err(|e| DenError::System(format!("decode memory records: {e}")))
 }

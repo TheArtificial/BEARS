@@ -3,7 +3,7 @@ mod tests {
     use uuid::Uuid;
 
     use den_core::config::Config;
-    use crate::core::memory::{
+    use crate::memory::{
         store::{
             append_memory_link, list_memory_links_for_source, LogicalMemoryPath, MemoryStoreManager,
         },

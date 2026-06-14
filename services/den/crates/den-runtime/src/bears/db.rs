@@ -3,7 +3,7 @@
 use sqlx::{types::Json, PgPool};
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::model::{
     Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
@@ -22,7 +22,7 @@ pub struct BearParams<'a> {
     pub context_profile: Option<Json<serde_json::Value>>,
 }
 
-pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
+pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, default_model, tools_enabled,
@@ -37,7 +37,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     .map_err(Into::into)
 }
 
-pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomError> {
+pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, default_model, tools_enabled,
@@ -53,7 +53,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     .map_err(Into::into)
 }
 
-pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, CustomError> {
+pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, DenError> {
     let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1")
         .bind(slug)
         .fetch_one(pool)
@@ -65,7 +65,7 @@ pub async fn bear_slug_exists_excluding(
     pool: &PgPool,
     slug: &str,
     exclude_id: Uuid,
-) -> Result<bool, CustomError> {
+) -> Result<bool, DenError> {
     let n: (i64,) =
         sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1 AND id <> $2")
             .bind(slug)
@@ -79,7 +79,7 @@ pub async fn update_bear(
     pool: &PgPool,
     id: Uuid,
     params: BearParams<'_>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let r = sqlx::query(
         r#"
         UPDATE bears
@@ -107,13 +107,13 @@ pub async fn update_bear(
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
-        return Err(CustomError::NotFound("bear not found".to_string()));
+        return Err(DenError::NotFound("bear not found".to_string()));
     }
     Ok(())
 }
 
 /// Creates a logical Bear row. Profile runtime bindings live in `bear_profile_bindings`.
-pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, CustomError> {
+pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, DenError> {
     create_bear_with_context_profile(pool, params).await
 }
 
@@ -121,7 +121,7 @@ pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, 
 pub async fn create_bear_with_context_profile(
     pool: &PgPool,
     params: BearParams<'_>,
-) -> Result<Uuid, CustomError> {
+) -> Result<Uuid, DenError> {
     let row: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO bears (
@@ -151,7 +151,7 @@ pub async fn update_bear_context_profile(
     id: Uuid,
     context_profile: Option<Json<serde_json::Value>>,
     system_prompt: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let r = sqlx::query(
         r#"
         UPDATE bears
@@ -167,7 +167,7 @@ pub async fn update_bear_context_profile(
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
-        return Err(CustomError::NotFound("bear not found".to_string()));
+        return Err(DenError::NotFound("bear not found".to_string()));
     }
     Ok(())
 }
@@ -189,7 +189,7 @@ pub async fn grant_membership(
     user_id: i32,
     bear_id: Uuid,
     role: Option<&str>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO user_bear (user_id, bear_id, role)
@@ -209,25 +209,25 @@ pub async fn revoke_membership(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let r = sqlx::query("DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2")
         .bind(user_id)
         .bind(bear_id)
         .execute(pool)
         .await?;
     if r.rows_affected() == 0 {
-        return Err(CustomError::NotFound("membership not found".to_string()));
+        return Err(DenError::NotFound("membership not found".to_string()));
     }
     Ok(())
 }
 
-pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
+pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {
     let r = sqlx::query("DELETE FROM bears WHERE id = $1")
         .bind(bear_id)
         .execute(pool)
         .await?;
     if r.rows_affected() == 0 {
-        return Err(CustomError::NotFound("bear not found".to_string()));
+        return Err(DenError::NotFound("bear not found".to_string()));
     }
     Ok(())
 }
@@ -243,7 +243,7 @@ pub struct BearMemberRow {
 pub async fn list_members_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Vec<BearMemberRow>, CustomError> {
+) -> Result<Vec<BearMemberRow>, DenError> {
     sqlx::query_as::<_, BearMemberRow>(
         r#"
         SELECT ub.user_id, u.username, u.display_name, ub.role
@@ -261,7 +261,7 @@ pub async fn list_members_for_bear(
     .map_err(Into::into)
 }
 
-pub async fn count_bear_admins(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
+pub async fn count_bear_admins(pool: &PgPool, bear_id: Uuid) -> Result<i64, DenError> {
     let n: (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*)::bigint
@@ -280,7 +280,7 @@ pub async fn membership_role_for_user(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-) -> Result<Option<Option<String>>, CustomError> {
+) -> Result<Option<Option<String>>, DenError> {
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2")
             .bind(user_id)
@@ -300,7 +300,7 @@ pub struct MembershipRow {
     pub role: Option<String>,
 }
 
-pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, CustomError> {
+pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, DenError> {
     sqlx::query_as::<_, MembershipRow>(
         r#"
         SELECT ub.user_id, u.username, ub.bear_id, b.slug AS bear_slug, b.name AS bear_name, ub.role
@@ -318,7 +318,7 @@ pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, Custo
 pub async fn list_bears_for_user(
     pool: &PgPool,
     user_id: i32,
-) -> Result<Vec<BearWithMembership>, CustomError> {
+) -> Result<Vec<BearWithMembership>, DenError> {
     sqlx::query_as::<_, BearWithMembership>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
@@ -342,7 +342,7 @@ pub async fn bear_for_user_by_slug(
     pool: &PgPool,
     user_id: i32,
     slug: &str,
-) -> Result<Option<Bear>, CustomError> {
+) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
@@ -360,7 +360,7 @@ pub async fn bear_for_user_by_slug(
     .map_err(Into::into)
 }
 
-pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
+pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, DenError> {
     let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1")
         .bind(bear_id)
         .fetch_one(pool)
@@ -372,7 +372,7 @@ pub async fn user_may_use_bear(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-) -> Result<bool, CustomError> {
+) -> Result<bool, DenError> {
     let n: (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*)::bigint FROM user_bear WHERE user_id = $1 AND bear_id = $2
@@ -388,7 +388,7 @@ pub async fn user_may_use_bear(
 pub async fn ensure_bear_profile_binding_rows(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     for profile in BearProfile::ALL {
         sqlx::query(
             r#"
@@ -409,7 +409,7 @@ pub async fn ensure_bear_profile_binding_rows(
 pub async fn list_bear_profile_bindings(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Vec<BearProfileBinding>, CustomError> {
+) -> Result<Vec<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
         r#"
         SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
@@ -437,7 +437,7 @@ pub async fn get_bear_profile_binding(
     pool: &PgPool,
     bear_id: Uuid,
     profile: BearProfile,
-) -> Result<Option<BearProfileBinding>, CustomError> {
+) -> Result<Option<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
         r#"
         SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
@@ -459,7 +459,7 @@ pub async fn profile_binding_id(
     pool: &PgPool,
     bear_id: Uuid,
     profile: BearProfile,
-) -> Result<Option<String>, CustomError> {
+) -> Result<Option<String>, DenError> {
     let row: Option<(String,)> = sqlx::query_as(
         r#"
         SELECT binding_id
@@ -479,7 +479,7 @@ pub async fn profile_letta_agent_id(
     pool: &PgPool,
     bear_id: Uuid,
     profile: BearProfile,
-) -> Result<Option<String>, CustomError> {
+) -> Result<Option<String>, DenError> {
     let row: Option<(Option<String>,)> = sqlx::query_as(
         r#"
         SELECT letta_agent_id
@@ -498,7 +498,7 @@ pub async fn mark_bear_profile_binding_provisioning(
     pool: &PgPool,
     bear_id: Uuid,
     profile: BearProfile,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, updated_at)
@@ -525,7 +525,7 @@ pub async fn mark_bear_profile_binding_ready(
     letta_agent_id: Option<&str>,
     version: i32,
     config_hash: &serde_json::Value,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO bear_profile_bindings (
@@ -561,7 +561,7 @@ pub async fn mark_bear_profile_binding_synced(
     profile: BearProfile,
     version: i32,
     config_hash: &serde_json::Value,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE bear_profile_bindings
@@ -588,7 +588,7 @@ pub async fn mark_bear_profile_binding_drifted(
     bear_id: Uuid,
     profile: BearProfile,
     message: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE bear_profile_bindings
@@ -611,7 +611,7 @@ pub async fn mark_bear_profile_binding_failed(
     bear_id: Uuid,
     profile: BearProfile,
     message: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO bear_profile_bindings (
@@ -636,7 +636,7 @@ pub async fn mark_bear_profile_binding_failed(
 pub async fn list_bear_skills(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Vec<BearSkillManifestEntry>, CustomError> {
+) -> Result<Vec<BearSkillManifestEntry>, DenError> {
     sqlx::query_as::<_, BearSkillManifestEntry>(
         r#"
         SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_profiles,
@@ -657,7 +657,7 @@ pub async fn propose_skill(
     bear_id: Uuid,
     proposed_by_agent_id: &str,
     skill_payload: &serde_json::Value,
-) -> Result<Uuid, CustomError> {
+) -> Result<Uuid, DenError> {
     let row: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO bear_skill_proposals (bear_id, proposed_by_agent_id, skill_payload)
@@ -676,7 +676,7 @@ pub async fn propose_skill(
 pub async fn list_pending_skill_proposals(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Vec<BearSkillProposal>, CustomError> {
+) -> Result<Vec<BearSkillProposal>, DenError> {
     sqlx::query_as::<_, BearSkillProposal>(
         r#"
         SELECT bear_id, id, proposed_by_agent_id, proposed_at, skill_payload, status,
@@ -698,7 +698,7 @@ pub async fn backfill_default_letta_agent_type(
     pool: &PgPool,
     bear_id: Uuid,
     default: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE bears
@@ -720,7 +720,7 @@ pub async fn ensure_default_runtime_plan(
     pool: &PgPool,
     bear_id: Uuid,
     default_json: &serde_json::Value,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE bears

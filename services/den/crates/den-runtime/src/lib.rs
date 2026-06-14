@@ -36,6 +36,20 @@ pub mod llm;
 /// assistant display/title helpers, agent JSON projections, and model/tool option types.
 pub mod agent_assist;
 
+/// Pure conversation-id classification + normalization helpers (shared by the runtime
+/// conversation layer and the ACP edge).
+pub mod conversation_ids;
+
+/// Bear provisioning, registry, managed blocks, runtime-plan, templates, and the `bears` DB.
+pub mod bears;
+
+/// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
+/// prompt-block store/blocks, proposals, observations, and admin inspection.
+pub mod memory;
+
+/// Conversation event projection + persistence (events, message types, persistence, archive).
+pub mod conversation;
+
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
 pub use runtime::bearwire_projection as runtime_bearwire_projection;
@@ -51,3 +65,12 @@ pub use runtime::role_registry as role_runtime_registry;
 pub use runtime::turn_state;
 pub use llm::bifrost;
 pub use agent_assist::runtime_stream_parser;
+pub use memory::bear_observations;
+pub use memory::curate_executor as memory_curate_executor;
+pub use memory::proposals as memory_proposals;
+pub use memory::prompt_block_store as prompt_memory_block_store;
+pub use memory::prompt_blocks as prompt_memory_blocks;
+pub use conversation::archived as archived_conversations;
+pub use conversation::events as conversation_events;
+pub use conversation::message_types as conversation_message_types;
+pub use conversation::persistence as conversation_persistence;

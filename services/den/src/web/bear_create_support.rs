@@ -459,7 +459,9 @@ impl AdminBearPromptForm {
                 "All role prompts are required for role-aware bears.".to_string(),
             ));
         }
-        context_profile_to_json(&profile).map(Some)
+        context_profile_to_json(&profile)
+            .map(Some)
+            .map_err(CustomError::from)
     }
 
     pub fn resolved_system_prompt(
@@ -512,6 +514,7 @@ pub fn composed_system_prompt_for_profile_json(
     };
     crate::core::bears::compose_role_context(&bear, BearProfile::Chat, None)
         .map(|context| context.composed_prompt)
+        .map_err(CustomError::from)
 }
 
 pub fn build_context_profile_json_for_template(
@@ -525,7 +528,7 @@ pub fn build_context_profile_json_for_template(
         CustomError::ValidationError(format!("unknown first-bear template: {template_id}"))
     })?;
     let profile = template.context_profile(bear_name, user_steering, bear_context, first_task);
-    context_profile_to_json(&profile)
+    context_profile_to_json(&profile).map_err(CustomError::from)
 }
 
 /// Shared DB write for creating a bear row (operator or member flow).
@@ -551,6 +554,7 @@ pub async fn insert_new_bear_row(
         },
     )
     .await
+    .map_err(CustomError::from)
 }
 
 /// Shared DB write for creating a role-aware context-profile bear row.
@@ -579,4 +583,5 @@ pub async fn insert_new_bear_row_with_context_profile(
         },
     )
     .await
+    .map_err(CustomError::from)
 }

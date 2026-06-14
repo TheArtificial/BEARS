@@ -16,6 +16,14 @@ use crate::{
     errors::CustomError,
 };
 
+// Pure conversation-id predicates now live in `den-runtime`; re-export them so this module's
+// internal logic and the existing `core::acp::runtime::is_*` call sites stay unchanged.
+pub use den_runtime::conversation_ids::{
+    is_acp_archive_target, is_acp_history_target, is_native_runtime_conversation_id,
+    is_valid_pending_acp_conversation_id, normalize_acp_conversation_id,
+    normalized_durable_acp_conversation_id,
+};
+
 pub fn acp_missing_pair_binding_message(bear_slug: &str) -> String {
     format!(
         "ACP requires this Bear to have a provisioned `pair` profile runtime binding, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing profiles`, then retry."
@@ -124,51 +132,6 @@ impl AcpConversationResolution {
             archive_target,
             requires_belongs_to_bear_check,
         }
-    }
-}
-
-pub fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
-    conversation_id.starts_with("new-")
-        && conversation_id.len() <= 42
-        && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
-}
-
-pub fn is_native_runtime_conversation_id(conversation_id: &str) -> bool {
-    conversation_id.starts_with("den-conv-")
-}
-
-pub fn is_acp_history_target(conversation_id: &str) -> bool {
-    conversation_id == "default"
-        || conversation_id.starts_with("conv-")
-        || is_native_runtime_conversation_id(conversation_id)
-}
-
-pub fn is_acp_archive_target(conversation_id: &str) -> bool {
-    conversation_id.starts_with("conv-") || is_native_runtime_conversation_id(conversation_id)
-}
-
-pub fn normalized_durable_acp_conversation_id(raw: Option<&str>) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|s| is_acp_history_target(s))
-        .map(str::to_string)
-}
-
-pub fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
-    let s = raw.unwrap_or("default").trim();
-    if s.is_empty() {
-        return Ok("default".to_string());
-    }
-    let ok = s == "default"
-        || (s.starts_with("conv-") && s.len() >= 8)
-        || (s.starts_with("new-") && s.len() >= 8)
-        || s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if ok {
-        Ok(s.to_string())
-    } else {
-        Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default', a runtime conv- id, or a pending new- id): {s}"
-        )))
     }
 }
 

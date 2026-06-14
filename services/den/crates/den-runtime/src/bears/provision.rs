@@ -1,11 +1,11 @@
 //! Create/update Den-native profile runtime bindings after bear rows exist.
 
+use den_core::config::Config;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
-    core::memory::MemoryStoreManager,
+    memory::MemoryStoreManager,
 };
 
 use super::context_composition::render_role_prompt;
@@ -13,14 +13,14 @@ use super::db as bears_db;
 use super::managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config};
 use super::model::{Bear, BearProfile};
 use super::runtime_plan::default_runtime_plan;
-use crate::errors::CustomError;
+use den_core::DenError;
 
 /// Provision profile runtime bindings for a new bear (Den-native SQLite + in-process loop).
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     provision_bear_native(pool, config, bear_id).await
 }
 
@@ -28,10 +28,10 @@ async fn provision_bear_native(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let summary = reconcile_bear_native(pool, config, bear_id).await?;
     if let Some(message) = summary.diagnostic_message() {
-        return Err(CustomError::System(message));
+        return Err(DenError::System(message));
     }
 
     tracing::info!(%bear_id, "Den-native profile runtimes provisioned for bear");
@@ -43,10 +43,10 @@ pub async fn reconcile_bear_native(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<crate::core::bears::sync::BearSyncSummary, CustomError> {
+) -> Result<crate::bears::sync::BearSyncSummary, DenError> {
     let bear = bears_db::get_bear(pool, bear_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
 
     bears_db::ensure_bear_profile_binding_rows(pool, bear_id).await?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
@@ -63,7 +63,7 @@ pub async fn reconcile_bear_native(
         outcomes.push(reconcile_one_native_profile(pool, config, &bear, profile).await?);
     }
 
-    Ok(crate::core::bears::sync::BearSyncSummary {
+    Ok(crate::bears::sync::BearSyncSummary {
         bear_id,
         outcomes,
     })
@@ -74,8 +74,8 @@ async fn reconcile_one_native_profile(
     _config: &Config,
     bear: &Bear,
     profile: BearProfile,
-) -> Result<crate::core::bears::sync::BearProfileSyncOutcome, CustomError> {
-    use crate::core::bears::sync::BearProfileSyncOutcome;
+) -> Result<crate::bears::sync::BearProfileSyncOutcome, DenError> {
+    use crate::bears::sync::BearProfileSyncOutcome;
 
     let binding_id = format!("den-native:{}:{}", bear.id, profile.as_str());
     let config_hash = profile_config_hash(pool, bear, profile).await?;
@@ -125,7 +125,7 @@ pub async fn provision_missing_bear_profiles_native(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<usize, CustomError> {
+) -> Result<usize, DenError> {
     provision_missing_bear_profiles(pool, config, bear_id).await
 }
 
@@ -133,10 +133,10 @@ pub async fn provision_missing_bear_profiles(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<usize, CustomError> {
+) -> Result<usize, DenError> {
     let bear = bears_db::get_bear(pool, bear_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     bears_db::ensure_bear_profile_binding_rows(pool, bear_id).await?;
 
     let mut missing_before = 0usize;
@@ -158,16 +158,16 @@ pub async fn provision_missing_bear_profiles(
 
     let summary = reconcile_bear_native(pool, config, bear_id).await?;
     if let Some(message) = summary.diagnostic_message() {
-        return Err(CustomError::System(message));
+        return Err(DenError::System(message));
     }
     Ok(missing_before)
 }
 
-pub(crate) async fn profile_prompt_text(
+pub async fn profile_prompt_text(
     pool: &PgPool,
     bear: &Bear,
     profile: BearProfile,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     if bear.context_profile.is_none() {
         return render_role_prompt(bear, profile);
     }
@@ -190,18 +190,18 @@ pub(crate) async fn profile_prompt_text(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            CustomError::System(format!(
+            DenError::System(format!(
                 "compiled managed prompt missing rendered prompt for profile {}",
                 profile.as_str()
             ))
         })
 }
 
-pub(crate) async fn profile_config_hash(
+pub async fn profile_config_hash(
     pool: &PgPool,
     bear: &Bear,
     profile: BearProfile,
-) -> Result<serde_json::Value, CustomError> {
+) -> Result<serde_json::Value, DenError> {
     let mut payload = serde_json::json!({
         "schema_version": 1,
         "role": profile.as_str(),
@@ -222,7 +222,7 @@ pub(crate) async fn profile_config_hash(
                 get_compiled_bear_config(pool, bear.id)
                     .await?
                     .ok_or_else(|| {
-                        CustomError::System(
+                        DenError::System(
                             "compiled managed config missing after successful compile".to_string(),
                         )
                     })?

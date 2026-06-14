@@ -1,11 +1,11 @@
+use den_core::DenError;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    core::memory::store::{
+    memory::store::{
         append_memory_record, list_records_for_logical_path, LogicalMemoryPath, MemoryStoreManager,
     },
-    errors::CustomError,
 };
 
 use super::store::BearMemoryStore;
@@ -18,7 +18,7 @@ pub async fn sqlite_write_at_path(
     title: &str,
     body: &str,
     metadata: Value,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let logical = LogicalMemoryPath::from_logical_path(logical_path);
     let content = if body.starts_with('#') {
@@ -61,7 +61,7 @@ pub async fn sqlite_write_profile_entry(
     tags: &[String],
     source: Option<Value>,
     author: Option<String>,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let logical = LogicalMemoryPath::profile_local(profile, kind);
     let content = format!("# {title}\n\n{body}");
@@ -97,7 +97,7 @@ pub async fn sqlite_write_profile_entry(
 pub async fn sqlite_memory_browse(
     store: &BearMemoryStore,
     role: &str,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
         r#"
         SELECT DISTINCT logical_path
@@ -110,7 +110,7 @@ pub async fn sqlite_memory_browse(
     .bind(role)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite memory browse failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite memory browse failed: {e}")))?;
     let children: Vec<Value> = rows
         .into_iter()
         .map(|path| {
@@ -134,7 +134,7 @@ pub async fn sqlite_memory_browse(
 pub async fn sqlite_memory_read(
     store: &BearMemoryStore,
     logical_path: &str,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let rows = list_records_for_logical_path(store, logical_path, 20).await?;
     if rows.is_empty() {
         return Ok(json!({
@@ -167,7 +167,7 @@ pub async fn sqlite_memory_search(
     role: &str,
     query: &str,
     limit: i64,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
     let rows = sqlx::query_as::<_, (String, String, String, i64)>(
         r#"
@@ -184,7 +184,7 @@ pub async fn sqlite_memory_search(
     .bind(limit)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite memory search failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
         .map(|(memory_id, path, content, sequence_no)| {
@@ -208,7 +208,7 @@ pub async fn sqlite_memory_search(
 pub async fn sqlite_collect_role_logical_paths(
     store: &BearMemoryStore,
     role: &str,
-) -> Result<Vec<String>, CustomError> {
+) -> Result<Vec<String>, DenError> {
     sqlx::query_scalar::<_, String>(
         r#"
         SELECT DISTINCT logical_path
@@ -221,14 +221,14 @@ pub async fn sqlite_collect_role_logical_paths(
     .bind(role)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite collect paths failed: {e}")))
+    .map_err(|e| DenError::System(format!("sqlite collect paths failed: {e}")))
 }
 
 pub async fn sqlite_list_plan_artifacts(
     store: &BearMemoryStore,
     role: &str,
     limit: i64,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let rows = sqlx::query_as::<_, (String, String, String, i64)>(
         r#"
         SELECT memory_id, logical_path, content_text, sequence_no
@@ -244,7 +244,7 @@ pub async fn sqlite_list_plan_artifacts(
     .bind(limit)
     .fetch_all(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite list plan artifacts failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite list plan artifacts failed: {e}")))?;
     let results: Vec<Value> = rows
         .into_iter()
         .map(|(memory_id, path, content, sequence_no)| {
@@ -263,7 +263,7 @@ pub async fn sqlite_list_plan_artifacts(
 pub async fn sqlite_memory_status(
     store: &BearMemoryStore,
     role: &str,
-) -> Result<Value, CustomError> {
+) -> Result<Value, DenError> {
     let file_count: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(DISTINCT logical_path)
@@ -275,7 +275,7 @@ pub async fn sqlite_memory_status(
     .bind(role)
     .fetch_one(store.pool())
     .await
-    .map_err(|e| CustomError::System(format!("sqlite memory status failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("sqlite memory status failed: {e}")))?;
     Ok(json!({
         "configured": true,
         "available": true,

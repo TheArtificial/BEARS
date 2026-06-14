@@ -3,7 +3,7 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BearObservationRow {
@@ -38,7 +38,7 @@ pub fn observation_logical_path(observation_id: &str) -> String {
 pub async fn create(
     pool: &PgPool,
     params: CreateBearObservation<'_>,
-) -> Result<BearObservationRow, CustomError> {
+) -> Result<BearObservationRow, DenError> {
     let logical_path = observation_logical_path(params.observation_id);
     let row = sqlx::query(
         r#"
@@ -67,7 +67,7 @@ pub async fn mark_review_queued(
     bear_id: Uuid,
     observation_row_id: Uuid,
     proposal_id: Uuid,
-) -> Result<BearObservationRow, CustomError> {
+) -> Result<BearObservationRow, DenError> {
     let row = sqlx::query(
         r#"
         UPDATE bear_observations
@@ -90,7 +90,7 @@ pub async fn get_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
     observation_id: &str,
-) -> Result<Option<BearObservationRow>, CustomError> {
+) -> Result<Option<BearObservationRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, bear_id, observation_id, summary, salience, payload_ref, source,

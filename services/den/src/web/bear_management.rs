@@ -1106,6 +1106,7 @@ async fn chat_agent_id_for_bear(
     bears_db::profile_binding_id(pool, bear.id, BearProfile::Chat)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+        .map_err(CustomError::from)
 }
 
 fn web_href_for_conversation(slug: &str, conversation_id: &str) -> String {

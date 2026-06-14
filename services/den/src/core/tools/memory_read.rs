@@ -40,7 +40,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         let store = stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_read(&store, path)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
@@ -48,7 +48,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         let store = stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_browse(&store, role.as_str())
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn search(
@@ -62,7 +62,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         let store = stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_search(&store, role.as_str(), query, limit)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
@@ -70,7 +70,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         let store = stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_status(&store, role.as_str())
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn write_entry(
@@ -92,7 +92,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             entry.author,
         )
         .await
-        .map_err(CustomError::into_den)
+        
     }
 }
 

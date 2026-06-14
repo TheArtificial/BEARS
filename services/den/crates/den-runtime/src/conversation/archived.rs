@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
-pub async fn list_for_bear(pool: &PgPool, bear_id: Uuid) -> Result<HashSet<String>, CustomError> {
+pub async fn list_for_bear(pool: &PgPool, bear_id: Uuid) -> Result<HashSet<String>, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
         r#"
         SELECT conversation_id
@@ -27,7 +27,7 @@ pub async fn set_archived(
     archived_by_user_id: Option<i32>,
     source: &str,
     archived: bool,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     if archived {
         sqlx::query(
             r#"

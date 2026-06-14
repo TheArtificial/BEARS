@@ -20,7 +20,7 @@ use crate::{
         memory::{tools as sqlite_memory, MemoryStoreManager},
         tools::session::DenToolInvocationContext,
     },
-    errors::{CustomError, DenError},
+    errors::DenError,
 };
 
 /// Concrete [`WorkSurfaceOps`] over the runtime memory stores.
@@ -55,7 +55,7 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
                 }),
             )
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
             responses.push(written);
         }
         Ok(WorkSurfaceScaffoldOutcome {
@@ -74,7 +74,7 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
         let store = self.stores.store_for_bear(context.bear_id).await?;
         let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str())
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
         let orientation =
             build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
         Ok(json!({

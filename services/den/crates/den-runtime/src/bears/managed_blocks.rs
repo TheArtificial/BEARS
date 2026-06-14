@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{types::Json, FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 use super::{context_composition, Bear, BearProfile};
 
@@ -218,7 +218,7 @@ pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
     ]
 }
 
-pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), CustomError> {
+pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
     for block in system_block_seed_data() {
         sqlx::query(
             r#"
@@ -296,7 +296,7 @@ pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), CustomError> {
     Ok(())
 }
 
-pub async fn list_system_blocks(pool: &PgPool) -> Result<Vec<SystemBlockRow>, CustomError> {
+pub async fn list_system_blocks(pool: &PgPool) -> Result<Vec<SystemBlockRow>, DenError> {
     sqlx::query_as::<_, SystemBlockRow>(
         r#"
         SELECT key, kind, scope, status, current_published_version_id
@@ -312,7 +312,7 @@ pub async fn list_system_blocks(pool: &PgPool) -> Result<Vec<SystemBlockRow>, Cu
 pub async fn list_system_block_versions(
     pool: &PgPool,
     block_key: &str,
-) -> Result<Vec<SystemBlockVersionRow>, CustomError> {
+) -> Result<Vec<SystemBlockVersionRow>, DenError> {
     sqlx::query_as::<_, SystemBlockVersionRow>(
         r#"
         SELECT id, block_key, version_number, content, change_summary, content_hash
@@ -330,7 +330,7 @@ pub async fn list_system_block_versions(
 pub async fn list_bear_block_bindings(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Vec<BearBlockBindingRow>, CustomError> {
+) -> Result<Vec<BearBlockBindingRow>, DenError> {
     sqlx::query_as::<_, BearBlockBindingRow>(
         r#"
         SELECT bear_id, block_key, mode, custom_content, forked_from_version_id, last_reviewed_version_id
@@ -353,7 +353,7 @@ pub async fn upsert_bear_block_binding(
     custom_content: Option<&str>,
     forked_from_version_id: Option<i64>,
     last_reviewed_version_id: Option<i64>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO bear_block_bindings (
@@ -382,7 +382,7 @@ pub async fn upsert_bear_block_binding(
 pub async fn resolve_managed_blocks_for_bear(
     pool: &PgPool,
     bear: &Bear,
-) -> Result<ResolvedManagedBlockSet, CustomError> {
+) -> Result<ResolvedManagedBlockSet, DenError> {
     let rows: Vec<ManagedBlockResolutionRow> = sqlx::query_as(
         r#"
         SELECT sb.key,
@@ -427,7 +427,7 @@ pub async fn resolve_managed_blocks_for_bear(
         let (effective_content, effective_hash, source_mode) = match mode.as_str() {
             "inherit" => {
                 let content = system_content.ok_or_else(|| {
-                    CustomError::System(format!(
+                    DenError::System(format!(
                         "published system block {key} is missing current_published_version content"
                     ))
                 })?;
@@ -436,7 +436,7 @@ pub async fn resolve_managed_blocks_for_bear(
             }
             "custom" => {
                 let content = custom_content.ok_or_else(|| {
-                    CustomError::ValidationError(format!(
+                    DenError::ValidationError(format!(
                         "custom binding for block {key} is missing custom_content"
                     ))
                 })?;
@@ -444,7 +444,7 @@ pub async fn resolve_managed_blocks_for_bear(
                 (content, hash, mode)
             }
             other => {
-                return Err(CustomError::ValidationError(format!(
+                return Err(DenError::ValidationError(format!(
                     "unknown bear block binding mode for {key}: {other}"
                 )));
             }
@@ -472,16 +472,16 @@ pub async fn resolve_managed_blocks_for_bear(
 
 pub fn resolved_blocks_json(
     resolved: &ResolvedManagedBlockSet,
-) -> Result<Json<serde_json::Value>, CustomError> {
+) -> Result<Json<serde_json::Value>, DenError> {
     serde_json::to_value(resolved)
         .map(Json)
-        .map_err(|e| CustomError::Parsing(format!("serialize resolved managed blocks: {e}")))
+        .map_err(|e| DenError::Parsing(format!("serialize resolved managed blocks: {e}")))
 }
 
 pub fn compile_managed_config_for_bear(
     bear: &Bear,
     resolved: ResolvedManagedBlockSet,
-) -> Result<CompiledBearConfig, CustomError> {
+) -> Result<CompiledBearConfig, DenError> {
     let mut rendered_prompts = serde_json::Map::new();
     let mut rendered_prompt_hashes = serde_json::Map::new();
 
@@ -494,7 +494,7 @@ pub fn compile_managed_config_for_bear(
     }
 
     let resolved_json = serde_json::to_value(&resolved)
-        .map_err(|e| CustomError::Parsing(format!("serialize resolved managed blocks: {e}")))?;
+        .map_err(|e| DenError::Parsing(format!("serialize resolved managed blocks: {e}")))?;
     let rendered_prompts_value = serde_json::Value::Object(rendered_prompts);
     let rendered_prompt_hashes_value = serde_json::Value::Object(rendered_prompt_hashes);
     let tool_guidance_hashes_value = json!({});
@@ -520,9 +520,9 @@ pub fn compile_managed_config_for_bear(
 pub async fn upsert_compiled_bear_config(
     pool: &PgPool,
     compiled: &CompiledBearConfig,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let resolved_blocks_json = serde_json::to_value(&compiled.resolved_blocks).map_err(|e| {
-        CustomError::Parsing(format!("serialize compiled resolved managed blocks: {e}"))
+        DenError::Parsing(format!("serialize compiled resolved managed blocks: {e}"))
     })?;
     sqlx::query(
         r#"
@@ -564,7 +564,7 @@ pub async fn upsert_compiled_bear_config(
 pub async fn get_compiled_bear_config(
     pool: &PgPool,
     bear_id: Uuid,
-) -> Result<Option<BearCompiledConfigRow>, CustomError> {
+) -> Result<Option<BearCompiledConfigRow>, DenError> {
     sqlx::query_as::<_, BearCompiledConfigRow>(
         r#"
         SELECT bear_id,
@@ -587,7 +587,7 @@ pub async fn get_compiled_bear_config(
 pub async fn compile_and_store_managed_config_for_bear(
     pool: &PgPool,
     bear: &Bear,
-) -> Result<CompiledBearConfig, CustomError> {
+) -> Result<CompiledBearConfig, DenError> {
     seed_system_blocks(pool).await?;
     let resolved = resolve_managed_blocks_for_bear(pool, bear).await?;
     let compiled = compile_managed_config_for_bear(bear, resolved)?;

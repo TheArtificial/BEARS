@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 /// Allowed `conversation_messages.message_type` values (migration `20260530213000`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,7 +43,7 @@ impl ConversationMessageType {
         }
     }
 
-    pub fn try_from_storage(value: &str) -> Result<Self, CustomError> {
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value.trim() {
             "user" | "user_input" => Ok(Self::User),
             "assistant" | "assistant_output" | "assistant_reasoning" => Ok(Self::Assistant),
@@ -53,7 +53,7 @@ impl ConversationMessageType {
             "tool_result" | "tool_event" => Ok(Self::ToolResult),
             "workflow_event" | "prompt_memory_diagnostic" => Ok(Self::WorkflowEvent),
             "compaction_marker" => Ok(Self::CompactionMarker),
-            other => Err(CustomError::ValidationError(format!(
+            other => Err(DenError::ValidationError(format!(
                 "unsupported conversation message_type: {other}"
             ))),
         }
@@ -86,13 +86,13 @@ impl ConversationMessageVisibility {
         }
     }
 
-    pub fn try_from_storage(value: &str) -> Result<Self, CustomError> {
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value.trim() {
             "default" | "visible" => Ok(Self::Default),
             "hidden_from_user" => Ok(Self::HiddenFromUser),
             "admin_only" => Ok(Self::AdminOnly),
             "diagnostic_only" => Ok(Self::DiagnosticOnly),
-            other => Err(CustomError::ValidationError(format!(
+            other => Err(DenError::ValidationError(format!(
                 "unsupported conversation message visibility: {other}"
             ))),
         }
@@ -122,13 +122,13 @@ impl ConversationMessageRole {
         }
     }
 
-    pub fn try_from_storage(value: &str) -> Result<Self, CustomError> {
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value.trim() {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "developer" => Ok(Self::Developer),
-            other => Err(CustomError::ValidationError(format!(
+            other => Err(DenError::ValidationError(format!(
                 "unsupported conversation message role: {other}"
             ))),
         }

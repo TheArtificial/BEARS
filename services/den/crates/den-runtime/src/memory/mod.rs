@@ -10,7 +10,7 @@ pub mod proposals;
 pub mod tools;
 
 /// Per-Bear SQLite store, extracted to the `den-memory` crate. Re-exported here
-/// so existing `crate::core::memory::store::…` paths keep resolving.
+/// so existing `crate::memory::store::…` paths keep resolving.
 pub use den_memory as store;
 
 #[cfg(test)]

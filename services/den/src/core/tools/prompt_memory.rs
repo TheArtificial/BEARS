@@ -18,7 +18,7 @@ use crate::{
         list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
         upsert_prompt_memory_block,
     },
-    errors::{CustomError, DenError},
+    errors::DenError,
 };
 
 /// Postgres-backed [`PromptMemoryStore`] over a pool reference.
@@ -41,13 +41,13 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     ) -> Result<Vec<PromptMemoryBlock>, DenError> {
         list_prompt_memory_blocks_for_bear_profile(self.pool, bear_id, profile_slug)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn upsert_block(&self, write: &PromptMemoryBlockWrite) -> Result<(), DenError> {
         upsert_prompt_memory_block(self.pool, write)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn patch_block(
@@ -57,13 +57,13 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     ) -> Result<(), DenError> {
         patch_prompt_memory_block(self.pool, block_id, patch)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn archive_conflicting(&self, write: &PromptMemoryBlockWrite) -> Result<u64, DenError> {
         archive_conflicting_prompt_memory_blocks(self.pool, write)
             .await
-            .map_err(CustomError::into_den)
+            
     }
 
     async fn archive_superseded_by(
@@ -79,7 +79,7 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
             supersedes_block_id,
         )
         .await
-        .map_err(CustomError::into_den)
+        
     }
 }
 

@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
-use crate::config::Config;
-use crate::core::bears::{
+use den_core::config::Config;
+use crate::bears::{
     db::{create_bear, get_bear_profile_binding, BearParams},
     model::BearProfile,
     provision::{provision_bear_if_configured, reconcile_bear_native},

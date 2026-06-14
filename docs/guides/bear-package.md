@@ -61,6 +61,8 @@ Tables included in a standard cognition export (see `services/den/src/core/memor
 | `reflection_run_outcomes` | Canonical reflection run records and outcomes |
 | `bear_sequence` | Monotonic sequence allocator (required for ordering/replay) |
 
+> **Pending [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md):** the Bear entity layer — `entities`, `entity_handles`, `memory_relations`, `memory_access_rules` — ships in this same cognition export, and `memory_links` becomes a read view over the two relation tables. Import keeps each opaque `entity_id` stable and **re-links `canonical_ref`** against the destination registries via strong handles (entities that fail to re-resolve are demoted to `provisional`; access-bearing rules stay inert until re-resolved — fail-closed). Adds to `memory_schema_version`.
+
 Operational SQLite settings at rest: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000` (same as runtime defaults).
 
 ### `artifacts/` (optional)
@@ -208,6 +210,7 @@ On import, **drop and re-create** Den-native runtime bindings (`den-native:{id}:
 4. Register Bear row in Den Postgres from `manifest.yaml` (identity + slug + charter).
 5. Re-provision role profiles and remap models.
 6. Rebuild derived indexes (semantic retrieval, if enabled) from canonical SQLite — never treat derivatives as source of truth.
+7. Re-link entity `canonical_ref`s against destination registries via strong handles ([ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §12); demote entities that do not re-resolve to `provisional`.
 
 ## What stays on Den (reference)
 

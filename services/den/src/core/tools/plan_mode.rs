@@ -220,8 +220,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                     },
                 }),
             )
-            .await
-            .map_err(DenError::from)?;
+            .await?;
             written
                 .get("path")
                 .and_then(|v| v.as_str())

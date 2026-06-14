@@ -149,7 +149,7 @@ impl<'a> DenMemoryReviewStore<'a> {
             },
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
 
         let reflection_date = OffsetDateTime::now_utc().date();
         let conversation_key = format!("memory_curate:{reflection_date}");
@@ -181,7 +181,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     ) -> Result<Option<ObservationRecord>, DenError> {
         let existing = get_observation(self.pool, self.config, self.stores, bear_id, observation_id)
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
         Ok(existing.as_ref().map(observation_record))
     }
 
@@ -204,7 +204,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             },
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
 
         let proposal = self
             .enqueue_observation_review(&request, &observation, &salience)
@@ -218,7 +218,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             proposal.id,
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
         let mut observation = observation;
         observation.status = "review_queued".to_string();
         observation.proposal_id = Some(proposal.id);
@@ -234,7 +234,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         let proposals =
             db_list_proposals(self.pool, self.config, self.stores, bear_id, status.as_deref(), limit)
                 .await
-                .map_err(CustomError::into_den)?;
+                ?;
         Ok(json!(proposals))
     }
 
@@ -245,7 +245,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     ) -> Result<Option<Value>, DenError> {
         let proposal = db_get_proposal(self.pool, self.config, self.stores, bear_id, proposal_id)
             .await
-            .map_err(CustomError::into_den)?;
+            ?;
         Ok(proposal.map(|proposal| json!(proposal)))
     }
 
@@ -268,7 +268,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             },
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
         self.project_resolved(&request.projection, &resolved);
         Ok(json!(resolved))
     }
@@ -298,7 +298,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             },
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
         project_to_conversation(
             self.pool,
             proposal.bear_id,
@@ -326,7 +326,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             request.proposal_id,
         )
         .await
-        .map_err(CustomError::into_den)?
+        ?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
         let content = request.body.clone().unwrap_or_else(|| {
@@ -350,7 +350,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             request.reviewer_profile.as_str(),
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
         let resolved = db_resolve_proposal(
             self.pool,
             self.config,
@@ -369,7 +369,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             },
         )
         .await
-        .map_err(CustomError::into_den)?;
+        ?;
         self.project_resolved(&request.projection, &resolved);
         Ok(json!({
             "bear_id": request.bear_id,

@@ -48,7 +48,7 @@ fn default_provisioning_version() -> i32 {
 
 // `BearProfile` now lives in the `den-core` foundation crate (shared by runtime,
 // docket, tools, memory, web/api). Re-exported here so existing
-// `crate::core::bears::{BearProfile, model::BearProfile}` paths keep compiling.
+// `crate::bears::{BearProfile, model::BearProfile}` paths keep compiling.
 pub use den_core::BearProfile;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

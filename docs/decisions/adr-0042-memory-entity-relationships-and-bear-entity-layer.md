@@ -114,6 +114,76 @@ The **bear entity layer travels in the bear package** so relations never dangle 
 - This ADR is the **native replacement** for [ADR-0015](adr-0015-multi-user-memory.md)'s per-user memory: "the human you are talking to" is a `person` entity at `confirmed`/asserted trust (identity from the session/ACP token), and per-user isolation is an `audience` access-bearing relation — not a Letta isolated block.
 - Recall scoring ([ADR-0041](adr-0041-archival-recall-and-async-curation.md), [ADR-0038](adr-0038-platform-embedding-standard-and-derived-recall-index.md)) gains **entity filters**: descriptive relations boost; access-bearing relations gate; the Qdrant passage payload should carry resolved `entity_id`s for filtered recall.
 
+### 11. Entity identity: ids, handles, and strong/weak resolution (settled — "fork D")
+
+**Entity ids.** Opaque, stable, bear-local (ULID-style `TEXT`). Type is a column, **never encoded in the id** — types can change (a provisional `person` may be promoted to a Den user; a `contact` is just a `person` with address-book provenance). The `entity_id` is the **portable identity**; `canonical_ref` re-links on import; merge/split never reuse ids.
+
+**Merge and split.**
+
+- **Merge:** choose a survivor; the loser gets `state = merged` and `superseded_by_entity_id = survivor`. Reads follow the forward pointer to the live entity; a background pass repoints relations.
+- **Split:** create a new entity, move the offending handle(s) to it, and re-home relations using the `source_handle` qualifier — relations whose `source_handle` belongs to the moved handle follow it; provenance-less relations go to `curate` review.
+- Merge/split are consequential identity operations: **`curate` (and human via UI) only.**
+
+**Entity-type vocabulary (v1, descriptor-owned).** `contact`, `place`, and others are added by registering a descriptor — no migration.
+
+| Entity type | Owning registry (`canonical_ref`) | Default trust | Anchor-eligible |
+|---|---|---|---|
+| `person` | Cabinet People / Den user (when known) | inferred (asserted from token) | yes |
+| `org` | Cabinet | inferred | yes |
+| `event` | calendar / external | inferred (asserted from event id) | optional |
+| `mission` | Cabinet | asserted | yes |
+| `domain` | bear-local | asserted | yes |
+| `work_surface` | Den control-plane / Cabinet / Docket | asserted | yes |
+| `connection` | Den control-plane (owner-scoped) | asserted | no |
+| `artifact` | external (URL/registry) | inferred | optional |
+
+`contact` is **not** a type — it is a `person` with address-book provenance (a handle / `canonical_ref`).
+
+**Handle vocabulary + strength.** Strength is declared on the **handle-type descriptor**, optionally overridable per entity type (e.g. a `checkout` path is unique but still *weak* because it is machine-local).
+
+| Handle type | Example | Strength |
+|---|---|---|
+| `den_user` | `den_user:42` | strong |
+| `session_human` | (from ACP token) | strong (asserted) |
+| `git_remote` | `git_remote:github.com/acme/app` | strong |
+| `cabinet_ref` | `cabinet_ref:people/ryan` | strong |
+| `connection_ref` | `connection_ref:gh-acme` | strong |
+| `calendar_event_id` | `calendar_event_id:…` | strong |
+| `slack_user` | `slack_user:T01:U07` | strong |
+| `email` | `email:ryan@acme.com` | strong |
+| `url` | `url:https://github.com/acme/app/pull/12` | strong |
+| `checkout` / `workspace_root` | `checkout:/home/h/app` | weak |
+| `mention` | `mention:"Ryan"` | weak |
+| `alias` | `alias:"Ry"` | weak |
+
+**Resolution algorithm.**
+
+1. The per-type resolver normalizes incoming signals into handles.
+2. **Exact match on a strong handle ⇒ resolve to that entity** (attach new handles; raise resolution/trust per the source). A new entity created from a strong handle starts at `resolved` (or `confirmed` if session-asserted).
+3. **Only weak handles ⇒** search for candidates (matching weak handles, name similarity *within type*); a confident candidate yields `candidate`/`ambiguous` for confirmation; otherwise create a new `provisional`/`observed` entity.
+4. **Never auto-merge across *different* strong identities on similarity.** Cross-handle unification (Ryan's `slack_user` + `email` + `cabinet_ref` are one person) requires an **authoritative registry mapping** (Den identity map, Cabinet People) or an explicit merge.
+5. **Conflicting strong matches** (a new signal claims two existing strong-handle entities are one) → `curate`/human, never automatic.
+
+**Trust gate (ties to §7).** Access-bearing relations (`memory_access_rules`) may target **only `resolved`/`confirmed`** entities. Provisional/weak entities can hold descriptive relations but cannot gate visibility — a mis-resolved provisional must never leak memory.
+
+**Who does what.**
+
+- Deterministic strong-handle resolution: any ingestion path.
+- Provisional-entity creation, handle attach, and descriptive relations: `chat`/`pair`/`work`/`watch`.
+- Weak-candidate promotion, merge/split, and **all** access-bearing relations: `curate` (+ human via UI), consistent with `curate` owning cross-profile governance.
+- Session/ACP-token identity ⇒ a `person` at `confirmed` + asserted trust; **never inferred from chat text** (per `AGENTS.md`).
+
+### 12. Portability: package placement and import re-linking (settled — "fork E")
+
+The entity layer needs **no new package tier**: `entities`, `entity_handles`, `memory_relations`, and `memory_access_rules` live in per-Bear SQLite (bear cognition), so they ship automatically in the existing **cognition export** (`memory.sqlite`) alongside `memory_records` ([bear package](../guides/bear-package.md)). `memory_links` is a view, recreated by schema. This bumps `memory_schema_version`.
+
+- **`bear_id` rewrite already covers the new tables** (the existing import rule rewrites `bear_id` across all SQLite tables in one transaction). **`entity_id` is bear-local and opaque — never rewritten**, so every relation stays valid after import; nothing dangles.
+- **`canonical_ref` re-linking (new import step).** `canonical_ref` points at the *source* Den/Cabinet/calendar registries and is meaningless on another host. On import: keep `entity_id` stable; re-resolve each entity's `canonical_ref` against the **destination** registries via its **strong handles** (`git_remote` → destination work surface/connection; `cabinet_ref`/`email`/`slack_user` → destination Cabinet/Den). Entities that re-resolve become `resolved`/`confirmed`; those that do not are **demoted to `provisional` with `canonical_ref` cleared** — never keep a stale cross-host canonical pointer. This mirrors the existing "rebuild derived indexes / re-provision bindings / remap models" pattern.
+- **Access-bearing rules travel** (SQLite rows), so visibility gating survives import. After re-linking, any `memory_access_rules` whose target entity did not reach `resolved` is **inert until re-resolved** (§11 trust gate) — fail-closed, not fail-open.
+- **Operator visibility on export.** Authoritative entity data is in `memory.sqlite`; the manifest may additionally carry an informational **entity summary** (counts by type, resolved vs provisional) so operators can see "what entities this Bear knows" without opening the DB. (Optional, informational.)
+
+Deferred (unchanged): extracting the registries' *own* knowledge about an entity (Cabinet People content, etc.). The package carries the Bear's references and resolution, not Cabinet's graph.
+
 ## Schema deltas (sketch)
 
 Canonical bear SQLite (`den-memory`). Final names/columns settle with D/E.
@@ -129,7 +199,7 @@ CREATE TABLE entities (
     resolution     TEXT NOT NULL DEFAULT 'observed', -- observed|provisional|resolved|confirmed|rejected|merged
     trust          TEXT NOT NULL DEFAULT 'inferred', -- inferred|asserted
     canonical_ref  TEXT NULL,                -- cabinet:/den:/calendar: ref when resolved
-    supersedes_entity_id TEXT NULL,          -- merge/split provenance
+    superseded_by_entity_id TEXT NULL,       -- forward pointer: dead (merged|superseded) -> live survivor
     metadata_json  TEXT NOT NULL DEFAULT '{}',
     created_at     TEXT NOT NULL
 );
@@ -201,9 +271,6 @@ CREATE VIEW memory_links AS
 
 ## Open questions
 
-- **D — entity-id scheme + handle vocabulary.** Final entity-type set (`person`, `contact`, `org`, `event`, `mission`, `domain`, `work_surface`, `connection`, `artifact`, `place`?), handle-type vocabulary, and which handle types are "strong" (auto-resolve/merge) vs "weak" (stay provisional).
-- **E — bear-package entity section.** Exact exported fields and the import re-linking rules for `canonical_ref` against destination registries (pending [bear package](../guides/bear-package.md) verification).
-- **Relation vocabulary v1 final** — confirm `subject`/`source`/`participant`/`applies_when` (descriptive) and `audience`/`confined_to` (access-bearing); whether weak references are `subject` + low `confidence` or a distinct `mentions` relation.
 - **Naming** — `memory_access_rules` vs `memory_visibility` vs `memory_access_scopes`; view materialization (likely plain view).
 - **Work-surface canonical home** — confirm externally-backed surfaces resolve through Connections only, and whether `work_surface_ref` is retired once `entities` lands.
 - **Salience threshold** for promoting an entity from query-derived view to projected anchor.

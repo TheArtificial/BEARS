@@ -1,17 +1,17 @@
+use den_core::DenError;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    core::{
+    {
         bears::BearProfile,
         conversation_events::{
             memory_proposal_created_projection, memory_proposal_resolved_projection,
             project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
     },
-    errors::CustomError,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,7 +118,7 @@ fn maybe_project_memory_proposal_resolved(pool: &PgPool, row: &MemoryProposalRow
 pub async fn create(
     pool: &PgPool,
     params: CreateMemoryProposal<'_>,
-) -> Result<MemoryProposalRow, CustomError> {
+) -> Result<MemoryProposalRow, DenError> {
     let row = sqlx::query(
         r#"
         INSERT INTO bear_memory_proposals (
@@ -166,7 +166,7 @@ pub async fn list_for_bear(
     bear_id: Uuid,
     status: Option<&str>,
     limit: i64,
-) -> Result<Vec<MemoryProposalRow>, CustomError> {
+) -> Result<Vec<MemoryProposalRow>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
@@ -205,7 +205,7 @@ pub struct ProposalResolutionParams<'a> {
 pub async fn resolve_for_bear(
     pool: &PgPool,
     params: ProposalResolutionParams<'_>,
-) -> Result<MemoryProposalRow, CustomError> {
+) -> Result<MemoryProposalRow, DenError> {
     let row = sqlx::query(
         r#"
         UPDATE bear_memory_proposals
@@ -247,7 +247,7 @@ pub async fn get_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
     proposal_id: Uuid,
-) -> Result<Option<MemoryProposalRow>, CustomError> {
+) -> Result<Option<MemoryProposalRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,

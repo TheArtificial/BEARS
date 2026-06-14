@@ -1,24 +1,24 @@
 use serde::Serialize;
 
 // Prompt-memory domain types now live in `den-tools` (the tool-executor crate);
-// re-exported here so existing `crate::core::prompt_memory_blocks::*` paths keep
+// re-exported here so existing `crate::prompt_memory_blocks::*` paths keep
 // resolving. The runtime prompt-compilation logic below stays in `den`.
-pub(crate) use den_tools::prompt_memory::{
+pub use den_tools::prompt_memory::{
     PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PromptMemoryCompilationInput<'a> {
-    pub(crate) role: &'a str,
-    pub(crate) work_surfaces: &'a [String],
-    pub(crate) session_id: &'a str,
-    pub(crate) max_blocks: usize,
+pub struct PromptMemoryCompilationInput<'a> {
+    pub role: &'a str,
+    pub work_surfaces: &'a [String],
+    pub session_id: &'a str,
+    pub max_blocks: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct PromptMemoryCompilation {
-    pub(crate) included_blocks: Vec<PromptMemoryBlock>,
-    pub(crate) omitted_block_ids: Vec<String>,
+pub struct PromptMemoryCompilation {
+    pub included_blocks: Vec<PromptMemoryBlock>,
+    pub omitted_block_ids: Vec<String>,
 }
 
 fn block_matches_scope(block: &PromptMemoryBlock, input: &PromptMemoryCompilationInput<'_>) -> bool {
@@ -46,7 +46,7 @@ fn scope_rank(scope: PromptMemoryBlockScope) -> i32 {
     }
 }
 
-pub(crate) fn compile_prompt_memory_blocks(
+pub fn compile_prompt_memory_blocks(
     blocks: &[PromptMemoryBlock],
     input: PromptMemoryCompilationInput<'_>,
 ) -> PromptMemoryCompilation {
@@ -73,7 +73,7 @@ pub(crate) fn compile_prompt_memory_blocks(
     }
 }
 
-pub(crate) fn render_prompt_memory_block_context(compilation: &PromptMemoryCompilation) -> String {
+pub fn render_prompt_memory_block_context(compilation: &PromptMemoryCompilation) -> String {
     if compilation.included_blocks.is_empty() {
         return "No prompt memory blocks are active for this runtime context.".to_string();
     }
