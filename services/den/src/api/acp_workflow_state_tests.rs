@@ -142,7 +142,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
     .unwrap();
     let err = validate_memory_write_entry_semantics(
         &invalid_memory,
-        &crate::core::tools::session::DenToolInvocationContext {
+        &den_core::tools::context::DenToolInvocationContext {
             bear_id: uuid::Uuid::nil(),
             bear_slug: "test".to_string(),
             binding_id: "agent".to_string(),
