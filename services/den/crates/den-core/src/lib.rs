@@ -5,8 +5,12 @@
 
 pub mod config;
 pub mod error;
+pub mod governance;
+pub mod ids;
 pub mod metrics;
 pub mod profile;
 
 pub use error::DenError;
+pub use governance::{GovernanceMode, RunMode};
+pub use ids::{BearId, ConversationId, SessionId, UserId};
 pub use profile::BearProfile;

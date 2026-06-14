@@ -8,7 +8,8 @@
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+
+use crate::ids::BearId;
 
 /// Operational profile a Bear runs under (not a membership role).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ impl BearProfile {
         }
     }
 
-    pub fn tags_for_bear(self, bear_id: Uuid) -> Vec<String> {
+    pub fn tags_for_bear(self, bear_id: BearId) -> Vec<String> {
         vec![
             format!("bear:{bear_id}"),
             format!("profile:{}", self.as_str()),
