@@ -195,7 +195,7 @@ Survey result: `core/` is already a clean layer (**no `core/` module imports `cr
 
 The **residual** `core/acp/` (`sessions`, `tokens`, `runtime`, `turn_controller`, `turn_runner`) is the true ACP protocol edge → `den-acp` later.
 
-**`errors::CustomError` → `den-core`.** It is a foundational error type with no upward deps, used by ~122 files across runtime + edges, so it belongs below both. Move the definition to `den-core` and keep a `crate::errors` re-export shim so the 122 call sites are untouched during the lift.
+**Error handling: cluster migrates to `den-core::DenError` (do NOT move `CustomError`).** `crate::errors::CustomError` is *by design* the web-boundary adapter for the `den` binary — it implements `axum::IntoResponse` (renders `error.html`) and carries auth/mailgun/validator/axum `From` impls — so it must stay in `den`. The web-free `DenError` already lives in `den-core` (it is what service-layer code should return, per the `errors` module doc). The first-move cluster currently returns `CustomError` in ~85 spots (`runtime/` 43, `acp::plan_mode` 26, `acp::tool_turns` 16) and `DenError` nowhere; the lift converts those to `DenError`. This is mechanical: variants mirror 1:1, `DenError` already has the needed `?`-conversions (`anyhow`, `io`, `sqlx`, sqlx-`uuid`, `serde_json`, `reqwest`), and `impl From<DenError> for CustomError` already exists so edge HTTP handlers that propagate via `?` keep working unchanged.
 
 ### v2 — Deferred refinements
 
