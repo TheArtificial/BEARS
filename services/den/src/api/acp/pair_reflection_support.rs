@@ -130,6 +130,14 @@ pub(crate) async fn run_pair_reflection_summary(
             .map(str::to_string);
         (path, memory_id)
     };
+    // Async-index the pair summary into derived recall (ADR-0038 Phase 1b); best-effort.
+    den_runtime::reflection_conductor::enqueue_recall_index_if_enabled(
+        &state.sqlx_pool,
+        state.config.as_ref(),
+        session.bear_id,
+        "pair_reflection_summary",
+    )
+    .await;
     let completed_run = pair_reflection::complete_run(
         &state.sqlx_pool,
         CompletePairReflectionRun {

@@ -721,6 +721,28 @@ pub async fn enqueue_recall_index(
     Ok(row.map(row_from_sql))
 }
 
+/// Best-effort recall enqueue for the memory write path: a no-op when recall is disabled
+/// (`QDRANT_URL` unset) and a logged warning on failure — it must never fail the caller's
+/// tool/turn. Coalescing is handled by [`enqueue_recall_index`].
+pub async fn enqueue_recall_index_if_enabled(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+    trigger: &str,
+) {
+    if config.qdrant_url.is_none() {
+        return;
+    }
+    if let Err(error) = enqueue_recall_index(pool, bear_id, trigger).await {
+        tracing::warn!(
+            bear_id = %bear_id,
+            trigger,
+            error = %error,
+            "failed to enqueue recall_index"
+        );
+    }
+}
+
 async fn claim_next_recall_index_run(
     pool: &PgPool,
     bear_id: Uuid,

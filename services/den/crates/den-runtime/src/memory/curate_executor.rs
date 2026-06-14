@@ -419,24 +419,15 @@ async fn apply_core_promotion(
     )
     .await?;
 
-    // Derived recall is updated asynchronously (ADR-0038 Phase 1b): enqueue a reconcile so a
-    // worker re-indexes this Bear's canonical heads. Best-effort — recall is optional and a
-    // failure here must not block the curate promotion.
-    if config.qdrant_url.is_some() {
-        if let Err(error) = crate::reflection::conductor::enqueue_recall_index(
-            pool,
-            bear_id,
-            "memory_curate_core_promotion",
-        )
-        .await
-        {
-            tracing::warn!(
-                bear_id = %bear_id,
-                error = %error,
-                "failed to enqueue recall_index after core promotion"
-            );
-        }
-    }
+    // Derived recall is updated asynchronously (ADR-0038 Phase 1b): enqueue a reconcile so the
+    // recall_index worker re-indexes this Bear's canonical heads. Best-effort.
+    crate::reflection::conductor::enqueue_recall_index_if_enabled(
+        pool,
+        config,
+        bear_id,
+        "memory_curate_core_promotion",
+    )
+    .await;
 
     let (result_path, result_commit) = (target_path, Some(memory_id));
     resolve_proposal(

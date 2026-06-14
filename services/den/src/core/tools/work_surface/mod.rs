@@ -10,11 +10,13 @@ pub(crate) use den_core::tools::work_surface::*;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
 use crate::{
+    config::Config,
     errors::DenError,
     core::tools::session::DenToolInvocationContext,
 };
@@ -25,6 +27,8 @@ use den_runtime::{
 
 /// Concrete [`WorkSurfaceOps`] over the runtime memory stores.
 pub(crate) struct DenWorkSurfaceOps<'a> {
+    pub(crate) pool: &'a PgPool,
+    pub(crate) config: &'a Config,
     pub(crate) stores: &'a MemoryStoreManager,
 }
 
@@ -58,6 +62,15 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
             ?;
             responses.push(written);
         }
+        // Async-index these scaffold writes into derived recall (ADR-0038 Phase 1b);
+        // best-effort, coalesced per Bear.
+        den_runtime::reflection_conductor::enqueue_recall_index_if_enabled(
+            self.pool,
+            self.config,
+            bear_id,
+            "work_surface_scaffold",
+        )
+        .await;
         Ok(WorkSurfaceScaffoldOutcome {
             storage: Some("sqlite".to_string()),
             updates: responses,

@@ -26,12 +26,13 @@ use den_runtime::{
 
 /// Concrete [`RoleMemoryStore`] over the runtime config (native SQLite + legacy MemFS).
 pub(crate) struct DenRoleMemoryStore<'a> {
+    pool: &'a PgPool,
     config: &'a Config,
 }
 
 impl<'a> DenRoleMemoryStore<'a> {
-    pub(crate) fn new(config: &'a Config) -> Self {
-        Self { config }
+    pub(crate) fn new(pool: &'a PgPool, config: &'a Config) -> Self {
+        Self { pool, config }
     }
 }
 
@@ -82,7 +83,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError> {
         let stores = MemoryStoreManager::new(self.config);
-        sqlite_memory::sqlite_write_profile_entry(
+        let written = sqlite_memory::sqlite_write_profile_entry(
             &stores,
             bear_id,
             role.as_str(),
@@ -93,8 +94,16 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             entry.source,
             entry.author,
         )
-        .await
-        
+        .await?;
+        // Async-index this write into derived recall (ADR-0038 Phase 1b); best-effort.
+        den_runtime::reflection_conductor::enqueue_recall_index_if_enabled(
+            self.pool,
+            self.config,
+            bear_id,
+            "role_memory_write_entry",
+        )
+        .await;
+        Ok(written)
     }
 }
 
@@ -104,7 +113,7 @@ pub(crate) async fn memory_status(
     context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, CustomError> {
-    let memory = DenRoleMemoryStore::new(config);
+    let memory = DenRoleMemoryStore::new(pool, config);
     let prompt = DenPromptMemoryStore::new(pool);
     den_core::tools::memory::memory_status(&memory, &prompt, context.bear_id, role)
         .await
