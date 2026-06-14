@@ -8,7 +8,7 @@ use crate::{
         bears::{model::BearProfile, Bear},
         memory::{
             store::{append_memory_record, LogicalMemoryPath},
-            MemoryStoreManager,
+            AccessContext, MemoryStoreManager,
         },
     },
 };
@@ -70,6 +70,7 @@ async fn projects_shared_identity_anchors_without_work_surface() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        access: AccessContext::empty(),
     })
     .await
     .expect("project");
@@ -102,6 +103,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints.clone(),
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        access: AccessContext::empty(),
     })
     .await
     .expect("project");
@@ -137,6 +139,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints,
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        access: AccessContext::empty(),
     })
     .await
     .expect("project");
@@ -177,10 +180,103 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
         },
         work_surface_status_override: Some("resolved"),
         native_runtime: true,
+        access: AccessContext::empty(),
     })
     .await
     .expect("project");
 
     assert!(result.rendered_text.contains("## Work surface: my-app"));
     assert!(result.rendered_text.contains("Use SQLite"));
+}
+
+#[tokio::test]
+async fn access_bearing_relation_gates_record_out_of_projection() {
+    use crate::memory::store::{append_relation, resolve, Assertion, Resolution, Signal};
+
+    let bear_id = Uuid::new_v4();
+    let bear = legacy_test_bear(bear_id);
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = format!("/tmp/bears-kmp-access-{}", Uuid::new_v4());
+    let stores = MemoryStoreManager::new(&config);
+    let store = stores.store_for_bear(bear.id).await.expect("store");
+
+    let record = append_memory_record(
+        &store,
+        &LogicalMemoryPath::from_logical_path("core/bear-overview.md"),
+        "overview",
+        "curate",
+        None,
+        "Confidential charter",
+        &serde_json::json!({}),
+    )
+    .await
+    .expect("append");
+
+    // Confine the record to a resolved work-surface entity.
+    let surface = match resolve(
+        &store,
+        "work_surface",
+        Some("client-a"),
+        &[Signal::new("git_remote", "github.com/acme/client-a")],
+        Assertion::Asserted,
+    )
+    .await
+    .expect("resolve")
+    {
+        Resolution::Resolved(e) => e.entity_id,
+        other => panic!("expected Resolved, got {other:?}"),
+    };
+    append_relation(
+        &store,
+        &record.memory_id,
+        &surface,
+        "confined_to",
+        &serde_json::json!({}),
+        "curate",
+        None,
+        None,
+    )
+    .await
+    .expect("append access rule");
+
+    let pool = noop_pg_pool();
+
+    // Fail-closed context hides the confined record.
+    let hidden = project_key_memory(KeyMemoryProjectionInput {
+        pool: &pool,
+        stores: &stores,
+        bear: &bear,
+        profile: BearProfile::Pair,
+        conversation_id: "den-conv-test",
+        session_hints: WorkSurfaceSessionHints::default(),
+        work_surface_status_override: None,
+        native_runtime: true,
+        access: AccessContext::empty(),
+    })
+    .await
+    .expect("project");
+    assert!(!hidden.rendered_text.contains("Confidential charter"));
+    assert_eq!(
+        hidden.diagnostic["omitted_by_access"]
+            .as_array()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        1
+    );
+
+    // Granting the confinement scope surfaces it.
+    let shown = project_key_memory(KeyMemoryProjectionInput {
+        pool: &pool,
+        stores: &stores,
+        bear: &bear,
+        profile: BearProfile::Pair,
+        conversation_id: "den-conv-test",
+        session_hints: WorkSurfaceSessionHints::default(),
+        work_surface_status_override: None,
+        native_runtime: true,
+        access: AccessContext::empty().with_confinement([surface]),
+    })
+    .await
+    .expect("project");
+    assert!(shown.rendered_text.contains("Confidential charter"));
 }

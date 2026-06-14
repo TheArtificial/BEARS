@@ -8,7 +8,8 @@ use crate::{
         bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash, Bear},
         memory::{
             has_work_surface_canonical_anchor, head_record_for_logical_path,
-            list_profile_local_head_records, memory_sequence_high_water, MemoryRecordRow, MemoryStoreManager,
+            list_profile_local_head_records, memory_sequence_high_water, record_visible,
+            AccessContext, MemoryRecordRow, MemoryStoreManager,
         },
     },
 };
@@ -53,6 +54,9 @@ pub struct KeyMemoryProjectionInput<'a> {
     pub session_hints: WorkSurfaceSessionHints,
     pub work_surface_status_override: Option<&'a str>,
     pub native_runtime: bool,
+    /// Mandatory access gate (ADR-0042 §7): records carrying access-bearing relations are
+    /// only projected when this context grants them. An empty context is fail-closed.
+    pub access: AccessContext,
 }
 
 struct TierBudget {
@@ -193,6 +197,7 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     let mut included = Vec::<Value>::new();
     let mut omitted_budget = Vec::<String>::new();
     let mut omitted_no_surface = Vec::<String>::new();
+    let mut omitted_by_access = Vec::<String>::new();
     let mut sections = Vec::<String>::new();
 
     // Tier 1 — shared identity anchors
@@ -207,6 +212,10 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
             let Some(record) = head_record_for_logical_path(&store, path).await? else {
                 continue;
             };
+            if !record_visible(&store, &record.memory_id, &input.access).await? {
+                omitted_by_access.push(path.to_string());
+                continue;
+            }
             match tracker.try_take_record(&record.content_text) {
                 Some(body) => {
                     included.push(json!({
@@ -258,6 +267,10 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
                 let Some(record) = head_record_for_logical_path(&store, &path).await? else {
                     continue;
                 };
+                if !record_visible(&store, &record.memory_id, &input.access).await? {
+                    omitted_by_access.push(path.clone());
+                    continue;
+                }
                 match tracker.try_take_record(&record.content_text) {
                     Some(body) => {
                         included.push(json!({
@@ -307,6 +320,12 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
                 }
                 continue;
             }
+            if !record_visible(&store, &record.memory_id, &input.access).await? {
+                if let Some(path) = record.logical_path.clone() {
+                    omitted_by_access.push(path);
+                }
+                continue;
+            }
             match tracker.try_take_record(&record.content_text) {
                 Some(body) => {
                     included.push(json!({
@@ -337,7 +356,9 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     {
         let mut tracker = BudgetTracker::new(&budget, 3);
         if let Some(record) = head_record_for_logical_path(&store, TIER4_SITUATION_PATH).await? {
-            if let Some(body) = tracker.try_take_record(&record.content_text) {
+            if !record_visible(&store, &record.memory_id, &input.access).await? {
+                omitted_by_access.push(TIER4_SITUATION_PATH.to_string());
+            } else if let Some(body) = tracker.try_take_record(&record.content_text) {
                 included.push(json!({
                     "tier": 4,
                     "memory_id": record.memory_id,
@@ -364,6 +385,7 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         "included": included,
         "omitted_by_budget": omitted_budget,
         "omitted_because_no_surface": omitted_no_surface,
+        "omitted_by_access": omitted_by_access,
         "global_char_cap": budget.global_cap,
     });
     Ok(KeyMemoryProjectionResult {

@@ -3,6 +3,7 @@
 //! Service-layer leaf crate (see `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`):
 //! depends only on `den-core`. Higher-level curation/tools live in `den`.
 
+pub mod access;
 pub mod descriptors;
 pub mod entity;
 mod logical_path;
@@ -19,6 +20,7 @@ pub mod resolver;
 #[cfg(test)]
 mod test_support;
 
+pub use access::{record_visible, AccessContext};
 pub use descriptors::{
     EntityTrust, HandleStrength, RecallEffect, RelationClass, ResolutionState,
 };

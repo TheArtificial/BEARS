@@ -62,14 +62,20 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** write tests — descriptive vs access routing; misfiling impossible; access-bearing rejects unresolved targets; union view returns both with correct `class`.
 
-## Phase 4 — Enforcement + recall/projection integration  ⏳ pending (reaches into the `den` service crate)
+## Phase 4 — Enforcement + recall/projection integration  🟡 partially landed (gate + projection); recall-leg wiring deferred
 
-- Recall assembler takes a **mandatory `AccessContext`** (the `memory_access_rules` query) — the **only** consumer of the access table; omission is a compile error (fail-closed).
-- Descriptive relations feed recall **boost/filter**; wire entity filters into ADR-0041/0038 recall and carry resolved `entity_id`s in the Qdrant passage payload.
-- This relation layer is also the substrate for the **bounded graph recall leg** ([DERIVED_RECALL Phase 3.5](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6): depth-capped (default 2), read-only, retrieval-time traversal over the `memory_relations` bipartite links — **gated relations excluded**, `AccessContext` applied before results return, no stored edges ([ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §4).
-- Entity-aware **key memory projection** (`core/agent_loop/key_memory_projection.rs`): `audience` gating + `applies_when` proactive surfacing alongside work-surface-first precedence.
+**Landed** (`den-memory/src/access.rs`, `den-runtime/.../key_memory_projection.rs`):
 
-**Exit:** recall/projection tests — `audience` gates cross-person leakage; `confined_to` prevents cross-surface leakage; descriptive relations boost; building recall without `AccessContext` fails to compile.
+- `AccessContext` is the **fail-closed** gate (`record_visible`) and the **only** reader of `memory_access_rules`; an empty context hides every access-gated record.
+- Key memory projection takes a **mandatory `access: AccessContext`** field — omitting it is a compile error. Every projected record is gated; `audience` (ANY-of addressees) and `confined_to` (ALL-of scopes, hard non-leak) are enforced, and the `omitted_by_access` diagnostic records suppressions. The production caller passes `AccessContext::empty()` until session identity is resolved to entities (Phase 6) — a no-op today since no access rules exist yet, which is exactly why the gate lands **before** access-rule writes.
+
+**Deferred** (blocked on the recall index — [Derived Recall Index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), needs Qdrant):
+
+- Descriptive relations feeding recall **boost/filter**; carrying resolved `entity_id`s in the Qdrant passage payload.
+- The **bounded graph recall leg** ([DERIVED_RECALL Phase 3.5](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6) over the `memory_relations` bipartite links (depth-capped, read-only, gated relations excluded, `AccessContext` applied — [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §4).
+- `applies_when` proactive surfacing in projection (descriptive boost).
+
+**Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (recall slice):** pending recall infra.
 
 ## Phase 5 — Anchors generalize
 

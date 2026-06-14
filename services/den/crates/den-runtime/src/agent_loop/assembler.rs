@@ -136,6 +136,9 @@ pub async fn assemble_native_turn_for_bear(
         session_hints: ctx.session_hints(),
         work_surface_status_override: ctx.work_surface_status_override(),
         native_runtime: ctx.native_runtime,
+        // Fail-closed default: until session identity is resolved to entities (Phase 6),
+        // any access-gated record is hidden. No-op today (no access rules exist yet).
+        access: crate::memory::AccessContext::empty(),
     })
     .await
     {
