@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 use tokio::time::timeout;
 use url::Url;
 
+use crate::config::Config;
 use crate::startup;
 use crate::web::AppState;
 
@@ -85,6 +86,7 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
 
     checks.push(den_pg);
     checks.push(bifrost_h);
+    checks.push(check_qdrant(cfg).await);
 
     StackHealthReport::from_checks(checks)
 }
@@ -321,6 +323,58 @@ async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
                 }
             }
         }
+    }
+}
+
+/// Probe the derived recall index (Qdrant). Recall is optional and derived (ADR-0038), so an
+/// unreachable store is a **warning** (Den degrades to keyword search) rather than a hard
+/// failure that would 503 the whole stack. Idempotently ensures the recall collection so the
+/// status surface self-heals startup races against the `recall` compose profile.
+async fn check_qdrant(config: &Config) -> HealthCheck {
+    let Some(recall) = den_runtime::recall::QdrantRecall::from_config(config) else {
+        return HealthCheck {
+            id: "qdrant",
+            label: "Qdrant recall",
+            state: CheckState::Skipped,
+            detail: "QDRANT_URL unset — derived recall disabled (keyword fallback)".into(),
+        };
+    };
+
+    match timeout(HTTP_PROBE_TIMEOUT, recall.ensure_collection()).await {
+        Ok(Ok(created)) => HealthCheck {
+            id: "qdrant",
+            label: "Qdrant recall",
+            state: CheckState::Ok,
+            detail: if created {
+                format!(
+                    "reachable at {}; collection {} created",
+                    recall.base_url(),
+                    recall.collection_name()
+                )
+            } else {
+                format!(
+                    "reachable at {}; collection {} present",
+                    recall.base_url(),
+                    recall.collection_name()
+                )
+            },
+        },
+        Ok(Err(e)) => HealthCheck {
+            id: "qdrant",
+            label: "Qdrant recall",
+            state: CheckState::Warn,
+            detail: format!("{e} — recall degraded to keyword fallback"),
+        },
+        Err(_) => HealthCheck {
+            id: "qdrant",
+            label: "Qdrant recall",
+            state: CheckState::Warn,
+            detail: format!(
+                "timeout after {}s probing {} — recall degraded to keyword fallback",
+                HTTP_PROBE_TIMEOUT.as_secs(),
+                recall.base_url()
+            ),
+        },
     }
 }
 

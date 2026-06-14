@@ -12,6 +12,10 @@ echo "Running smoke tests..."
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
+# When set, the Qdrant recall assertion in tests/smoke is active.
+export QDRANT_URL="${QDRANT_URL:-}"
+export EMBEDDING_MODEL="${EMBEDDING_MODEL:-text-embedding-3-small}"
+export EMBEDDING_DIMENSIONS="${EMBEDDING_DIMENSIONS:-1536}"
 
 if [ "${AGENT_RUNTIME}" != "native" ]; then
   printf 'smoke.sh requires AGENT_RUNTIME=native; legacy service health checks are not in the default compose stack\n' >&2
@@ -41,4 +45,8 @@ fi
 DEN_URL="http://bears-den:3000" \
 BEARS_API_URL="${API_URL}" \
 AGENT_RUNTIME="${AGENT_RUNTIME}" \
+QDRANT_URL="${QDRANT_URL}" \
+OPENAI_API_KEY="${OPENAI_API_KEY}" \
+EMBEDDING_MODEL="${EMBEDDING_MODEL}" \
+EMBEDDING_DIMENSIONS="${EMBEDDING_DIMENSIONS}" \
 python3 -m pytest tests/smoke/ -v

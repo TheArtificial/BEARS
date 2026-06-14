@@ -5,10 +5,12 @@
 //! `RuntimeStreamEvent` mapping lives in den-runtime to avoid a cycle.
 
 mod client;
+mod embeddings;
 mod idle_byte_stream;
 
 pub use client::{
     normalize_llm_model_handle, ChatCompletionRequest, ChatMessage, ChatToolCall,
     ChatToolCallFunction, LlmClient, LlmToolDefinition,
 };
+pub use embeddings::EmbeddingClient;
 pub use idle_byte_stream::byte_stream_with_idle_timeout;

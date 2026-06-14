@@ -7,8 +7,8 @@ mod stream;
 
 pub use den_llm::byte_stream_with_idle_timeout;
 pub use den_llm::{
-    ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, LlmClient,
-    LlmToolDefinition,
+    ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, EmbeddingClient,
+    LlmClient, LlmToolDefinition,
 };
 pub use stream::{
     openai_sse_chunk_to_runtime_events, openai_sse_event_body_to_runtime_events,

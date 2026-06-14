@@ -163,6 +163,16 @@ pub struct Config {
     /// Max results returned by Den search tools (`DEN_SEARCH_MAX_RESULTS`, default 5, clamped 1..10).
     pub den_search_max_results: usize,
 
+    /// Derived recall vector store (Qdrant) base URL, e.g. `http://bears-qdrant:6333`
+    /// (`QDRANT_URL`). `None`/empty disables recall — Den falls back to keyword search (ADR-0038).
+    pub qdrant_url: Option<String>,
+    /// Active platform embedding standard id (`EMBEDDING_STANDARD`, default `bears-embed-v1`).
+    pub embedding_standard: String,
+    /// Embedding model for the active standard (`EMBEDDING_MODEL`, default `text-embedding-3-small`).
+    pub embedding_model: String,
+    /// Embedding vector dimensions for the active standard (`EMBEDDING_DIMENSIONS`, default 1536).
+    pub embedding_dimensions: u32,
+
     /// Explicit web UI fixture profile for browser smoke testing.
     ///
     /// This is a runtime selector, not a generic development mode switch. The named profile is
@@ -428,6 +438,28 @@ impl Config {
             })
             .clamp(1, 10);
 
+        let qdrant_url = std::env::var("QDRANT_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty());
+        let embedding_standard = std::env::var("EMBEDDING_STANDARD")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "bears-embed-v1".to_string());
+        let embedding_model = std::env::var("EMBEDDING_MODEL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "text-embedding-3-small".to_string());
+        let embedding_dimensions: u32 = std::env::var("EMBEDDING_DIMENSIONS")
+            .unwrap_or_else(|_| "1536".to_string())
+            .parse()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid EMBEDDING_DIMENSIONS, defaulting to 1536");
+                1536
+            });
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -477,6 +509,10 @@ impl Config {
             den_search_provider,
             brave_search_api_key,
             den_search_max_results,
+            qdrant_url,
+            embedding_standard,
+            embedding_model,
+            embedding_dimensions,
             ui_fixture_profile,
         }
     }
@@ -547,6 +583,10 @@ impl Config {
             den_search_provider: String::new(),
             brave_search_api_key: String::new(),
             den_search_max_results: 5,
+            qdrant_url: None,
+            embedding_standard: "bears-embed-v1".into(),
+            embedding_model: "text-embedding-3-small".into(),
+            embedding_dimensions: 1536,
             ui_fixture_profile: None,
         }
     }

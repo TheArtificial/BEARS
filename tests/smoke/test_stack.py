@@ -35,9 +35,13 @@ def service_url(env_name, service_name, port):
 
 
 DEN = service_url("BEARS_DEN_URL", "bears-den", 3000)
+BIFROST = service_url("BEARS_BIFROST_URL", "bears-bifrost", 8080)
 MEMFS_MANAGER = service_url("BEARS_MEMFS_MANAGER_URL", "bears-memfs-manager", 8285)
 CODEPOOL = service_url("BEARS_CODEPOOL_URL", "bears-codepool", 3030)
 API = os.environ.get("BEARS_API_URL", "").rstrip("/")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small").strip()
+EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
+PLACEHOLDER_SECRETS = {"", "dev-placeholder", "SETME"}
 SEEDED_USERNAME = "alice"
 SEEDED_PASSWORD = "Never deploy seed passwords."
 SEEDED_BEAR_SLUG = "test-bear"
@@ -47,6 +51,10 @@ LETTA_API_KEY = os.environ.get("LETTA_API_KEY") or os.environ.get(
     "LETTA_SERVER_PASS", "dev-placeholder"
 )
 AGENT_RUNTIME = os.environ.get("AGENT_RUNTIME", "native").strip().lower()
+
+
+def real_openai_key_present():
+    return os.environ.get("OPENAI_API_KEY", "").strip() not in PLACEHOLDER_SECRETS
 
 
 def uses_native_agent_runtime():
@@ -84,6 +92,49 @@ def test_memfs_manager_health():
 def test_den_reachable():
     response = request_with_retries("GET", f"{DEN}/health", timeout=5)
     assert response.status_code == 200
+
+
+def test_den_status_reports_qdrant_when_recall_enabled():
+    # Only meaningful when the derived-recall (Qdrant) profile is part of the stack.
+    if not os.environ.get("QDRANT_URL"):
+        return
+    response = request_with_retries("GET", f"{DEN}/status.json", timeout=10)
+    # /status.json returns 503 only when a check *fails*; an optional recall store
+    # that is merely degraded stays a warning, so the body is the source of truth.
+    assert response.status_code in (200, 503), response.text
+    body = response.json()
+    checks = {c["id"]: c for c in body["health"]["checks"]}
+    assert "qdrant" in checks, body
+    qdrant = checks["qdrant"]
+    assert qdrant["state"] == "ok", qdrant
+    assert "den_recall_" in qdrant["detail"], qdrant
+
+
+def test_bifrost_embeds_fixture_text_when_recall_enabled():
+    # Phase 0 derived-recall exit: embed fixture text through Bifrost (which injects the
+    # OpenAI key server-side) and confirm the platform standard's vector width.
+    if not os.environ.get("QDRANT_URL"):
+        return  # recall not part of this stack
+    if not real_openai_key_present():
+        return  # no live embedding-capable key in this environment
+    model = EMBEDDING_MODEL if "/" in EMBEDDING_MODEL else f"openai/{EMBEDDING_MODEL}"
+    response = request_with_retries(
+        "POST",
+        f"{BIFROST}/v1/embeddings",
+        json={
+            "model": model,
+            "input": ["bears keep canonical memory in sqlite"],
+            "dimensions": EMBEDDING_DIMENSIONS,
+        },
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text
+    vectors = response.json().get("data", [])
+    assert len(vectors) == 1, response.text
+    embedding = vectors[0].get("embedding", [])
+    assert (
+        len(embedding) == EMBEDDING_DIMENSIONS
+    ), f"expected {EMBEDDING_DIMENSIONS} dims, got {len(embedding)}"
 
 
 def test_pool_health():

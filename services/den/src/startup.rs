@@ -108,7 +108,32 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
         );
     }
 
+    bootstrap_recall_index(config).await;
+
     Ok(())
+}
+
+/// Best-effort bootstrap of the derived recall index (Qdrant). Recall is optional and
+/// derived from the canonical SQLite store, so failures here are logged and swallowed —
+/// Den degrades to keyword fallback rather than failing startup (ADR-0038).
+async fn bootstrap_recall_index(config: &Config) {
+    let Some(recall) = den_runtime::recall::QdrantRecall::from_config(config) else {
+        return;
+    };
+    match recall.ensure_collection().await {
+        Ok(created) => tracing::info!(
+            collection = recall.collection_name(),
+            created,
+            url = recall.base_url(),
+            "Derived recall index (Qdrant) ready"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            collection = recall.collection_name(),
+            url = recall.base_url(),
+            "Qdrant recall index unavailable at startup; continuing with keyword fallback"
+        ),
+    }
 }
 
 #[cfg(all(test, not(feature = "production")))]

@@ -68,6 +68,10 @@ pub mod reflection;
 /// Pair reflection: projects pair-turn reflection completions into conversations.
 pub mod pair_reflection;
 
+/// Derived recall index client (ADR-0038): minimal Qdrant REST client for readiness +
+/// collection bootstrap. Recall is optional; absence/unreachability degrades to keyword search.
+pub mod recall;
+
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
 pub use runtime::bearwire_projection as runtime_bearwire_projection;

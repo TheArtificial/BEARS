@@ -18,6 +18,14 @@ export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
 
+# Opt-in derived-recall (Qdrant) profile: set SMOKE_RECALL=1 to bring up bears-qdrant and
+# exercise the full recall path end-to-end.
+export SMOKE_RECALL="${SMOKE_RECALL:-0}"
+
+recall_enabled() {
+  case "${SMOKE_RECALL:-0}" in 1 | true | yes | on) return 0 ;; *) return 1 ;; esac
+}
+
 if [ "${AGENT_RUNTIME}" != "native" ]; then
   printf 'smoke-stack.sh requires AGENT_RUNTIME=native; Letta/Codepool/MemFS are not in docker-compose.yaml\n' >&2
   exit 1
@@ -36,9 +44,17 @@ export COMPOSE_ENV_FILES=(
   "DEN_IMAGE=${DEN_IMAGE}"
 )
 
+COMPOSE_PROFILE_ARGS=(--profile bundled)
+
+if recall_enabled; then
+  export QDRANT_URL="${QDRANT_URL:-http://bears-qdrant:6333}"
+  COMPOSE_ENV_FILES+=("QDRANT_URL=${QDRANT_URL}")
+  COMPOSE_PROFILE_ARGS+=(--profile recall)
+fi
+
 compose_with_env() {
   env -i PATH="$PATH" HOME="$HOME" DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" \
-    "${COMPOSE_ENV_FILES[@]}" docker compose --profile bundled "$@"
+    "${COMPOSE_ENV_FILES[@]}" docker compose "${COMPOSE_PROFILE_ARGS[@]}" "$@"
 }
 
 wait_postgres_service() {
@@ -117,6 +133,12 @@ docker build --build-arg SQLX_OFFLINE=true -t "${DEN_IMAGE}" "${ROOT}/services/d
 echo "Starting bundled Postgres..."
 compose_with_env up -d bears-postgres
 wait_postgres_service bears-postgres bears den
+
+if recall_enabled; then
+  echo "Starting Qdrant (recall profile)..."
+  compose_with_env up -d bears-qdrant
+  wait_compose_service_ready bears-qdrant
+fi
 
 echo "Starting native BEARS stack (bifrost + den)..."
 compose_with_env up -d --force-recreate bears-bifrost bears-den

@@ -23,15 +23,16 @@ Complements existing **key memory projection** (path anchors); does not replace 
 - pgvector on Den Postgres
 - Separate embedding models per source class (unless a future ADR adds e.g. code-only `bears-embed-code-v1`)
 
-## Phase 0 — Platform wiring  🟡 partially landed (compose + env)
+## Phase 0 — Platform wiring  🟡 mostly landed (compose, env, config, embedding client, status check)
 
 - ✅ Add env: `EMBEDDING_STANDARD`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `QDRANT_URL` — set on `bears-den` in `docker-compose.yaml` (+ `.env.example`); `QDRANT_URL` empty = recall disabled (LIKE fallback).
 - ✅ Compose: optional `bears-qdrant` service (profile `recall`) with persistent `bears-qdrant-data` volume. Nothing `depends_on` it; the default stack is unchanged. Enable with `COMPOSE_PROFILES=recall` + `QDRANT_URL=http://bears-qdrant:6333`.
-- ⏳ Register embedding model in Bifrost `config.json`; Den `embedding` model task calls `/v1/embeddings`.
-- ⏳ Den `Config` reads the new env (currently set in-container but not yet consumed).
-- ⏳ Preflight: warn when recall enabled but Qdrant unreachable; native runtime works without recall (LIKE fallback).
+- ✅ Den `Config` consumes the new env (`qdrant_url`, `embedding_standard`, `embedding_model`, `embedding_dimensions`) in `den-core/src/config.rs`.
+- ✅ Register embedding model in Bifrost `config.json` (`text-embedding-3-small` authorized on the openai provider key); Den embedding client (`den-llm::EmbeddingClient`) calls `/v1/embeddings` with the active standard's model + dimensions. *(Invocation from the indexer lands in Phase 1.)*
+- ✅ Qdrant client (`den-runtime::recall::QdrantRecall`) + startup collection bootstrap (`den/src/startup.rs`) + `/status.json` health check (`web/stack_health.rs`); a recall-enabled full-stack smoke is wired via `SMOKE_RECALL=1` in `scripts/smoke{,-stack}.sh`.
+- ⏳ Preflight (`services/preflight/preflight.py`): warn when recall enabled but Qdrant unreachable (runtime `/status.json` check already covers this at request time); native runtime works without recall (LIKE fallback).
 
-**Exit:** smoke embed of fixture text; health check passes. *(Pending: requires Bifrost embedding model + Den config wiring.)*
+**Exit:** smoke embed of fixture text; health check passes. *(Health check ✅; live fixture embed pending a real embedding-capable key in the smoke env.)*
 
 ## Phase 1 — Passage registry + Bear indexer
 
