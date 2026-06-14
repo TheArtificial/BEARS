@@ -3,7 +3,6 @@
 //! ACP runtime glue.
 
 pub mod events;
-pub mod plan_mode;
 pub mod runtime;
 pub mod sessions;
 pub mod tokens;

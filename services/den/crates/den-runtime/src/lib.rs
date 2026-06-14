@@ -11,3 +11,6 @@
 /// ACP projection of the `den-tools` tool surface: tool classes, names, session policy,
 /// and provider display/policy helpers. Shared by the runtime and the ACP edge.
 pub mod acp_tools;
+
+/// Plan-mode state machine and transitions (turn/plan coordination).
+pub mod acp_plan_mode;

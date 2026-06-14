@@ -1,6 +1,6 @@
 pub mod acp;
 pub use acp::events as acp_events;
-pub use acp::plan_mode as acp_plan_mode;
+pub use den_runtime::acp_plan_mode;
 pub use acp::runtime as acp_runtime;
 pub use acp::sessions as acp_sessions;
 pub use acp::tokens as acp_tokens;
