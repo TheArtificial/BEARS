@@ -185,7 +185,24 @@ Survey result: `core/` is already a clean layer (**no `core/` module imports `cr
 
 **Decision: rename off `letta` now (not deferred).** The retained native helpers in `core/letta/` (runtime stream parser, assistant display/title, agent JSON projections, model/tool option types, tool policy) and `acp::letta_events` (which holds the native `AcpGatewayEvent`) are renamed off the `letta` name before/with the lift.
 
-**Extraction order (each step keeps the workspace green + its own commit):** rename off `letta` *(done)* → den-runtime skeleton *(done)* → **runtime + shared turn/tool contracts cluster** *(done — see below)* → `core/llm` glue → `native_runtime` *(in progress)* → `agent_loop` → `bears` → `conversation` → `reflection`/`pair_reflection` → `core/memory` glue → `DenToolContext` impls → flip `den` onto `den-runtime`, drop the flat shims.
+**Extraction order (each step keeps the workspace green + its own commit):** rename off `letta` *(done)* → den-runtime skeleton *(done)* → **runtime + shared turn/tool contracts cluster** *(done — see below)* → **runtime blob (5 SCC-ordered stages, see below)** → `DenToolContext` impls → flip `den` onto `den-runtime`, drop the flat shims.
+
+**Second cluster — the "runtime blob" (staging corrected 2026-06 after precise import analysis).** The original per-subsystem order (`native_runtime` → `agent_loop` → `bears` → …) is **not achievable**: these subsystems are mutually recursive and all target `den-runtime`, so they move as strongly-connected components, not individually. Precise `module::` import analysis (token scans like `\bbears` were false-positiving on `bear_id`/`BearProfile`) gives this condensed DAG (X → Y = X depends on Y):
+- **A = {`llm`, `agent_assist`}** — leaf (mutual; no other blob deps).
+- **B = {`bears`, `memory`}** — leaf (mutual; no other blob deps).
+- **`conversation`** → B, `acp::runtime`.
+- **`pair_reflection`** → B.
+- **C = {`native_runtime`, `agent_loop`}** → A, B, `conversation` (via `conversation_events`), `acp::turn_runner` (request types only).
+- **`reflection`** → B, C. (`reflection`/`pair_reflection` are pure sinks — nothing in the blob depends on them.)
+
+The blob's **only** external (den-stay) tethers, beyond `CustomError` (335 refs → `den_core::DenError`): `agent_loop` uses `den_tools::descriptor::render_profile_tool_surface_blurb` (leaf, path rewrite); `conversation`/`native_runtime` use `acp::runtime` conversation-id predicates (`acp::runtime` is a leaf → moves in); `native_runtime` uses `acp::turn_runner` request types carrying `&ApiState` (→ split: move the runtime-contract parts in, replace `&ApiState` with concrete `sqlx_pool`/`config`/`memory_stores` fields, keep the `acp_sessions`-coupled orchestration wrappers in den). `acp::sessions` (leaf, 393 LOC) moves in too because `materialize_acp_runtime_conversation_if_needed` upserts the session store. `acp::tokens` stays in den (auth → `den-acp` later).
+
+**Staged execution (each = git mv subset + path rewrite + re-export shims + green + commit):**
+1. **Stage A** — `llm` + `agent_assist`.
+2. **Stage B** — `bears` + `memory`.
+3. **Stage C** — `acp::runtime` + `conversation`.
+4. **Stage D** — break `ApiState` coupling + split `acp::turn_runner` runtime-contracts; move `acp::sessions` + `native_runtime` + `agent_loop`.
+5. **Stage E** — `pair_reflection` + `reflection`.
 
 **First cluster move — DONE (commits on the `test` branch).** `den-runtime` now owns: `runtime/**` (contracts/provider/role/role_registry/compaction*/conversations/turn_state/pair_turn/bearwire_projection, with the familiar flat aliases re-exported), plus `acp_events` (`AcpGatewayEvent` + SSE adapter), `acp_tools`, `acp_plan_mode`, `acp_tool_turns`, and `acp_turn_controller`. The cluster's error type was first migrated `CustomError → den_core::DenError` (a bidirectional `From` was added in `den`). Cycle breaks discovered + applied: `acp_turn_controller` had to come along (runtime turn coordination); `AcpCompactionStatusResponse` (a runtime-produced DTO) was relocated from `api/acp/http_types` into `runtime/compaction_store` (api re-exports it); `role_registry` now uses `den_core::BearProfile` and inlines the small `bear_profile_bindings` lookup instead of calling den's `bears::db`. `den` keeps thin re-export shims in `core/mod.rs` so edge/api/web call sites are untouched, and the two cross-layer bridge tests (which also touch den-only `native_runtime`/`acp_turn_controller`) were relocated into the `den` crate.
 
