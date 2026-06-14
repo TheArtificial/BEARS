@@ -4,7 +4,7 @@
 
 /// One selectable LLM model row for `<select>` options.
 ///
-/// Constructed from Bifrost model metadata (see [`crate::core::llm::bifrost`]).
+/// Constructed from Bifrost model metadata (see [`crate::llm::bifrost`]).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelOption {
     /// Value for the agent `model` / Den `default_model` (e.g. `gpt-4o`).

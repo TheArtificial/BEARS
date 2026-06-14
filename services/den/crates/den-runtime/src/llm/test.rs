@@ -1,5 +1,5 @@
 use super::stream::{openai_sse_chunk_to_runtime_events, OpenAiStreamAccumulator};
-use crate::core::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[test]
 fn parses_text_delta_from_recorded_sse() {

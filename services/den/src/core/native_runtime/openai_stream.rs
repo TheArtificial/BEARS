@@ -60,7 +60,7 @@ pub fn openai_byte_stream_to_event_stream(
                                 queued_events.push_back(Ok(event));
                             }
                         }
-                        Err(err) => queued_events.push_back(Err(err.into())),
+                        Err(err) => queued_events.push_back(Err(err)),
                     }
                 }
                 if accumulator.should_detach_upstream() {

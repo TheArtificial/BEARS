@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::{config::Config, core::agent_assist::ModelOption, errors::CustomError};
+use crate::agent_assist::ModelOption;
+use den_core::{config::Config, DenError};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BifrostModelMetadata {
@@ -103,9 +104,9 @@ impl BifrostClient {
         !self.metadata_url.is_empty()
     }
 
-    pub async fn list_models(&self) -> Result<Vec<BifrostModelMetadata>, CustomError> {
+    pub async fn list_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
         if !self.is_enabled() {
-            return Err(CustomError::System(
+            return Err(DenError::System(
                 "Bifrost metadata is not configured (set BIFROST_METADATA_URL)".to_string(),
             ));
         }
@@ -116,20 +117,20 @@ impl BifrostClient {
             .send()
             .await
             .map_err(|e| {
-                CustomError::System(format!("Bifrost model metadata request failed: {e}"))
+                DenError::System(format!("Bifrost model metadata request failed: {e}"))
             })?;
         let status = resp.status();
         let text = resp.text().await.map_err(|e| {
-            CustomError::System(format!("Bifrost model metadata response body: {e}"))
+            DenError::System(format!("Bifrost model metadata response body: {e}"))
         })?;
         if !status.is_success() {
-            return Err(CustomError::System(format!(
+            return Err(DenError::System(format!(
                 "Bifrost model metadata HTTP {status}: {text}"
             )));
         }
 
         let payload: BifrostModelMetadataResponse = serde_json::from_str(&text).map_err(|e| {
-            CustomError::Parsing(format!("Bifrost model metadata JSON: {e}; body: {text}"))
+            DenError::Parsing(format!("Bifrost model metadata JSON: {e}; body: {text}"))
         })?;
 
         let mut models: Vec<BifrostModelMetadata> = payload
@@ -149,7 +150,7 @@ impl BifrostClient {
     pub async fn get_model(
         &self,
         handle: &str,
-    ) -> Result<Option<BifrostModelMetadata>, CustomError> {
+    ) -> Result<Option<BifrostModelMetadata>, DenError> {
         let handle = handle.trim();
         if handle.is_empty() {
             return Ok(None);

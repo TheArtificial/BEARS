@@ -1,11 +1,11 @@
 //! OpenAI-compatible streaming inference client (Bifrost / `LLM_API_URL`).
 //!
-//! Emits [`crate::core::runtime_contracts::RuntimeStreamEvent`] directly — no Letta JSON intermediate.
+//! Emits [`crate::runtime_contracts::RuntimeStreamEvent`] directly — no Letta JSON intermediate.
 
 pub mod bifrost;
 mod stream;
 
-pub(crate) use den_llm::byte_stream_with_idle_timeout;
+pub use den_llm::byte_stream_with_idle_timeout;
 pub use den_llm::{
     ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, LlmClient,
     LlmToolDefinition,

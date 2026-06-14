@@ -1,8 +1,6 @@
-use crate::{
-    core::runtime_contracts::{
-        RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
-        RuntimeStreamEvent,
-    },
+use crate::runtime_contracts::{
+    RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
+    RuntimeStreamEvent,
 };
 use den_core::DenError;
 
@@ -69,9 +67,9 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
         "ping" => None,
         "assistant_message" => {
             let text =
-                crate::core::acp_events::letta_stream_text_preserving_whitespace(inner)
+                crate::acp_events::letta_stream_text_preserving_whitespace(inner)
                     .or_else(|| {
-                        crate::core::acp_events::letta_stream_text_preserving_whitespace(
+                        crate::acp_events::letta_stream_text_preserving_whitespace(
                             event,
                         )
                     })
@@ -92,10 +90,10 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                         .map(str::to_string)
                 })
                 .or_else(|| {
-                    crate::core::acp_events::letta_stream_text_preserving_whitespace(inner)
+                    crate::acp_events::letta_stream_text_preserving_whitespace(inner)
                 })
                 .or_else(|| {
-                    crate::core::acp_events::letta_stream_text_preserving_whitespace(event)
+                    crate::acp_events::letta_stream_text_preserving_whitespace(event)
                 })
                 .unwrap_or_default();
             Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
@@ -141,7 +139,7 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
             } else {
                 Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
                     turn: None,
-                    category: crate::core::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
+                    category: crate::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
                     message: format!(
                         "Letta stopped before producing assistant output: {stop_reason}"
                     ),
@@ -221,12 +219,12 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     }),
             }),
         ),
-        _ => crate::core::acp_events::native_letta_conversation_resolved_event(event).map(
+        _ => crate::acp_events::native_letta_conversation_resolved_event(event).map(
             |evt| match evt {
-                crate::core::acp_events::AcpGatewayEvent::ConversationResolved {
+                crate::acp_events::AcpGatewayEvent::ConversationResolved {
                     conversation_id,
                 } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
-                    conversation: crate::core::runtime_contracts::RuntimeConversationRef {
+                    conversation: crate::runtime_contracts::RuntimeConversationRef {
                         id: conversation_id,
                     },
                 }),

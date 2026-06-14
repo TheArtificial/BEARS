@@ -28,6 +28,14 @@ pub mod acp_turn_controller;
 /// conversations, turn state, pair-turn, and the BearWire projection.
 pub mod runtime;
 
+/// OpenAI-compatible streaming inference client (Bifrost / `LLM_API_URL`) + SSE→runtime
+/// event mapping, over the `den-llm` leaf.
+pub mod llm;
+
+/// Agent-runtime support helpers: the runtime SSE stream parser, tool-policy filtering,
+/// assistant display/title helpers, agent JSON projections, and model/tool option types.
+pub mod agent_assist;
+
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
 pub use runtime::bearwire_projection as runtime_bearwire_projection;
@@ -41,3 +49,5 @@ pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;
 pub use runtime::role_registry as role_runtime_registry;
 pub use runtime::turn_state;
+pub use llm::bifrost;
+pub use agent_assist::runtime_stream_parser;

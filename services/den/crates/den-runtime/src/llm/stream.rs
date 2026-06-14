@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::core::runtime_contracts::{
+use crate::runtime_contracts::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 
@@ -176,10 +176,10 @@ impl OpenAiStreamAccumulator {
     }
 }
 
-pub fn openai_sse_chunk_to_runtime_events(chunk_body: &[u8]) -> Result<Vec<RuntimeStreamEvent>, crate::errors::CustomError> {
+pub fn openai_sse_chunk_to_runtime_events(chunk_body: &[u8]) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
     let mut events = Vec::new();
     let text = std::str::from_utf8(chunk_body).map_err(|_| {
-        crate::errors::CustomError::System("invalid UTF-8 in LLM SSE chunk".to_string())
+        den_core::DenError::System("invalid UTF-8 in LLM SSE chunk".to_string())
     })?;
     let mut accumulator = OpenAiStreamAccumulator::default();
     for line in text.split('\n') {
@@ -195,7 +195,7 @@ pub fn openai_sse_chunk_to_runtime_events(chunk_body: &[u8]) -> Result<Vec<Runti
             continue;
         }
         let json = serde_json::from_str::<Value>(data).map_err(|e| {
-            crate::errors::CustomError::System(format!("invalid LLM SSE JSON: {e}"))
+            den_core::DenError::System(format!("invalid LLM SSE JSON: {e}"))
         })?;
         let parsed = accumulator.ingest_sse_data_line(&json);
         events.extend(parsed.events);
@@ -206,7 +206,7 @@ pub fn openai_sse_chunk_to_runtime_events(chunk_body: &[u8]) -> Result<Vec<Runti
 /// Parse a single SSE event body (as used by the byte-stream adapter) into runtime events.
 pub fn openai_sse_event_body_to_runtime_events(
     body: &[u8],
-) -> Result<Vec<RuntimeStreamEvent>, crate::errors::CustomError> {
+) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
     let mut accumulator = OpenAiStreamAccumulator::default();
     openai_sse_frame_to_runtime_events(&mut accumulator, body)
 }
@@ -215,9 +215,9 @@ pub fn openai_sse_event_body_to_runtime_events(
 pub fn openai_sse_frame_to_runtime_events(
     accumulator: &mut OpenAiStreamAccumulator,
     body: &[u8],
-) -> Result<Vec<RuntimeStreamEvent>, crate::errors::CustomError> {
+) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
     let text = std::str::from_utf8(body).map_err(|_| {
-        crate::errors::CustomError::System("invalid UTF-8 in LLM SSE frame".to_string())
+        den_core::DenError::System("invalid UTF-8 in LLM SSE frame".to_string())
     })?;
     let mut events = Vec::new();
     for line in text.split('\n') {
@@ -237,7 +237,7 @@ pub fn openai_sse_frame_to_runtime_events(
             continue;
         }
         let json = serde_json::from_str::<Value>(data).map_err(|e| {
-            crate::errors::CustomError::System(format!("invalid LLM SSE JSON: {e}"))
+            den_core::DenError::System(format!("invalid LLM SSE JSON: {e}"))
         })?;
         let parsed = accumulator.ingest_sse_data_line(&json);
         events.extend(parsed.events);
