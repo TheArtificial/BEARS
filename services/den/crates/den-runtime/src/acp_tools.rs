@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::core::tool_descriptor_guidance::{
+use den_tools::tool_descriptor_guidance::{
     render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy, ToolScopeKind,
     ToolSideEffectKind,
 };

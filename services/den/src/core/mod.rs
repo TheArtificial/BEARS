@@ -5,7 +5,7 @@ pub use acp::runtime as acp_runtime;
 pub use acp::sessions as acp_sessions;
 pub use acp::tokens as acp_tokens;
 pub use acp::tool_turns as acp_tool_turns;
-pub use acp::tools as acp_tools;
+pub use den_runtime::acp_tools;
 pub use acp::turn_controller as acp_turn_controller;
 pub use acp::turn_runner as acp_turn_runner;
 pub mod api_utils;

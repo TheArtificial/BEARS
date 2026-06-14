@@ -7,3 +7,7 @@
 //!
 //! Modules are migrated out of the `den` crate incrementally; this skeleton compiles on
 //! its own and grows as each subsystem in the v1.4 extraction order lands here.
+
+/// ACP projection of the `den-tools` tool surface: tool classes, names, session policy,
+/// and provider display/policy helpers. Shared by the runtime and the ACP edge.
+pub mod acp_tools;

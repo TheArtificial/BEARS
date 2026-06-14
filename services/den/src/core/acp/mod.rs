@@ -8,7 +8,6 @@ pub mod runtime;
 pub mod sessions;
 pub mod tokens;
 pub mod tool_turns;
-pub mod tools;
 pub mod turn_controller;
 pub mod turn_runner;
 
