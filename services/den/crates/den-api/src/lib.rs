@@ -78,25 +78,8 @@ pub use service::create_api_app;
 pub use den_core::config;
 pub use den_http::{auth_backend, build_info, errors};
 
-use std::sync::{Arc, OnceLock};
-
-static TOOL_INVOKER: OnceLock<Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>> =
-    OnceLock::new();
-
-/// Install the process-wide builtin-Den-tool invoker.
-///
-/// The api/ACP edge executes builtin Den tools (the `/internal/den-tools/invoke`
-/// endpoint and ACP runtime-local tool calls) but depends only on the
-/// [`den_runtime::native_runtime::RuntimeToolInvoker`] trait — not on the concrete
-/// den-side tool composition (`DenToolContext` + executors), which lives in the
-/// `den` binary. The binary injects its `DenRuntimeToolInvoker` here at startup, so
-/// the edge stays free of that dependency. Idempotent; the first installation wins.
-pub fn set_tool_invoker(invoker: Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>) {
-    let _ = TOOL_INVOKER.set(invoker);
-}
-
-/// The installed [`set_tool_invoker`] invoker, if any. `None` before the binary
-/// installs one (e.g. in unit tests that never execute a builtin Den tool).
-pub fn tool_invoker() -> Option<Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>> {
-    TOOL_INVOKER.get().cloned()
-}
+// The builtin-Den-tool invoker registry moved to its natural home in den-runtime
+// (which defines `RuntimeToolInvoker`), so the ACP edge can reach it without a
+// `den-acp -> den-api` cycle. Re-exported here for the remaining den-api/den-web
+// call sites and the binary's startup injection.
+pub use den_runtime::native_runtime::{set_tool_invoker, tool_invoker};

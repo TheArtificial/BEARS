@@ -19,7 +19,7 @@ mod tools;
 mod turn;
 mod web_chat_loop;
 
-pub use tool_invoker::RuntimeToolInvoker;
+pub use tool_invoker::{set_tool_invoker, tool_invoker, RuntimeToolInvoker};
 
 pub use openai_stream::openai_byte_stream_to_event_stream;
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};

@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::PgPool;
+use std::sync::{Arc, OnceLock};
 
 use den_core::{config::Config, DenError};
 use den_core::tools::context::DenToolInvocationContext;
@@ -27,4 +28,24 @@ pub trait RuntimeToolInvoker: Send + Sync {
         arguments: Value,
         context: DenToolInvocationContext,
     ) -> Result<Value, DenError>;
+}
+
+static TOOL_INVOKER: OnceLock<Arc<dyn RuntimeToolInvoker>> = OnceLock::new();
+
+/// Install the process-wide builtin-Den-tool invoker.
+///
+/// The HTTP edges (`den-api`/`den-acp`/`den-web`) execute builtin Den tools (the
+/// `/internal/den-tools/invoke` endpoint, ACP runtime-local tool calls, the web
+/// chat turn) but depend only on the [`RuntimeToolInvoker`] trait — not on the
+/// concrete den-side tool composition (`DenToolContext` + executors), which lives
+/// in the `den` binary. The binary injects its concrete invoker here at startup,
+/// so the edges stay free of that dependency. Idempotent; the first install wins.
+pub fn set_tool_invoker(invoker: Arc<dyn RuntimeToolInvoker>) {
+    let _ = TOOL_INVOKER.set(invoker);
+}
+
+/// The installed [`set_tool_invoker`] invoker, if any. `None` before the binary
+/// installs one (e.g. in unit tests that never execute a builtin Den tool).
+pub fn tool_invoker() -> Option<Arc<dyn RuntimeToolInvoker>> {
+    TOOL_INVOKER.get().cloned()
 }
