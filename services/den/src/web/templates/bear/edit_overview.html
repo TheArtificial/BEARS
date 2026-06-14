@@ -6,7 +6,7 @@
 {% block content %}
 <section>
     <h2>Edit overview</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
     {% if letta_sync_error %}
     <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>
     {% endif %}
@@ -20,7 +20,7 @@
     <div class="box full-width">
         <h3>Delete bear</h3>
         <p class="form-hint">This removes the bear from Den and all memberships. Letta agents are not deleted automatically.</p>
-        <form method="post" action="/bear/{{ bear.slug | e }}/details/delete">
+        <form method="post" action="/bear/{{ bear.slug | e }}/delete">
             <label for="confirm_slug">Type the bear slug <code>{{ bear.slug | e }}</code> to confirm</label>
             <input id="confirm_slug" name="confirm_slug" type="text" required autocomplete="off" />
             <p><button type="submit">Delete bear permanently</button></p>

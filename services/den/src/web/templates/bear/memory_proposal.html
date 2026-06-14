@@ -5,7 +5,7 @@
 {% block content %}
 <section>
     <h2>Memory proposal</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/details/memory">Back to Bear memory</a></p>
+    <p><a href="/bear/{{ bear.slug | e }}/memory">Back to memory</a></p>
 
     <section class="box full-width">
         <h3>{{ proposal.title | e }}</h3>
@@ -39,7 +39,7 @@
         {% if proposal.source_paths and proposal.source_paths | length > 0 %}
         <ul>
             {% for path in proposal.source_paths %}
-            <li><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ proposal.source_profile | e }}&path={{ path | urlencode }}"><code>{{ path | e }}</code></a></li>
+            <li><a href="/bear/{{ bear.slug | e }}/memory?role={{ proposal.source_profile | e }}&path={{ path | urlencode }}"><code>{{ path | e }}</code></a></li>
             {% endfor %}
         </ul>
         {% else %}
@@ -51,7 +51,7 @@
     <section class="box full-width">
         <h3>Resolve proposal</h3>
         <p class="form-hint">These actions only triage the proposal. They do not write <code>core/</code>, Cabinet, skills, tasks, observations, or run results.</p>
-        <form method="post" action="/bear/{{ bear.slug | e }}/details/memory/proposals/{{ proposal.id }}" class="fields-grid">
+        <form method="post" action="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal.id }}" class="fields-grid">
             <label for="proposal-status">Resolution</label>
             <select id="proposal-status" name="status">
                 <option value="deferred">Deferred</option>

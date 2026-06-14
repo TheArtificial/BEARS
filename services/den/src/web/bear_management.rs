@@ -16,141 +16,163 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
-    auth_backend::{AuthSession, SessionUser},
+    auth_backend::AuthSession,
     config::Config,
     errors::CustomError,
     web::{
         bear_create_support::{
             bear_configuration_page_context, bear_new_form_context,
             ensure_stored_model_in_options_for_handle, insert_new_bear_row,
-            model_catalog_select_context, validate_default_model_for_letta,
+            model_catalog_select_context, validate_default_model_for_catalog,
+            validate_default_model_for_letta,
             BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
     },
     core::{
         acp_tokens,
-        user,
         user::db as user_db,
     },
 };
 use den_runtime::{
     acp_sessions,
     acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
-    archived_conversations,
     bears::{
             db as bears_db,
             db::{
-                role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
+                role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
             },
-            provision, Bear, BearProfileBinding, BearProfile,
+            provision, Bear, BearProfile,
         },
     memory::tools::sqlite_collect_role_logical_paths,
-    memory_proposals::{self, CreateMemoryProposal},
-    pair_reflection,
 };
 
+use super::bear_settings;
+pub(crate) use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
+pub(crate) use super::bear_profile::build_role_detail_view;
+
 pub fn router() -> Router<AppState> {
-    Router::new()
+    bear_settings::router()
+        .merge(Router::new())
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
-        .route_with_tsr("/bear/{slug}/details", get(bear_details_get))
-        .route_with_tsr("/bear/{slug}/details/edit", get(bear_edit_redirect_get))
+        .route_with_tsr("/bear/{slug}/details", get(legacy_details_redirect))
+        .route_with_tsr("/bear/{slug}/details/{*rest}", get(legacy_details_path_redirect))
+        .route_with_tsr("/bear/{slug}/edit", get(bear_edit_redirect_get))
         .route_with_tsr(
-            "/bear/{slug}/details/edit/overview",
+            "/bear/{slug}/edit/overview",
             get(bear_edit_overview_get).post(bear_edit_overview_post),
         )
         .route_with_tsr(
-            "/bear/{slug}/details/edit/prompt",
+            "/bear/{slug}/edit/prompt",
             get(bear_edit_prompt_get).post(bear_edit_prompt_post),
         )
         .route_with_tsr(
-            "/bear/{slug}/details/edit/configuration",
+            "/bear/{slug}/edit/configuration",
             get(bear_edit_configuration_get).post(bear_edit_configuration_post),
         )
-        .route_with_tsr("/bear/{slug}/details/access", get(bear_access_get))
+        .route_with_tsr("/bear/{slug}/code-token", get(bear_code_token_get).post(bear_code_token_post))
+        .route_with_tsr("/bear/{slug}/memory/browse", get(memory_browse_redirect))
+        .route_with_tsr("/bear/{slug}/memory/browse/runtime-blocks", get(runtime_blocks_redirect))
         .route_with_tsr(
-            "/bear/{slug}/details/code-token",
-            get(bear_code_token_get).post(bear_code_token_post),
+            "/bear/{slug}/memory/browse/proposals/{proposal_id}",
+            get(memory_proposal_legacy_redirect),
         )
-        .route_with_tsr(
-            "/bear/{slug}/details/conversations",
-            get(bear_conversations_get),
-        )
-        .route_with_tsr("/bear/{slug}/details/roles/{role}", get(bear_role_get))
-        .route_with_tsr(
-            "/bear/{slug}/details/memory",
-            get(bear_memory_get).post(bear_memory_delete_post),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/details/memory/runtime-blocks",
-            get(bear_runtime_blocks_get),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/details/memory/proposals/{proposal_id}",
-            get(bear_memory_proposal_get).post(bear_memory_proposal_post),
-        )
-        .route_with_tsr("/bear/{slug}/details/delete", post(bear_delete_post))
-        .route_with_tsr("/bear/{slug}/details/members/add", post(member_add_post))
-        .route_with_tsr(
-            "/bear/{slug}/details/members/remove",
-            post(member_remove_post),
-        )
+        .route_with_tsr("/bear/{slug}/delete", post(bear_delete_post))
+        .route_with_tsr("/bear/{slug}/members/add", post(member_add_post))
+        .route_with_tsr("/bear/{slug}/members/remove", post(member_remove_post))
 }
 
-async fn email_verify_redirect(
-    pool: &sqlx::PgPool,
-    user_id: i32,
-) -> Result<Option<Redirect>, CustomError> {
-    let u = user::user_by_id(pool, user_id).await?;
-    if !u.email_verified.unwrap_or(false) {
-        return Ok(Some(Redirect::to("/settings/email/verify")));
-    }
-    Ok(None)
+async fn legacy_details_redirect(Path(slug): Path<String>) -> Redirect {
+    Redirect::permanent(&format!("/bear/{}/overview", slug.trim()))
 }
 
-async fn load_bear_member(
-    pool: &sqlx::PgPool,
-    user_id: i32,
-    slug: &str,
-) -> Result<Bear, CustomError> {
+async fn legacy_details_path_redirect(Path((slug, rest)): Path<(String, String)>) -> Redirect {
     let slug = slug.trim();
-    if slug.is_empty() {
-        return Err(CustomError::NotFound("bear not found".to_string()));
+    let path = rest.trim_start_matches('/');
+    let target = match path {
+        "" | "details" => format!("/bear/{slug}/overview"),
+        "access" => format!("/bear/{slug}/access"),
+        "conversations" => format!("/bear/{slug}/conversations"),
+        "code-token" => format!("/bear/{slug}/code-token"),
+        "edit" | "edit/overview" => format!("/bear/{slug}/edit/overview"),
+        "edit/prompt" => format!("/bear/{slug}/edit/prompt"),
+        "edit/configuration" => format!("/bear/{slug}/edit/configuration"),
+        "memory" => format!("/bear/{slug}/memory"),
+        p if p.starts_with("memory/") => {
+            let rest = p.trim_start_matches("memory/");
+            if rest.starts_with("browse/") {
+                let sub = rest.trim_start_matches("browse/");
+                if sub.starts_with("proposals/") {
+                    format!("/bear/{slug}/memory/{sub}")
+                } else if sub == "runtime-blocks" {
+                    format!("/bear/{slug}/advanced?message={}", urlencoding::encode("Runtime memory blocks view is deprecated."))
+                } else {
+                    format!("/bear/{slug}/memory?{}", sub.replace('/', "&"))
+                }
+            } else {
+                format!("/bear/{slug}/memory/{rest}")
+            }
+        }
+        p if p.starts_with("roles/") => {
+            let profile = p.trim_start_matches("roles/");
+            format!("/bear/{slug}/profiles/{profile}")
+        }
+        p if p.starts_with("profiles/") => format!("/bear/{slug}/{p}"),
+        other => format!("/bear/{slug}/overview?legacy={}", urlencoding::encode(other)),
+    };
+    Redirect::permanent(&target)
+}
+
+async fn memory_browse_redirect(
+    Path(slug): Path<String>,
+    Query(q): Query<BearMemoryBrowseRedirectQuery>,
+) -> Redirect {
+    let mut target = format!("/bear/{}/memory", slug.trim());
+    let mut params = Vec::new();
+    if let Some(role) = q.role.filter(|s| !s.is_empty()) {
+        params.push(format!("role={}", urlencoding::encode(&role)));
     }
-    bears_db::bear_for_user_by_slug(pool, user_id, slug)
-        .await?
-        .ok_or_else(|| {
-            CustomError::NotFound("Bear not found or you do not have access.".to_string())
-        })
-}
-
-async fn viewer_is_bear_admin(
-    pool: &sqlx::PgPool,
-    user_id: i32,
-    bear_id: Uuid,
-) -> Result<bool, CustomError> {
-    let role = bears_db::membership_role_for_user(pool, user_id, bear_id).await?;
-    Ok(match role {
-        None => false,
-        Some(inner) => role_is_bear_admin(inner.as_deref()),
-    })
-}
-
-/// Edit bear settings, resync, access, membership, delete: bear admins or site operators (`users.is_admin`).
-async fn viewer_can_manage_bear(
-    pool: &sqlx::PgPool,
-    user: &SessionUser,
-    bear_id: Uuid,
-) -> Result<bool, CustomError> {
-    if user.is_admin {
-        return Ok(true);
+    if let Some(qs) = q.q.filter(|s| !s.is_empty()) {
+        params.push(format!("q={}", urlencoding::encode(&qs)));
     }
-    viewer_is_bear_admin(pool, user.id, bear_id).await
+    if let Some(path) = q.path.filter(|s| !s.is_empty()) {
+        params.push(format!("path={}", urlencoding::encode(&path)));
+    }
+    if let Some(deleted) = q.deleted {
+        params.push(format!("deleted={deleted}"));
+    }
+    if let Some(review) = q.review_requested {
+        params.push(format!("review_requested={review}"));
+    }
+    if let Some(error) = q.error.filter(|s| !s.is_empty()) {
+        params.push(format!("error={}", urlencoding::encode(&error)));
+    }
+    if !params.is_empty() {
+        target.push('?');
+        target.push_str(&params.join("&"));
+    }
+    Redirect::permanent(&target)
 }
 
+async fn runtime_blocks_redirect(Path(slug): Path<String>) -> Redirect {
+    Redirect::permanent(&format!(
+        "/bear/{}/advanced?message={}",
+        slug.trim(),
+        urlencoding::encode("Runtime memory blocks view is deprecated.")
+    ))
+}
+
+async fn memory_proposal_legacy_redirect(
+    Path((slug, proposal_id)): Path<(String, Uuid)>,
+) -> Redirect {
+    Redirect::permanent(&format!(
+        "/bear/{}/memory/proposals/{proposal_id}",
+        slug.trim()
+    ))
+}
 
 #[derive(Debug, Deserialize)]
-struct BearMemoryQuery {
+struct BearMemoryBrowseRedirectQuery {
     role: Option<String>,
     q: Option<String>,
     path: Option<String>,
@@ -159,112 +181,6 @@ struct BearMemoryQuery {
     error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct BearMemoryProposalResolutionForm {
-    status: String,
-    #[serde(default)]
-    review_notes: Option<String>,
-    #[serde(default)]
-    decision_summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BearMemoryDeleteForm {
-    role: String,
-    #[serde(default)]
-    paths: Vec<String>,
-    #[serde(default)]
-    action: Option<String>,
-    #[serde(default)]
-    confirm: String,
-    #[serde(default)]
-    review_title: Option<String>,
-    #[serde(default)]
-    review_summary: Option<String>,
-    #[serde(default)]
-    review_rationale: Option<String>,
-    #[serde(default)]
-    suggested_action: Option<String>,
-    #[serde(default)]
-    sensitivity: Option<String>,
-    #[serde(default)]
-    requires_human: Option<String>,
-}
-
-#[derive(Serialize)]
-struct BearMemoryRoleRow {
-    profile: String,
-    label: String,
-    description: String,
-    runtime_family: String,
-    letta_agent_id: Option<String>,
-    provisioning_status: String,
-    selected: bool,
-    status_state: Option<String>,
-    status_label: String,
-    file_count: usize,
-    registered_view_count: usize,
-    canonical_tip: Option<String>,
-    allowed_prefixes: Vec<String>,
-    entry_counts: Vec<BearMemoryEntryCountRow>,
-    recent_activity: Vec<BearMemoryActivityRow>,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct BearMemoryActivityRow {
-    event: String,
-    detail: String,
-}
-
-#[derive(Serialize)]
-struct BearMemoryEntryCountRow {
-    kind: String,
-    count: String,
-}
-
-#[derive(Serialize)]
-struct RoleDetailView {
-    profile: String,
-    label: String,
-    plain_name: &'static str,
-    description: String,
-    surfaces: Vec<&'static str>,
-    capabilities: Vec<&'static str>,
-    memory: Vec<&'static str>,
-    actions: Vec<RoleActionLink>,
-    runtime_family: String,
-    letta_agent_id: Option<String>,
-    provisioning_status: String,
-    last_synced_at: Option<String>,
-    last_provisioning_error: Option<String>,
-    memfs_view_state: Option<String>,
-    memfs_view_quarantined: bool,
-    memfs_view_diagnostic: Option<String>,
-    memory_status_label: String,
-    memory_file_count: usize,
-    memory_entry_counts: Vec<BearMemoryEntryCountRow>,
-    memory_allowed_prefixes: Vec<String>,
-    memory_recent_activity: Vec<BearMemoryActivityRow>,
-    role_contract: String,
-    composed_prompt: String,
-}
-
-#[derive(Serialize)]
-struct RoleActionLink {
-    label: &'static str,
-    href: String,
-}
-
-#[derive(Serialize)]
-struct RuntimeBlockRoleRow {
-    profile: String,
-    label: String,
-    letta_agent_id: Option<String>,
-    block_count: usize,
-    diagnostics: Option<serde_json::Value>,
-    error: Option<String>,
-}
 
 #[derive(Serialize)]
 struct AcpToolDetailRow {
@@ -280,86 +196,9 @@ struct AcpToolDetailRow {
     highlighted: bool,
 }
 
-fn role_memory_label(role: BearProfile) -> &'static str {
-    match role {
-        BearProfile::Chat => "Conversation memory",
-        BearProfile::Pair => "Pairing memory",
-        BearProfile::Curate => "Review memory",
-        BearProfile::Work => "Work memory",
-        BearProfile::Watch => "Watch memory",
-    }
-}
-
-fn role_memory_description(role: BearProfile) -> &'static str {
-    match role {
-        BearProfile::Chat => "Notes and local memory from chat-like conversations.",
-        BearProfile::Pair => "Coding collaboration notes, logs, decisions, and summaries.",
-        BearProfile::Curate => "Review, reflection, and memory integration work.",
-        BearProfile::Work => "Task execution logs, decisions, and summaries.",
-        BearProfile::Watch => "Event/subscription logs and summaries.",
-    }
-}
-
-fn role_plain_name(role: BearProfile) -> &'static str {
-    match role {
-        BearProfile::Chat => "Conversational front door",
-        BearProfile::Pair => "Collaborative tool/IDE partner",
-        BearProfile::Curate => "Memory and integration reviewer",
-        BearProfile::Work => "Approved outbound executor",
-        BearProfile::Watch => "Inbound observer",
-    }
-}
-
-fn role_surfaces(role: BearProfile) -> Vec<&'static str> {
-    match role {
-        BearProfile::Chat => vec!["Web chat", "Future chat surfaces"],
-        BearProfile::Pair => vec!["ACP clients", "IDEs", "Future design/productivity tools"],
-        BearProfile::Curate => vec!["Internal review and integration"],
-        BearProfile::Work => vec!["Den task dispatch", "Schedules", "Approved background jobs"],
-        BearProfile::Watch => vec![
-            "Webhooks",
-            "Polling",
-            "Queues",
-            "Subscriptions",
-            "Event streams",
-        ],
-    }
-}
-
-fn role_capabilities(role: BearProfile) -> Vec<&'static str> {
-    match role {
-        BearProfile::Chat => vec![
-            "Synchronous conversation",
-            "Task intent capture",
-            "Channel-safe tools",
-            "Work plan updates",
-        ],
-        BearProfile::Pair => vec![
-            "Client-mediated tool use",
-            "Code/workspace context",
-            "User-gated actions",
-            "File/document collaboration",
-        ],
-        BearProfile::Curate => vec![
-            "Memory review",
-            "Task intent review",
-            "Observation review",
-            "Skill proposal review",
-            "Shared memory promotion",
-        ],
-        BearProfile::Work => vec![
-            "Approved API calls",
-            "Scheduled tasks",
-            "Event-triggered work",
-            "Run-status reporting",
-        ],
-        BearProfile::Watch => vec![
-            "Inbound event parsing",
-            "Observation creation",
-            "Subscription monitoring",
-            "Event summarization",
-        ],
-    }
+#[derive(Debug, Deserialize)]
+struct CodeTokenForm {
+    name: String,
 }
 
 fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
@@ -477,45 +316,6 @@ fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
     }
 }
 
-fn role_memory_rules(role: BearProfile) -> Vec<&'static str> {
-    match role {
-        BearProfile::Chat => vec![
-            "Reads core/",
-            "Reads and writes chat/",
-            "Does not directly promote to core/",
-        ],
-        BearProfile::Pair => vec![
-            "Reads core/",
-            "Reads and writes pair/",
-            "Does not directly promote to core/",
-        ],
-        BearProfile::Curate => vec![
-            "Reads across role branches, subject to policy",
-            "Writes curate/",
-            "Promotes durable knowledge into core/",
-            "Does not write directly to other role branches",
-        ],
-        BearProfile::Work => vec![
-            "Reads core/",
-            "Reads task definition/run context",
-            "Reads and writes work/",
-            "Does not read raw chat/, pair/, or watch/ directly",
-        ],
-        BearProfile::Watch => vec![
-            "Reads core/",
-            "Reads delivered event payloads",
-            "Reads and writes watch/",
-            "Does not write core/ directly",
-            "Does not trigger outbound action directly",
-        ],
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CodeTokenForm {
-    name: String,
-}
-
 #[derive(Serialize)]
 struct DetailsConvRow {
     id: String,
@@ -524,19 +324,6 @@ struct DetailsConvRow {
     channel_label: &'static str,
     web_href: String,
     archived: bool,
-}
-
-#[derive(Serialize)]
-struct BearRoleViewRow {
-    profile: String,
-    binding_id: String,
-    runtime_family: String,
-    letta_agent_id: Option<String>,
-    provisioning_status: String,
-    last_synced_at: Option<String>,
-    memfs_view_state: Option<String>,
-    memfs_view_quarantined: bool,
-    memfs_view_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -602,22 +389,6 @@ struct BearWorkSurfaceRow {
     workplace_labels: Vec<String>,
     canonical_path_count: usize,
     anchor_status: String,
-}
-
-impl BearRoleViewRow {
-    fn from_agent(agent: BearProfileBinding, role: BearProfile) -> Self {
-        Self {
-            profile: role.as_str().to_string(),
-            binding_id: agent.binding_id.clone(),
-            runtime_family: role.runtime_family().to_string(),
-            letta_agent_id: agent.letta_agent_id,
-            provisioning_status: agent.provisioning_status,
-            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
-        }
-    }
 }
 
 async fn read_native_memory_content(
@@ -989,120 +760,6 @@ async fn bear_plan_mode_rows(
         .collect())
 }
 
-async fn build_role_detail_view(
-    state: &AppState,
-    bear: &Bear,
-    role: BearProfile,
-) -> Result<RoleDetailView, CustomError> {
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
-    let agent = bears_db::get_bear_profile_binding(state.sqlx_pool(), bear.id, role)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("profile runtime binding not found".to_string()))?;
-
-    let role_row = BearRoleViewRow::from_agent(agent.clone(), role);
-
-    let memory_entry_counts: Vec<BearMemoryEntryCountRow> = Vec::new();
-    let memory_allowed_prefixes: Vec<String> = Vec::new();
-    let memory_recent_activity: Vec<BearMemoryActivityRow> = Vec::new();
-    let (memory_status_label, memory_file_count) = {
-        let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-        let store = manager.store_for_bear(bear.id).await?;
-        match den_runtime::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
-            Ok(status) => {
-                let available = status
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| status.get("available").and_then(|v| v.as_bool()))
-                    .unwrap_or(true);
-                let label = if available { "Available" } else { "Unavailable" }.to_string();
-                let file_count = status
-                    .get("file_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize;
-                (label, file_count)
-            }
-            Err(err) => (format!("Error: {err}"), 0usize),
-        }
-    };
-
-    let composed = den_runtime::bears::compose_role_context(
-        bear,
-        role,
-        Some("Runtime/conversation context is injected when this role handles a specific task."),
-    )?;
-    let role_contract = if composed.role_contract.trim().is_empty() {
-        "Legacy/manual Bear prompt; no role-aware contract is stored yet.".to_string()
-    } else {
-        composed.role_contract
-    };
-
-    let mut actions = Vec::new();
-    match role {
-        BearProfile::Chat => {
-            actions.push(RoleActionLink {
-                label: "Open chat",
-                href: format!("/bear/{}", bear.slug),
-            });
-            actions.push(RoleActionLink {
-                label: "All conversations",
-                href: format!("/bear/{}/details/conversations", bear.slug),
-            });
-        }
-        BearProfile::Pair => {
-            actions.push(RoleActionLink {
-                label: "Code with this Bear",
-                href: format!("/bear/{}/details/code-token", bear.slug),
-            });
-        }
-        _ => {}
-    }
-    actions.push(RoleActionLink {
-        label: "Role memory",
-        href: format!("/bear/{}/details/memory?role={}", bear.slug, role.as_str()),
-    });
-
-    Ok(RoleDetailView {
-        profile: role.as_str().to_string(),
-        label: role_memory_label(role).to_string(),
-        plain_name: role_plain_name(role),
-        description: role_memory_description(role).to_string(),
-        surfaces: role_surfaces(role),
-        capabilities: role_capabilities(role),
-        memory: role_memory_rules(role),
-        actions,
-        runtime_family: role.runtime_family().to_string(),
-        letta_agent_id: role_row.letta_agent_id,
-        provisioning_status: role_row.provisioning_status,
-        last_synced_at: role_row.last_synced_at,
-        last_provisioning_error: agent.last_provisioning_error,
-        memfs_view_state: role_row.memfs_view_state,
-        memfs_view_quarantined: role_row.memfs_view_quarantined,
-        memfs_view_diagnostic: role_row.memfs_view_diagnostic,
-        memory_status_label,
-        memory_file_count,
-        memory_entry_counts,
-        memory_allowed_prefixes,
-        memory_recent_activity,
-        role_contract,
-        composed_prompt: composed.composed_prompt,
-    })
-}
-
-async fn bear_role_rows(
-    state: &AppState,
-    bear_id: Uuid,
-) -> Result<Vec<BearRoleViewRow>, CustomError> {
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
-    let mut rows = Vec::new();
-    for agent in bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await? {
-        let role = agent
-            .parsed_profile()
-            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        rows.push(BearRoleViewRow::from_agent(agent, role));
-    }
-    Ok(rows)
-}
-
 async fn chat_agent_id_for_bear(
     pool: &sqlx::PgPool,
     bear: &Bear,
@@ -1332,7 +989,7 @@ async fn new_bear_post(
         let bear = bears_db::get_bear(state.sqlx_pool(), id)
             .await?
             .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-        return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/overview", bear.slug)).into_response());
     }
 
     let page = bear_new_form_context(&state, &form).await;
@@ -1349,219 +1006,6 @@ async fn new_bear_post(
     .await
 }
 
-/// Renders [`bear/details.html`].
-async fn render_bear_details_page(
-    state: &AppState,
-    auth_session: AuthSession,
-    bear: Bear,
-    members: Vec<BearMemberRow>,
-    can_manage_bear: bool,
-) -> Result<Response, CustomError> {
-    let letta_configured = true;
-    let letta_api_base = String::new();
-    let slug = bear.slug.clone();
-    let chat_agent_id = chat_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
-    let role_rows = bear_role_rows(state, bear.id).await?;
-    let mut role_details = Vec::new();
-    for role in BearProfile::ALL {
-        role_details.push(build_role_detail_view(state, &bear, role).await?);
-    }
-
-    let letta_agent_summary: Option<()> = None;
-    let letta_agent_fetch_error: Option<String> = None;
-
-    let (conversation_rows, archived_conversation_count) = {
-        let archived_ids =
-            archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-        let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
-        let records = den_runtime::conversation_persistence::list_conversations_for_bear(
-            state.sqlx_pool(),
-            bear.id,
-            200,
-        )
-        .await?;
-        let mut rows = Vec::new();
-        let mut archived_count = 0usize;
-        for r in records {
-            let Some(external_id) = r
-                .external_conversation_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            if archived_ids.contains(&external_id) {
-                archived_count += 1;
-                continue;
-            }
-            let last_message_at = Some(
-                r.updated_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-            );
-            let title = r
-                .current_title
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| external_id.clone());
-            let channel_label = if acp_ids.contains(&external_id) {
-                "ACP"
-            } else {
-                "Web"
-            };
-            rows.push(DetailsConvRow {
-                web_href: web_href_for_conversation(&slug, &external_id),
-                id: external_id,
-                title,
-                last_message_at,
-                channel_label,
-                archived: false,
-            });
-        }
-        rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
-        (rows, archived_count)
-    };
-
-    let context_profile = den_runtime::bears::context_profile_from_json(&bear.context_profile)?;
-    let user_steering = context_profile
-        .as_ref()
-        .map(|p| p.user_steering.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let bear_context = context_profile
-        .as_ref()
-        .map(|p| p.bear_context.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let template_label = context_profile.as_ref().and_then(|p| {
-        p.template_id.as_deref().and_then(|id| {
-            den_runtime::bears::templates::first_bear_template(id)
-                .map(|template| template.name.to_string())
-                .or_else(|| Some(id.to_string()))
-        })
-    });
-    let chat_composed_prompt = den_runtime::bears::compose_role_context(
-        &bear,
-        BearProfile::Chat,
-        Some("Runtime/conversation context is injected when this role handles a specific chat."),
-    )?
-    .composed_prompt;
-    let pair_composed_prompt = den_runtime::bears::compose_role_context(
-        &bear,
-        BearProfile::Pair,
-        Some("Runtime/conversation context is injected when this role handles a specific ACP/client session."),
-    )?
-    .composed_prompt;
-
-    let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
-        None
-    } else {
-        Some(bear.letta_tool_ids.0.join(", "))
-    };
-
-    let acp_tool_details = acp_tool_detail_rows();
-    let work_surface_rows = bear_work_surface_rows(&state.config, bear.id).await?;
-    let web_sources = bear_web_sources(state.sqlx_pool(), bear.id).await?;
-    let web_approvals = bear_web_approvals(state.sqlx_pool(), bear.id).await?;
-    let web_fetches = bear_web_fetches(state.sqlx_pool(), bear.id).await?;
-    let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), bear.id).await?;
-
-    let mem_health: Option<serde_json::Value> = {
-        let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-        match manager.store_for_bear(bear.id).await {
-            Ok(store) => {
-                match den_runtime::memory::tools::sqlite_memory_status(
-                    &store,
-                    BearProfile::Chat.as_str(),
-                )
-                .await
-                {
-                    Ok(status) => {
-                        let file_count = status
-                            .get("file_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        Some(serde_json::json!({
-                            "is_ok": true,
-                            "label": "Available",
-                            "state": "native",
-                            "commit_count_display": "—",
-                            "memory_file_count_display": file_count.to_string(),
-                            "file_count_display": file_count.to_string(),
-                            "recent_activity_count": 0,
-                        }))
-                    }
-                    Err(_) => None,
-                }
-            }
-            Err(_) => None,
-        }
-    };
-    let mem_health_error: Option<String> = None;
-
-    render_template(
-        state,
-        "bear/details.html",
-        auth_session,
-        context! {
-            bear,
-            can_manage_bear,
-            members,
-            letta_configured,
-            letta_api_base,
-            chat_agent_id,
-            role_rows,
-            role_details,
-            context_profile_enabled => bear.context_profile.is_some(),
-            user_steering,
-            bear_context,
-            template_label,
-            chat_composed_prompt,
-            pair_composed_prompt,
-            letta_agent_summary,
-            letta_agent_fetch_error,
-            letta_tool_ids_display,
-            conversation_rows,
-            archived_conversation_count,
-            acp_tool_details,
-            mem_health,
-            mem_health_error,
-            work_surface_rows,
-            web_sources,
-            web_approvals,
-            web_fetches,
-            plan_mode_rows,
-        },
-    )
-    .await
-}
-
-async fn bear_details_get(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    let user_id = user.id;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
-
-    render_bear_details_page(
-        &state,
-        auth_session,
-        bear,
-        members,
-        can_manage_bear,
-    )
-    .await
-}
 
 async fn bear_edit_redirect_get(
     Path(slug): Path<String>,
@@ -1578,7 +1022,7 @@ async fn bear_edit_redirect_get(
     }
 
     let _bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    Ok(Redirect::to(&format!("/bear/{}/details/edit/overview", slug.trim())).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/edit/overview", slug.trim())).into_response())
 }
 
 async fn bear_edit_overview_get(
@@ -1598,7 +1042,7 @@ async fn bear_edit_overview_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
     let form = BearOverviewEditForm::from(&bear);
@@ -1633,7 +1077,7 @@ async fn bear_edit_overview_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
 
@@ -1695,7 +1139,7 @@ async fn bear_edit_overview_post(
         }
 
         let out_slug = form.slug.trim().to_string();
-        return Ok(Redirect::to(&format!("/bear/{out_slug}/details")).into_response());
+        return Ok(Redirect::to(&format!("/bear/{out_slug}/overview")).into_response());
     }
 
     render_template(
@@ -1728,7 +1172,7 @@ async fn bear_edit_prompt_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
     let form = BearPromptEditForm::from(&bear);
@@ -1763,7 +1207,7 @@ async fn bear_edit_prompt_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
 
@@ -1814,7 +1258,7 @@ async fn bear_edit_prompt_post(
             .await;
         }
 
-        return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/overview", bear.slug)).into_response());
     }
 
     render_template(
@@ -1847,7 +1291,7 @@ async fn bear_edit_configuration_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
     let form = BearConfigurationEditForm::from(&bear);
@@ -1884,13 +1328,13 @@ async fn bear_edit_configuration_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
 
     let (catalog_configured, catalog_models, _catalog_error) =
         model_catalog_select_context(&state).await;
-    let letta_fetch = catalog_configured.then(|| {
+    let catalog_fetch = catalog_configured.then(|| {
         let model_trim = form.default_model.trim();
         let h = (!model_trim.is_empty()).then_some(model_trim);
         Ok::<_, CustomError>(ensure_stored_model_in_options_for_handle(h, catalog_models))
@@ -1901,24 +1345,8 @@ async fn bear_edit_configuration_post(
         validation_errors = e;
     }
 
-    let letta_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let letta_agent_type_db: Option<String> = {
-        let t = form.letta_agent_type.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t.to_string())
-        }
-    };
-
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+    validate_default_model_for_catalog(&catalog_fetch, default_model_trim, &mut validation_errors);
 
     let default_model_opt = if default_model_trim.is_empty() {
         None
@@ -1937,8 +1365,8 @@ async fn bear_edit_configuration_post(
                 system_prompt: bear.system_prompt.as_str(),
                 default_model: default_model_opt,
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: Json(letta_tool_ids.clone()),
+                letta_agent_type: bear.letta_agent_type.as_deref(),
+                letta_tool_ids: bear.letta_tool_ids.clone(),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -1973,7 +1401,7 @@ async fn bear_edit_configuration_post(
             .await;
         }
 
-        return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/overview", bear.slug)).into_response());
     }
 
     let page = bear_configuration_page_context(&state, &bear, &form).await;
@@ -1991,611 +1419,6 @@ async fn bear_edit_configuration_post(
     .await
 }
 
-async fn bear_role_get(
-    Path((slug, role)): Path<(String, String)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let role = role
-        .parse::<BearProfile>()
-        .map_err(|err| CustomError::NotFound(err.to_string()))?;
-    let role_detail = build_role_detail_view(&state, &bear, role).await?;
-    let role_rows = bear_role_rows(&state, bear.id).await?;
-
-    render_template(
-        &state,
-        "bear/role_detail.html",
-        auth_session,
-        context! {
-            bear,
-            role_detail,
-            role_rows,
-        },
-    )
-    .await
-}
-
-async fn bear_access_get(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    let user_id = user.id;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
-        ));
-    }
-    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
-    render_template(
-        &state,
-        "bear/access.html",
-        auth_session,
-        context! {
-            bear,
-            members,
-        },
-    )
-    .await
-}
-
-async fn bear_conversations_get(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-
-    let (rows, list_error) = {
-        let archived_ids =
-            archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-        let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
-        let records = den_runtime::conversation_persistence::list_conversations_for_bear(
-            state.sqlx_pool(),
-            bear.id,
-            200,
-        )
-        .await?;
-        let mut rows = Vec::new();
-        for r in records {
-            let Some(external_id) = r
-                .external_conversation_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            let archived = archived_ids.contains(&external_id);
-            let last_message_at = Some(
-                r.updated_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-            );
-            let title = r
-                .current_title
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| external_id.clone());
-            let channel_label = if acp_ids.contains(&external_id) {
-                "ACP"
-            } else {
-                "Web"
-            };
-            rows.push(DetailsConvRow {
-                web_href: web_href_for_conversation(&bear.slug, &external_id),
-                id: external_id,
-                title,
-                last_message_at,
-                channel_label,
-                archived,
-            });
-        }
-        rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
-        (rows, Option::<String>::None)
-    };
-
-    render_template(
-        &state,
-        "bear/conversations.html",
-        auth_session,
-        context! {
-            bear,
-            conversation_rows => rows,
-            list_error,
-        },
-    )
-    .await
-}
-
-async fn bear_memory_get(
-    Path(slug): Path<String>,
-    Query(q): Query<BearMemoryQuery>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = true;
-    let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let store = manager.store_for_bear(bear.id).await?;
-    let requested_role = q.role.as_deref().unwrap_or("pair");
-    let selected_role = requested_role
-        .parse::<BearProfile>()
-        .unwrap_or(BearProfile::Pair);
-    let selected_role_name = selected_role.as_str().to_string();
-    let search_query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let selected_path = q.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let delete_notice = q.deleted;
-    let review_notice = q.review_requested;
-    let delete_error = q.error.as_deref().map(str::trim).filter(|s| !s.is_empty());
-
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
-    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear.id).await?;
-    let mut role_rows = Vec::new();
-    for agent in agents {
-        let role = agent
-            .parsed_profile()
-            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        let mut row = BearMemoryRoleRow {
-            profile: role.as_str().to_string(),
-            label: role_memory_label(role).to_string(),
-            description: role_memory_description(role).to_string(),
-            runtime_family: role.runtime_family().to_string(),
-            letta_agent_id: agent.letta_agent_id,
-            provisioning_status: agent.provisioning_status,
-            selected: role == selected_role,
-            status_state: None,
-            status_label: "Unavailable".to_string(),
-            file_count: 0,
-            registered_view_count: 0,
-            canonical_tip: None,
-            allowed_prefixes: Vec::new(),
-            entry_counts: Vec::new(),
-            recent_activity: Vec::new(),
-            error: None,
-        };
-        match den_runtime::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
-            Ok(status) => {
-                let available = status
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| status.get("available").and_then(|v| v.as_bool()))
-                    .unwrap_or(true);
-                row.status_state = Some(if available { "ok" } else { "unavailable" }.to_string());
-                row.status_label = if available { "Available" } else { "Unavailable" }.to_string();
-                row.file_count = status
-                    .get("file_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize;
-            }
-            Err(err) => {
-                row.status_label = "Error".to_string();
-                row.error = Some(err.to_string());
-            }
-        }
-        role_rows.push(row);
-    }
-
-    let selected_tree =
-        match den_runtime::memory::tools::sqlite_memory_browse(&store, selected_role.as_str()).await
-        {
-            Ok(v) => {
-                let files = v
-                    .get("children")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!([]));
-                Some(serde_json::json!({ "files": files }))
-            }
-            Err(err) => {
-                tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), "Could not load memory tree: {err}");
-                None
-            }
-        };
-
-    let search_results = if let Some(query) = search_query {
-        match den_runtime::memory::tools::sqlite_memory_search(
-            &store,
-            selected_role.as_str(),
-            query,
-            50,
-        )
-        .await
-        {
-            Ok(v) => {
-                let hits = v
-                    .get("hits")
-                    .and_then(|h| h.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let results: Vec<serde_json::Value> = hits
-                    .iter()
-                    .map(|h| {
-                        let snippet = h.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
-                        serde_json::json!({
-                            "path": h.get("path").and_then(|p| p.as_str()).unwrap_or(""),
-                            "title": serde_json::Value::Null,
-                            "snippet": snippet,
-                            "size_bytes": snippet.len(),
-                        })
-                    })
-                    .collect();
-                let result_count = results.len();
-                Some(serde_json::json!({
-                    "results": results,
-                    "result_count": result_count,
-                    "scanned_file_count": result_count,
-                }))
-            }
-            Err(err) => {
-                tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), "Could not search memory: {err}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let selected_file = if let Some(path) = selected_path {
-        match den_runtime::memory::tools::sqlite_memory_read(&store, path).await {
-            Ok(v) => {
-                if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
-                    Some(serde_json::json!({
-                        "path": v.get("path").and_then(|p| p.as_str()).unwrap_or(path),
-                        "content": v.get("content").and_then(|c| c.as_str()).unwrap_or(""),
-                    }))
-                } else {
-                    None
-                }
-            }
-            Err(err) => {
-                tracing::warn!(bear_id = %bear.id, role = selected_role.as_str(), path = path, "Could not read memory file: {err}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let pair_reflection_runs =
-        pair_reflection::list_recent_for_bear(state.sqlx_pool(), bear.id, 10)
-            .await
-            .unwrap_or_default();
-    let memory_proposals = memory_proposals::list_for_bear(state.sqlx_pool(), bear.id, None, 25)
-        .await
-        .unwrap_or_default();
-
-    let runtime_block_count: Option<usize> = Some(0);
-
-    render_template(
-        &state,
-        "bear/memory.html",
-        auth_session,
-        context! {
-            bear,
-            letta_configured,
-            role_rows,
-            selected_role => selected_role_name,
-            search_query => search_query.unwrap_or(""),
-            selected_path => selected_path.unwrap_or(""),
-            selected_tree,
-            search_results,
-            selected_file,
-            runtime_block_count,
-            pair_reflection_runs,
-            memory_proposals,
-            memfs_configured => true,
-            delete_notice,
-            review_notice,
-            delete_error,
-        },
-    )
-    .await
-}
-
-async fn bear_memory_delete_post(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<BearMemoryDeleteForm>,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
-        ));
-    }
-    let role = form
-        .role
-        .parse::<BearProfile>()
-        .map_err(CustomError::ValidationError)?;
-    let action = form.action.as_deref().unwrap_or("delete").trim();
-    let confirm = form.confirm.trim();
-    let mut paths = form
-        .paths
-        .into_iter()
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.dedup();
-    if paths.is_empty() {
-        let target = format!(
-            "/bear/{}/details/memory?role={}&error={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode("Select at least one memory file.")
-        );
-        return Ok(Redirect::to(&target).into_response());
-    }
-    if action == "request_review" {
-        let title = form
-            .review_title
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Review selected memory");
-        let summary = form
-            .review_summary
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Selected memory files were marked for Reflection/curate review from the Bear memory UI.");
-        let proposal = memory_proposals::create(
-            state.sqlx_pool(),
-            CreateMemoryProposal {
-                bear_id: bear.id,
-                source_profile: role,
-                source_agent_id: bears_db::profile_binding_id(state.sqlx_pool(), bear.id, role).await?,
-                source_paths: paths,
-                source_refs: serde_json::json!([]),
-                suggested_action: form
-                    .suggested_action
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("unspecified"),
-                target_ref: None,
-                title,
-                summary,
-                rationale: form
-                    .review_rationale
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or(""),
-                proposed_content: None,
-                proposed_patch: None,
-                refs: serde_json::json!({}),
-                sensitivity: form
-                    .sensitivity
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("normal"),
-                requires_human: form.requires_human.as_deref() == Some("on"),
-                project_to_conversation: true,
-            },
-        )
-        .await?;
-        let target = format!(
-            "/bear/{}/details/memory?role={}&review_requested=1&path={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode(
-                proposal
-                    .source_paths
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or("")
-            )
-        );
-        return Ok(Redirect::to(&target).into_response());
-    }
-    if confirm != role.as_str() && confirm != bear.slug {
-        let target = format!(
-            "/bear/{}/details/memory?role={}&error={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode("Type the role name or Bear slug to confirm deletion.")
-        );
-        return Ok(Redirect::to(&target).into_response());
-    }
-    let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let store = manager.store_for_bear(bear.id).await?;
-    let mut deleted = 0usize;
-    for path in &paths {
-        let result = sqlx::query(
-            "DELETE FROM memory_records WHERE bear_id = ? AND scope_profile = ? AND logical_path = ?",
-        )
-        .bind(bear.id.to_string())
-        .bind(role.as_str())
-        .bind(path)
-        .execute(store.pool())
-        .await
-        .map_err(|err| CustomError::System(format!("delete memory records failed: {err}")))?;
-        if result.rows_affected() > 0 {
-            deleted += 1;
-        }
-    }
-    let target = format!(
-        "/bear/{}/details/memory?role={}&deleted={}",
-        bear.slug,
-        role.as_str(),
-        deleted
-    );
-    Ok(Redirect::to(&target).into_response())
-}
-
-async fn bear_memory_proposal_get(
-    Path((slug, proposal_id)): Path<(String, Uuid)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let proposal = memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
-    render_template(
-        &state,
-        "bear/memory_proposal.html",
-        auth_session,
-        context! {
-            bear,
-            proposal,
-            can_manage_bear,
-            errors => None::<String>,
-        },
-    )
-    .await
-}
-
-async fn bear_memory_proposal_post(
-    Path((slug, proposal_id)): Path<(String, Uuid)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<BearMemoryProposalResolutionForm>,
-) -> Result<Response, CustomError> {
-    let user = auth_session
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
-        ));
-    }
-    let status = form.status.trim();
-    if !matches!(
-        status,
-        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
-    ) {
-        return Err(CustomError::ValidationError(
-            "invalid memory proposal status".to_string(),
-        ));
-    }
-    memory_proposals::resolve_for_bear(
-        state.sqlx_pool(),
-        memory_proposals::ProposalResolutionParams {
-            bear_id: bear.id,
-            proposal_id,
-            reviewer_profile: BearProfile::Curate,
-            reviewer_agent_id: None,
-            status,
-            review_notes: form.review_notes.as_deref(),
-            decision_summary: form.decision_summary.as_deref(),
-            result_path: None,
-            result_commit: None,
-            project_to_conversation: true,
-        },
-    )
-    .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/details/memory/proposals/{}",
-        bear.slug, proposal_id
-    ))
-    .into_response())
-}
-
-async fn bear_runtime_blocks_get(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = true;
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear.id).await?;
-    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear.id).await?;
-    let mut rows = Vec::new();
-    for agent in agents {
-        let role = agent
-            .parsed_profile()
-            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        rows.push(RuntimeBlockRoleRow {
-            profile: role.as_str().to_string(),
-            label: role_memory_label(role).to_string(),
-            letta_agent_id: agent.letta_agent_id.clone(),
-            block_count: 0,
-            diagnostics: None,
-            error: None,
-        });
-    }
-
-    render_template(
-        &state,
-        "bear/runtime_blocks.html",
-        auth_session,
-        context! {
-            bear,
-            letta_configured,
-            runtime_block_rows => rows,
-        },
-    )
-    .await
-}
 
 #[derive(Debug, Deserialize)]
 struct BearDeleteForm {
@@ -2620,7 +1443,7 @@ async fn bear_delete_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
     if body.confirm_slug.trim() != bear.slug {
@@ -2659,7 +1482,7 @@ async fn member_add_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
 
@@ -2685,7 +1508,7 @@ async fn member_add_post(
 
     bears_db::grant_membership(state.sqlx_pool(), target.id, bear.id, role_db).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/details/access", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/access", bear.slug)).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2711,7 +1534,7 @@ async fn member_remove_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin or site admin role required".to_string(),
+            "bear admin role required".to_string(),
         ));
     }
 
@@ -2733,5 +1556,5 @@ async fn member_remove_post(
 
     bears_db::revoke_membership(state.sqlx_pool(), body.remove_user_id, bear.id).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/details/access", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/access", bear.slug)).into_response())
 }

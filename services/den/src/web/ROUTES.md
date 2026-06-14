@@ -34,24 +34,39 @@ real-page smoke testing in development.
 
 - `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a role-aware `context_profile`, provisions/syncs role agents, and redirects to chat
 
+## Bear settings (`src/web/bear_settings.rs`)
+
+Member-facing bear administration at `/bear/{slug}/…` (read for members, write for bear admins):
+
+- `GET /bear/{slug}/overview` — readiness summary and navigation hub
+- `GET /bear/{slug}/access` — membership list; bear admins grant/revoke via POST actions
+- `GET /bear/{slug}/persona` — compiled prompts and block bindings
+- `GET /bear/{slug}/profiles` — native profile binding table
+- `GET /bear/{slug}/profiles/{profile}` — profile detail for `chat`, `pair`, `curate`, `work`, or `watch`
+- `GET|POST /bear/{slug}/memory` — unified memory browser (tree, search, delete/review for bear admins)
+- `GET|POST /bear/{slug}/memory/proposals/{proposal_id}` — memory review proposal detail and resolution
+- `GET /bear/{slug}/memory/records/{memory_id}` — single memory record inspector
+- `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
+- `GET /bear/{slug}/context` — prompt memory blocks
+- `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
+- `GET /bear/{slug}/advanced` — diagnostics and provision action
+- `POST /bear/{slug}/provision-missing-roles` — provision missing native profile bindings (redirects to `/profiles`)
+
 ## Member bear management (`src/web/bear_management.rs`)
 
-- `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
-- `GET /bear/{slug}/details` — canonical bear details and bear-scoped administration surface for members; includes overview, conversations, role summaries, work surfaces, memory summary, advanced Letta/MemFS diagnostics, and bear-admin-gated management sections such as configuration, access, web policy/audit visibility, and resync actions; optional query `letta_resync=ok|error` after resync attempts
-- `POST /bear/{slug}/details/resync-letta` — push Den registry to Letta (`PATCH` agent + recompile); bear admins only; redirects back to details
-- `GET /bear/{slug}/details/edit` — redirect to `/bear/{slug}/details/edit/overview`
-- `GET|POST /bear/{slug}/details/edit/overview` — edit slug, name, description; delete bear form (POST still targets `/bear/{slug}/details/delete`)
-- `GET|POST /bear/{slug}/details/edit/prompt` — edit system prompt only (bear admins)
-- `GET|POST /bear/{slug}/details/edit/configuration` — edit default model, default Letta agent type, and default tool ids for role agents (bear admins)
-- `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
-- `GET /bear/{slug}/details/conversations` — all threads including archived (Letta); membership required
-- `GET /bear/{slug}/details/roles/{profile}` — server-rendered profile detail page for `chat`, `pair`, `curate`, `work`, or `watch`
-- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser; query `profile` (not `role`) selects the memory branch
-- `POST /bear/{slug}/details/memory` — bear admin memory cleanup action; deletes selected Markdown memory files from the selected role branch after confirmation and resets registered role views to canonical.
-- `GET /bear/{slug}/details/memory/runtime-blocks` — Letta-native runtime memory blocks by role agent; separated from Bear MemFS memory and expected to trend toward zero blocks.
-- `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
-- `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only
-- `POST /bear/{slug}/details/members/remove` — remove membership (`remove_user_id`) — bear admins only; cannot remove the last admin
+- `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin`
+- `GET /bear/{slug}/details` — permanent redirect to `/bear/{slug}/overview`
+- `GET /bear/{slug}/details/{*rest}` — permanent redirects to canonical `/bear/{slug}/…` paths (legacy `roles/` → `profiles/`)
+- `GET /bear/{slug}/edit` — redirect to `/bear/{slug}/edit/overview`
+- `GET|POST /bear/{slug}/edit/overview` — edit slug, name, description; delete bear form
+- `GET|POST /bear/{slug}/edit/prompt` — edit system prompt (bear admins)
+- `GET|POST /bear/{slug}/edit/configuration` — edit default model only via Bifrost catalog (bear admins)
+- `GET|POST /bear/{slug}/code-token` — ACP code token for pair profile
+- `GET /bear/{slug}/memory/browse` — permanent redirect to `/bear/{slug}/memory` (query preserved)
+- `GET /bear/{slug}/memory/browse/runtime-blocks` — permanent redirect to `/bear/{slug}/advanced` (deprecated)
+- `GET /bear/{slug}/memory/browse/proposals/{id}` — permanent redirect to `/bear/{slug}/memory/proposals/{id}`
+- `POST /bear/{slug}/delete` — delete bear row (bear admins only)
+- `POST /bear/{slug}/members/add`, `POST /bear/{slug}/members/remove` — legacy membership actions
 
 ## End-user chat (Phase 1 — same origin as web)
 
@@ -69,10 +84,10 @@ real-page smoke testing in development.
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and role-agent provisioning defaults)
-- `GET /admin/bears/{id}` — operator bear registry detail; no longer the primary bear administration surface, which lives at member-facing `/bear/{slug}/details`
-- `POST /admin/bears/{id}/provision-missing-profiles` (alias `/provision-missing-roles`) — provision missing Den-native profile bindings; renders detail with a status line
+- `GET /admin/bears/{id}` — operator bear registry detail; redirects to member-facing `/bear/{slug}/…`
+- `POST /admin/bears/{id}/provision-missing-profiles` (alias `/provision-missing-roles`) — provision missing Den-native profile bindings
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)
-- `POST /admin/bears/{id}/retry-letta` — reconcile Den-native profile bindings (legacy URL name); responds with detail HTML including a status line
+- `POST /admin/bears/{id}/retry-letta` — reconcile Den-native profile bindings (legacy URL name)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test

@@ -11,10 +11,10 @@
   <tbody>
   {% for b in bears %}
     <tr>
-      <td><a href="/admin/bears/{{ b.id }}"><code>{{ b.slug | e }}</code></a></td>
+      <td><a href="/bear/{{ b.slug | e }}/overview"><code>{{ b.slug | e }}</code></a></td>
       <td>{{ b.name | e }}</td>
       <td>{% if b.default_model %}{{ b.default_model | e }}{% else %}<em>none</em>{% endif %}</td>
-      <td><a href="/admin/bears/{{ b.id }}/edit">Edit</a></td>
+      <td><a href="/bear/{{ b.slug | e }}/edit/overview">Edit</a></td>
     </tr>
   {% endfor %}
   </tbody>

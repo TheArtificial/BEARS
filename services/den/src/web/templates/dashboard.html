@@ -12,7 +12,7 @@
         <li>
             <a href="/bear/{{ b.slug | e }}">{{ b.name | e }}</a>
             {% if b.is_admin %}<span class="form-hint">(you are admin)</span>{% endif %}
-            — <a href="/bear/{{ b.slug | e }}/details">Details</a>
+            — <a href="/bear/{{ b.slug | e }}/overview">Overview</a>
             {% if b.description %}
             <p>{{ b.description | e }}</p>
             {% endif %}

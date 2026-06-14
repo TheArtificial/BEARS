@@ -1,0 +1,14 @@
+<nav class="bear-admin-nav" style="margin-bottom: 1rem;">
+  <a href="/bear/{{ bear.slug | e }}/overview"{% if bear_nav_active == "overview" %} aria-current="page"{% endif %}>Overview</a> |
+  <a href="/bear/{{ bear.slug | e }}/access"{% if bear_nav_active == "access" %} aria-current="page"{% endif %}>Access</a> |
+  <a href="/bear/{{ bear.slug | e }}/persona"{% if bear_nav_active == "persona" %} aria-current="page"{% endif %}>Persona</a> |
+  <a href="/bear/{{ bear.slug | e }}/profiles"{% if bear_nav_active == "profiles" %} aria-current="page"{% endif %}>Profiles</a> |
+  <a href="/bear/{{ bear.slug | e }}/code-token"{% if bear_nav_active == "code-token" %} aria-current="page"{% endif %}>Code token</a> |
+  <a href="/bear/{{ bear.slug | e }}/memory"{% if bear_nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a> |
+  <a href="/bear/{{ bear.slug | e }}/conversations"{% if bear_nav_active == "conversations" %} aria-current="page"{% endif %}>Conversations</a> |
+  <a href="/bear/{{ bear.slug | e }}/context"{% if bear_nav_active == "context" %} aria-current="page"{% endif %}>Context</a> |
+  <a href="/bear/{{ bear.slug | e }}/policy"{% if bear_nav_active == "policy" %} aria-current="page"{% endif %}>Policy</a> |
+  <a href="/bear/{{ bear.slug | e }}/advanced"{% if bear_nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a>
+  · <a href="/bear/{{ bear.slug | e }}">Chat</a>
+  · <a href="/">Dashboard</a>
+</nav>

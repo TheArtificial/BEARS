@@ -5,7 +5,7 @@
 {% block content %}
 <section>
     <h2>Bear memory</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
     <p class="form-hint">
         Bear memory is split between shared and role-local memory. Role-local memory can be useful permanently without being promoted to shared memory or Cabinet.
     </p>
@@ -40,7 +40,7 @@
                 {% for row in role_rows %}
                 <tr{% if row.selected %} class="selected"{% endif %}>
                     <td>
-                        <strong><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ row.profile | e }}">{{ row.label | e }}</a></strong><br>
+                        <strong><a href="/bear/{{ bear.slug | e }}/memory/browse?role={{ row.profile | e }}">{{ row.label | e }}</a></strong><br>
                         <span class="caption">{{ row.description | e }}</span>
                     </td>
                     <td><code>{{ row.profile | e }}</code><br><span class="caption">{{ row.runtime_family | e }}</span></td>
@@ -73,14 +73,14 @@
         </table>
         <p class="form-hint">
             Runtime memory blocks are Letta-native state, separate from Bear memory files.
-            <a href="/bear/{{ bear.slug | e }}/details/memory/runtime-blocks">Runtime memory blocks{% if runtime_block_count is not none %}: {{ runtime_block_count }}{% endif %}</a>.
+            <a href="/bear/{{ bear.slug | e }}/memory/browse/runtime-blocks">Runtime memory blocks{% if runtime_block_count is not none %}: {{ runtime_block_count }}{% endif %}</a>.
             Long term, this count should be 0 for most Bears.
         </p>
     </section>
 
     <section class="box full-width">
         <h3>Browse and search</h3>
-        <form method="get" action="/bear/{{ bear.slug | e }}/details/memory" class="fields-grid">
+        <form method="get" action="/bear/{{ bear.slug | e }}/memory/browse" class="fields-grid">
             <label for="memory-role">Role</label>
             <select id="memory-role" name="role">
                 {% for row in role_rows %}
@@ -97,7 +97,7 @@
 
     <section class="two-columns">
         <div>
-            <form class="box full-width" method="post" action="/bear/{{ bear.slug | e }}/details/memory">
+            <form class="box full-width" method="post" action="/bear/{{ bear.slug | e }}/memory/browse">
                 <h3>{{ selected_role | e }} memory tree</h3>
                 <input type="hidden" name="role" value="{{ selected_role | e }}">
                 {% if selected_tree and selected_tree.files and selected_tree.files | length > 0 %}
@@ -112,7 +112,7 @@
                         {% else %}
                         <label>
                             <input type="checkbox" name="paths" value="{{ node.path | e }}">
-                            <a href="/bear/{{ bear.slug | e }}/details/memory?role={{ selected_role | e }}&path={{ node.path | urlencode }}"><code>📄 {{ node.path | e }}</code></a>
+                            <a href="/bear/{{ bear.slug | e }}/memory/browse?role={{ selected_role | e }}&path={{ node.path | urlencode }}"><code>📄 {{ node.path | e }}</code></a>
                         </label>
                         {% endif %}
                     </li>
@@ -180,8 +180,8 @@
                     <td>{{ proposal.status | e }}</td>
                     <td>{{ proposal.source_profile | e }}</td>
                     <td>{{ proposal.suggested_action | e }}</td>
-                    <td><a href="/bear/{{ bear.slug | e }}/details/memory/proposals/{{ proposal.id }}">{{ proposal.title | e }}</a></td>
-                    <td>{% for p in proposal.source_paths %}{% if not loop.first %}<br>{% endif %}<a href="/bear/{{ bear.slug | e }}/details/memory?role={{ proposal.source_profile | e }}&path={{ p | urlencode }}"><code>{{ p | e }}</code></a>{% endfor %}</td>
+                    <td><a href="/bear/{{ bear.slug | e }}/memory/browse/proposals/{{ proposal.id }}">{{ proposal.title | e }}</a></td>
+                    <td>{% for p in proposal.source_paths %}{% if not loop.first %}<br>{% endif %}<a href="/bear/{{ bear.slug | e }}/memory/browse?role={{ proposal.source_profile | e }}&path={{ p | urlencode }}"><code>{{ p | e }}</code></a>{% endfor %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -205,7 +205,7 @@
                     <td>{{ run.trigger | e }}</td>
                     <td><code>{{ run.acp_session_id | e }}</code></td>
                     <td>{{ run.considered_message_count }}</td>
-                    <td>{% if run.summary_path %}<a href="/bear/{{ bear.slug | e }}/details/memory?role=pair&path={{ run.summary_path | urlencode }}"><code>{{ run.summary_path | e }}</code></a>{% else %}<span class="caption">—</span>{% endif %}</td>
+                    <td>{% if run.summary_path %}<a href="/bear/{{ bear.slug | e }}/memory/browse?role=pair&path={{ run.summary_path | urlencode }}"><code>{{ run.summary_path | e }}</code></a>{% else %}<span class="caption">—</span>{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -225,7 +225,7 @@
                 <tbody>
                     {% for result in search_results.results %}
                     <tr>
-                        <td><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ selected_role | e }}&q={{ search_query | urlencode }}&path={{ result.path | urlencode }}"><code>{{ result.path | e }}</code></a></td>
+                        <td><a href="/bear/{{ bear.slug | e }}/memory/browse?role={{ selected_role | e }}&q={{ search_query | urlencode }}&path={{ result.path | urlencode }}"><code>{{ result.path | e }}</code></a></td>
                         <td>{% if result.title %}{{ result.title | e }}{% else %}<span class="caption">—</span>{% endif %}</td>
                         <td>{{ result.snippet | e }}</td>
                         <td>{{ result.size_bytes }}</td>

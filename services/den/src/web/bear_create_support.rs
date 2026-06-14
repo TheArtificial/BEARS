@@ -184,31 +184,27 @@ impl From<&Bear> for BearConfigurationEditForm {
     }
 }
 
-/// Model + tool `<select>`s for `/bear/{slug}/details/edit/configuration`.
+/// Model select for `/bear/{slug}/edit/configuration` (Bifrost catalog only).
 pub async fn bear_configuration_page_context(
     state: &AppState,
     _bear: &Bear,
     form: &BearConfigurationEditForm,
 ) -> minijinja::Value {
-    let (letta_configured, letta_model_options, letta_models_fetch_error) =
+    let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
     let model_trim = form.default_model.trim();
     let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let letta_model_options = if letta_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, letta_model_options)
+    let model_options = if model_catalog_configured {
+        ensure_stored_model_in_options_for_handle(model_handle, model_options)
     } else {
-        letta_model_options
+        model_options
     };
 
     context! {
         native_runtime => true,
-        letta_configured,
-        letta_model_options,
-        letta_models_fetch_error,
-        letta_tools_configured => false,
-        letta_tool_options => Vec::<ToolOption>::new(),
-        letta_tools_fetch_error => Option::<String>::None,
-        letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
+        model_catalog_configured,
+        model_options,
+        models_fetch_error,
     }
 }
 

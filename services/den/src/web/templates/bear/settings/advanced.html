@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Advanced · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+<div class="box">
+<h2>Advanced · {{ bear.name }}</h2>
+
+{% if message %}
+<p><strong>{{ message | e }}</strong></p>
+{% endif %}
+
+<h3>Diagnostics</h3>
+<dl>
+  <dt>Bear id</dt>
+  <dd><code>{{ bear.id }}</code></dd>
+  <dt>Runtime</dt>
+  <dd>Native (Den in-process)</dd>
+  <dt>Created</dt>
+  <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
+  <dt>Updated</dt>
+  <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
+</dl>
+
+{% if stats %}
+<h3>SQLite memory file</h3>
+<dl>
+  <dt>Path</dt>
+  <dd><code>{{ stats.db_path | e }}</code></dd>
+  <dt>Exists</dt>
+  <dd>{% if stats.db_exists %}yes ({{ stats.db_size_bytes }} bytes){% else %}no{% endif %}</dd>
+  <dt>Records</dt>
+  <dd>{{ stats.record_count }}</dd>
+</dl>
+{% endif %}
+
+{% if can_manage_bear %}
+<form method="post" action="/bear/{{ bear.slug | e }}/provision-missing-roles">
+  <button type="submit">Provision missing profile bindings</button>
+</form>
+{% endif %}
+</div>
+{% endblock %}

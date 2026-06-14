@@ -6,7 +6,7 @@
 {% block content %}
 <section>
     <h2>System prompt</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
     {% if letta_sync_error %}
     <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>
     {% endif %}

@@ -49,7 +49,7 @@ endblock %} {% block content %}
             {% else %}
             <form
                 method="post"
-                action="/bear/{{ bear.slug | e }}/details/code-token"
+                action="/bear/{{ bear.slug | e }}/code-token"
             >
                 <label for="name">Token name</label>
                 <input

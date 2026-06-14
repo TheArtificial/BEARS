@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Context · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+<div class="box">
+<h2>Context blocks · {{ bear.name }}</h2>
+<p class="form-hint">Postgres-backed prompt memory blocks assembled into runtime context.</p>
+
+{% if prompt_blocks and prompt_blocks | length > 0 %}
+<table>
+  <thead><tr><th>Block id</th><th>Scope</th><th>Type</th><th>State</th><th>Title</th><th>Preview</th></tr></thead>
+  <tbody>
+  {% for b in prompt_blocks %}
+    <tr>
+      <td><code>{{ b.block_id | e }}</code></td>
+      <td>{{ b.scope | e }}</td>
+      <td>{{ b.block_type | e }}</td>
+      <td>{{ b.state | e }}</td>
+      <td>{{ b.title | e }}</td>
+      <td><pre style="white-space: pre-wrap; margin:0; max-height:4rem; overflow:auto;">{{ b.body_preview | e }}</pre></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No prompt memory blocks for this bear.</em></p>
+{% endif %}
+</div>
+{% endblock %}

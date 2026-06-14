@@ -36,46 +36,55 @@ use crate::web::bear_create_support::{
     validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
 
-use super::bear_domains;
+async fn redirect_bear_slug(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Redirect, CustomError> {
+    let bear = bears_db::get_bear(state.sqlx_pool(), id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    Ok(Redirect::permanent(&format!("/bear/{}/overview", bear.slug)))
+}
+
+async fn redirect_bear_slug_path(
+    Path((id, rest)): Path<(Uuid, String)>,
+    State(state): State<AppState>,
+) -> Result<Redirect, CustomError> {
+    let bear = bears_db::get_bear(state.sqlx_pool(), id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let path = rest.trim_start_matches('/');
+    let target = match path {
+        "" => format!("/bear/{}/overview", bear.slug),
+        "edit" => format!("/bear/{}/edit/overview", bear.slug),
+        "edit/prompt" => format!("/bear/{}/edit/prompt", bear.slug),
+        "access" => format!("/bear/{}/access", bear.slug),
+        "persona" => format!("/bear/{}/persona", bear.slug),
+        "profiles" => format!("/bear/{}/profiles", bear.slug),
+        "memory" => format!("/bear/{}/memory", bear.slug),
+        p if p.starts_with("memory/records/") => {
+            format!("/bear/{}/{}", bear.slug, p)
+        }
+        "conversations" => format!("/bear/{}/conversations", bear.slug),
+        p if p.starts_with("conversations/") => format!("/bear/{}/{}", bear.slug, p),
+        "context" => format!("/bear/{}/context", bear.slug),
+        "policy" => format!("/bear/{}/policy", bear.slug),
+        "advanced" => format!("/bear/{}/advanced", bear.slug),
+        other => format!("/bear/{}/overview?legacy={}", bear.slug, urlencoding::encode(other)),
+    };
+    Ok(Redirect::permanent(&target))
+}
 
 pub fn router() -> Router<AppState> {
-    bear_domains::router().merge(Router::new())
+    Router::new()
         .route_with_tsr("/bears/", get(list_view))
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
-        .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
-        .route_with_tsr(
-            "/bears/{id}/edit/prompt",
-            get(edit_prompt_view).post(edit_prompt_action),
-        )
-        .route_with_tsr("/bears/{id}/members/grant", post(grant_member_action))
-        .route_with_tsr(
-            "/bears/{id}/members/{user_id}/revoke",
-            post(revoke_member_action),
-        )
-        .route_with_tsr("/bears/{id}/web-sources", post(add_web_source_action))
-        .route_with_tsr(
-            "/bears/{id}/web-sources/{source_id}/delete",
-            post(delete_web_source_action),
-        )
-        .route_with_tsr("/bears/{id}/web-approvals", post(add_web_approval_action))
-        .route_with_tsr(
-            "/bears/{id}/web-approvals/{approval_id}/revoke",
-            post(revoke_web_approval_action),
-        )
-        .route_with_tsr(
-            "/bears/{id}/provision-missing-profiles",
-            post(provision_missing_profiles_action),
-        )
-        .route_with_tsr(
-            "/bears/{id}/provision-missing-roles",
-            post(provision_missing_profiles_action),
-        )
-        .route_with_tsr("/bears/{id}/retry-letta", post(retry_letta_action))
-        .route_with_tsr("/bears/{id}", get(detail_view))
+        .route_with_tsr("/bears/{id}", get(redirect_bear_slug))
+        .route_with_tsr("/bears/{id}/{*rest}", get(redirect_bear_slug_path))
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearWebSourceRow {
+pub(crate) struct BearWebSourceRow {
     id: Uuid,
     scope_kind: String,
     scope_value: String,
@@ -86,7 +95,7 @@ pub(super) struct BearWebSourceRow {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearWebApprovalRow {
+pub(crate) struct BearWebApprovalRow {
     id: Uuid,
     scope_kind: String,
     scope_value: String,
@@ -97,7 +106,7 @@ pub(super) struct BearWebApprovalRow {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearWebFetchRow {
+pub(crate) struct BearWebFetchRow {
     url: String,
     final_url: Option<String>,
     host: String,
@@ -110,24 +119,24 @@ pub(super) struct BearWebFetchRow {
 }
 
 #[derive(Debug, Deserialize)]
-struct AddWebSourceForm {
-    scope_kind: String,
-    scope_value: String,
-    policy: String,
+pub(crate) struct AddWebSourceForm {
+    pub(crate) scope_kind: String,
+    pub(crate) scope_value: String,
+    pub(crate) policy: String,
     #[serde(default)]
-    label: String,
+    pub(crate) label: String,
     #[serde(default)]
-    priority: Option<i32>,
+    pub(crate) priority: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AddWebApprovalForm {
-    scope_kind: String,
-    scope_value: String,
+pub(crate) struct AddWebApprovalForm {
+    pub(crate) scope_kind: String,
+    pub(crate) scope_value: String,
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearPlanModeRow {
+pub(crate) struct BearPlanModeRow {
     id: Uuid,
     user_id: i32,
     username: Option<String>,
@@ -141,18 +150,19 @@ pub(super) struct BearPlanModeRow {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearProfileBindingHealthRow {
-    profile: String,
-    binding_id: String,
-    runtime_family: String,
-    branch: String,
-    letta_agent_id: Option<String>,
-    provisioning_status: String,
-    last_provisioned_version: i32,
-    last_synced_at: Option<String>,
-    health_status: String,
-    health_label: String,
-    health_detail: Option<String>,
+pub(crate) struct BearProfileBindingHealthRow {
+    pub(crate) profile: String,
+    pub(crate) surface_label: String,
+    pub(crate) binding_id: String,
+    pub(crate) runtime_family: String,
+    pub(crate) branch: String,
+    pub(crate) letta_agent_id: Option<String>,
+    pub(crate) provisioning_status: String,
+    pub(crate) last_provisioned_version: i32,
+    pub(crate) last_synced_at: Option<String>,
+    pub(crate) health_status: String,
+    pub(crate) health_label: String,
+    pub(crate) health_detail: Option<String>,
     letta_name: Option<String>,
     letta_model: Option<String>,
     letta_agent_type: Option<String>,
@@ -164,20 +174,31 @@ pub(super) struct BearProfileBindingHealthRow {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct BearMemberAdminRow {
-    pub(super) user_id: i32,
-    pub(super) username: String,
-    pub(super) display_name: String,
-    pub(super) role: Option<String>,
-    pub(super) role_label: String,
+pub(crate) struct BearMemberAdminRow {
+    pub(crate) user_id: i32,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
+    pub(crate) role: Option<String>,
+    pub(crate) role_label: String,
 }
 
-pub(super) fn membership_role_label(role: Option<&str>) -> String {
+pub(crate) fn membership_role_label(role: Option<&str>) -> String {
     match role.map(str::trim).filter(|s| !s.is_empty()) {
         Some("admin") => "Admin — can manage bear settings and members".to_string(),
         Some("member") | None => "Member — can use the bear".to_string(),
         Some(other) => format!("Custom ({other})"),
     }
+}
+
+fn profile_surface_label(role: BearProfile) -> String {
+    match role {
+        BearProfile::Chat => "Web chat",
+        BearProfile::Pair => "ACP/coding",
+        BearProfile::Curate => "Memory curation",
+        BearProfile::Work => "Sandboxed work",
+        BearProfile::Watch => "Observation",
+    }
+    .to_string()
 }
 
 impl BearProfileBindingHealthRow {
@@ -205,6 +226,7 @@ impl BearProfileBindingHealthRow {
         };
         Self {
             profile: role.as_str().to_string(),
+            surface_label: profile_surface_label(role),
             binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
@@ -228,7 +250,7 @@ impl BearProfileBindingHealthRow {
 
 }
 
-pub(super) async fn bear_web_sources(
+pub(crate) async fn bear_web_sources(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebSourceRow>, CustomError> {
@@ -270,7 +292,7 @@ pub(super) async fn bear_web_sources(
         .collect())
 }
 
-pub(super) async fn bear_web_approvals(
+pub(crate) async fn bear_web_approvals(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebApprovalRow>, CustomError> {
@@ -337,7 +359,7 @@ pub(super) async fn bear_web_approvals(
         .collect())
 }
 
-pub(super) async fn bear_web_fetches(
+pub(crate) async fn bear_web_fetches(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebFetchRow>, CustomError> {
@@ -381,7 +403,7 @@ pub(super) async fn bear_web_fetches(
         .collect())
 }
 
-pub(super) async fn bear_plan_mode_rows(
+pub(crate) async fn bear_plan_mode_rows(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearPlanModeRow>, CustomError> {
@@ -443,7 +465,7 @@ pub(super) async fn bear_plan_mode_rows(
         .collect())
 }
 
-pub(super) async fn bear_agent_health_rows(
+pub(crate) async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
     _letta_configured: bool,
@@ -676,7 +698,7 @@ pub async fn new_action(
             }
         }
 
-        Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
+        Ok(Redirect::to(&format!("/bear/{}/overview", form.slug.trim())).into_response())
     } else {
         let users = user_db::get_users(state.sqlx_pool()).await?;
         let page = admin_bear_new_form_context(&state, &form).await;
