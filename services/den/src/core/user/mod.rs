@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::{query_as, PgPool};
 use time::PrimitiveDateTime;
 
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
 pub const RESERVED_NAMES: [&str; 18] = [
     // 3-letters not needed because minimum length is 4
@@ -48,7 +48,7 @@ pub struct UserSettings {
     pub week_start_day: i32,
 }
 
-pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<User, CustomError> {
+pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<User, DenError> {
     let user = query_as!(
         User,
         "
@@ -79,7 +79,7 @@ pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<User, CustomError> 
 pub async fn user_by_username_opt(
     db_pool: &PgPool,
     username: String,
-) -> Result<Option<User>, CustomError> {
+) -> Result<Option<User>, DenError> {
     let user_opt = query_as!(
         User,
         "

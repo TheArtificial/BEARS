@@ -1,6 +1,6 @@
 use sqlx::{query, PgPool};
 
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
 #[derive(sqlx::FromRow, serde::Serialize)]
 pub struct User {
@@ -23,7 +23,7 @@ pub struct UserAuth {
     pub theme: String,
 }
 
-pub async fn get_users(db_pool: &PgPool) -> Result<Vec<User>, CustomError> {
+pub async fn get_users(db_pool: &PgPool) -> Result<Vec<User>, DenError> {
     let users = sqlx::query_as::<_, User>(
         r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users"#,
     )
@@ -38,7 +38,7 @@ pub async fn create_user(
     username: &str,
     display_name: &str,
     passhash: &str,
-) -> Result<i32, CustomError> {
+) -> Result<i32, DenError> {
     let record = sqlx::query!(
         "INSERT INTO users (email, username, display_name, passhash) VALUES ($1, $2, $3, $4) RETURNING id",
         email,
@@ -51,7 +51,7 @@ pub async fn create_user(
     Ok(record.id)
 }
 
-pub async fn get_user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<User>, CustomError> {
+pub async fn get_user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<User>, DenError> {
     let user = sqlx::query_as::<_, User>(
         r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE id = $1"#,
     )
@@ -61,14 +61,14 @@ pub async fn get_user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<User>, C
     Ok(user)
 }
 
-pub async fn get_username_by_id(db_pool: &PgPool, id: i32) -> Result<Option<String>, CustomError> {
+pub async fn get_username_by_id(db_pool: &PgPool, id: i32) -> Result<Option<String>, DenError> {
     let result = query!("SELECT username FROM users WHERE id = $1", id)
         .fetch_optional(db_pool)
         .await?;
     Ok(result.map(|r| r.username))
 }
 
-pub async fn count_users_by_username(db_pool: &PgPool, username: &str) -> Result<i64, CustomError> {
+pub async fn count_users_by_username(db_pool: &PgPool, username: &str) -> Result<i64, DenError> {
     let record = sqlx::query!("SELECT COUNT(*) FROM users WHERE username = $1", username)
         .fetch_one(db_pool)
         .await?;
@@ -78,7 +78,7 @@ pub async fn count_users_by_username(db_pool: &PgPool, username: &str) -> Result
 pub async fn get_user_by_username(
     db_pool: &PgPool,
     username: &str,
-) -> Result<Option<UserAuth>, CustomError> {
+) -> Result<Option<UserAuth>, DenError> {
     let user = sqlx::query_as::<_, UserAuth>(
         r#"
         SELECT id, username, passhash,
@@ -94,7 +94,7 @@ pub async fn get_user_by_username(
     Ok(user)
 }
 
-pub async fn get_user_by_email(db_pool: &PgPool, email: &str) -> Result<Option<User>, CustomError> {
+pub async fn get_user_by_email(db_pool: &PgPool, email: &str) -> Result<Option<User>, DenError> {
     let user = sqlx::query_as::<_, User>(
         r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE email = $1"#,
     )
@@ -107,7 +107,7 @@ pub async fn get_user_by_email(db_pool: &PgPool, email: &str) -> Result<Option<U
 pub async fn get_user_auth_by_email(
     db_pool: &PgPool,
     email: &str,
-) -> Result<Option<UserAuth>, CustomError> {
+) -> Result<Option<UserAuth>, DenError> {
     let user = sqlx::query_as::<_, UserAuth>(
         r#"
         SELECT id, username, passhash,
@@ -131,7 +131,7 @@ pub async fn update_user_by_id(
     display_name: &str,
     theme: &str,
     week_start_day: i32,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     query!(
         "UPDATE users SET email = $1, username = $2, display_name = $3, theme = $4, week_start_day = $5, updated_at = NOW() WHERE id = $6",
         email,
@@ -150,7 +150,7 @@ pub async fn set_user_passhash_by_id(
     db_pool: &PgPool,
     id: i32,
     passhash: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     query!(
         "UPDATE users SET passhash = $1, updated_at = NOW() WHERE id = $2",
         passhash,
@@ -161,14 +161,14 @@ pub async fn set_user_passhash_by_id(
     Ok(())
 }
 
-pub async fn delete_user_by_id(db_pool: &PgPool, id: i32) -> Result<(), CustomError> {
+pub async fn delete_user_by_id(db_pool: &PgPool, id: i32) -> Result<(), DenError> {
     query!("DELETE FROM users WHERE id = $1", id)
         .execute(db_pool)
         .await?;
     Ok(())
 }
 
-pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<super::User>, CustomError> {
+pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<super::User>, DenError> {
     let user = sqlx::query_as!(
         super::User,
         r#"
@@ -199,7 +199,7 @@ pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<super::User>
 pub async fn settings_by_id(
     db_pool: &PgPool,
     id: i32,
-) -> Result<Option<super::UserSettings>, CustomError> {
+) -> Result<Option<super::UserSettings>, DenError> {
     let settings = sqlx::query_as!(
         super::UserSettings,
         r#"
@@ -218,7 +218,7 @@ pub async fn settings_by_id(
 pub async fn update_settings(
     db_pool: &PgPool,
     user_settings: &super::UserSettings,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query!(
         r#"
         UPDATE users

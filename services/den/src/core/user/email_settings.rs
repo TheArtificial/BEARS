@@ -3,7 +3,7 @@ use sqlx::{query, query_as, PgPool};
 
 use crate::{
     config::Config,
-    errors::CustomError,
+    errors::DenError,
     core::email,
 };
 
@@ -54,7 +54,7 @@ impl From<UserEmailSettings> for VerifyEmailParams {
 pub async fn settings_by_id(
     db_pool: &PgPool,
     user_id: i32,
-) -> Result<UserEmailSettings, CustomError> {
+) -> Result<UserEmailSettings, DenError> {
     if let Some(email_settings) = query_as!(
         UserEmailSettings,
         "
@@ -117,7 +117,7 @@ pub async fn settings_by_id(
 
         Ok(email_settings)
     } else {
-        Err(CustomError::Database(format!(
+        Err(DenError::Database(format!(
             "Cannot find a current email address for user {user_id}"
         )))
     }
@@ -128,7 +128,7 @@ pub async fn settings_by_id(
 pub async fn update_email_basics(
     db_pool: &PgPool,
     email_basics: UserEmailBasics,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let user_id = email_basics.user_id;
     let new_email = email_basics.email.to_lowercase();
     let active_flag = email_basics.active;
@@ -188,7 +188,7 @@ pub async fn update_email_basics(
     .fetch_optional(&mut *tx)
     .await?;
     if email_exists.is_some() {
-        return Err(CustomError::Database(format!(
+        return Err(DenError::Database(format!(
             "Email address {new_email} is already in use by another user"
         )));
     }
@@ -266,7 +266,7 @@ pub async fn mark_email_verified(
     db_pool: &PgPool,
     user_id: i32,
     verify_code: String,
-) -> Result<VerifyOutcome, CustomError> {
+) -> Result<VerifyOutcome, DenError> {
     if let Some(email_config) = query!(
         "
         SELECT id, verify_code_expire_at, verified_at
@@ -331,7 +331,7 @@ pub async fn send_verify_email_for_user_id(
     db_pool: &PgPool,
     user_id: i32,
     app_config: &Config,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let verify_email_params = VerifyEmailParams::from(settings_by_id(db_pool, user_id).await?);
 
     let email_address = verify_email_params.email;
@@ -399,7 +399,7 @@ pub async fn set_admin_email_verified(
     db_pool: &PgPool,
     user_id: i32,
     verified: bool,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let verified_at: Option<time::OffsetDateTime> = if verified {
         Some(time::OffsetDateTime::now_utc())
     } else {
@@ -427,7 +427,7 @@ pub async fn set_admin_email_verified(
             .bind(user_id)
             .fetch_optional(db_pool)
             .await?
-            .ok_or_else(|| CustomError::NotFound(format!("user {user_id} not found")))?;
+            .ok_or_else(|| DenError::NotFound(format!("user {user_id} not found")))?;
 
         sqlx::query(
             r#"INSERT INTO email_configs (user_id, email_address, active, verified_at)

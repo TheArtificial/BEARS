@@ -1,7 +1,7 @@
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct Invite {
@@ -17,7 +17,7 @@ pub struct InvitingUser {
     pub inviting_display_name: Option<String>,
 }
 
-pub async fn by_user_id(db_pool: &PgPool, user_id: i32) -> Result<Vec<Invite>, CustomError> {
+pub async fn by_user_id(db_pool: &PgPool, user_id: i32) -> Result<Vec<Invite>, DenError> {
     let invites = sqlx::query_as::<_, Invite>(
         r#"
         SELECT
@@ -37,7 +37,7 @@ pub async fn by_user_id(db_pool: &PgPool, user_id: i32) -> Result<Vec<Invite>, C
     Ok(invites)
 }
 
-pub async fn create(db_pool: &PgPool, user_id: i32, code: &str) -> Result<i32, CustomError> {
+pub async fn create(db_pool: &PgPool, user_id: i32, code: &str) -> Result<i32, DenError> {
     let row = sqlx::query(
         "INSERT INTO invites (user_id, code, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) RETURNING id",
     )
@@ -49,7 +49,7 @@ pub async fn create(db_pool: &PgPool, user_id: i32, code: &str) -> Result<i32, C
     Ok(id)
 }
 
-pub async fn check(db_pool: &PgPool, code: &str) -> Result<Option<InvitingUser>, CustomError> {
+pub async fn check(db_pool: &PgPool, code: &str) -> Result<Option<InvitingUser>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT
@@ -70,7 +70,7 @@ pub async fn check(db_pool: &PgPool, code: &str) -> Result<Option<InvitingUser>,
     }))
 }
 
-pub async fn consume(db_pool: &PgPool, code: &str, new_user_id: i32) -> Result<(), CustomError> {
+pub async fn consume(db_pool: &PgPool, code: &str, new_user_id: i32) -> Result<(), DenError> {
     sqlx::query("UPDATE invites SET new_user_id = $1, updated_at = NOW() WHERE code = $2")
         .bind(new_user_id)
         .bind(code)

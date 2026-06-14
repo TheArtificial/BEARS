@@ -102,9 +102,7 @@ impl BearDirectory for DenBearDirectory<'_> {
     }
 
     async fn current_user(&self, user_id: i32) -> Result<CurrentUser, DenError> {
-        let current = user::user_by_id(self.pool, user_id)
-            .await
-            .map_err(CustomError::into_den)?;
+        let current = user::user_by_id(self.pool, user_id).await?;
         Ok(CurrentUser {
             id: current.id,
             username: current.username,

@@ -10,12 +10,12 @@ use sqlx::PgPool;
 use tokio::task;
 
 use crate::core::user;
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Database(#[from] CustomError),
+    Database(#[from] DenError),
 
     #[error(transparent)]
     TaskJoin(#[from] task::JoinError),

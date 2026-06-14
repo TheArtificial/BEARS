@@ -4,7 +4,7 @@ use mailgun_rs::{Attachment, EmailAddress, Mailgun, MailgunRegion, Message};
 use minijinja::Environment;
 use sqlx::{query, query_as, PgPool};
 
-use crate::{config::Config, errors::CustomError};
+use crate::{config::Config, errors::DenError};
 
 pub struct EmailConfig {
     pub user_id: i32,
@@ -17,7 +17,7 @@ pub struct EmailConfig {
 pub async fn get_current_config(
     sqlx_pool: &PgPool,
     user_id: i32,
-) -> Result<EmailConfig, CustomError> {
+) -> Result<EmailConfig, DenError> {
     Ok(query_as!(
         EmailConfig,
         r#"
@@ -71,7 +71,7 @@ pub async fn send_email_template(
     app_config: &Config,
     config: EmailConfig,
     request: EmailTemplateRequest<'static>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let EmailTemplateRequest {
         subject,
         template_env,
@@ -116,7 +116,7 @@ pub async fn send_email_template(
 
     // prepare message body
     let template = template_env.get_template(template_name).map_err(|e| {
-        CustomError::Render(format!("Unable to find template '{template_name}': {e:?}"))
+        DenError::Render(format!("Unable to find template '{template_name}': {e:?}"))
     })?;
     let html = match template.render(merged_ctx) {
         Ok(rendered) => rendered,
@@ -128,7 +128,7 @@ pub async fn send_email_template(
                 tracing::error!("Causal error: {:#}", next_err);
                 current_err = next_err;
             }
-            return Err(CustomError::Render(format!(
+            return Err(DenError::Render(format!(
                 "Error rendering template '{template_name}'"
             )));
         }
@@ -189,7 +189,7 @@ pub async fn send_email_template(
             .execute(sqlx_pool)
             .await?;
 
-            Err(CustomError::Email(send_err.to_string()))
+            Err(DenError::Email(send_err.to_string()))
         }
     }
 }
