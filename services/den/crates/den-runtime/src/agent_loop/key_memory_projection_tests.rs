@@ -1,18 +1,18 @@
+use den_core::config::Config;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
-    core::{
+    {
         agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput},
         bears::{model::BearProfile, Bear},
         memory::{
             store::{append_memory_record, LogicalMemoryPath},
             MemoryStoreManager,
         },
-        tools::work_surface::WorkSurfaceSessionHints,
     },
 };
+use den_tools::work_surface::WorkSurfaceSessionHints;
 
 fn legacy_test_bear(bear_id: Uuid) -> Bear {
     let now = OffsetDateTime::now_utc();

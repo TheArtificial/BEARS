@@ -1,9 +1,10 @@
+use den_core::DenError;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{
+    {
         prompt_memory_block_store::{
             select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
             PromptMemoryRuntimeSelection,
@@ -21,7 +22,6 @@ use crate::{
         },
         runtime_conversations::RuntimeCompactionTriggerKind,
     },
-    errors::CustomError,
 };
 
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
@@ -87,7 +87,7 @@ async fn load_prompt_memory_runtime_text(
     profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let selection = match select_prompt_memory_blocks_for_runtime(
         pool,
         PromptMemoryBlockQuery {
@@ -132,7 +132,7 @@ pub async fn assemble_den_owned_runtime_supplement(
     session_id: &str,
     workspace_roots: &[String],
     client_context: &Value,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let mut parts = Vec::new();
     let prompt_memory = load_prompt_memory_runtime_text(
         pool,

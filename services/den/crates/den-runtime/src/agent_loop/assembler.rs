@@ -1,18 +1,18 @@
+use den_core::DenError;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{
+    {
         bears::{
             db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
         },
         memory::MemoryStoreManager,
-        tools::work_surface::WorkSurfaceSessionHints,
         llm::ChatMessage,
     },
-    errors::CustomError,
 };
+use den_tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
     context::{
@@ -85,30 +85,30 @@ pub struct AssembledNativeTurn {
 
 pub async fn assemble_native_turn_messages(
     ctx: AssembleTurnContext<'_>,
-) -> Result<Vec<ChatMessage>, CustomError> {
+) -> Result<Vec<ChatMessage>, DenError> {
     Ok(assemble_native_turn(ctx).await?.messages)
 }
 
 pub async fn assemble_native_turn(
     ctx: AssembleTurnContext<'_>,
-) -> Result<AssembledNativeTurn, CustomError> {
+) -> Result<AssembledNativeTurn, DenError> {
     let bear = bears_db::get_bear(ctx.pool, ctx.bear_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     assemble_native_turn_for_bear(ctx, &bear).await
 }
 
 pub async fn assemble_native_turn_messages_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
-) -> Result<Vec<ChatMessage>, CustomError> {
+) -> Result<Vec<ChatMessage>, DenError> {
     Ok(assemble_native_turn_for_bear(ctx, bear).await?.messages)
 }
 
 pub async fn assemble_native_turn_for_bear(
     ctx: AssembleTurnContext<'_>,
     bear: &Bear,
-) -> Result<AssembledNativeTurn, CustomError> {
+) -> Result<AssembledNativeTurn, DenError> {
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
     let projection = if ctx.profile == BearProfile::Chat {
         KeyMemoryProjectionResult {
@@ -212,7 +212,7 @@ pub async fn assemble_native_turn_for_bear(
     }
     if ctx.profile == BearProfile::Chat {
         system_text.push_str("\n\n");
-        system_text.push_str(&crate::core::tools::descriptor::render_profile_tool_surface_blurb(
+        system_text.push_str(&den_tools::descriptor::render_profile_tool_surface_blurb(
             ctx.profile,
         ));
     }

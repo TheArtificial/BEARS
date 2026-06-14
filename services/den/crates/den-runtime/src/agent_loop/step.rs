@@ -7,7 +7,7 @@ use futures::{Stream, TryStreamExt};
 use tokio::time::timeout;
 
 use crate::{
-    core::{
+    {
         agent_loop::{context::repair_tool_call_message_chain, AgentLoopSession},
         llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
         native_runtime::openai_byte_stream_to_event_stream,

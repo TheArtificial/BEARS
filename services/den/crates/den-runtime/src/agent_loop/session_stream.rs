@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use futures::Stream;
 
 use crate::{
-    core::{
+    {
         agent_loop::{
             session_store::AgentLoopSessionStore,
             tool_policy::{maybe_pause_for_tool_approval, provider_tool_requires_approval},
@@ -92,7 +92,7 @@ impl SessionTrackingStream {
             .map(|(id, (name, args))| ChatToolCall {
                 id: id.clone(),
                 call_type: "function".to_string(),
-                function: crate::core::llm::ChatToolCallFunction {
+                function: crate::llm::ChatToolCallFunction {
                     name: name.clone(),
                     arguments: args.clone(),
                 },
@@ -167,7 +167,7 @@ impl SessionTrackingStream {
             return;
         }
         self.store.update(&self.session_key, |session| {
-            session.messages.push(crate::core::llm::ChatMessage {
+            session.messages.push(crate::llm::ChatMessage {
                 role: "assistant".to_string(),
                 content: self.assistant_content(),
                 tool_call_id: None,
@@ -180,12 +180,12 @@ impl SessionTrackingStream {
 }
 
 fn upsert_assistant_tool_step_in_messages(
-    messages: &mut Vec<crate::core::llm::ChatMessage>,
+    messages: &mut Vec<crate::llm::ChatMessage>,
     content: Option<String>,
     calls: &[ChatToolCall],
     already_synced: bool,
 ) {
-    let assistant = crate::core::llm::ChatMessage {
+    let assistant = crate::llm::ChatMessage {
         role: "assistant".to_string(),
         content,
         tool_call_id: None,
@@ -373,7 +373,7 @@ impl Stream for SessionTrackingStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::llm::{ChatMessage, ChatToolCall, ChatToolCallFunction};
+    use crate::llm::{ChatMessage, ChatToolCall, ChatToolCallFunction};
 
     fn sample_tool_call(id: &str) -> ChatToolCall {
         ChatToolCall {
@@ -433,7 +433,7 @@ mod tests {
         });
 
         let repaired =
-            crate::core::agent_loop::context::repair_tool_call_message_chain(messages);
+            crate::agent_loop::context::repair_tool_call_message_chain(messages);
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].role, "assistant");
         assert_eq!(repaired[2].role, "tool");

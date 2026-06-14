@@ -1,4 +1,4 @@
-use crate::core::llm::{ChatMessage, ChatToolCall};
+use crate::llm::{ChatMessage, ChatToolCall};
 
 /// Returns tool calls from the latest assistant message that do not yet have tool results.
 pub fn pending_tool_calls(messages: &[ChatMessage]) -> Vec<ChatToolCall> {
@@ -24,7 +24,7 @@ pub fn pending_tool_calls(messages: &[ChatMessage]) -> Vec<ChatToolCall> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::llm::ChatToolCallFunction;
+    use crate::llm::ChatToolCallFunction;
 
     fn call(id: &str) -> ChatToolCall {
         ChatToolCall {

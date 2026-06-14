@@ -1,4 +1,5 @@
 //! Multi-step native web chat turn: executes Den server tools in-process and continues the loop.
+use den_core::config::Config;
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -13,8 +14,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
-    core::{
+    {
         agent_loop::{
             pending_tool_calls, provider_tool_supports_unilateral_execution, run_agent_step_stream,
             spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
@@ -30,14 +30,14 @@ use crate::{
         runtime_contracts::{
             RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
         },
-        tools::{
-            arguments::DenToolChannelContext,
-            descriptor::builtin_den_tool_descriptor_for_provider_name,
-            session::{invoke_den_tool, DenToolInvocationContext},
-        },
     },
 };
 use den_core::DenError;
+use den_tools::arguments::DenToolChannelContext;
+use den_tools::context::DenToolInvocationContext;
+use den_tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+
+use crate::native_runtime::RuntimeToolInvoker;
 
 const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_secs(120);
@@ -59,6 +59,7 @@ pub struct NativeWebChatLoopRuntime {
     pub session_id: String,
     pub request_id: String,
     pub session_store: AgentLoopSessionStore,
+    pub tool_invoker: Arc<dyn RuntimeToolInvoker>,
 }
 
 type ToolExecFuture =
@@ -195,7 +196,7 @@ impl NativeWebChatLoopStream {
     pub(crate) fn wrap_step_stream(
         runtime: &NativeWebChatLoopRuntime,
         stream: RuntimeEventStream,
-        session: &crate::core::agent_loop::AgentLoopSession,
+        session: &crate::agent_loop::AgentLoopSession,
     ) -> RuntimeEventStream {
         Box::pin(SessionTrackingStream::new(
             stream,
@@ -459,15 +460,17 @@ async fn execute_one_web_chat_den_tool(
                 protocol: Some("den_chat".to_string()),
             },
         };
-        match invoke_den_tool(
-            &runtime.pool,
-            runtime.config.as_ref(),
-            &runtime.stores,
-            &canonical,
-            args,
-            tool_context,
-        )
-        .await
+        match runtime
+            .tool_invoker
+            .invoke(
+                &runtime.pool,
+                runtime.config.as_ref(),
+                &runtime.stores,
+                &canonical,
+                args,
+                tool_context,
+            )
+            .await
         {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
             Err(error) => format!("error: {error}"),

@@ -1,4 +1,4 @@
-use crate::core::memory_curate_executor::CurateBriefingItem;
+use crate::memory_curate_executor::CurateBriefingItem;
 
 pub fn compose_curate_briefing_prompt(briefing: &[CurateBriefingItem]) -> String {
     let mut prompt = String::from(

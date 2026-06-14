@@ -1,23 +1,21 @@
+use den_core::DenError;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{
+    {
         bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash, Bear},
         memory::{
             has_work_surface_canonical_anchor, head_record_for_logical_path,
             list_profile_local_head_records, memory_sequence_high_water, MemoryRecordRow, MemoryStoreManager,
         },
-        tools::{
-            support::truncate_chars,
-            work_surface::{
-                work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
-                work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
-            },
-        },
     },
-    errors::CustomError,
+};
+use den_tools::support::truncate_chars;
+use den_tools::work_surface::{
+    work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
+    work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
 };
 
 const TIER1_SHARED_PATHS: &[&str] = &[
@@ -156,7 +154,7 @@ pub(crate) async fn compiled_prompt_cache_token(
     bear: &Bear,
     role: BearProfile,
     _native_runtime: bool,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     if bear.context_profile.is_none() {
         return Ok(format!("legacy:{}:{}", bear.id, bear.provisioning_version));
     }
@@ -171,7 +169,7 @@ pub(crate) async fn compiled_prompt_cache_token(
         .to_string())
 }
 
-pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<KeyMemoryProjectionResult, CustomError> {
+pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<KeyMemoryProjectionResult, DenError> {
     let store = input.stores.store_for_bear(input.bear.id).await?;
     let sequence_high_water = memory_sequence_high_water(&store).await?;
     let compiled_config_token =

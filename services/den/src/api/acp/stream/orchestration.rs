@@ -175,7 +175,9 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
 
     let event_upstream = match crate::core::acp_turn_runner::start_acp_turn_event_stream_with_retries(
         crate::core::acp_turn_runner::AcpTurnStartRequest {
-            state: &state,
+            sqlx_pool: &state.sqlx_pool,
+            config: &state.config,
+            memory_stores: &state.memory_stores,
             request_id,
             user_id,
             session_id,

@@ -1,20 +1,16 @@
+use den_core::{config::Config, DenError};
 use serde_json::Value;
 
 use crate::{
-    config::Config,
-    core::{
-        bears::BearProfile,
-        llm::LlmToolDefinition,
-        tools::{
-            descriptor::{
-                builtin_den_tool_descriptors_for_pair_acp_surface,
-                builtin_den_tool_descriptors_for_profile, DenToolDescriptor,
-            },
-            memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name},
-        },
-    },
-    errors::CustomError,
+    bears::BearProfile,
+    llm::LlmToolDefinition,
 };
+use den_tools::descriptor::{
+    builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
+    DenToolDescriptor,
+};
+
+use super::memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name};
 
 /// Pair turns omit adapter workspace/MCP tools unless the prompt suggests repo/file work.
 pub fn pair_turn_needs_workspace_client_tools(prompt: Option<&str>) -> bool {
@@ -178,7 +174,7 @@ pub fn merge_den_and_client_tools(
     role: BearProfile,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
-) -> Result<Vec<LlmToolDefinition>, CustomError> {
+) -> Result<Vec<LlmToolDefinition>, DenError> {
     let mut merged = if role == BearProfile::Chat {
         if chat_turn_needs_full_tool_surface(pair_turn_prompt) {
             den_tools_for_profile(config, role)
@@ -271,7 +267,7 @@ pub fn merge_den_and_client_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use den_core::config::Config;
 
     fn native_test_config() -> Config {
         Config::test_stub()

@@ -832,6 +832,9 @@ async fn chat_send_native_inner(
             session_id: &session_id,
             prompt: &upstream_message,
             request_id,
+            tool_invoker: std::sync::Arc::new(
+                crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
+            ),
         },
     )
     .await?;

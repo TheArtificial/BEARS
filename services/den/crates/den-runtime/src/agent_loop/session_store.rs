@@ -5,7 +5,7 @@ use std::{
 
 use uuid::Uuid;
 
-use crate::core::{
+use crate::{
     agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
     llm::{ChatMessage, LlmToolDefinition},
 };

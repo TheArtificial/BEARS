@@ -1,3 +1,4 @@
+use den_core::config::Config;
 use std::sync::{Arc, LazyLock};
 
 use futures::StreamExt;
@@ -7,8 +8,7 @@ use uuid::Uuid;
 use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
-    config::Config,
-    core::{
+    {
         acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
@@ -216,7 +216,7 @@ async fn build_session(
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, DenError> {
     let llm = LlmClient::new(deps.config);
-    let bear = crate::core::bears::db::get_bear(deps.pool, bear_id)
+    let bear = crate::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     let include_prompt_memory =
@@ -325,6 +325,9 @@ pub struct NativeWebChatTurnParams<'a> {
     pub session_id: &'a str,
     pub prompt: &'a str,
     pub request_id: Uuid,
+    /// Concrete builtin-tool dispatcher injected by the `den` binary (the
+    /// `DenToolContext` aggregate lives there, not in `den-runtime`).
+    pub tool_invoker: Arc<dyn super::RuntimeToolInvoker>,
 }
 
 /// Browser web chat turn (`BearProfile::Chat`) over the native in-process loop.
@@ -379,6 +382,7 @@ pub async fn start_native_web_chat_turn_event_stream(
         session_id: params.session_id.to_string(),
         request_id: params.request_id.to_string(),
         session_store: SESSION_STORE.clone(),
+        tool_invoker: params.tool_invoker.clone(),
     };
     let step_stream = NativeWebChatLoopStream::wrap_step_stream(&runtime, stream, &session);
     let turn_start_message_len = session.messages.len();
@@ -401,7 +405,7 @@ pub async fn start_native_profile_turn_event_stream(
 ) -> Result<RuntimeEventStream, DenError> {
     let profile = NativeCapabilityProfile::for_profile(role);
     let runtime_conversations =
-        NativeRuntimeConversationBackend::with_pool(request.state.sqlx_pool.clone());
+        NativeRuntimeConversationBackend::with_pool(request.sqlx_pool.clone());
     let materialized =
         materialize_acp_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
@@ -409,9 +413,9 @@ pub async fn start_native_profile_turn_event_stream(
     let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
     let session = build_session(
         &NativeRuntimeDeps {
-            pool: &request.state.sqlx_pool,
-            config: request.state.config.as_ref(),
-            stores: &request.state.memory_stores,
+            pool: request.sqlx_pool,
+            config: request.config,
+            stores: request.memory_stores,
         },
         profile,
         request.bear_id,
@@ -430,12 +434,12 @@ pub async fn start_native_profile_turn_event_stream(
         Vec::new(),
     )
     .await?;
-    let llm = LlmClient::new(request.state.config.as_ref());
+    let llm = LlmClient::new(request.config);
     let stream = run_agent_step_stream(&llm, &session).await?;
     let stream = wrap_session_stream(
         stream,
         &session,
-        request.state.sqlx_pool.clone(),
+        request.sqlx_pool.clone(),
         request.bear_id,
         Some(request.user_id),
         &conversation_id,
@@ -494,10 +498,10 @@ pub async fn continue_native_acp_turn_event_stream(
         } => {
             let approve = matches!(
                 decision,
-                crate::core::runtime_contracts::RuntimeApprovalDecision::Approve
+                crate::runtime_contracts::RuntimeApprovalDecision::Approve
             );
             record_approval_decision(
-                &request.state.sqlx_pool,
+                request.sqlx_pool,
                 approval_request_id,
                 approve,
                 reason.as_deref(),
@@ -530,12 +534,12 @@ pub async fn continue_native_acp_turn_event_stream(
             "native agent loop reached max steps".to_string(),
         ));
     }
-    let llm = LlmClient::new(request.state.config.as_ref());
+    let llm = LlmClient::new(request.config);
     let stream = run_agent_step_stream(&llm, &session).await?;
     let stream = wrap_session_stream(
         stream,
         &session,
-        request.state.sqlx_pool.clone(),
+        request.sqlx_pool.clone(),
         session.bear_id,
         None,
         &conversation_id,

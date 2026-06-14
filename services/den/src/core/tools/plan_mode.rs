@@ -89,8 +89,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             "plan",
         )
-        .await
-        .map_err(DenError::from)?;
+        .await?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
@@ -163,8 +162,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             "write",
         )
-        .await
-        .map_err(DenError::from)?;
+        .await?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
@@ -248,8 +246,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             "plan",
         )
-        .await
-        .map_err(DenError::from)?;
+        .await?;
         let storage = "sqlite";
         Ok(PlanModeExitView {
             workplan: (self.workplan_payload)(&row),
@@ -290,8 +287,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             "ask",
         )
-        .await
-        .map_err(DenError::from)?;
+        .await?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(

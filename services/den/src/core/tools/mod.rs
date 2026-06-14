@@ -12,6 +12,7 @@ pub mod memory_review;
 pub mod memory_write;
 pub mod plan_mode;
 pub mod prompt_memory;
+pub mod runtime_invoker;
 pub mod session;
 pub mod workflow;
 pub mod support;

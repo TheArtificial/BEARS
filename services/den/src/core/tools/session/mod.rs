@@ -41,7 +41,6 @@ impl den_tools::conversation::ConversationTitleOps for DenConversationTitleOps<'
     ) -> Result<u64, crate::errors::DenError> {
         acp_sessions::set_title_for_bear_conversation(self.pool, bear_id, conversation_id, title)
             .await
-            .map_err(CustomError::into_den)
     }
 }
 

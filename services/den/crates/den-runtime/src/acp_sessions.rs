@@ -3,7 +3,7 @@ use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertAcpSession {
@@ -50,7 +50,7 @@ pub struct AcpSessionRow {
     pub updated_at: OffsetDateTime,
 }
 
-pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<(), CustomError> {
+pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO acp_sessions (
@@ -90,9 +90,9 @@ pub async fn set_current_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     mode: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     if !matches!(mode, "ask" | "plan" | "write") {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "ACP session mode must be one of ask, plan, write".to_string(),
         ));
     }
@@ -118,7 +118,7 @@ pub async fn mark_resolved(
     bear_id: Uuid,
     acp_session_id: &str,
     resolved_conversation_id: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE acp_sessions
@@ -164,7 +164,7 @@ pub async fn find_for_user_bear_session(
     user_id: i32,
     bear_slug: &str,
     acp_session_id: &str,
-) -> Result<Option<AcpSessionRow>, CustomError> {
+) -> Result<Option<AcpSessionRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
@@ -198,7 +198,7 @@ pub struct SessionListParams<'a> {
 pub async fn list_for_user_bear(
     pool: &PgPool,
     params: SessionListParams<'_>,
-) -> Result<Vec<AcpSessionRow>, CustomError> {
+) -> Result<Vec<AcpSessionRow>, DenError> {
     let limit = params.limit.clamp(1, 100);
     let cwd_filter = params.cwd_filter.map(str::trim).filter(|s| !s.is_empty());
     let rows = sqlx::query(
@@ -239,7 +239,7 @@ pub async fn update_adapter_environment(
     bear_id: Uuid,
     acp_session_id: &str,
     adapter_environment: &serde_json::Value,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE acp_sessions
@@ -263,7 +263,7 @@ pub async fn update_client_conversation_title(
     bear_id: Uuid,
     acp_session_id: &str,
     title: Option<&str>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let normalized = title
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -295,7 +295,7 @@ pub async fn update_client_conversation_title(
     Ok(())
 }
 
-pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
+pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE acp_sessions
@@ -314,7 +314,7 @@ pub async fn set_title_for_bear_conversation(
     bear_id: Uuid,
     conversation_id: &str,
     title: &str,
-) -> Result<u64, CustomError> {
+) -> Result<u64, DenError> {
     let result = sqlx::query(
         r#"
         UPDATE acp_sessions
@@ -339,7 +339,7 @@ pub async fn mark_title_synced(
     user_id: i32,
     bear_id: Uuid,
     acp_session_id: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE acp_sessions
@@ -358,7 +358,7 @@ pub async fn mark_title_synced(
 pub async fn resolved_conversation_ids_for_bear(
     pool: &PgPool,
     bear_slug: &str,
-) -> Result<Vec<String>, CustomError> {
+) -> Result<Vec<String>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT resolved_conversation_id
@@ -378,7 +378,7 @@ pub async fn resolved_conversation_ids_for_bear(
         .collect())
 }
 
-pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
+pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE acp_sessions

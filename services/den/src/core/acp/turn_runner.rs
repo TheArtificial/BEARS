@@ -1,4 +1,8 @@
-//! ACP turn dispatch — native in-process loop only.
+//! ACP turn dispatch (edge orchestration) — native in-process loop only.
+//!
+//! The runtime-side turn *contracts* (request inputs, stream context, conversation
+//! materialization) live in `den-runtime`; this module re-exports them and keeps the
+//! edge-only wrappers that wire `ApiState`/tool-turn coordination into the native runtime.
 
 use uuid::Uuid;
 
@@ -6,35 +10,17 @@ use crate::{
     api::service::ApiState,
     core::{
         acp_tool_turns::AcpToolTurnCoordinator,
-        runtime_contracts::{
-            RuntimeConversationBackend, RuntimeConversationRef, RuntimeEventStream,
-            RuntimeStreamContinuation, RoleRuntimeBinding,
-        },
+        runtime_contracts::{RuntimeEventStream, RuntimeStreamContinuation},
     },
-    errors::{CustomError, DenError},
+    errors::DenError,
 };
 
-/// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
-pub const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
-
-pub struct AcpTurnStartRequest<'a> {
-    pub state: &'a ApiState,
-    pub request_id: Uuid,
-    pub user_id: i32,
-    pub session_id: &'a str,
-    pub bear_id: Uuid,
-    pub bear_slug: &'a str,
-    pub client: &'a str,
-    pub cwd: Option<&'a str>,
-    pub binding: &'a RoleRuntimeBinding,
-    pub conversation_selection: &'a str,
-    pub upstream_target: &'a str,
-    pub prompt: &'a str,
-    pub client_tools: Option<serde_json::Value>,
-    pub runtime_context: Option<&'a str>,
-    pub runtime_context_len: usize,
-    pub stream_tokens: bool,
-}
+pub use den_runtime::acp_turn_runner::{
+    default_acp_tool_continue_stream_context, looks_like_runtime_waiting_for_approval_error,
+    materialize_acp_runtime_conversation_if_needed, AcpRuntimeMaterializationResult,
+    AcpTurnContinueRequest, AcpTurnStartRequest, AcpTurnStreamContext,
+    ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+};
 
 pub struct AcpStaleRuntimeCleanupParams {
     pub state: ApiState,
@@ -46,91 +32,6 @@ pub struct AcpStaleRuntimeCleanupParams {
     pub run_ids: Vec<String>,
     pub reason: &'static str,
     pub request_id: Uuid,
-}
-
-pub struct AcpTurnContinueRequest<'a> {
-    pub state: &'a ApiState,
-    pub request_id: Uuid,
-    pub acp_session_id: &'a str,
-    pub conversation: RuntimeConversationRef,
-    pub binding: &'a RoleRuntimeBinding,
-    pub continuation: crate::core::runtime_contracts::RuntimeContinuation,
-    pub stream_context: AcpTurnStreamContext,
-}
-
-pub fn default_acp_tool_continue_stream_context() -> AcpTurnStreamContext {
-    AcpTurnStreamContext {
-        client_tools: None,
-        stream_tokens: false,
-        max_steps: 4,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AcpTurnStreamContext {
-    pub client_tools: Option<serde_json::Value>,
-    pub stream_tokens: bool,
-    pub max_steps: u32,
-}
-
-pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
-    crate::core::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
-}
-
-pub struct AcpRuntimeMaterializationResult {
-    pub conversation_id: String,
-    pub created: bool,
-}
-
-/// Materialize a runtime conversation when the client selected a pending `new-*` id.
-///
-/// Prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
-/// turn starts; this function then returns early without creating a second conversation.
-pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
-    runtime_conversations: &B,
-    request: &AcpTurnStartRequest<'_>,
-) -> Result<AcpRuntimeMaterializationResult, CustomError> {
-    if request.upstream_target.starts_with("conv-")
-        || crate::core::acp_runtime::is_native_runtime_conversation_id(request.upstream_target)
-    {
-        return Ok(AcpRuntimeMaterializationResult {
-            conversation_id: request.upstream_target.to_string(),
-            created: false,
-        });
-    }
-    if !request.conversation_selection.starts_with("new-") {
-        return Ok(AcpRuntimeMaterializationResult {
-            conversation_id: request.upstream_target.to_string(),
-            created: false,
-        });
-    }
-    let conv_id = runtime_conversations
-        .create_conversation(request.binding)
-        .await?
-        .id;
-    crate::core::acp_sessions::upsert_session(
-        &request.state.sqlx_pool,
-        crate::core::acp_sessions::UpsertAcpSession {
-            user_id: request.user_id,
-            bear_id: request.bear_id,
-            bear_slug: request.bear_slug.to_string(),
-            acp_session_id: request.session_id.to_string(),
-            runtime_session_id: format!(
-                "acp-api-direct:{}:{}:{}",
-                request.client, request.bear_id, request.session_id
-            ),
-            conversation_id: request.conversation_selection.to_string(),
-            resolved_conversation_id: Some(conv_id.clone()),
-            client: request.client.to_string(),
-            cwd: request.cwd.map(str::to_string),
-            current_mode: None,
-        },
-    )
-    .await?;
-    Ok(AcpRuntimeMaterializationResult {
-        conversation_id: conv_id,
-        created: true,
-    })
 }
 
 pub async fn start_acp_turn_event_stream_with_retries(

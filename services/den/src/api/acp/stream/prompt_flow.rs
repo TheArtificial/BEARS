@@ -236,7 +236,8 @@ pub(in crate::api::acp) async fn run_prompt_flow(
                 )
                 .await
                 .map_err(|err| {
-                    let (status, code, message) = acp_error_status_message(&err);
+                    let (status, code, message) =
+                        acp_error_status_message(&CustomError::from(err));
                     ApiError::new(status, code, message)
                 })?;
             }
@@ -250,7 +251,8 @@ pub(in crate::api::acp) async fn run_prompt_flow(
                 )
                 .await
                 .map_err(|err| {
-                    let (status, code, message) = acp_error_status_message(&err);
+                    let (status, code, message) =
+                        acp_error_status_message(&CustomError::from(err));
                     ApiError::new(status, code, message)
                 })?;
             }

@@ -11,11 +11,15 @@
 mod openai_stream;
 #[cfg(test)]
 mod openai_stream_tests;
+pub mod memfs;
 mod profile;
 mod profile_briefing;
+pub mod tool_invoker;
 mod tools;
 mod turn;
 mod web_chat_loop;
+
+pub use tool_invoker::RuntimeToolInvoker;
 
 pub use openai_stream::openai_byte_stream_to_event_stream;
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};

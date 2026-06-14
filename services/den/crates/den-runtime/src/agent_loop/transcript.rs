@@ -2,7 +2,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::{
+use crate::{
     conversation_events::{
         canonical_persistence_context, spawn_persist_assistant_output,
         spawn_persist_tool_request, spawn_persist_tool_result, ConversationEventProvenance,
@@ -161,7 +161,7 @@ pub fn spawn_persist_web_chat_turn(
 }
 
 fn spawn_persist_incomplete_tool_results(
-    context: crate::core::conversation_events::ConversationPersistenceContext,
+    context: crate::conversation_events::ConversationPersistenceContext,
     provenance: &ConversationEventProvenance,
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],

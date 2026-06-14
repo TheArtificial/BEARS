@@ -1,9 +1,9 @@
-use crate::core::{
+use crate::{
     acp_tools::{acp_tool_policy, acp_tool_policy_json_for_provider, AcpToolName},
     agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
     runtime_contracts::RuntimeSemanticEvent,
-    tools::descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
+use den_tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -65,7 +65,7 @@ pub async fn record_approval_decision(
     approval_id: &str,
     approve: bool,
     reason: Option<&str>,
-) -> Result<(), crate::errors::CustomError> {
+) -> Result<(), den_core::DenError> {
     decide_native_approval(
         pool,
         approval_id,

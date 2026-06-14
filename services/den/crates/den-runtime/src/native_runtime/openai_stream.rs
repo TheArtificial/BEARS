@@ -5,7 +5,7 @@ use std::task::Poll;
 use futures::Stream;
 
 use crate::{
-    core::{
+    {
         runtime_stream_parser::{
             find_sse_frame_end, strip_trailing_sse_delimiter_owned,
         },

@@ -50,6 +50,18 @@ pub mod memory;
 /// Conversation event projection + persistence (events, message types, persistence, archive).
 pub mod conversation;
 
+/// ACP session store (conversation↔session mapping over Postgres).
+pub mod acp_sessions;
+
+/// Runtime-side ACP turn contracts (start/continue request inputs + materialization).
+pub mod acp_turn_runner;
+
+/// The native agent loop: assembly, step streaming, approvals, transcript projection.
+pub mod agent_loop;
+
+/// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
+pub mod native_runtime;
+
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
 pub use runtime::bearwire_projection as runtime_bearwire_projection;

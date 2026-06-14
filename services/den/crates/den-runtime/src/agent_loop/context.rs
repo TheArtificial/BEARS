@@ -1,9 +1,10 @@
+use den_core::DenError;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{
+    {
         agent_loop::tool_outcome::{
             is_legacy_synthetic_interrupted_tool_result,
             tool_message_counts_toward_llm_resolution, INCOMPLETE_TOOL_RESULT_MARK,
@@ -13,7 +14,6 @@ use crate::{
         },
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     },
-    errors::CustomError,
 };
 
 #[derive(Debug, Clone)]
@@ -339,7 +339,7 @@ pub async fn load_transcript_messages(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
-) -> Result<Vec<ChatMessage>, CustomError> {
+) -> Result<Vec<ChatMessage>, DenError> {
     let history_rows = sqlx::query_as::<_, (String, String, Value)>(
         r#"
         SELECT message_type, content_text, content_json
@@ -408,7 +408,7 @@ pub async fn assemble_agent_messages(
     system_context: Option<&str>,
     human_message: Option<&str>,
     tool_messages: &[ChatMessage],
-) -> Result<Vec<ChatMessage>, CustomError> {
+) -> Result<Vec<ChatMessage>, DenError> {
     let mut messages = Vec::new();
     if let Some(system) = system_context.filter(|s| !s.is_empty()) {
         messages.push(ChatMessage {
@@ -436,7 +436,7 @@ pub async fn assemble_agent_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::agent_loop::tool_outcome::LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE;
+    use crate::agent_loop::tool_outcome::LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE;
     use serde_json::json;
 
     #[test]

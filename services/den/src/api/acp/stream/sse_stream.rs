@@ -1078,7 +1078,9 @@ impl Stream for AcpRuntimeSseStream {
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                             let prepared = continue_acp_turn_with_runtime(AcpTurnContinueRequest {
-                                state: &api_state,
+                                sqlx_pool: &api_state.sqlx_pool,
+                                config: &api_state.config,
+                                memory_stores: &api_state.memory_stores,
                                 request_id,
                                 acp_session_id: &acp_session_id,
                                 conversation: continuation_conversation,

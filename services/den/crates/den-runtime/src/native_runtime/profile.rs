@@ -1,6 +1,6 @@
 //! Capability profiles for API-direct native roles ([Phase 5](../../../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
 
-use crate::core::{
+use crate::{
     agent_loop::StrategyProfile,
     bears::BearProfile,
 };

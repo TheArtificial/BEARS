@@ -3,7 +3,7 @@
 //! (events, tools, plan_mode, tool_turns) now live in the `den-runtime` crate.
 
 pub mod runtime;
-pub mod sessions;
+pub use den_runtime::acp_sessions as sessions;
 pub mod tokens;
 pub mod turn_runner;
 

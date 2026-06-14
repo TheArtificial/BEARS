@@ -1,3 +1,4 @@
+use den_core::DenError;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
@@ -7,11 +8,10 @@ use futures::Stream;
 use futures::StreamExt;
 
 use crate::{
-    core::{
+    {
         native_runtime::openai_byte_stream_to_event_stream,
         runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
     },
-    errors::DenError,
 };
 
 #[tokio::test]
@@ -20,7 +20,7 @@ async fn tool_call_finish_does_not_synthesize_turn_completed() {
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"memory_read\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
         "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
     );
-    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::DenError>(
+    let source = futures::stream::iter(vec![Ok::<Bytes, den_core::DenError>(
         Bytes::from_static(frames.as_bytes()),
     )]);
     let mut stream = openai_byte_stream_to_event_stream(source);

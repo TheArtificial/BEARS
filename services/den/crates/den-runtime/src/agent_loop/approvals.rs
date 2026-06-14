@@ -2,7 +2,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 #[derive(Debug, Clone)]
 pub struct NativeApprovalRow {
@@ -27,7 +27,7 @@ pub async fn create_native_approval(
     tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let approval_id = Uuid::new_v4().to_string();
     sqlx::query(
         r#"
@@ -46,7 +46,7 @@ pub async fn create_native_approval(
     .bind(arguments.to_string())
     .execute(pool)
     .await
-    .map_err(|e| CustomError::System(format!("create native approval failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("create native approval failed: {e}")))?;
     Ok(approval_id)
 }
 
@@ -55,7 +55,7 @@ pub async fn decide_native_approval(
     approval_id: &str,
     decision: NativeApprovalDecision,
     reason: Option<&str>,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let status = match decision {
         NativeApprovalDecision::Approve => "approved",
         NativeApprovalDecision::Deny => "denied",
@@ -72,6 +72,6 @@ pub async fn decide_native_approval(
     .bind(reason)
     .execute(pool)
     .await
-    .map_err(|e| CustomError::System(format!("decide native approval failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("decide native approval failed: {e}")))?;
     Ok(())
 }
