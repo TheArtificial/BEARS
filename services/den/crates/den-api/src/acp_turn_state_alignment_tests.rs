@@ -40,7 +40,7 @@ async fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields
         .connect(&std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string()))
         .await;
     let payload = if let Ok(pool) = pool {
-        let _ = sqlx::migrate!("./migrations").run(&pool).await;
+        let _ = sqlx::migrate!("../../migrations").run(&pool).await;
         serde_json::to_value(acp_session_row_to_http_with_modes(&pool, row, plan_mode).await.unwrap()).unwrap()
     } else {
         let mut payload = json!({

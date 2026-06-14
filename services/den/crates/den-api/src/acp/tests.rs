@@ -116,7 +116,7 @@ use den_runtime::prompt_memory_blocks::{
         let database_url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
         let pool = PgPoolOptions::new().connect(&database_url).await.ok()?;
-        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
         Some(pool)
     }
 

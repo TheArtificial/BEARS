@@ -5,9 +5,12 @@
 //! - [`auth_backend`] — the axum-login authentication/authorization backend.
 //! - [`api_utils`] — small serde (de)serialization helpers for request payloads.
 //! - [`user`] / [`email`] — the identity layer the auth backend depends on.
+//! - [`web_policy`] — bear web-fetch approval/source policy (shared by the api edge
+//!   and the web admin/settings handlers); kept here because it returns `CustomError`.
 pub mod api_utils;
 pub mod auth_backend;
 pub mod build_info;
 pub mod email;
 pub mod errors;
 pub mod user;
+pub mod web_policy;

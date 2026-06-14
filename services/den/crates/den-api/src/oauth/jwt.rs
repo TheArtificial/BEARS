@@ -253,7 +253,7 @@ fn generate_jti() -> String {
 /// JWT signing material for HS256 access tokens.
 ///
 /// When `RUN_API=true` or the binary is built with `--features production`, startup
-/// requires a non-empty `JWT_SECRET` (see [`crate::startup::validate_runtime_config`]).
+/// requires a non-empty `JWT_SECRET` (see the binary's `startup::validate_runtime_config`).
 /// If this is called without that guard (e.g. tests), a dev-only default may apply.
 pub fn get_jwt_secret() -> Vec<u8> {
     std::env::var("JWT_SECRET")

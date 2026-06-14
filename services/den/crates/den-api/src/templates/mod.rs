@@ -28,7 +28,7 @@ pub fn init_template_env() -> &'static Environment<'static> {
         #[cfg(not(feature = "production"))]
         {
             // In development, load templates from filesystem for hot reload
-            env.set_loader(minijinja::path_loader("src/api/templates"));
+            env.set_loader(minijinja::path_loader("crates/den-api/src/templates"));
         }
 
         env

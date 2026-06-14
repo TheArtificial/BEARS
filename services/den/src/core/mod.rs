@@ -1,11 +1,12 @@
 // The native agent runtime moved to the `den-runtime` crate during the v1.4 split.
 // Modules below depend on it directly via `den_runtime::*` (the former flat
 // `pub use den_runtime::*` shims here were dropped in the final flip). What remains
-// in `core` are the den-binary-local subsystems and the den-side ACP edge.
-pub mod acp;
-pub use acp::runtime as acp_runtime;
-pub use acp::tokens as acp_tokens;
-pub use acp::turn_runner as acp_turn_runner;
+// in `core` are the den-binary-local subsystems.
+//
+// The ACP edge (`acp` + its runtime/tokens/turn_runner) moved to `den-api` (v1.5
+// split); re-exported here so `crate::core::acp*` call sites (seeds, web) are
+// unchanged until those callers migrate off the binary-local path.
+pub use den_api::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // `api_utils`, `email`, and `user` moved to the shared edge foundation crate
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.

@@ -26,6 +26,7 @@ axum = { version = "0.8", default-features = false, features = ["json", "http1",
 axum-login = "0.17.0"
 mailgun-rs = "2.0.1"
 minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
+minijinja-embed = "2.7.0"
 password-auth = "1.0.0"
 rand = "0.9.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
@@ -36,6 +37,8 @@ thiserror = "2.0.12"
 time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.41"
+url = "2.5.4"
+uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.20", features = ["derive"] }
 
 [build-dependencies]

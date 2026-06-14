@@ -11,12 +11,7 @@ use serde_json::{json, Value};
 use crate::{
     api::service::ApiState,
     errors::CustomError,
-    core::{
-        tools::{
-        aliases::is_builtin_den_tool,
-        session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
-    },
-    },
+    core::tools::{aliases::is_builtin_den_tool, session::DenToolInvocationContext},
 };
 
 pub fn router() -> Router<ApiState> {
@@ -65,15 +60,24 @@ async fn invoke_den_tool(
         "den tool invocation started"
     );
 
-    match run_den_tool(
-        &state.sqlx_pool,
-        state.config.as_ref(),
-        &state.memory_stores,
-        &tool_name,
-        payload.arguments,
-        payload.context,
-    )
-    .await
+    let Some(invoker) = crate::tool_invoker() else {
+        return json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "builtin Den tool runtime is not initialized",
+        );
+    };
+    match invoker
+        .invoke(
+            &state.sqlx_pool,
+            state.config.as_ref(),
+            &state.memory_stores,
+            &tool_name,
+            payload.arguments,
+            payload.context,
+        )
+        .await
+        .map_err(CustomError::from)
     {
         Ok(result) => {
             tracing::info!(tool_name = %tool_name, request_id = %request_id, "den tool invocation finished");

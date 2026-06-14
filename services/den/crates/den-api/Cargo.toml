@@ -1,0 +1,62 @@
+[package]
+name = "den-api"
+version = "0.1.0"
+edition = "2021"
+
+# den-api: the JSON/REST + ACP HTTP edge of the den binary. It owns the public
+# API service (`service::create_api_app`, `ApiState`), the v1 user/profile/oauth
+# routes, the OAuth2 authorization server, and the native ACP protocol surface
+# (`acp`, plus the residual session/token/runtime modules under `core::acp`).
+# It sits above den-http (identity/error foundation), den-runtime (tool/runtime
+# execution), den-docket (work plans), and den-core. The den-acp sub-split
+# (carving `acp` + `core::acp` into their own crate) is a v2 follow-up; for now
+# this crate carries both via a self-alias so `crate::api::*` paths resolve.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production", "den-runtime/production", "den-http/production"]
+
+[dependencies]
+den-core = { path = "../den-core" }
+den-docket = { path = "../den-docket" }
+den-http = { path = "../den-http" }
+den-runtime = { path = "../den-runtime" }
+anyhow = "1.0"
+async-trait = "0.1.86"
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum-extra = { version = "0.10.0", features = ["form", "query"] }
+axum-login = "0.17.0"
+base64 = "0.22"
+bytes = "1"
+futures = "0.3"
+jsonwebtoken = "9.3.0"
+minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
+minijinja-embed = "2.7.0"
+password-auth = "1.0.0"
+rand = "0.9.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+thiserror = "2.0.12"
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+tracing = "0.1.41"
+url = "2.5.4"
+urlencoding = "2.1"
+utoipa = { version = "4.0", features = ["axum_extras"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+validator = { version = "0.20", features = ["derive"] }
+
+[build-dependencies]
+minijinja-embed = "2.7.0"
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }
+den-runtime = { path = "../den-runtime", features = ["test-util"] }
+serde_json = "1.0.138"

@@ -46,12 +46,20 @@
 //! - `SERVER_MODE=web` - Run only web service (port 3000)
 //! - `SERVER_MODE=both` - Run both services simultaneously
 
+// Self-alias so the migrated edge keeps resolving its historical `crate::api::*`
+// paths (this crate *is* the old `den::api` module tree). Lets the v1.5 extraction
+// land without rewriting ~200 `api::`-prefixed paths; a v2 cleanup can drop these.
+extern crate self as api;
+
 pub mod acp;
 #[cfg(test)]
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]
 mod acp_workflow_state_tests;
 pub mod auth;
+// Residual native ACP protocol modules, kept under `crate::core::acp` so the
+// migrated `acp` call sites resolve unchanged (v1.5 den-api extraction).
+pub mod core;
 pub mod docs;
 pub mod internal;
 pub mod oauth;
@@ -61,3 +69,32 @@ pub mod v1;
 
 // Re-export main API service creation function
 pub use service::create_api_app;
+
+// Foundation re-export shims (v1.5 den-api extraction): keep the migrated call
+// sites resolving `crate::errors`, `crate::config`, `crate::auth_backend`, and
+// `crate::build_info` unchanged. These types live in den-http / den-core now.
+pub use den_core::config;
+pub use den_http::{auth_backend, build_info, errors};
+
+use std::sync::{Arc, OnceLock};
+
+static TOOL_INVOKER: OnceLock<Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>> =
+    OnceLock::new();
+
+/// Install the process-wide builtin-Den-tool invoker.
+///
+/// The api/ACP edge executes builtin Den tools (the `/internal/den-tools/invoke`
+/// endpoint and ACP runtime-local tool calls) but depends only on the
+/// [`den_runtime::native_runtime::RuntimeToolInvoker`] trait — not on the concrete
+/// den-side tool composition (`DenToolContext` + executors), which lives in the
+/// `den` binary. The binary injects its `DenRuntimeToolInvoker` here at startup, so
+/// the edge stays free of that dependency. Idempotent; the first installation wins.
+pub fn set_tool_invoker(invoker: Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>) {
+    let _ = TOOL_INVOKER.set(invoker);
+}
+
+/// The installed [`set_tool_invoker`] invoker, if any. `None` before the binary
+/// installs one (e.g. in unit tests that never execute a builtin Den tool).
+pub fn tool_invoker() -> Option<Arc<dyn den_runtime::native_runtime::RuntimeToolInvoker>> {
+    TOOL_INVOKER.get().cloned()
+}

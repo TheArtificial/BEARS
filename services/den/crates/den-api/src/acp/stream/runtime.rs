@@ -16,7 +16,7 @@ use crate::{
         tools::{
             arguments::DenToolChannelContext,
             constants::{DEN_BEAR_ENVIRONMENT, DEN_WEB_FETCH},
-            session::{invoke_den_tool, DenToolInvocationContext},
+            session::DenToolInvocationContext,
         },
         web_policy,
     },
@@ -30,6 +30,35 @@ use den_runtime::{
             CanonicalConversationRecord,
         },
 };
+
+/// Execute a builtin Den tool via the process-wide injected invoker.
+///
+/// The api edge does not own the den-side tool composition; the binary installs a
+/// `RuntimeToolInvoker` at startup (see [`crate::set_tool_invoker`]). Maps the
+/// den-core error into the web-boundary `CustomError` the ACP stream propagates.
+async fn run_builtin_den_tool(
+    context: &AcpStreamContext,
+    tool_name: &str,
+    args: serde_json::Value,
+    tool_context: DenToolInvocationContext,
+) -> Result<serde_json::Value, CustomError> {
+    let Some(invoker) = crate::tool_invoker() else {
+        return Err(CustomError::System(
+            "builtin Den tool runtime is not initialized".to_string(),
+        ));
+    };
+    invoker
+        .invoke(
+            &context.pool,
+            context.config.as_ref(),
+            &context.memory_stores,
+            tool_name,
+            args,
+            tool_context,
+        )
+        .await
+        .map_err(CustomError::from)
+}
 
 fn should_skip_canonical_persistence(context: &AcpStreamContext) -> bool {
     let database_url = context.config.database_url.as_str();
@@ -635,16 +664,7 @@ pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
                     protocol: Some("acp".to_string()),
                 },
             };
-            match invoke_den_tool(
-                &context.pool,
-                context.config.as_ref(),
-                &context.memory_stores,
-                DEN_BEAR_ENVIRONMENT,
-                args,
-                tool_context,
-            )
-            .await
-            {
+            match run_builtin_den_tool(context, DEN_BEAR_ENVIRONMENT, args, tool_context).await {
                 Ok(value) => AcpToolResultRequest {
                     turn_id: None,
                     request_id: Some(context.request_id.to_string()),
@@ -753,16 +773,7 @@ pub(in crate::api::acp) async fn invoke_acp_den_tool(
             protocol: Some("acp".to_string()),
         },
     };
-    match invoke_den_tool(
-        &context.pool,
-        context.config.as_ref(),
-        &context.memory_stores,
-        canonical_name,
-        args,
-        tool_context,
-    )
-    .await
-    {
+    match run_builtin_den_tool(context, canonical_name, args, tool_context).await {
         Ok(value) => AcpToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),

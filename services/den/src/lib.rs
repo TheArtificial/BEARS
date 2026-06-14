@@ -2,7 +2,9 @@
 //!
 //! Clippy: broad suppressions live on the largest legacy modules (for example [`crate::api::oauth`]);
 //! prefer fixing warnings locally and shrinking those module allows over time.
-pub mod api;
+// The API + ACP edge moved to the `den-api` crate (v1.5 split). Re-exported as
+// `crate::api` so the remaining binary call sites (run/web/seeds) resolve unchanged.
+pub use den_api as api;
 pub use den_http::auth_backend;
 pub use den_http::build_info;
 pub use den_core::config;
@@ -65,6 +67,14 @@ pub async fn run() -> Result<(), StartupError> {
         .with(tracing_subscriber::fmt::layer())
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))?;
+
+    // Inject the concrete builtin-Den-tool invoker into the api/ACP edge. The edge
+    // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
+    // composition lives here in the binary (`core::tools`), so we install it at the
+    // composition root before any request can execute a tool.
+    crate::api::set_tool_invoker(Arc::new(
+        crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
+    ));
 
     let build = crate::build_info::snapshot();
     tracing::info!(

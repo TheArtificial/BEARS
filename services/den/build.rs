@@ -51,12 +51,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::env::var("TEMPLATES_DIR").unwrap_or("src/web/templates".to_string());
         minijinja_embed::embed_templates!(&templates_dir);
 
-        // The `email` template group moved to the `den-http` crate (v1.5 split); it is
-        // embedded by that crate's own build.rs now.
-
-        let api_templates_dir =
-            std::env::var("API_TEMPLATES_DIR").unwrap_or("src/api/templates".to_string());
-        minijinja_embed::embed_templates!(&api_templates_dir, &[][..], "api");
+        // The `email` and `api` template groups moved to the `den-http` and
+        // `den-api` crates (v1.5 split); they are embedded by those crates' own
+        // build.rs now.
 
         println!(
             "cargo:warning=Template embedding completed in {:.2}s",
