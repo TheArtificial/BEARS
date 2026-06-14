@@ -2,6 +2,19 @@ use super::stream::{openai_sse_chunk_to_runtime_events, OpenAiStreamAccumulator}
 use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[test]
+fn parses_text_delta_from_delta_text_field() {
+    let chunk = br#"data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"text":"hello"},"finish_reason":null}]}
+
+"#;
+    let events = openai_sse_chunk_to_runtime_events(chunk).expect("parse");
+    assert!(matches!(
+        events.first(),
+        Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }))
+            if text == "hello"
+    ));
+}
+
+#[test]
 fn parses_text_delta_from_recorded_sse() {
     let chunk = br#"data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}
 

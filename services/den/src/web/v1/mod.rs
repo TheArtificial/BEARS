@@ -441,14 +441,23 @@ fn map_persisted_history_page(
                 )
             {
                 last.text.push_str(&row.content_text);
+                last.text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
+                    &last.text,
+                );
                 continue;
             }
+        }
+        let text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
+            &row.content_text,
+        );
+        if text.is_empty() {
+            continue;
         }
         coalesced_desc.push((
             row.sequence_no,
             ChatHistoryMessage {
                 role: client_chat_history_role(&storage_role),
-                text: row.content_text.clone(),
+                text,
             },
         ));
     }
@@ -927,6 +936,29 @@ mod chat_history_map_tests {
             provider_message_id: None,
             created_at: time::OffsetDateTime::now_utc(),
         }
+    }
+
+    #[test]
+    fn map_persisted_page_strips_trailing_ephemeral_status_suffix() {
+        let rows = vec![
+            persisted_row(2, "assistant", "assistant", "HelloThinking…"),
+            persisted_row(1, "user", "user", "Hello"),
+        ];
+        let (msgs, has_more, _) = map_persisted_history_page(&rows, 10);
+        assert!(!has_more);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].text, "Hello");
+    }
+
+    #[test]
+    fn map_persisted_page_omits_ephemeral_only_assistant_rows() {
+        let rows = vec![
+            persisted_row(2, "assistant", "assistant", "Thinking…"),
+            persisted_row(1, "user", "user", "Hello"),
+        ];
+        let (msgs, _, _) = map_persisted_history_page(&rows, 10);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
     }
 
     #[test]

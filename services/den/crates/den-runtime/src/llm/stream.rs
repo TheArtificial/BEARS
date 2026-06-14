@@ -4,6 +4,15 @@ use crate::runtime_contracts::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 
+fn delta_assistant_text(delta: &Value) -> Option<String> {
+    for key in ["content", "text"] {
+        if let Some(text) = delta.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 /// Accumulates OpenAI streaming tool-call argument fragments keyed by tool-call index.
 #[derive(Debug, Default)]
 pub struct OpenAiStreamAccumulator {
@@ -52,15 +61,13 @@ impl OpenAiStreamAccumulator {
         };
 
         if let Some(delta) = choice.get("delta") {
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    out.events.push(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::AssistantTextDelta {
-                            text: content.to_string(),
-                        },
-                    ));
-                }
-            }
+            if let Some(content) = delta_assistant_text(delta) {
+            out.events.push(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::AssistantTextDelta {
+                    text: content,
+                },
+            ));
+        }
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                 self.saw_tool_calls = true;
                 for item in tool_calls {

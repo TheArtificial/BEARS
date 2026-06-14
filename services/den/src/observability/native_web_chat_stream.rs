@@ -12,7 +12,7 @@ use den_runtime::runtime_contracts::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 
-use super::chat_proxy_stream::bear_channel_sse_bytes;
+use super::chat_proxy_stream::{bear_channel_sse_bytes, is_ephemeral_progress_status};
 
 /// Maps a native runtime semantic event to zero or more bear_channel JSON events.
 pub fn runtime_semantic_to_bear_channel_events(
@@ -38,8 +38,9 @@ pub fn runtime_semantic_to_bear_channel_events(
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![serde_json::json!({
-                "type": "reasoning_delta",
-                "text": format!("Finished {tool_name}: {display_summary}"),
+                "type": "server_tool_finished",
+                "tool": tool_name,
+                "summary": display_summary,
             })];
             if status == ToolCallFinishStatus::Error {
                 if let Some(message) = error_message {
@@ -57,9 +58,19 @@ pub fn runtime_semantic_to_bear_channel_events(
         RuntimeSemanticEvent::RunProgress {
             text: Some(text),
             ..
-        } => vec![serde_json::json!({ "type": "reasoning_delta", "text": text })],
+        } => {
+            if is_ephemeral_progress_status(&text) {
+                vec![serde_json::json!({ "type": "status_progress", "text": text })]
+            } else {
+                vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
+            }
+        }
         RuntimeSemanticEvent::RunProgress { kind, text: None, .. } => {
-            vec![serde_json::json!({ "type": "reasoning_delta", "text": kind })]
+            if is_ephemeral_progress_status(&kind) {
+                vec![serde_json::json!({ "type": "status_progress", "text": kind })]
+            } else {
+                vec![serde_json::json!({ "type": "reasoning_delta", "text": kind })]
+            }
         }
         RuntimeSemanticEvent::ConversationResolved { conversation } => {
             vec![serde_json::json!({
@@ -77,8 +88,8 @@ pub fn runtime_semantic_to_bear_channel_events(
         } => {
             let summary = title.unwrap_or_else(|| tool_name.clone());
             vec![serde_json::json!({
-                "type": "reasoning_delta",
-                "text": format!("Started {summary}"),
+                "type": "server_tool_started",
+                "tool": summary,
             })]
         }
         RuntimeSemanticEvent::Error {
@@ -237,6 +248,7 @@ impl Stream for NativeWebChatUpstreamStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::chat_proxy_stream::EPHEMERAL_PROGRESS_STATUSES;
 
     #[test]
     fn maps_assistant_text_to_assistant_delta() {
@@ -248,6 +260,37 @@ mod tests {
         );
         assert_eq!(events[0]["type"], "assistant_delta");
         assert_eq!(events[0]["text"], "Hello");
+    }
+
+    #[test]
+    fn maps_ephemeral_run_progress_to_status_progress() {
+        for status in EPHEMERAL_PROGRESS_STATUSES {
+            let events = runtime_semantic_to_bear_channel_events(
+                RuntimeSemanticEvent::RunProgress {
+                    kind: "status".to_string(),
+                    text: Some((*status).to_string()),
+                    phase: None,
+                    detail: None,
+                },
+                None,
+            );
+            assert_eq!(events[0]["type"], "status_progress", "status={status}");
+            assert_eq!(events[0]["text"], *status);
+        }
+    }
+
+    #[test]
+    fn maps_non_ephemeral_run_progress_to_reasoning_delta() {
+        let events = runtime_semantic_to_bear_channel_events(
+            RuntimeSemanticEvent::RunProgress {
+                kind: "status".to_string(),
+                text: Some("Indexing documents".to_string()),
+                phase: None,
+                detail: None,
+            },
+            None,
+        );
+        assert_eq!(events[0]["type"], "reasoning_delta");
     }
 
     #[test]
@@ -271,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_tool_call_finished_to_reasoning_and_single_error() {
+    fn maps_tool_call_finished_to_status_and_single_error() {
         let events = runtime_semantic_to_bear_channel_events(
             RuntimeSemanticEvent::ToolCallFinished {
                 tool_call_id: "call_1".to_string(),
@@ -283,17 +326,14 @@ mod tests {
             Some("req-1"),
         );
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0]["type"], "reasoning_delta");
-        assert!(events[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("Finished memory_read"));
+        assert_eq!(events[0]["type"], "server_tool_finished");
+        assert_eq!(events[0]["tool"], "memory_read");
         assert_eq!(events[1]["type"], "error");
         assert_eq!(events[1]["error_type"], "tool_execution_error");
     }
 
     #[test]
-    fn maps_tool_call_requested_to_reasoning_delta() {
+    fn maps_tool_call_requested_to_server_tool_started() {
         let events = runtime_semantic_to_bear_channel_events(
             RuntimeSemanticEvent::ToolCallRequested {
                 tool_call_id: "call_1".to_string(),
@@ -309,8 +349,8 @@ mod tests {
             None,
         );
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["type"], "reasoning_delta");
-        assert_eq!(events[0]["text"], "Started den_capabilities_list_self");
+        assert_eq!(events[0]["type"], "server_tool_started");
+        assert_eq!(events[0]["tool"], "den_capabilities_list_self");
     }
 
     #[test]

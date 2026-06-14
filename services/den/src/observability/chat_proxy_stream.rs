@@ -15,6 +15,37 @@ use den_runtime::conversation_persistence::{append_message, ensure_conversation_
 
 use super::metrics;
 
+/// Ephemeral run-progress lines shown during live streaming; must not be persisted or coalesced into history.
+pub(crate) const EPHEMERAL_PROGRESS_STATUSES: &[&str] = &[
+    "Thinking…",
+    "Still working…",
+    "Running tools…",
+    "Continuing…",
+];
+
+pub(crate) fn is_ephemeral_progress_status(text: &str) -> bool {
+    EPHEMERAL_PROGRESS_STATUSES.contains(&text)
+}
+
+/// Strips trailing ephemeral status suffixes from polluted persisted rows (e.g. `HelloThinking…`).
+pub(crate) fn strip_ephemeral_status_suffixes(text: &str) -> String {
+    let mut out = text.to_string();
+    loop {
+        let trimmed = out.trim_end();
+        let mut stripped = false;
+        for suffix in EPHEMERAL_PROGRESS_STATUSES {
+            if trimmed.ends_with(suffix) {
+                out = trimmed[..trimmed.len() - suffix.len()].trim_end().to_string();
+                stripped = true;
+                break;
+            }
+        }
+        if !stripped {
+            return out;
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Terminal {
     Ok,
@@ -177,6 +208,7 @@ impl PendingConversationPersistence {
                     self.assistant_text.push_str(text);
                 }
             }
+            "status_progress" => {}
             "reasoning_delta" => {
                 if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
                     self.reasoning_text.push_str(text);
@@ -358,32 +390,67 @@ pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes>
 fn empty_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "type": "error",
-        "message": "The assistant stream ended without a reply.",
-        "detail": "No displayable content reached the browser before the stream closed. You can retry, or share the reference below when asking for help.",
+        "message": "No response received",
+        "detail": "The assistant did not return any text. You can retry, or share the reference below if the problem continues.",
         "error_type": "stream_empty_terminal",
         "request_id": request_id.to_string(),
     })
 }
 
-fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
+fn incomplete_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "type": "error",
+        "message": "Reply incomplete",
+        "detail": "The assistant was still working but did not finish a reply. You can retry, or share the reference below when asking for help.",
+        "error_type": "stream_incomplete_terminal",
+        "request_id": request_id.to_string(),
+    })
+}
+
+fn browser_terminal_error(request_id: Uuid, event: &serde_json::Value) -> Bytes {
     let mapped = serde_json::json!({
         "message_type": "error_message",
-        "message": "The assistant stream ended without a reply.",
-        "detail": "No displayable content reached the browser before the stream closed. You can retry, or share the reference below when asking for help.",
-        "error_type": "stream_empty_terminal",
-        "support_ref": request_id.to_string(),
+        "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),
+        "detail": event.get("detail").and_then(|v| v.as_str()),
+        "error_type": event.get("error_type").and_then(|v| v.as_str()),
+        "support_ref": event.get("request_id").and_then(|v| v.as_str()),
     });
-    bear_channel_sse_bytes(&mapped).expect("empty terminal error serializes")
+    bear_channel_sse_bytes(&mapped).expect("terminal error serializes")
+}
+
+fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
+    browser_terminal_error(request_id, &empty_terminal_bear_channel_error(request_id))
+}
+
+fn browser_incomplete_terminal_error(request_id: Uuid) -> Bytes {
+    browser_terminal_error(request_id, &incomplete_terminal_bear_channel_error(request_id))
+}
+
+fn persistence_has_substantive_reply(persistence: &PendingConversationPersistence) -> bool {
+    !persistence.assistant_text.trim().is_empty() || !persistence.error_text.trim().is_empty()
+}
+
+fn persistence_has_stream_chrome(persistence: &PendingConversationPersistence, browser_bytes: usize) -> bool {
+    browser_bytes > 0
+        || !persistence.status_text.trim().is_empty()
+        || !persistence.reasoning_text.trim().is_empty()
 }
 
 fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Bytes> {
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let mapped = match ty {
-        "assistant_delta" => serde_json::json!({
-            "message_type": "assistant_message",
-            "content": event.get("text").and_then(|v| v.as_str()).unwrap_or(""),
-            "id": event.get("id").and_then(|v| v.as_str()),
-        }),
+        "assistant_delta" => {
+            let raw = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let content = strip_ephemeral_status_suffixes(raw);
+            if content.trim().is_empty() {
+                return None;
+            }
+            serde_json::json!({
+                "message_type": "assistant_message",
+                "content": content,
+                "id": event.get("id").and_then(|v| v.as_str()),
+            })
+        }
         "reasoning_delta" => {
             let text = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
             serde_json::json!({
@@ -391,6 +458,14 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
                 "reasoning": text,
                 "content": text,
                 "id": event.get("id").and_then(|v| v.as_str()),
+            })
+        }
+        "status_progress" => {
+            let text = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            serde_json::json!({
+                "message_type": "status_message",
+                "content": text,
+                "status_type": "run_progress",
             })
         }
         "error" => serde_json::json!({
@@ -437,7 +512,7 @@ pub(crate) fn deep_chat_sse_body_for_assistant_text(text: &str) -> String {
 }
 
 
-/// Streams `bear_channel` SSE from Codepool to the browser after translating channel events
+/// Streams `bear_channel` SSE from the native runtime upstream to the browser after translating channel events
 /// into the existing Deep Chat / Letta-shaped SSE payloads consumed by `bear_chat.html`.
 pub struct BearChannelSseProxyStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
@@ -487,15 +562,24 @@ impl BearChannelSseProxyStream {
         }
     }
 
-    fn queue_empty_terminal_error_if_needed(&mut self) -> bool {
-        if self.total_bytes > 0 || self.empty_terminal_error_emitted {
+    fn queue_terminal_error_if_needed(&mut self) -> bool {
+        if self.empty_terminal_error_emitted || persistence_has_substantive_reply(&self.persistence) {
             return false;
         }
         self.empty_terminal_error_emitted = true;
-        let error_event = empty_terminal_bear_channel_error(self.request_id);
+        let chrome_only =
+            persistence_has_stream_chrome(&self.persistence, self.total_bytes);
+        let error_event = if chrome_only {
+            incomplete_terminal_bear_channel_error(self.request_id)
+        } else {
+            empty_terminal_bear_channel_error(self.request_id)
+        };
         self.persistence.ingest(&error_event);
-        self.pending
-            .push_back(browser_empty_terminal_error(self.request_id));
+        self.pending.push_back(if chrome_only {
+            browser_incomplete_terminal_error(self.request_id)
+        } else {
+            browser_empty_terminal_error(self.request_id)
+        });
         true
     }
 
@@ -644,7 +728,7 @@ impl Stream for BearChannelSseProxyStream {
                             bear_id = %this.bear_id,
                             conversation_id = %this.conversation_id,
                             ttfb_ms = ttfb.as_millis().min(u128::from(u64::MAX)) as u64,
-                            "chat_send first bear_channel byte from Codepool"
+                            "chat_send first bear_channel byte from native upstream"
                         );
                     }
                     this.buffer.extend_from_slice(&chunk);
@@ -689,7 +773,7 @@ impl Stream for BearChannelSseProxyStream {
                         conversation_id = %this.conversation_id,
                         error = %e,
                         total_bytes = this.total_bytes,
-                        "chat_send bear_channel proxy chunk error from Codepool"
+                        "chat_send bear_channel proxy chunk error from native upstream"
                     );
                     return Poll::Ready(Some(Err(std::io::Error::other(e.to_string()))));
                 }
@@ -720,7 +804,7 @@ impl Stream for BearChannelSseProxyStream {
                     if this.terminal.is_some() {
                         return Poll::Ready(None);
                     }
-                    if this.queue_empty_terminal_error_if_needed() {
+                    if this.queue_terminal_error_if_needed() {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }
@@ -741,7 +825,10 @@ impl Stream for BearChannelSseProxyStream {
                             }
                         }
                     }
-                    let outcome = if this.empty_terminal_error_emitted || this.total_bytes == 0 {
+                    let outcome = if this.empty_terminal_error_emitted
+                        || !persistence_has_substantive_reply(&this.persistence)
+                            && this.total_bytes == 0
+                    {
                         Terminal::Empty
                     } else {
                         Terminal::Ok
@@ -847,6 +934,30 @@ mod tests {
     }
 
     #[test]
+    fn maps_status_progress_to_status_message() {
+        let out = mapped_text("data: {\"type\":\"status_progress\",\"text\":\"Thinking…\"}\n\n");
+        assert!(out.contains("\"message_type\":\"status_message\""));
+        assert!(out.contains("Thinking…"));
+        assert!(!out.contains("reasoning_message"));
+    }
+
+    #[test]
+    fn persistence_ingest_ignores_status_progress() {
+        let mut persistence = PendingConversationPersistence::default();
+        persistence.ingest(&serde_json::json!({"type": "status_progress", "text": "Thinking…"}));
+        assert!(!persistence.has_flushable_content());
+    }
+
+    #[test]
+    fn strip_ephemeral_status_suffixes_removes_trailing_pollution() {
+        assert_eq!(
+            strip_ephemeral_status_suffixes("HelloThinking…"),
+            "Hello"
+        );
+        assert_eq!(strip_ephemeral_status_suffixes("Thinking…"), "");
+    }
+
+    #[test]
     fn maps_reasoning_delta_to_deep_chat_sse() {
         let out = mapped_text("data: {\"type\":\"reasoning_delta\",\"text\":\"Thinking\"}\n\n");
         assert!(out.contains("\"message_type\":\"reasoning_message\""));
@@ -896,6 +1007,22 @@ mod tests {
     fn drops_done_control_event() {
         let out = mapped_text("data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n");
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn maps_ephemeral_assistant_delta_suffix_to_empty() {
+        let out = mapped_text("data: {\"type\":\"assistant_delta\",\"text\":\"Thinking…\"}\n\n");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn chrome_only_stream_gets_incomplete_terminal_error() {
+        let bytes = browser_incomplete_terminal_error(
+            Uuid::parse_str("f42114ea-99bd-48a7-818a-78d4e3d914be").unwrap(),
+        );
+        let text = String::from_utf8(bytes.to_vec()).expect("utf8");
+        assert!(text.contains("stream_incomplete_terminal") || text.contains("Reply incomplete"));
+        assert!(text.contains("f42114ea-99bd-48a7-818a-78d4e3d914be"));
     }
 
     #[test]
