@@ -527,6 +527,7 @@ dependencies = [
  "den-docket",
  "den-llm",
  "den-memory",
+ "den-runtime",
  "den-tools",
  "dotenvy",
  "futures",
@@ -618,6 +619,37 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "den-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "bytes",
+ "den-core",
+ "den-docket",
+ "den-llm",
+ "den-memory",
+ "den-tools",
+ "futures",
+ "indexmap",
+ "rand 0.9.4",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
  "uuid",
 ]
 
