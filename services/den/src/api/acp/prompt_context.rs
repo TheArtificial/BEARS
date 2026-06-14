@@ -8,8 +8,8 @@ use crate::{
         },
     }, service::ApiState},
     errors::CustomError,
-    core::work_plans::WorkPlanProjection,
 };
+use den_docket::WorkPlanProjection;
 use den_runtime::{
     acp_plan_mode,
     acp_tools::AcpResolvedSessionPolicy,

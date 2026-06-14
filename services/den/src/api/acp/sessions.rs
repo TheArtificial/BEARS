@@ -1,10 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 
-use crate::{
-    errors::CustomError,
-    core::work_plans::WorkPlanProjection,
-};
+use crate::errors::CustomError;
+use den_docket::WorkPlanProjection;
 use den_runtime::{
     acp_sessions,
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,

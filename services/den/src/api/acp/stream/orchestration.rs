@@ -57,7 +57,7 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
     cwd: &str,
     client_context: &serde_json::Value,
     conversation_resolution: &AcpConversationResolution,
-    current_activity_plan: &Option<crate::core::work_plans::WorkPlanProjection>,
+    current_activity_plan: &Option<den_docket::WorkPlanProjection>,
     plan_mode_context: &str,
     activity_context: &str,
     tool_prompt_context: &str,
@@ -141,7 +141,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     conversation_resolution: &AcpConversationResolution,
     synthetic_session: &den_runtime::acp_sessions::AcpSessionRow,
     resolved_policy: &AcpResolvedSessionPolicy,
-    current_activity_plan: &Option<crate::core::work_plans::WorkPlanProjection>,
+    current_activity_plan: &Option<den_docket::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,
     setup: AcpStreamSetup,
 ) -> Result<Result<Response, CustomError>, ApiError> {
