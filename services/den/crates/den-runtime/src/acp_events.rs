@@ -4,17 +4,17 @@ use bytes::Bytes;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::core::{
+use crate::{
     acp_tool_turns::AcpToolResultRequest,
     acp_tools::{
         acp_diag_phase, acp_tool_display_for_provider, acp_tool_policy_json_for_provider,
         supported_provider_tool_names, AcpToolName,
     },
-    tools::descriptor::{
-        builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
-        den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
-    },
-    work_plans::{WorkPlanItemStatus, WorkPlanProjection},
+};
+use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
+use den_tools::descriptor::{
+    builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
+    den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
 };
 
 #[derive(Debug)]

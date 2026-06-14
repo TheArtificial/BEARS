@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::core::{
+use crate::{
     runtime::compaction::{
         artifact_ref_from_decision, build_runtime_context_envelope,
         choose_compaction_decision, merge_iterative_summary,

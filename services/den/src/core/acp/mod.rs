@@ -1,13 +1,10 @@
-//! Agent Client Protocol (ACP) runtime: sessions, tokens, the turn runner +
-//! controller, tool turns, plan mode, the legacy Letta event mapping, and the
-//! ACP runtime glue.
+//! Agent Client Protocol (ACP) edge: sessions, tokens, the turn runner +
+//! controller, and the ACP runtime glue. The shared turn/tool contracts
+//! (events, tools, plan_mode, tool_turns) now live in the `den-runtime` crate.
 
-pub mod events;
 pub mod runtime;
 pub mod sessions;
 pub mod tokens;
-pub mod tool_turns;
-pub mod turn_controller;
 pub mod turn_runner;
 
 #[cfg(test)]

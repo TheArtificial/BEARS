@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::core::runtime_conversations::{
+use crate::runtime_conversations::{
     RuntimeCompactionArtifactRef, RuntimeCompactionBoundary, RuntimeCompactionTriggerKind,
 };
 
@@ -67,11 +67,11 @@ pub fn build_compaction_skipped_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::runtime_compaction::{
+    use crate::runtime_compaction::{
         artifact_ref_from_decision, RuntimeCompactionDecision, RuntimeCompactionPolicy,
         RuntimeCompactionStrategy,
     };
-    use crate::core::runtime_conversations::{
+    use crate::runtime_conversations::{
         RuntimeCompactionBoundary, RuntimeCompactionTriggerKind,
     };
 

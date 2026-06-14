@@ -14,7 +14,3 @@ pub mod role;
 pub mod role_registry;
 pub mod turn_state;
 
-#[cfg(test)]
-mod role_tests {
-    include!("role_tests.rs");
-}

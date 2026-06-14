@@ -1,11 +1,31 @@
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 
-use crate::{
-    api::acp::AcpCompactionStatusResponse,
-    core::runtime_compaction_observability::RuntimeCompactionEvent,
-};
+use crate::runtime_compaction_observability::RuntimeCompactionEvent;
 use den_core::DenError;
+use serde::Serialize;
+
+/// Serialized compaction status for a conversation, as surfaced to ACP/web clients.
+///
+/// Produced here by the runtime compaction store and consumed by the `den` API edge
+/// (re-exported as `crate::core::runtime_compaction_store::AcpCompactionStatusResponse`).
+#[derive(Debug, Serialize)]
+pub struct AcpCompactionStatusResponse {
+    pub status: String,
+    pub policy_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_group_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_group_end: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_envelope: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_memory_diagnostic: Option<serde_json::Value>,
+}
 
 pub async fn record_runtime_compaction_event(
     pool: &PgPool,
@@ -52,7 +72,7 @@ pub async fn record_runtime_compaction_event(
     Ok(())
 }
 
-pub(crate) async fn list_runtime_compaction_events(
+pub async fn list_runtime_compaction_events(
     pool: &PgPool,
     conversation_id: &str,
     limit: i64,

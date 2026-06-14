@@ -1,12 +1,10 @@
-use crate::{
-    config::Config,
-    core::runtime::provider::{
-        acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
-        ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
-        RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory,
-        RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeToolResultStatus,
-    },
+use crate::runtime::provider::{
+    acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
+    ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
+    RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory,
+    RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeToolResultStatus,
 };
+use den_core::config::Config;
 use den_core::DenError;
 
 #[test]

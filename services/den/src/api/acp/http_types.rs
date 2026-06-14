@@ -179,23 +179,9 @@ pub(crate) struct AcpConversationHistoryMessage {
     pub(super) created_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct AcpCompactionStatusResponse {
-    pub(crate) status: String,
-    pub(crate) policy_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) source_group_start: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) source_group_end: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) diagnostic: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) artifact: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) context_envelope: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) prompt_memory_diagnostic: Option<serde_json::Value>,
-}
+// Relocated to den-runtime (it is produced by the runtime compaction store); re-exported
+// here so existing `super::http_types::AcpCompactionStatusResponse` paths keep compiling.
+pub(crate) use crate::core::runtime_compaction_store::AcpCompactionStatusResponse;
 
 #[derive(Debug, Serialize)]
 pub(super) struct AcpConversationHistoryResponse {

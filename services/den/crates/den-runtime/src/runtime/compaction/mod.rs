@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::runtime_conversations::{
+use crate::runtime_conversations::{
     RuntimeCompactionArtifactKind, RuntimeCompactionArtifactRef, RuntimeCompactionBoundary,
     RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
     RuntimeSemanticGroupKind,

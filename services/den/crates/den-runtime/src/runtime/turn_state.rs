@@ -1,8 +1,7 @@
 use serde_json::{json, Value};
 
-use crate::core::{
-    acp_plan_mode, acp_tools::AcpResolvedSessionPolicy, work_plans::WorkPlanProjection,
-};
+use crate::{acp_plan_mode, acp_tools::AcpResolvedSessionPolicy};
+use den_docket::WorkPlanProjection;
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
@@ -149,7 +148,7 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
     }
 }
 
-fn activity_item_json(item: &crate::core::work_plans::WorkPlanItem) -> Value {
+fn activity_item_json(item: &den_docket::WorkPlanItem) -> Value {
     json!({
         "id": item.id,
         "title": item.title,

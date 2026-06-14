@@ -2,10 +2,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    core::{
-        acp_tool_turns::AcpToolTurnCoordinator,
-        acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
-    },
+    acp_tool_turns::AcpToolTurnCoordinator,
+    acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
 };
 use den_core::DenError;
 
@@ -331,7 +329,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    pub(crate) guard: crate::core::acp_tool_turns::AcpActiveTurnGuard,
+    pub guard: crate::acp_tool_turns::AcpActiveTurnGuard,
 }
 
 impl RoleTurnGuard {

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use crate::core::{
+use crate::{
     acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
     runtime_contracts::{
         RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
@@ -138,7 +138,5 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
     }
 }
 
-#[cfg(test)]
-mod golden_traces_tests;
 #[cfg(test)]
 mod test;

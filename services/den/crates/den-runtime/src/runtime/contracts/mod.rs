@@ -1,4 +1,4 @@
-use crate::config::Config;
+use den_core::config::Config;
 use den_core::DenError;
 use bytes::Bytes;
 use futures::Stream;

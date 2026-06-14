@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::core::acp_tool_turns::AcpToolTurnCoordinator;
+use crate::acp_tool_turns::AcpToolTurnCoordinator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpTurnPhase {
@@ -723,8 +723,8 @@ fn client_display_name(client: &str) -> &'static str {
 }
 
 fn humanize_tool_name(tool_name: &str) -> String {
-    if let Some(tool) = crate::core::acp_tools::AcpToolName::from_provider_alias(tool_name) {
-        return crate::core::acp_tools::acp_tool_display(tool).label.to_string();
+    if let Some(tool) = crate::acp_tools::AcpToolName::from_provider_alias(tool_name) {
+        return crate::acp_tools::acp_tool_display(tool).label.to_string();
     }
     if let Some(rest) = tool_name.strip_prefix("mcp__") {
         let parts: Vec<&str> = rest.split("__").collect();
@@ -856,7 +856,7 @@ mod tests {
         let (_handle, _rx) = registry.register("acp-session", request_id, None);
         let (tx, _rx) = tokio::sync::oneshot::channel();
         tool_turns
-            .register(crate::core::acp_tool_turns::AcpToolTurnRegistration {
+            .register(crate::acp_tool_turns::AcpToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
