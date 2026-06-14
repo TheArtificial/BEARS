@@ -1,4 +1,26 @@
-// ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
+//! The den web edge: server-rendered UI (Askama/MiniJinja over axum) plus the
+//! `/v1/*` JSON + SSE surface for the in-app chat. Depends on den-http (identity/
+//! errors), den-api (OAuth client types + the injected tool invoker), den-runtime,
+//! den-docket, and den-core.
+//!
+// ROUTES: When modifying routes in this file, update ROUTES.md if present.
+
+// Self-alias so the edge keeps resolving its historical `crate::web::*` paths
+// (this crate *is* the old `den::web` module tree). Avoids rewriting the many
+// `web::AppState` / `web::*` references across submodules.
+extern crate self as web;
+
+// Foundation re-export shims (v1.5 den-web extraction): keep migrated call sites
+// resolving `crate::config`, `crate::errors`, `crate::auth_backend`, and
+// `crate::build_info` unchanged. These live in den-core / den-http now.
+pub use den_core::config;
+pub use den_http::{auth_backend, build_info, errors};
+// The admin OAuth-client UI references the OAuth server types from den-api.
+pub use den_api as api;
+
+pub mod core;
+pub mod observability;
+
 pub mod admin;
 pub mod bear_chat;
 pub mod bear_create_support;
@@ -19,7 +41,6 @@ pub mod v1;
 use indexmap::IndexMap;
 use std::sync::OnceLock;
 
-use crate::build_info;
 use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
 
@@ -176,7 +197,7 @@ pub async fn server_with_state(
     }
 
     let memory_serve =
-        MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
+        MemoryServe::new(load_assets!("src/assets")).cache_control(CacheControl::Short);
 
     let bifrost = std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
 

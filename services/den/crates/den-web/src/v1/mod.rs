@@ -27,7 +27,7 @@ use crate::{
         tools::{
             arguments::DenToolChannelContext,
             constants::DEN_CONVERSATION_SET_TITLE,
-            session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
+            session::DenToolInvocationContext,
         },
         docket::{DocketService, PgDocketService},
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
@@ -636,15 +636,20 @@ async fn maybe_handle_direct_set_conversation_title(
         },
     };
     let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let value = run_den_tool(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        &stores,
-        DEN_CONVERSATION_SET_TITLE,
-        serde_json::json!({ "title": title }),
-        context,
-    )
-    .await?;
+    let invoker = den_api::tool_invoker().ok_or_else(|| {
+        CustomError::System("builtin Den tool runtime is not initialized".to_string())
+    })?;
+    let value = invoker
+        .invoke(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &stores,
+            DEN_CONVERSATION_SET_TITLE,
+            serde_json::json!({ "title": title }),
+            context,
+        )
+        .await
+        .map_err(CustomError::from)?;
     let text = value
         .get("content")
         .and_then(|v| v.as_str())
@@ -832,6 +837,9 @@ async fn chat_send_native_inner(
         config: state.config.as_ref(),
         stores: &stores,
     };
+    let tool_invoker = den_api::tool_invoker().ok_or_else(|| {
+        CustomError::System("builtin Den tool runtime is not initialized".to_string())
+    })?;
     let runtime_stream = den_runtime::native_runtime::start_native_web_chat_turn_event_stream(
         den_runtime::native_runtime::NativeWebChatTurnParams {
             deps: &deps,
@@ -845,9 +853,7 @@ async fn chat_send_native_inner(
             session_id: &session_id,
             prompt: &upstream_message,
             request_id,
-            tool_invoker: std::sync::Arc::new(
-                crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
-            ),
+            tool_invoker,
         },
     )
     .await?;

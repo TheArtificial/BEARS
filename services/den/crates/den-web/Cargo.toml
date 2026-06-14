@@ -1,0 +1,72 @@
+[package]
+name = "den-web"
+version = "0.1.0"
+edition = "2021"
+
+# den-web: the server-rendered web UI + `/v1/*` JSON/SSE edge of the den binary.
+# It owns the MiniJinja template environment + embedded assets, the session-cookie
+# UI routes (home/onboarding/admin/bear management/user settings), and the in-app
+# chat surface. It sits above den-http (identity/errors/web policy), den-api (OAuth
+# client types + the injected builtin-tool invoker), den-runtime, den-docket, and
+# den-core. Builtin Den tool execution is injected via `den_api::tool_invoker`, so
+# the den-side tool composition stays in the binary.
+
+[lints]
+workspace = true
+
+[features]
+production = [
+    "den-core/production",
+    "den-http/production",
+    "den-runtime/production",
+    "den-api/production",
+]
+web-ui-fixtures = []
+
+[dependencies]
+den-core = { path = "../den-core" }
+den-http = { path = "../den-http" }
+den-runtime = { path = "../den-runtime" }
+den-docket = { path = "../den-docket" }
+den-api = { path = "../den-api" }
+ammonia = "4.1.1"
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum-extra = { version = "0.10.0", features = ["form", "query"] }
+axum-login = "0.17.0"
+bytes = "1"
+futures = "0.3"
+indexmap = { version = "2.9.0", features = ["serde"] }
+memory-serve = "1.2.2"
+minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
+minijinja-contrib = { version = "2.6.0", features = ["datetime", "timezone"] }
+minijinja-embed = "2.7.0"
+password-auth = "1.0.0"
+pulldown-cmark = "0.13.0"
+rand = "0.9.1"
+regex = "1.11.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+rusty-s3 = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower = "0.5.2"
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+tracing = "0.1.41"
+url = "2.5.4"
+urlencoding = "2.1"
+uuid = { version = "1", features = ["serde", "v4"] }
+validator = { version = "0.20", features = ["derive"] }
+
+[build-dependencies]
+minijinja-embed = "2.7.0"
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }
+den-runtime = { path = "../den-runtime", features = ["test-util"] }
+dotenvy = "0.15.7"
+http-body-util = "0.1"
+serde_json = "1.0.138"
+tower = { version = "0.5.2", features = ["util"] }

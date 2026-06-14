@@ -54,17 +54,10 @@ pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::Mig
 }
 
 /// Whether [`validate_runtime_config`] requires a non-empty `JWT_SECRET` (production builds or `RUN_API`).
-pub fn requires_jwt_secret(config: &Config) -> bool {
-    #[cfg(feature = "production")]
-    {
-        let _ = config;
-        true
-    }
-    #[cfg(not(feature = "production"))]
-    {
-        config.run_api
-    }
-}
+///
+/// Canonical home is `den_core::config`; re-exported so the web edge (den-web) and
+/// the binary's startup validation share one definition.
+pub use den_core::config::requires_jwt_secret;
 
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {

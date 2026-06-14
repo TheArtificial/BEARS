@@ -462,7 +462,7 @@ impl Config {
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
-                .unwrap_or("src/web/templates".to_string()),
+                .unwrap_or("crates/den-web/src/templates".to_string()),
             database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL"),
 
             mailgun_api_key: std::env::var("MAILGUN_API_KEY").unwrap_or_default(),
@@ -589,5 +589,23 @@ impl Config {
             embedding_dimensions: 1536,
             ui_fixture_profile: None,
         }
+    }
+}
+
+/// Whether startup must require a non-empty `JWT_SECRET`.
+///
+/// Production builds always require it; dev builds require it only when the API
+/// service runs (it mints/validates bearer tokens). Shared by the binary's
+/// startup validation and the web edge's stack-health check.
+#[must_use]
+pub fn requires_jwt_secret(config: &Config) -> bool {
+    #[cfg(feature = "production")]
+    {
+        let _ = config;
+        true
+    }
+    #[cfg(not(feature = "production"))]
+    {
+        config.run_api
     }
 }

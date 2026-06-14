@@ -10,10 +10,11 @@ pub use den_http::build_info;
 pub use den_core::config;
 pub mod core;
 pub use den_http::errors;
-pub mod observability;
 pub mod seeds;
 pub mod startup;
-pub mod web;
+// The web edge (server-rendered UI + /v1) moved to the `den-web` crate (v1.5
+// split). Re-exported as `crate::web` so the binary's `run()` resolves unchanged.
+pub use den_web as web;
 
 use crate::config::Config;
 use crate::startup::{

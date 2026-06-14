@@ -13,7 +13,6 @@ use tokio::time::timeout;
 use url::Url;
 
 use crate::config::Config;
-use crate::startup;
 use crate::web::AppState;
 
 /// Wall-clock timeout for each upstream HTTP health call (Letta, Codepool, Bifrost).
@@ -92,7 +91,7 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
 }
 
 fn jwt_check(cfg: &crate::config::Config) -> HealthCheck {
-    if !startup::requires_jwt_secret(cfg) {
+    if !den_core::config::requires_jwt_secret(cfg) {
         return HealthCheck {
             id: "jwt_secret",
             label: "JWT_SECRET",

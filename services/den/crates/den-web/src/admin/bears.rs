@@ -1211,7 +1211,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_sessions_sqlx_store::PostgresStore;
 
-    use crate::{config::Config, startup::run_sqlx_migrations, web::AppState};
+    use crate::{config::Config, web::AppState};
 
     static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -1235,7 +1235,11 @@ mod tests {
                 return None;
             }
         };
-        if let Err(err) = run_sqlx_migrations(&pool).await {
+        if let Err(err) = sqlx::migrate!("../../migrations")
+            .set_ignore_missing(true)
+            .run(&pool)
+            .await
+        {
             eprintln!("skipping DB-backed admin route test: migrations failed: {err}");
             return None;
         }

@@ -15,7 +15,6 @@ pub mod sandbox;
 pub mod migration;
 pub mod tools;
 pub mod docket;
-pub mod s3;
 pub use tools::tool_descriptor_guidance;
 pub use tools::web_policy;
 pub mod work_plans;

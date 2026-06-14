@@ -34,36 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-env-changed=GIT_SHA");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
-    // Only run expensive embedding & DB migration steps when the `production`
-    // feature is enabled. Cargo exposes enabled features to build scripts via
-    // environment variables named CARGO_FEATURE_<FEATURE_NAME_UPPER>.
-    let production_enabled = env::var_os("CARGO_FEATURE_PRODUCTION").is_some();
-
-    // Always record the assets dir variable (cheap) but avoid any heavy work
-    // unless production is explicitly requested.
-    let _assets_dir = std::env::var("ASSETS_DIR").unwrap_or("src/web/assets".to_string());
-
-    if production_enabled {
-        let template_start = Instant::now();
-        println!("cargo:warning=Production build: starting template embedding...");
-
-        let templates_dir =
-            std::env::var("TEMPLATES_DIR").unwrap_or("src/web/templates".to_string());
-        minijinja_embed::embed_templates!(&templates_dir);
-
-        // The `email` and `api` template groups moved to the `den-http` and
-        // `den-api` crates (v1.5 split); they are embedded by those crates' own
-        // build.rs now.
-
-        println!(
-            "cargo:warning=Template embedding completed in {:.2}s",
-            template_start.elapsed().as_secs_f64()
-        );
-    } else {
-        println!(
-            "cargo:warning=Skipping template embedding; enable the 'production' feature to run it."
-        );
-    }
+    // All template groups now live in the edge crates (web -> den-web, email ->
+    // den-http, api -> den-api), each embedded by its own build.rs in production.
+    // The thin binary embeds nothing.
 
     println!(
         "cargo:warning=Build script completed in {:.2}s",
