@@ -214,6 +214,41 @@ The blob's **only** external (den-stay) tethers, beyond `CustomError` (335 refs 
 
 **Flip complete — flat `core` shims dropped (2026-06).** The `den` binary's `core/mod.rs` previously re-exported the lifted runtime under flat aliases (`pub use den_runtime::bears;`, `pub use den_runtime::memory;`, … ~40 of them) so call sites kept resolving `crate::core::*` unchanged during the lift. The flip removed all those `pub use den_runtime::*` shims and repointed every call site directly at `den_runtime::*` (and the tool surface at `den_core::tools::*`). Mechanics: a word-boundary sweep rewrote path-form `crate::core::<rt>` → `den_runtime::<rt>`; a brace-aware splitter rewrote the nested `use crate::{ … core::{…} … }` and standalone `use crate::core::{…}` import trees, moving runtime members to a sibling `use den_runtime::{…}` while leaving den-local members (`tools`, `user`, `docket`, `work_plans`, `s3`, `email`, `sandbox`, `migration`, `api_utils`, `acp` + the `acp_runtime`/`acp_tokens`/`acp_turn_runner` aliases) under `crate::core`. The two DB integration tests in `tests/` (`acp_plan_mode`, `work_plans`) were repointed the same way (`den::core::*` → `den_runtime::*`). `core/mod.rs` now only declares the den-binary-local subsystems + the den-side ACP edge. No global `cargo fmt` was run (the tree isn't fmt-clean, so a workspace format would have been ~190 files of noise); only the touched import blocks were reformatted by hand/script. Workspace build + the `-D warnings` clippy gate (all targets) are green. **v1.4 runtime extraction is now COMPLETE.**
 
+#### v1.5 — edge extraction plan (`den-web` / `den-api` / `den-acp`), scoped 2026-06
+
+Measured coupling of the remaining `den` binary (src/ ≈ 44k LOC, the largest single compile unit at ~36s — see the build-time analysis; the HTTP edges are where that time lives):
+
+**Hard constraints discovered:**
+- **`CustomError` is the shared edge error** — used by **all** edges (web ~361 refs, api ~266, acp). It implements `axum::IntoResponse`, so it must live in a crate the edges depend on. **But** its current `into_response` renders `error.html`, which `{% extends "base.html" %}` — i.e. it needs the *whole web template tree*. **Decision:** the foundation's `CustomError` renders a **self-contained** error response (small inline HTML, no `base.html`), so it carries no template-tree dependency. (Minor UX change: the error page loses site chrome; reversible later via a den-web error layer.)
+- **Templates are embedded per-crate in production** (`build.rs` → `minijinja_embed::embed_templates!` for web/`email`/`api` groups; `load_templates!` reads them back). So whichever crate renders a template group must own that group's embed in its own `build.rs`. → web templates ⇒ `den-web`; email templates ⇒ identity layer; api/oauth templates ⇒ `den-api`.
+- **`ApiState` is shared by `api/v1` + `api/acp`** (one `create_api_app`; fields: `sqlx_pool`, `config`, `bifrost`, `acp_tool_turns`, `acp_turn_cancellations`, `memory_stores`). Splitting `den-acp` from `den-api` requires either `den-api → den-acp` or a shared state. **Decision:** keep ACP request types `ApiState`-decoupled (already done in v1.4 via concrete `sqlx_pool`/`config`/`memory_stores` fields); `den-acp` carries its own minimal state, `den-api` mounts it.
+- **sqlx offline:** a single workspace-root `.sqlx` cache (`services/den/.sqlx`) serves all member crates (sqlx walks up to it). Moving `query!` code into new crates needs **no** live DB / re-prepare as long as query text is unchanged. (api ~28 queries, web 1, acp ~0.)
+- **`auth_backend` → `core::user` → `CustomError`.** To let the foundation host auth without dragging web templates, the shared lower layers (`user`, `email`, `auth_backend`) migrate `CustomError → DenError` (extends the v1.4 "DenError = web-free, CustomError = web adapter" rule).
+
+**Target layering (as-built proposal):**
+```
+den (bin: main, startup, DI, router composition)
+   ├── den-web   (web/ + errors-rendering layer + observability/ + s3/ + web templates build.rs)
+   ├── den-api   (api/v1 + oauth + docs + ApiError + api templates build.rs)
+   └── den-acp   (core/acp/ residual + api/acp/)
+            ↓ all three depend on
+        den-foundation  (errors::CustomError [self-contained], auth_backend, api_utils,
+                         user, email)   ── “den-http” working name
+            ↓
+        den-runtime → den-core (+ leaves)
+```
+(One foundation crate to minimise blast radius this pass; may later split into `den-identity` (user/email leaf) + `den-http` (errors/auth/api_utils).)
+
+**Ordered steps (each: git mv subset + path rewrite + re-export shims in the binary + green + commit):**
+1. **Decouple shared lower layers off `CustomError`** — `user`, `email`, `auth_backend` return `DenError`; keep `From` bridges. *(no new crate; prerequisite)*
+2. **Extract `den-foundation`** — `errors` (self-contained `CustomError`), `auth_backend`, `api_utils`, `user`, `email` (+ email-templates build.rs). Binary keeps `crate::errors`/`crate::auth_backend`/`crate::core::user` shims.
+3. **Extract `den-web`** — `web/**` + `observability/**` + `core/s3` + web-templates build.rs. Most isolated edge (own `AppState`, own server entrypoint, 1 query).
+4. **Extract `den-api`** — `api/v1`, `api/oauth`, `api/docs`, `api/auth` (`ApiError`), `api/templates` + build.rs.
+5. **Extract `den-acp`** — residual `core/acp/` (`sessions`, `tokens`, `runtime`, `turn_runner`) + `api/acp/`; `den-api` mounts it.
+6. **Thin `den` binary** — `main`, `startup`, DI, router composition only.
+
+Risk notes: steps 4–5 are the hardest (ApiState seam, oauth state, 47 `ApiError` sites); step 3 is the highest build-time payoff and lowest risk after the foundation. Stop-and-stay-green after each commit; partial completion is acceptable and leaves a working tree.
+
 **First cluster move — DONE (commits on the `test` branch).** `den-runtime` now owns: `runtime/**` (contracts/provider/role/role_registry/compaction*/conversations/turn_state/pair_turn/bearwire_projection, with the familiar flat aliases re-exported), plus `acp_events` (`AcpGatewayEvent` + SSE adapter), `acp_tools`, `acp_plan_mode`, `acp_tool_turns`, and `acp_turn_controller`. The cluster's error type was first migrated `CustomError → den_core::DenError` (a bidirectional `From` was added in `den`). Cycle breaks discovered + applied: `acp_turn_controller` had to come along (runtime turn coordination); `AcpCompactionStatusResponse` (a runtime-produced DTO) was relocated from `api/acp/http_types` into `runtime/compaction_store` (api re-exports it); `role_registry` now uses `den_core::BearProfile` and inlines the small `bear_profile_bindings` lookup instead of calling den's `bears::db`. `den` keeps thin re-export shims in `core/mod.rs` so edge/api/web call sites are untouched, and the two cross-layer bridge tests (which also touch den-only `native_runtime`/`acp_turn_controller`) were relocated into the `den` crate.
 
 **Discovered during execution (2026-06) — `core/acp/` is NOT a single edge module; it must be split.** `core/runtime/` cannot move alone: it is knotted to a cluster of shared turn/tool *contracts* that today live under `core/acp/` with a misleading `acp` prefix. These move into `den-runtime` **with** `runtime/` (first cluster move):
