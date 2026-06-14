@@ -1,0 +1,45 @@
+[package]
+name = "den-http"
+version = "0.1.0"
+edition = "2021"
+
+# den-http: the shared HTTP/identity foundation for the den binary's edge crates
+# (den-web / den-api / den-acp). It owns the web-boundary error adapter
+# (`errors::CustomError`, the axum `IntoResponse` over the web-free `den_core::DenError`),
+# the axum-login auth backend (`auth_backend`), small request (de)serialization
+# helpers (`api_utils`), and the identity layer the auth backend depends on
+# (`user`, `email`). It sits just above `den-core`; the edges depend on it, not the
+# reverse. Email templates are embedded here (production) / path-loaded (dev) via
+# `email::template_environment`.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production"]
+
+[dependencies]
+den-core = { path = "../den-core" }
+anyhow = "1.0"
+async-trait = "0.1.86"
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros"] }
+axum-login = "0.17.0"
+mailgun-rs = "2.0.1"
+minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
+password-auth = "1.0.0"
+rand = "0.9.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+thiserror = "2.0.12"
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+validator = { version = "0.20", features = ["derive"] }
+
+[build-dependencies]
+minijinja-embed = "2.7.0"
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }

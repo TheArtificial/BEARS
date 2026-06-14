@@ -3,9 +3,16 @@ use axum::{
     http::StatusCode,
     response::{Html, IntoResponse, Response},
 };
-use minijinja::context;
 
 use std::fmt;
+
+/// Minimal HTML escaping for the self-contained error page.
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
 
 pub use den_core::DenError;
 
@@ -144,30 +151,24 @@ impl IntoResponse for CustomError {
         };
 
         tracing::error!("{}: {:#}", error_name, error_string);
-        // discard any error to avoid recursion
-        let mut template_env = minijinja::Environment::new();
-        // let templates_dir = std::env::var("TEMPLATES_DIR").unwrap_or("src/web/templates".to_string());
-        // minijinja_embed::embed_templates!(&templates_dir);
-        #[cfg(feature = "production")]
-        minijinja_embed::load_templates!(&mut template_env);
-        #[cfg(not(feature = "production"))]
-        template_env.set_loader(minijinja::path_loader("src/web/templates"));
-
-        if let Ok(template) = template_env.get_template("error.html") {
-            let body = template
-                .render(context! {
-                    error_code => status_code.as_u16(),
-                    error_name,
-                    error_message,
-                })
-                .unwrap();
-            return (status_code, Html(body)).into_response();
-        }
-        (
-            status_code,
-            format!("Catastrophic error: [{error_name}] {error_message}"),
-        )
-            .into_response()
+        // Self-contained error page: `den-http` is the shared edge foundation and
+        // deliberately carries no web template tree (that lives in `den-web`), so the
+        // boundary error renders standalone HTML rather than the styled `error.html`.
+        let code = status_code.as_u16();
+        let name = html_escape(error_name);
+        let message = html_escape(&error_message);
+        let body = format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+             <title>{name} Error</title>\
+             <style>body{{font-family:system-ui,sans-serif;margin:3rem auto;max-width:40rem;\
+             padding:0 1rem;color:#222}}h1{{font-size:1.25rem}}code{{display:block;white-space:pre-wrap;\
+             background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:1rem;margin-top:1rem}}</style>\
+             </head><body><h1>{code} — {name} error</h1>\
+             <p>Something has gone awry. Please report this.</p>\
+             <code>{message}</code></body></html>"
+        );
+        (status_code, Html(body)).into_response()
     }
 }
 

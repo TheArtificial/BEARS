@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::task;
 
-use crate::core::user;
 use crate::errors::DenError;
+use crate::user;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

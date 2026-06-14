@@ -4,7 +4,8 @@ use mailgun_rs::{Attachment, EmailAddress, Mailgun, MailgunRegion, Message};
 use minijinja::Environment;
 use sqlx::{query, query_as, PgPool};
 
-use crate::{config::Config, errors::DenError};
+use crate::errors::DenError;
+use den_core::config::Config;
 
 pub struct EmailConfig {
     pub user_id: i32,
@@ -48,6 +49,25 @@ pub struct EmailTemplateRequest<'a> {
     pub template_name: &'a str,
     pub ctx: minijinja::Value,
     pub attachments: Option<Vec<Attachment>>,
+}
+
+/// Build a minijinja [`Environment`] for the email template group.
+///
+/// In production the `email` group is embedded by this crate's `build.rs`; in dev
+/// it is path-loaded from disk (relative to the process CWD, i.e. `services/den`).
+/// Centralizing construction here keeps the embed/load in the single crate
+/// (`den-http`) that owns the email templates, so edge crates (e.g. den-web admin)
+/// can build the same environment without re-embedding.
+#[must_use]
+pub fn template_environment() -> Environment<'static> {
+    let mut env = Environment::new();
+    #[cfg(feature = "production")]
+    minijinja_embed::load_templates!(&mut env, "email");
+    #[cfg(not(feature = "production"))]
+    env.set_loader(minijinja::path_loader(
+        "crates/den-http/src/email/templates",
+    ));
+    env
 }
 
 /// Initialize the process-wide Mailgun client from startup [`Config`].

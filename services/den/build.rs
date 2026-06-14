@@ -51,9 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::env::var("TEMPLATES_DIR").unwrap_or("src/web/templates".to_string());
         minijinja_embed::embed_templates!(&templates_dir);
 
-        let email_templates_dir =
-            std::env::var("EMAIL_TEMPLATES_DIR").unwrap_or("src/core/email/templates".to_string());
-        minijinja_embed::embed_templates!(&email_templates_dir, &[][..], "email");
+        // The `email` template group moved to the `den-http` crate (v1.5 split); it is
+        // embedded by that crate's own build.rs now.
 
         let api_templates_dir =
             std::env::var("API_TEMPLATES_DIR").unwrap_or("src/api/templates".to_string());

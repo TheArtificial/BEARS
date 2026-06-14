@@ -6,15 +6,16 @@ pub mod acp;
 pub use acp::runtime as acp_runtime;
 pub use acp::tokens as acp_tokens;
 pub use acp::turn_runner as acp_turn_runner;
-pub mod api_utils;
+// `api_utils`, `email`, and `user` moved to the shared edge foundation crate
+// `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
+// unchanged until the edges are extracted.
+pub use den_http::{api_utils, email, user};
 pub mod sandbox;
 pub mod migration;
 pub mod tools;
-pub mod email;
 pub mod docket;
 pub mod s3;
 pub use tools::tool_descriptor_guidance;
-pub mod user;
 pub use tools::web_policy;
 pub mod work_plans;
 

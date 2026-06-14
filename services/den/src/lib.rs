@@ -3,11 +3,11 @@
 //! Clippy: broad suppressions live on the largest legacy modules (for example [`crate::api::oauth`]);
 //! prefer fixing warnings locally and shrinking those module allows over time.
 pub mod api;
-pub mod auth_backend;
+pub use den_http::auth_backend;
 pub mod build_info;
 pub use den_core::config;
 pub mod core;
-pub mod errors;
+pub use den_http::errors;
 pub mod observability;
 pub mod seeds;
 pub mod startup;

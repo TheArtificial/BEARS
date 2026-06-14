@@ -1,11 +1,9 @@
 use minijinja::context;
 use sqlx::{query, query_as, PgPool};
 
-use crate::{
-    config::Config,
-    errors::DenError,
-    core::email,
-};
+use crate::email;
+use crate::errors::DenError;
+use den_core::config::Config;
 
 pub struct UserEmailBasics {
     pub user_id: i32,
@@ -370,12 +368,7 @@ pub async fn send_verify_email_for_user_id(
     };
 
     // this is rare enough that we'll just init this as needed
-    let mut minijinja_env = minijinja::Environment::new();
-    // minijinja_contrib::add_to_environment(&mut minijinja_env); // needed for the 'datetimeformat' filter
-    #[cfg(feature = "production")]
-    minijinja_embed::load_templates!(&mut minijinja_env, "email");
-    #[cfg(not(feature = "production"))]
-    minijinja_env.set_loader(minijinja::path_loader("src/core/email/templates"));
+    let minijinja_env = email::template_environment();
 
     email::send_email_template(
         db_pool,

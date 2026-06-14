@@ -337,12 +337,7 @@ pub async fn send_test_email_action(
     //     return Err(CustomError::Email("User email is not verified".to_string()));
     // }
 
-    let mut minijinja_env = minijinja::Environment::new();
-    minijinja_contrib::add_to_environment(&mut minijinja_env); // needed for the 'datetimeformat' filter
-    #[cfg(feature = "production")]
-    minijinja_embed::load_templates!(&mut minijinja_env, "email");
-    #[cfg(not(feature = "production"))]
-    minijinja_env.set_loader(minijinja::path_loader("src/core/email/templates"));
+    let minijinja_env = den_http::email::template_environment();
 
     let cfg = match email::get_current_config(&sqlx_pool, user.id).await {
         Ok(c) => c,
