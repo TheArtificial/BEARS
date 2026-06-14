@@ -23,7 +23,7 @@ Complements existing **key memory projection** (path anchors); does not replace 
 - pgvector on Den Postgres
 - Separate embedding models per source class (unless a future ADR adds e.g. code-only `bears-embed-code-v1`)
 
-## Phase 0 — Platform wiring  🟡 mostly landed (compose, env, config, embedding client, status check)
+## Phase 0 — Platform wiring  ✅ landed (compose, env, config, embedding client, status check)
 
 - ✅ Add env: `EMBEDDING_STANDARD`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `QDRANT_URL` — set on `bears-den` in `docker-compose.yaml` (+ `.env.example`); `QDRANT_URL` empty = recall disabled (LIKE fallback).
 - ✅ Compose: optional `bears-qdrant` service (profile `recall`) with persistent `bears-qdrant-data` volume. Nothing `depends_on` it; the default stack is unchanged. Enable with `COMPOSE_PROFILES=recall` + `QDRANT_URL=http://bears-qdrant:6333`.
@@ -34,14 +34,14 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 **Exit:** smoke embed of fixture text; health check passes. *(Health check ✅; live fixture embed pending a real embedding-capable key in the smoke env.)*
 
-## Phase 1 — Passage registry + Bear indexer
+## Phase 1 — Passage registry + Bear indexer  🟡 indexer core landed; auto-enqueue pending
 
-- Migration: `recall_passages` (or `bear_recall_passages`) table — passage id, bear_id, memory_id, logical_path, chunk_index, content_hash, embedding_standard, indexed_at, deleted_at.
-- `core/recall/indexer.rs`: on memory record head change, chunk + hash dedup + embed + upsert Qdrant + registry row.
-- Indexing policy per ADR-0038 (kinds, visibility, head-only).
-- Async queue: enqueue on successful SQLite append (in-process or Docket task).
+- ✅ Migration: `recall_passages` Postgres table (`bear_id` FK, `memory_id`, `logical_path`, `chunk_index`, `content_hash`, `embedding_standard`, `source_class`, `point_id`, `indexed_at`, `deleted_at`; unique on `(bear_id, memory_id, chunk_index, embedding_standard)`). Registry metadata only — vectors in Qdrant, canonical text in SQLite (ADR-0038 §3).
+- ✅ `den-runtime::recall` module: `qdrant` (point upsert/delete/count), `chunking` (~2.4k-char chunks + overlap, SHA-256 `content_hash`), `policy` (indexable decision, deterministic `point_id`, Qdrant payload), `registry` (Postgres CRUD with dedup + soft-delete), `indexer` (`RecallIndexer::index_record` / `remove_record`, embedder-agnostic via `PassageEmbedder`; `EmbeddingClient` impl + `DeterministicEmbedder` test stub).
+- ✅ Indexing policy per ADR-0038: `visibility = normal`; `shared` records indexed; `profile_local` limited to `note`/`decision`/`summary`; `scratch`/`log` excluded. (Head-only selection relies on canonical head queries; supersession writes are still pending in `den-memory`.)
+- 🔲 Async queue: enqueue on successful SQLite append (planned via a `bear_reflection_runs` `recall_index` lane + worker loop, mirroring `memory_curate` — Den has no Docket job queue). **This is Phase 1b.**
 
-**Exit:** unit/integration tests — write memory → passage appears in Qdrant with correct payload; supersede removes old passages.
+**Exit:** ✅ unit tests (chunking/policy/payload/point-id) + a gated **live Postgres + Qdrant** integration test (`tests/recall_indexer.rs`, stub embedder, no API key) proving write memory → one Qdrant point per chunk → idempotent re-index (no duplicates) → `remove_record` deletes the points. Automatic indexing on canonical writes remains in 1b.
 
 ## Phase 2 — Bear recall in turn context
 

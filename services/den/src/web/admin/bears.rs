@@ -80,7 +80,7 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bears/", get(list_view))
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}", get(redirect_bear_slug))
-        .route_with_tsr("/bears/{id}/{*rest}", get(redirect_bear_slug_path))
+        .route("/bears/{id}/{*rest}", get(redirect_bear_slug_path))
 }
 
 #[derive(Debug, Serialize)]

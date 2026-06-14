@@ -56,7 +56,7 @@ pub fn router() -> Router<AppState> {
         .merge(Router::new())
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(legacy_details_redirect))
-        .route_with_tsr("/bear/{slug}/details/{*rest}", get(legacy_details_path_redirect))
+        .route("/bear/{slug}/details/{*rest}", get(legacy_details_path_redirect))
         .route_with_tsr("/bear/{slug}/edit", get(bear_edit_redirect_get))
         .route_with_tsr(
             "/bear/{slug}/edit/overview",

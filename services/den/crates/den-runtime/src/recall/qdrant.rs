@@ -1,16 +1,23 @@
-//! Derived recall index client (ADR-0038): a minimal Qdrant REST client for readiness
-//! checks and collection bootstrap.
+//! Minimal Qdrant REST client for the derived recall index (ADR-0038): readiness,
+//! collection bootstrap, and point upsert/delete/count.
 //!
 //! Recall is **optional and derived** — the canonical store is SQLite. When `QDRANT_URL`
 //! is unset or Qdrant is unreachable, callers degrade to keyword fallback and must never
-//! fail a turn. This client therefore exposes small, idempotent operations (`readyz`,
-//! `collection_exists`, `ensure_collection`) and leaves graceful-degradation policy to the
-//! caller.
+//! fail a turn.
 
 use std::time::Duration;
 
 use den_core::{config::Config, DenError};
-use serde_json::json;
+use serde::Serialize;
+use serde_json::{json, Value};
+
+/// A single Qdrant point: a deterministic id, its vector, and a filterable payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct QdrantPoint {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub payload: Value,
+}
 
 /// Minimal Qdrant REST client scoped to the active embedding standard's recall collection.
 #[derive(Clone)]
@@ -100,6 +107,94 @@ impl QdrantRecall {
             )));
         }
         Ok(true)
+    }
+
+    /// Upsert points into the recall collection (waits for the write to be applied).
+    pub async fn upsert_points(&self, points: &[QdrantPoint]) -> Result<(), DenError> {
+        if points.is_empty() {
+            return Ok(());
+        }
+        let url = format!(
+            "{}/collections/{}/points?wait=true",
+            self.base_url, self.collection
+        );
+        let body = json!({ "points": points });
+        let resp = self
+            .http
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant upsert ({url}): {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(DenError::System(format!(
+                "qdrant upsert HTTP {status} ({url}): {text}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Delete points by id (waits for the write to be applied).
+    pub async fn delete_points(&self, point_ids: &[String]) -> Result<(), DenError> {
+        if point_ids.is_empty() {
+            return Ok(());
+        }
+        let url = format!(
+            "{}/collections/{}/points/delete?wait=true",
+            self.base_url, self.collection
+        );
+        let body = json!({ "points": point_ids });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant delete ({url}): {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(DenError::System(format!(
+                "qdrant delete HTTP {status} ({url}): {text}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Count points matching a Qdrant filter (used for inspection/diagnostics + tests).
+    pub async fn count_with_filter(&self, filter: Value) -> Result<u64, DenError> {
+        let url = format!(
+            "{}/collections/{}/points/count",
+            self.base_url, self.collection
+        );
+        let body = json!({ "filter": filter, "exact": true });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant count ({url}): {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant count body ({url}): {e}")))?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "qdrant count HTTP {status} ({url}): {text}"
+            )));
+        }
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|e| DenError::System(format!("qdrant count parse ({url}): {e}")))?;
+        let count = value
+            .get("result")
+            .and_then(|r| r.get("count"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| DenError::System(format!("qdrant count missing result.count: {text}")))?;
+        Ok(count)
     }
 }
 
