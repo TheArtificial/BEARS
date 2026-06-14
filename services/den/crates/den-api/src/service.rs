@@ -33,27 +33,9 @@ use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
 
 use std::sync::Arc;
 
-/// Application state for the API service
-///
-/// Contains shared resources needed by API endpoints including database
-/// connections, template environment, and configuration. This state is
-/// independent from the web service state to allow separate deployment.
-#[derive(Clone)]
-pub struct ApiState {
-    /// Database connection pool for API operations
-    pub sqlx_pool: PgPool,
-    /// Shared immutable runtime configuration.
-    pub config: Arc<Config>,
-    /// Shared Bifrost model metadata client.
-    pub bifrost: Arc<BifrostClient>,
-    /// Process-local active ACP direct tool turns.
-    pub(crate) acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator,
-    /// Process-local active ACP stream cancellation signals.
-    pub(crate) acp_turn_cancellations:
-        den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry,
-    /// Per-Bear SQLite memory stores (native runtime cognition).
-    pub memory_stores: MemoryStoreManager,
-}
+// `ApiState` lives in `den-acp` now (v1.5+ sub-split, Option B). Re-exported so the
+// retained `crate::api::service::ApiState` paths in `v1`/`docs` resolve unchanged.
+pub use den_acp::service::ApiState;
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
     sqlx::query_scalar::<_, i32>("SELECT 1")
@@ -107,16 +89,13 @@ pub async fn create_api_app(
     let web_server_url = config.web_server_url.clone();
     let api_server_url = config.api_server_url.clone();
 
-    // Create API application state
-    let api_state = ApiState {
-        sqlx_pool: sqlx_pool.clone(),
-        config: config.clone(),
-        bifrost: Arc::new(BifrostClient::new(config.as_ref())),
-        acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new(),
-        acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(
-        ),
-        memory_stores: MemoryStoreManager::new(config.as_ref()),
-    };
+    // Create API application state (owned by den-acp; built via its constructor).
+    let api_state = ApiState::new(
+        sqlx_pool.clone(),
+        config.clone(),
+        Arc::new(BifrostClient::new(config.as_ref())),
+        MemoryStoreManager::new(config.as_ref()),
+    );
 
     // Create OAuth state (separate from main API state for OAuth endpoints)
     let oauth_state = OAuthState::new(sqlx_pool.clone(), web_server_url, api_server_url);
@@ -136,12 +115,12 @@ pub async fn create_api_app(
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
         .nest("/v1.0", crate::api::v1::router())
-        .nest("/internal", crate::api::internal::router())
+        .nest("/internal", den_acp::internal::router())
         // API documentation (no authentication required)
         .merge(crate::api::docs::router());
 
     if config.acp_gateway_enabled {
-        main_router = main_router.nest("/acp", crate::api::acp::router());
+        main_router = main_router.nest("/acp", den_acp::acp::router());
     }
 
     let router = main_router

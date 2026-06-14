@@ -51,18 +51,16 @@
 // land without rewriting ~200 `api::`-prefixed paths; a v2 cleanup can drop these.
 extern crate self as api;
 
-pub mod acp;
-#[cfg(test)]
-mod acp_turn_state_alignment_tests;
-#[cfg(test)]
-mod acp_workflow_state_tests;
-// Residual native ACP protocol modules, kept under `crate::core::acp` so the
-// migrated `acp` call sites resolve unchanged (v1.5 den-api extraction).
-pub mod core;
 pub mod docs;
-pub mod internal;
 pub mod service;
 pub mod v1;
+
+// The ACP edge (`acp` + the residual `core::acp*` protocol modules), the shared
+// `ApiState`, and the `/internal/den-tools/invoke` endpoint were carved into
+// `den-acp` (v1.5+ sub-split). Re-exported so `den_api::core::*` (used by the binary
+// `core::mod` + den-web) resolves unchanged; `create_api_app` (below) mounts the
+// `den_acp::acp` + `den_acp::internal` routers.
+pub use den_acp::core;
 
 // OAuth + bearer-auth + consent templates moved down to `den-oauth` (v1.5+) so the
 // ACP surface can depend on them without a `den-acp ↔ den-api` cycle. Re-exported

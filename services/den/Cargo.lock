@@ -569,6 +569,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "den-acp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-extra",
+ "axum-login",
+ "base64",
+ "bytes",
+ "den-core",
+ "den-docket",
+ "den-http",
+ "den-oauth",
+ "den-runtime",
+ "dotenvy",
+ "futures",
+ "jsonwebtoken",
+ "password-auth",
+ "rand 0.9.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "url",
+ "urlencoding",
+ "utoipa",
+ "uuid",
+ "validator",
+]
+
+[[package]]
 name = "den-api"
 version = "0.1.0"
 dependencies = [
@@ -579,6 +617,7 @@ dependencies = [
  "axum-login",
  "base64",
  "bytes",
+ "den-acp",
  "den-core",
  "den-docket",
  "den-http",

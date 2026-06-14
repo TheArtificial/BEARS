@@ -1,25 +1,22 @@
 [package]
-name = "den-api"
+name = "den-acp"
 version = "0.1.0"
 edition = "2021"
 
-# den-api: the JSON/REST + ACP HTTP edge of the den binary. It owns the public
-# API service (`service::create_api_app`, `ApiState`), the v1 user/profile/oauth
-# routes, the OAuth2 authorization server, and the native ACP protocol surface
-# (`acp`, plus the residual session/token/runtime modules under `core::acp`).
-# It sits above den-http (identity/error foundation), den-runtime (tool/runtime
-# execution), den-docket (work plans), and den-core. The den-acp sub-split
-# (carving `acp` + `core::acp` into their own crate) is a v2 follow-up; for now
-# this crate carries both via a self-alias so `crate::api::*` paths resolve.
+# den-acp: the ACP (Agent Client Protocol) HTTP edge — the native ACP protocol
+# surface (`acp`), the residual session/token/runtime protocol modules under
+# `core::acp`, the shared `ApiState` (Option B), and `/internal/den-tools/invoke`.
+# It sits below den-api (which mounts the acp + internal routers) and above
+# den-oauth (bearer auth), den-http (errors/identity), den-runtime (tool/runtime
+# execution), den-docket (work plans), and den-core.
 
 [lints]
 workspace = true
 
 [features]
-production = ["den-core/production", "den-runtime/production", "den-http/production", "den-oauth/production", "den-acp/production"]
+production = ["den-core/production", "den-runtime/production", "den-http/production", "den-oauth/production"]
 
 [dependencies]
-den-acp = { path = "../den-acp" }
 den-core = { path = "../den-core" }
 den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
@@ -34,8 +31,6 @@ base64 = "0.22"
 bytes = "1"
 futures = "0.3"
 jsonwebtoken = "9.3.0"
-minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
-minijinja-embed = "2.7.0"
 password-auth = "1.0.0"
 rand = "0.9.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
@@ -47,7 +42,6 @@ thiserror = "2.0.12"
 time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
-tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
 tracing = "0.1.41"
 url = "2.5.4"
 urlencoding = "2.1"
@@ -58,4 +52,5 @@ validator = { version = "0.20", features = ["derive"] }
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
 den-runtime = { path = "../den-runtime", features = ["test-util"] }
+dotenvy = "0.15.7"
 serde_json = "1.0.138"
