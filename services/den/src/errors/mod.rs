@@ -171,6 +171,17 @@ impl IntoResponse for CustomError {
     }
 }
 
+// `From<CustomError> for DenError` IS permitted by the orphan rule here: the impl
+// lives in the `den` crate where `CustomError` is local, and a local type appearing
+// as the trait's type argument satisfies RFC 2451 even though `DenError`/`From` are
+// foreign. This lets runtime/service code that returns the web-free `DenError`
+// propagate the few remaining `CustomError`-returning callees via `?`.
+impl From<CustomError> for DenError {
+    fn from(err: CustomError) -> DenError {
+        err.into_den()
+    }
+}
+
 impl From<DenError> for CustomError {
     fn from(err: DenError) -> CustomError {
         match err {
