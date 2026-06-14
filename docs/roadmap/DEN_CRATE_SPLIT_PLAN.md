@@ -185,7 +185,17 @@ Survey result: `core/` is already a clean layer (**no `core/` module imports `cr
 
 **Decision: rename off `letta` now (not deferred).** The retained native helpers in `core/letta/` (runtime stream parser, assistant display/title, agent JSON projections, model/tool option types, tool policy) and `acp::letta_events` (which holds the native `AcpGatewayEvent`) are renamed off the `letta` name before/with the lift.
 
-**Extraction order (each step keeps the workspace green + its own commit):** rename off `letta` → `runtime` (+`runtime_contracts`, `acp_tool_turns`, `work_plans`) → `core/llm` glue → `native_runtime` → `agent_loop` → `bears` → `conversation` → `reflection`/`pair_reflection` → `core/memory` glue → `DenToolContext` impls → flip `den` onto `den-runtime`, drop the flat shims.
+**Extraction order (each step keeps the workspace green + its own commit):** rename off `letta` *(done)* → den-runtime skeleton *(done)* → **runtime + shared turn/tool contracts cluster** (see below) → `core/llm` glue → `native_runtime` → `agent_loop` → `bears` → `conversation` → `reflection`/`pair_reflection` → `core/memory` glue → `DenToolContext` impls → flip `den` onto `den-runtime`, drop the flat shims.
+
+**Discovered during execution (2026-06) — `core/acp/` is NOT a single edge module; it must be split.** `core/runtime/` cannot move alone: it is knotted to a cluster of shared turn/tool *contracts* that today live under `core/acp/` with a misleading `acp` prefix. These move into `den-runtime` **with** `runtime/` (first cluster move):
+- `acp::events` (`AcpGatewayEvent` + SSE adapter; ~1.5k LOC) — the canonical native event model + its ACP-SSE projection; produced by `runtime/bearwire_projection`, consumed by the edge.
+- `acp::tools` (`AcpToolName`, `AcpResolvedSessionPolicy`, policy/display; ~2.9k LOC) — the ACP projection of the `den-tools` tool surface; depends only on the `den-tools` leaf.
+- `acp::plan_mode` (~0.6k) and `acp::tool_turns` (`AcpActiveTurnGuard`; ~1.1k) — turn/plan coordination used by `runtime`.
+- `work_plans` (docket projection).
+
+The **residual** `core/acp/` (`sessions`, `tokens`, `runtime`, `turn_controller`, `turn_runner`) is the true ACP protocol edge → `den-acp` later.
+
+**`errors::CustomError` → `den-core`.** It is a foundational error type with no upward deps, used by ~122 files across runtime + edges, so it belongs below both. Move the definition to `den-core` and keep a `crate::errors` re-export shim so the 122 call sites are untouched during the lift.
 
 ### v2 — Deferred refinements
 
