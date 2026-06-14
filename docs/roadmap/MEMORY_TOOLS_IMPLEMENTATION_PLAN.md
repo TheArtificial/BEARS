@@ -1,23 +1,37 @@
 # Memory tools implementation plan
 
-> **Direction changed (2026-06).** All roles now use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the "Letta Code-native MemFS tools for harness-backed roles" / API-direct split is removed. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** All roles use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the "Letta Code-native MemFS tools for harness-backed roles" / API-direct split is removed. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest/consolidation/recall scoring are in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+>
+> **Note.** Memory "files"/"paths" are logical-path projections over SQLite `memory_records`, not files in a MemFS/git branch.
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
-Status: proposed implementation plan.
-
-This plan implements Den-hosted memory tools for BEARS agents, prioritizing the ACP/API-direct `pair` role.
+Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist for `pair` (and read tools for `curate`) against SQLite. **The open gap is tool exposure** — user-facing `chat` turns currently receive no memory tools (see [Implementation status](#implementation-status-2026-06)) — plus derived recall and ADR-0041 schema deltas.
 
 Related docs:
 
-- [Workflow State Ontology ADR](../architecture/adr/workflow-state-ontology.md)
-- [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
-- [Schema-first Den-generated path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
-- [Bear Memory Tool Boundary ADR](../architecture/adr/bear-memory-tool-boundary.md)
-- [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
-- [Semantic memory context](../context/SEMANTIC_MEMORY.md)
-- [Memory model](../concepts/../architecture/memory-model.md)
-- [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
-- [Den-specific bear tools implementation plan](archives/DEN_SPECIFIC_TOOLS_PLAN.md)
+- [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md)
+- [Memory Curation Plan](MEMORY_CURATION_PLAN.md)
+- [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)
+- [ADR-0027 — Workflow state ontology](../decisions/adr-0027-workflow-state-ontology.md)
+- [ADR-0021 — Semantic bear memory](../decisions/adr-0021-semantic-bear-memory.md)
+- [ADR-0020 — Schema-first path strategy](../decisions/adr-0020-schema-first-path-strategy.md)
+- [ADR-0005 — Bear memory tool boundary](../decisions/adr-0005-bear-memory-tool-boundary.md)
+- [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)
+- [ADR-0041 — Archival recall and asynchronous curation](../decisions/adr-0041-archival-recall-and-async-curation.md)
+- [Memory model](../architecture/memory-model.md)
+
+## Implementation status (2026-06)
+
+| Capability | Plan section | State |
+|---|---|---|
+| `session_info`, `memory_write_entry`, `memory_status` | P0 | Implemented (SQLite) |
+| `memory_browse`, `memory_read`, `memory_search` (`LIKE`) | P1 | Implemented (SQLite) |
+| `memory_request_review` + proposals/promotions | P4 | Implemented (SQLite `memory_proposals`) |
+| Exposure to `chat`/`work`/`watch` profiles | P2/P3 | **Not done** — primary current gap |
+| Hybrid/semantic recall (Qdrant) | P5 | **Not done** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
+| ADR-0041 schema deltas (`salience`, `valid_from`/`invalid_at`, supersession, harvest marks) | Data model | **Not done** |
+
+Memory tools are gated by per-profile `allowed_roles` (in `den-tools` descriptors). `chat` is granted none, and web-chat turns often send an empty tool list — so user-facing bears report "no memory tools." Closing that gate is the first exposure task.
 
 ---
 
@@ -40,8 +54,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - Do not let agents write arbitrary `core/` paths.
 - Do not let agents choose schema-owned durable artifact paths.
 - Do not let semantic-memory tools masquerade as workplan, activity, task-intent, run-result, or workplan-artifact tools.
-- Do not replace Letta Code-native MemFS tools for harness-backed roles where native tools are the better low-latency path.
-- Do not implement destructive rollback or MemFS operator overrides as agent tools.
+- Do not implement destructive rollback or operator overrides as agent tools.
 - Do not call the session briefing “context.”
 - Do not prefix model-facing provider names with implementation ownership such as `den_`; keep ownership in canonical names and descriptor metadata.
 - Do not add new tool-name aliases outside the descriptor registry/resolver.
@@ -50,13 +63,14 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 
 ## Priority: why `pair` first
 
-`pair` should be first because:
+`pair` was implemented first because:
 
-- ACP `pair` is API-direct: ACP adapter ⇄ Den ⇄ Letta API.
-- It does not run through Codepool / Letta Code, so native Letta Code MemFS tools are not the natural path.
-- ACP local filesystem tools operate on the user's workspace, not Bear memory.
+- ACP `pair` runs on the native in-process runtime (ACP adapter ⇄ Den), with Den-hosted server tools.
+- ACP local filesystem tools operate on the user's workspace, not Bear memory — so Bear memory needs its own Den-hosted tools.
 - Pair sessions produce useful local tactical memory: coding notes, logs, decisions, debugging records, and summaries.
-- Pair memory tools can reuse the existing Den ACP server-tool path used for Den-hosted pair tools such as `web_fetch` and `web_search`.
+- Pair memory tools reuse the Den ACP server-tool path already used for `web_fetch` and `web_search`.
+
+> **Next priority is exposure, not pair.** With pair done, the highest-value remaining work is exposing memory tools to the user-facing `chat` profile (and `work`/`watch` by policy) so bears actually present memory tools — see [Implementation status](#implementation-status-2026-06) and P2/P3 below.
 
 ---
 
@@ -68,7 +82,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 |---|---|---|---|
 | `den.session.info` | `session_info` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
 | `den.memory.write_entry` | `memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
-| `den.memory.status` | `memory_status` | `pair` first | Return MemFS health for the current bear/role. |
+| `den.memory.status` | `memory_status` | `pair` first | Return SQLite store health for the current bear/role. |
 
 All three tools should participate in the workflow-state ontology. At minimum, descriptor metadata and tool responses should make it clear that these belong to the `memory` or `execution` domains, not `workplan` or `activity`, even though provider-safe names must stay concise and dot-free.
 
@@ -86,18 +100,18 @@ For `pair`, read/search scope should include:
 
 - `pair/` role-local memory;
 - `core/` curated shared memory when available;
-- no access to `chat/`, `review/`, `work/`, or `watch/` branches.
+- no access to `chat/`, `curate/`, `work/`, or `watch/` branches.
 
 ### P2 — broaden read-only memory tools to other roles
 
 | Role | Read/search scope |
 |---|---|
 | `chat` | `chat/`, `core/` |
-| `review` | all role branches and `core/` |
+| `curate` | all role scopes and `core/` |
 | `work` | `work/`, `core/`, dispatched task context |
 | `watch` | `watch/`, `core/`, delivered event/subscription context |
 
-`chat` and `work` may still use native Letta Code memory tools for ordinary MemFS editing. Den read/search/status APIs remain useful for policy, diagnostics, and UI.
+All roles use the same Den-hosted SQLite memory tools; there is no separate native editing path. Read/search/status tools are the only memory access for these roles and also back policy, diagnostics, and UI.
 
 ### P3 — role-local write entries for selected roles
 
@@ -105,8 +119,8 @@ Extend `den.memory.write_entry` beyond `pair` only after pair is stable.
 
 | Role | Recommended write kinds | Notes |
 |---|---|---|
-| `chat` | `note`, `log`, `decision`, `reflection`, `scratch`, `summary` | Avoid replacing native Letta Code memory tools unless Den adds audit/policy value. |
-| `review` | `note`, `log`, `decision`, `reflection`, `summary` | Useful for review notes and rejected-promotion rationale. |
+| `chat` | `note`, `log`, `decision`, `reflection`, `scratch`, `summary` | The user-facing conversational role; enabling writes here is part of closing the exposure gap. |
+| `curate` | `note`, `log`, `decision`, `reflection`, `summary` | Useful for curate notes and rejected-promotion rationale. |
 | `work` | `log`, `decision`, `summary`, `scratch` | Should usually be bound to a task/run. Prefer `write_run_result` for results. |
 | `watch` | `log`, `summary`, `scratch` | Prefer `write_observation` for observations. |
 
@@ -117,31 +131,30 @@ Future tools:
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
 | `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
-| `den.memory.list_proposals` | `memory_list_proposals` | `review` | List memory review proposals. |
-| `den.memory.read_proposal` | `memory_read_proposal` | `review` | Read one memory review proposal with source pointers and status. |
-| `den.memory.resolve_proposal` | `memory_resolve_proposal` | `review` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `memory_apply_core_update` | `review` | Apply a reviewed `core/` update with provenance. |
-| `den.memory.supersede_entry` | `memory_supersede_entry` | `review` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
-| `den.memory.history` | `memory_history` | role-scoped, review broader | Inspect commit/file history. |
-| `den.memory.diff` | `memory_diff` | role-scoped, review broader | Inspect diffs between commits or proposal states. |
-| `den.memory.semantic_search` | `memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
-| `den.memory.index_curated_summary` | `memory_index_curated_summary` | `review` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
+| `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
+| `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
+| `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
+| `den.memory.history` | `memory_history` | role-scoped, curate broader | Inspect record/supersession history. |
+| `den.memory.diff` | `memory_diff` | role-scoped, curate broader | Inspect diffs between record versions or proposal states. |
+| `den.memory.recall` | `memory_recall` | role-scoped by recall-scope/policy | Hybrid semantic recall over the derived Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). May be folded into a hybrid `memory_search` instead of a separate tool. |
+| `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Request recall indexing of selected curated summaries/pointers. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `review` decides the final outcome.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `curate` decides the final outcome.
 
-### P5 — Letta Archives semantic retrieval
+### P5 — Derived recall (Qdrant)
 
-Use Letta Archives instead of introducing a BEARS vector store.
+Use the Den-owned **derived Qdrant recall index** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) over canonical SQLite; do not store vectors in SQLite or bear packages.
 
 Planned behavior:
 
-- Create one Bear curated archive per Bear.
-- Add Cabinet Mission archives once Cabinet Missions and Bear↔Mission assignments are defined.
-- Attach shared archives to role agents by policy.
-- Den/curate owns writes to shared archives through `/v1/archives/{archive_id}/passages`.
-- Non-curate roles may search attached archives but must not independently archive `core/`.
-- Passage metadata stores canonical IDs, source URIs, version/hash, updated timestamps, and provenance.
-- Den maintains source-to-passage mappings because Letta does not provide passage external IDs/upsert.
+- One unified recall collection per active `embedding_standard` (`bears-embed-v1`), with payload filters for Bear and Cabinet scopes.
+- Add Cabinet Mission recall scopes once Cabinet Missions and Bear↔Mission assignments are defined.
+- Recall scopes are policy-attached to role agents (ACL by membership + identity scope, [ADR-0015](../decisions/adr-0015-multi-user-memory.md)).
+- Den/curate owns indexing via the `archive_index` reflection lane; role agents do not maintain the shared index.
+- `memory_search` becomes hybrid (vector when Qdrant configured, else `LIKE`), ranked by `recency × relevance × importance`, degrading gracefully ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
+- Passage registry (Den Postgres) stores canonical IDs, `content_hash`, chunk bounds, `indexed_at`, and supersession/delete state; vectors live in Qdrant and are rebuildable from canonical SQLite. See [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -203,9 +216,11 @@ Defaults:
 - `lifecycle.promotion`: `none`
 - `lifecycle.status`: `active`
 
+> **SQLite mapping.** This payload is stored as a `memory_records` row (`den-memory`): `kind`, `content_text` (title + body), `metadata_json` (tags, refs, lifecycle, source), `scope_type`/`scope_profile` (role-local vs shared), `logical_path` (projection), `author_profile`. Per [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) the entry also carries `salience` (drives reflection triggering and recall ranking); `valid_from`/`invalid_at` and `supersedes_memory_id` express lifecycle transitions instead of `lifecycle.status` mutation.
+
 ### Ontology-aware validation
 
-To support the workflow-state model, `den.memory.write_entry` should also reject content that is structurally in the wrong domain, even when the title/body are superficially valid text. In particular, persisted workplan artifacts such as `pair/plans/...` are not semantic-memory entries and must not be described as MemFS semantic-memory documents.
+To support the workflow-state model, `den.memory.write_entry` should also reject content that is structurally in the wrong domain, even when the title/body are superficially valid text. In particular, persisted workplan artifacts such as `pair/plans/...` are not semantic-memory entries and must not be written as `memory_records`.
 
 Examples to reject or redirect:
 
@@ -221,11 +236,11 @@ A lightweight structured content/domain class is preferred over verbose human-fa
 
 ---
 
-## Frontmatter format
+## Entry shape
 
-Memory entries should be written as Markdown with YAML frontmatter.
+Memory entries are `memory_records` rows: structured fields plus `content_text` and `metadata_json` ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). The YAML-frontmatter view below is an illustrative *logical* projection (e.g. for `memory_read` rendering and UI); it is not a file on disk. Provenance/lifecycle fields live in `metadata_json`, not a file header.
 
-Example:
+Example (logical view):
 
 ```text
 ---
@@ -254,16 +269,16 @@ lifecycle:
 
 # Use Den-hosted memory tools for ACP pair
 
-Pair is API-direct and does not naturally use Letta Code MemFS tools, so Den-hosted memory tools are the right first path.
+Pair runs on the native runtime with Den-hosted server tools, so Den-hosted SQLite memory tools are the right first path.
 ```
 
-Implementation may serialize frontmatter directly; a full YAML parser is not required for the first write path if output is controlled. Search/filter can begin with path/text and later parse frontmatter.
+Structured fields are stored as columns; tags/refs/lifecycle/source live in `metadata_json`. Search/filter can begin with `logical_path` + `content_text` (SQL `LIKE` today) and later add `metadata_json` filters and hybrid vector recall ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)).
 
 ---
 
 ## Path conventions
 
-Den or the MemFS tool chooses paths. Agents do not provide arbitrary paths to `den.memory.write_entry`.
+Den derives the `logical_path` projection. Agents do not provide arbitrary paths to `den.memory.write_entry`.
 
 Recommended path format:
 
@@ -294,76 +309,40 @@ Do not use title-derived slugs as identity. Optional display slugs can be added 
 
 ---
 
-## MemFS Manager changes
+## Store: per-Bear SQLite (`den-memory`)
 
-The existing MemFS Manager has a pair-only role note endpoint. Backward compatibility is not required, so it can be replaced by the role memory-entry endpoint once Den no longer calls it.
+Memory tools write/read the per-Bear SQLite store, not a MemFS sidecar. (The legacy MemFS Manager pair-note endpoint is retired; do not keep model-visible compatibility aliases.)
 
-### Existing behavior
+### Store
 
-- Endpoint writes only pair notes.
-- Writes under `pair/notes/<timestamp>-<slug>.md`.
-- Rejects roles other than pair.
-- Resets/updates role view repos after note writes.
+- One SQLite DB per Bear under `BEAR_SQLITE_DATA_DIR` (`{bear_id}.sqlite`), managed by `MemoryStoreManager` (`den-memory`), WAL, single writer per Bear.
+- Append-only `memory_records` with monotonic `sequence_no`; lifecycle via `supersedes_memory_id` (not destructive edits).
+- Tools reach the store through `DenRoleMemoryStore` in the Den tool dispatcher.
 
-This endpoint should be removed or left unreachable after `den.memory.write_entry` is implemented. Do not keep model-visible compatibility aliases.
+### Optional management endpoints (UI/ops, not agent-facing)
 
-### New endpoints
-
-Add management endpoints that are not exposed directly to agents:
+UI/diagnostics can read the same store via management endpoints, for example:
 
 ```text
 POST /v1/management/bears/{bear_id}/roles/{role}/memory-entries
 GET  /v1/management/bears/{bear_id}/roles/{role}/memory-status
-GET  /v1/management/bears/{bear_id}/roles/{role}/memory-tree
-GET  /v1/management/bears/{bear_id}/roles/{role}/memory-files/{path}
+GET  /v1/management/bears/{bear_id}/roles/{role}/memory-browse
+GET  /v1/management/bears/{bear_id}/roles/{role}/memory-records/{memory_id}
 GET  /v1/management/bears/{bear_id}/roles/{role}/memory-search
 ```
 
-Endpoint naming can be adjusted during implementation; the important point is that Den talks to MemFS Manager, and agents chat to Den.
+These are conveniences over the same SQLite store; agents always go through Den tools.
 
-### Role initialization
+### Logical-path conventions
 
-Update canonical branch initialization to create conventional directories:
-
-```text
-chat/notes/
-chat/logs/
-chat/decisions/
-chat/reflections/
-chat/scratch/
-chat/summaries/
-pair/notes/
-pair/logs/
-pair/decisions/
-pair/reflections/
-pair/scratch/
-pair/summaries/
-review/notes/
-review/logs/
-review/decisions/
-review/reflections/
-review/summaries/
-work/logs/
-work/decisions/
-work/scratch/
-work/summaries/
-watch/logs/
-watch/scratch/
-watch/summaries/
-```
-
-Keep existing reserved directories:
+There are no real directories; `logical_path` is a projection over records (`scope` + `kind` + work-surface). Conventional kind directories used in the projection:
 
 ```text
-pair/tasks/
-review/core/tasks/
-review/core/results/
-work/results/
-watch/observations/
-watch/subscriptions/
+{profile}/notes/   {profile}/logs/   {profile}/decisions/
+{profile}/reflections/   {profile}/scratch/   {profile}/summaries/
 ```
 
-Actual canonical path policy must be checked before expanding writable prefixes.
+Schema-owned artifacts (tasks/results/observations) are not semantic-memory kinds and use their own stores (Docket/observations/Garage), not `memory_write_entry`.
 
 ---
 
@@ -371,44 +350,36 @@ Actual canonical path policy must be checked before expanding writable prefixes.
 
 ### Tool descriptors
 
-Add descriptors in Den's built-in tool catalog:
+Built-in tool descriptors (`den-tools`), with provider-safe model-facing names:
 
-- `den.session.info`
-- `den.memory.write_entry`
-- `den.memory.status`
-- `den.memory.browse`
-- `den.memory.read`
-- `den.memory.search`
+| Canonical | Provider-safe |
+|---|---|
+| `den.session.info` | `session_info` |
+| `den.memory.write_entry` | `memory_write_entry` |
+| `den.memory.status` | `memory_status` |
+| `den.memory.browse` | `memory_browse` |
+| `den.memory.read` | `memory_read` |
+| `den.memory.search` | `memory_search` |
 
-For ACP pair exposure, add provider-safe names:
-
-- `session_info`
-- `memory_write_entry`
-- `memory_status`
-- `memory_browse`
-- `memory_read`
-- `memory_search`
-
-Initially expose only P0 for pair, then P1.
+Descriptors carry `allowed_roles`; **exposure is governed there**. The current gap is that `chat` is excluded — extend `allowed_roles` (and the per-profile roster assembly) to expose the appropriate read/write subset to user-facing profiles.
 
 ### Tool invocation
 
-Extend Den's tool dispatcher:
+Den's tool dispatcher:
 
-- `den.session.info` returns trusted invocation context, memory scopes, relevant policy, and health summary.
-- `den.memory.write_entry` validates role, kind, lifecycle, refs, tags, and body limits; calls MemFS Manager; returns path, entry id, commit, and view status.
-- `den.memory.status` calls MemFS Manager health/status endpoints.
-- `den.memory.browse/read/search` call MemFS Manager read endpoints with role-aware scope checks.
+- `den.session.info` returns trusted invocation context, memory scopes, relevant policy, and health summary. Its `memory.available_tools` must reflect the role's real roster (today it is hardcoded — fix as part of exposure).
+- `den.memory.write_entry` validates role, kind, lifecycle, refs, tags, and body limits; appends a `memory_records` row; returns `memory_id`, `logical_path`, and status.
+- `den.memory.status` reports SQLite store health for the current Bear/role.
+- `den.memory.browse/read/search` read the store with role-aware scope checks.
 
 ### ACP pair integration
 
-Update ACP direct pair descriptors:
+ACP pair descriptors:
 
-- Continue exposing existing client/local tools filtered by adapter capabilities.
-- Continue exposing `web_fetch` and `web_search` initially.
-- Remove `den_write_note` from ACP pair descriptors when `memory_write_entry` is added.
-- Add `session_info`, `memory_write_entry`, and `memory_status` in P0.
-- Add read/search/tree after MemFS Manager read endpoints are ready.
+- Expose client/local tools filtered by adapter capabilities.
+- Expose `web_fetch` and `web_search`.
+- `den_write_note` is retired in favor of `memory_write_entry`.
+- Expose `session_info`, `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review` (the pair ACP surface).
 
 Prompt guidance should say:
 
@@ -441,7 +412,7 @@ Write constraints:
 
 ### Future policy
 
-- `review` can read all branches and eventually approve/reject promotions.
+- `curate` can read all branches and eventually approve/reject promotions.
 - `work` writes should be task/run-bound.
 - `watch` writes should prefer `write_observation` for observations.
 - Person references require privacy review before adding person-specific memory write semantics.
@@ -462,8 +433,8 @@ Design responses to support:
 - semantic reference filters;
 - full entry display;
 - frontmatter/provenance inspection;
-- commit/hash display;
-- MemFS health/quarantine indicators;
+- record id / content-hash display;
+- SQLite store health indicators;
 - Cabinet links when present;
 - clear display for memories with no Cabinet mapping.
 
@@ -472,6 +443,8 @@ Do not design agent-only payloads that the UI cannot reuse.
 ---
 
 ## Implementation slices
+
+> **Status.** Slices 0–4 and most of slice 7 are implemented against SQLite (see [Implementation status](#implementation-status-2026-06)). The active slices are **exposure** (broaden `allowed_roles` beyond pair/curate, fix `session_info.memory`), **recall** (slice 8), and the ADR-0041 schema deltas. The slice text below is retained for the original sequencing rationale; read "MemFS Manager endpoint" as "SQLite store (`den-memory`)".
 
 ### Slice 0 — align docs and names
 
@@ -492,7 +465,7 @@ Deliverables:
 2. ACP pair exposure as `session_info`.
 3. Dispatcher implementation from trusted invocation context.
 4. Include allowed memory scopes and available memory tools.
-5. Include MemFS configured/unconfigured status if cheap; otherwise return unknown with diagnostic.
+5. Include SQLite store availability if cheap; otherwise return unknown with diagnostic.
 6. Tests for pair descriptor visibility and no arbitrary identity inputs.
 
 ### Slice 2 — pair `den.memory.write_entry`
@@ -519,8 +492,8 @@ Deliverables:
 1. MemFS Manager role health endpoint or reuse existing management health.
 2. Den `den.memory.status` descriptor and dispatcher.
 3. ACP exposure as `memory_status`.
-4. Return canonical tip, role/view tip if known, quarantine state, last reconcile status, and diagnostic.
-5. Tests for configured/unconfigured MemFS sidecar behavior.
+4. Return store availability, latest `sequence_no`, record counts by scope, and diagnostic.
+5. Tests for available/degraded SQLite store behavior.
 
 ### Slice 4 — pair read/tree/search
 
@@ -540,11 +513,22 @@ Goal: make read/tree/search/status available beyond pair.
 
 Deliverables:
 
-1. Role matrix implementation.
-2. Review can read all branches.
+1. Role matrix implementation (extend `allowed_roles`; fix `session_info.memory`).
+2. Curate can read all role scopes.
 3. Chat/work/watch scopes enforced.
-4. Codepool or Letta Code integration decision for harness-backed roles.
-5. Tests by role.
+4. Tests by role.
+
+### Slice 8 — derived recall
+
+Goal: hybrid semantic recall over canonical SQLite.
+
+Deliverables:
+
+1. Qdrant collection + Postgres passage registry ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)).
+2. `archive_index` reflection lane to index canonical heads; rebuild-on-import.
+3. Hybrid `memory_search` (vector when configured, else `LIKE`) scored `recency × relevance × importance` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); graceful degradation.
+4. ACL/identity-scoped recall ([ADR-0015](../decisions/adr-0015-multi-user-memory.md)).
+5. Tests for filter scoping, dedup, and degradation. See [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 
 ### Slice 6 — broaden write entries selectively
 
@@ -552,7 +536,7 @@ Goal: add role-local semantic entries for roles where Den adds value.
 
 Deliverables:
 
-1. Enable `chat`, `review`, `work`, and/or `watch` according to policy.
+1. Enable `chat`, `curate`, `work`, and/or `watch` according to policy.
 2. Work writes require task/run binding when relevant.
 3. Watch observations remain behind `write_observation`; generic entries avoid `kind: observation` initially.
 4. Tests by role and kind.
@@ -585,11 +569,11 @@ Deliverables:
 
 ### Integration tests
 
-- Den `den.memory.write_entry` writes through MemFS Manager.
-- ACP pair sees and can call memory tools.
-- `den_write_note` is no longer advertised once `memory_write_entry` is available.
+- Den `den.memory.write_entry` appends a `memory_records` row in per-Bear SQLite.
+- ACP pair sees and can call memory tools; the exposed profile roster matches `allowed_roles`.
+- `den_write_note` is no longer advertised.
 - Cross-role reads/writes denied.
-- MemFS unavailable returns clear configuration error.
+- SQLite store unavailable/unwritable returns a clear `memory_status` degraded result; turns do not fail.
 
 ### Smoke tests
 
@@ -607,20 +591,18 @@ Add or extend stack smoke coverage for:
 1. Should P0 expose `den.memory.status`, or should status be included only in `den.session.info` until P1?
 2. Should role-local entry writes use only opaque IDs, or include optional safe display slugs?
 3. How much frontmatter parsing should P1 search implement versus deferring to UI work?
-4. Should `den.memory.write_entry` be visible to `chat` if native Letta Code memory tools are available?
+4. Which read/write subset should `chat` (the user-facing profile) get, given there is no separate native editing path? (This is the active exposure question.)
 5. Should `scratch` entries have automatic retention/cleanup, or just lifecycle metadata at first?
 6. Should person references be accepted as opaque strings in P0, or deferred until privacy policy is designed?
 
 ---
 
-## Recommended first implementation target
+## Recommended next implementation target
 
-Implement these three tools for `pair` first:
+The pair vertical slice (`session_info`, `memory_write_entry`, `memory_status`, read/search) is implemented. The next targets, in order:
 
-1. `session_info`
-2. `memory_write_entry`
-3. `memory_status`
+1. **Exposure** — extend `allowed_roles` so the user-facing `chat` profile gets a read/search (and scoped write) subset, and align `session_info.memory.available_tools` with the real per-role roster. This is what makes bears report and use memory tools.
+2. **ADR-0041 schema deltas** — `salience` on `memory_records`, `valid_from`/`invalid_at`, begin writing `supersedes_memory_id`, `memory_harvest_marks`.
+3. **Derived recall** (slice 8) — Qdrant index + hybrid scored `memory_search`.
 
-Retire `den_write_note` rather than maintaining compatibility.
-
-This creates a useful pair memory vertical slice while avoiding the harder read/search and promotion work until the write model and situation briefing are proven.
+This closes the perceived "no memory tools" gap first, then makes memory semantically recallable.

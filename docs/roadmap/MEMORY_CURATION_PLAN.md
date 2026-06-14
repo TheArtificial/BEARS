@@ -1,23 +1,25 @@
 # Memory curation plan
 
-> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions` — not MemFS `core/`/role branches or Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/role branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+>
+> **Note.** `core/` paths denote logical-path projections over SQLite records, not files on a branch.
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
-This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `review` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
+This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
 
 Related docs:
 
 - [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation status and sequencing.
 - [Reflection system shared infrastructure plan](REFLECTION_SYSTEM_PLAN.md)
 - [Memory tools implementation plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
-- [Reflection System ADR](../architecture/adr/reflection-system.md)
-- [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
-- [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
-- [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
-- [Semantic memory context](../context/SEMANTIC_MEMORY.md)
-- [Memory model](../concepts/../architecture/memory-model.md)
+- [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)
+- [ADR-0041 — Archival recall and asynchronous curation](../decisions/adr-0041-archival-recall-and-async-curation.md)
+- [ADR-0018 — Reflection system](../decisions/adr-0018-reflection-system.md)
+- [ADR-0021 — Semantic bear memory](../decisions/adr-0021-semantic-bear-memory.md)
+- [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)
+- [Memory model](../architecture/memory-model.md)
 
 ---
 
@@ -27,12 +29,12 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 
 1. Role-local memories can remain local forever.
 2. Role-local memories can be proposed for promotion when useful beyond one role.
-3. `review` can review all role branches and decide what to do.
+3. `curate` can review all role branches and decide what to do.
 4. Approved durable shared knowledge is written to `core/`.
-5. Cabinet-worthy knowledge is proposed or written through Cabinet-specific workflows, not silently copied from MemFS.
+5. Cabinet-worthy knowledge is proposed or written through Cabinet-specific workflows, not silently copied.
 6. Every movement records provenance and leaves an audit trail.
-7. Letta Archives are used as derived semantic retrieval indexes; BEARS does not introduce a separate vector store.
-8. Curation runs as a bounded Reflection lane that can be triggered by heartbeat, proposals, memory writes, or manual request.
+7. A derived Qdrant recall index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) provides semantic retrieval over canonical SQLite; it is derived and rebuildable, never the source of truth.
+8. Curation runs as a bounded Reflection lane that can be triggered by heartbeat, proposals, memory writes, session archival, or manual request.
 9. Heartbeat cadence is throttled: active Bears can run memory curation more frequently than dormant Bears.
 
 ---
@@ -44,9 +46,9 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 - Do not let `work` read channel branches or watch branches.
 - Do not require promoted memories to have Cabinet objects.
 - Do not treat Cabinet as a mirror of Bear memory.
-- Do not allow agents to run destructive Git resets or MemFS operator overrides.
-- Do not let every role independently archive `core/` content.
-- Do not make Letta Archives the source of truth.
+- Do not allow agents to run destructive store operations or operator overrides.
+- Do not let every role independently request recall indexing of `core/` content.
+- Do not make the derived recall index the source of truth.
 
 ---
 
@@ -65,14 +67,14 @@ A local memory that has been identified as potentially useful elsewhere.
 Candidate sources:
 
 - explicit proposal from the writing role;
-- `review` finds it during review;
+- `curate` finds it during review;
 - a human marks it for review in the Den UI;
 - the **`archive_harvest`** Reflection lane mines closed session archives/compaction artifacts via an extraction-first pass ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md));
 - a Reflection heartbeat or event-triggered curation run surfaces it.
 
 ### Proposal
 
-A structured review object that asks `review` to take an action.
+A structured review object that asks `curate` to take an action.
 
 Proposal destinations:
 
@@ -136,15 +138,15 @@ Recall ranking then becomes `recency × relevance × importance`, degrading to a
 | `pair` | Writes coding/pairing notes, logs, decisions, reflections, and summaries; may propose shared updates. |
 | `watch` | Writes observations/logs from inbound events; should not decide shared truth. |
 | `work` | Writes task/run-bound logs, decisions, summaries, and results; may propose durable lessons. |
-| `review` | Reads all branches, reviews candidates/proposals, writes `core/`, rejects/no-ops noisy memory, and manages memory integration state. |
+| `curate` | Reads all branches, reviews candidates/proposals, writes `core/`, rejects/no-ops noisy memory, and manages memory integration state. |
 
 ---
 
 ## Tool model
 
-### Read tools for `review`
+### Read tools for `curate`
 
-`review` needs broad read access:
+`curate` needs broad read access:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
@@ -179,7 +181,7 @@ Initial `den.memory.request_review` input shape:
 - `sensitivity`: `normal`, `person`, `secret_risk`, `external_untrusted`, or `unknown`;
 - `requires_human`: optional human-review flag.
 
-### Review tools for `review`
+### Review tools for `curate`
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
@@ -205,18 +207,19 @@ Candidate future tools:
 
 ## Proposal storage
 
-Use Den DB as the source of truth for proposal lifecycle.
+Proposals are durable records, not hidden state in document frontmatter.
 
-Rationale:
+> **Native runtime.** Under `AGENT_RUNTIME=native` proposals persist to per-Bear SQLite `memory_proposals` ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md); `den-memory` crate) — `proposal_id`, `source_memory_id`, `suggested_action`, `sensitivity`, `requires_human`, `status`, `payload_json`, `created_at`, `reviewed_at`. The Postgres `bear_memory_proposals` table below is the legacy (non-native) control-plane shape; its richer columns map into the SQLite `payload_json`. Treat the field list as the logical proposal model regardless of backing store.
+
+Rationale for a structured store:
 
 - easier UI queries;
 - explicit review status;
-- avoids hidden state in Markdown frontmatter;
+- avoids hidden state in document frontmatter;
 - easier authorization/audit;
-- can link to multiple source files and targets;
-- can still mirror summary files into MemFS later if useful to agents.
+- can link to multiple source records and targets.
 
-Suggested table: `bear_memory_proposals`.
+Legacy Postgres table: `bear_memory_proposals`.
 
 Fields:
 
@@ -273,9 +276,9 @@ The UI should show proposal state without assuming a fixed list of memory kinds.
 
 ---
 
-## Letta Archives integration
+## Derived recall index integration
 
-Letta Archives should be used for semantic retrieval, not canonical storage. This follows Letta's recommended pattern: keep external systems canonical and treat archival memory as a derived retrieval index.
+Semantic recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), not a canonical store. Keep SQLite/Cabinet canonical and treat the index as a rebuildable, ephemeral retrieval view.
 
 ### Canonical ownership
 
@@ -283,100 +286,45 @@ Canonical stores own IDs, versions, ACLs, deletes, and full content:
 
 | Canonical source | Store |
 |---|---|
-| Shared Bear orientation | `core/` MemFS |
-| Role-local memory | role MemFS branches |
+| Shared Bear orientation (`core/`) | per-Bear SQLite `memory_records` (scope `shared`) |
+| Role-local memory | per-Bear SQLite `memory_records` (scope `profile_local`) |
 | Human-facing shared knowledge | Cabinet |
-| Workflow state | Den DB and schema artifacts |
+| Workflow state (tasks/jobs) | Den Postgres (Docket) and schema artifacts |
 | Files/results | Garage artifacts |
 
-Archive passages should usually be summaries or pointers. On retrieval hit, tools should fetch the canonical object by ID/path when exact truth matters.
+Recall passages are summaries or pointers. On a retrieval hit, tools should fetch the canonical record by `memory_id`/logical path when exact truth matters.
 
-### Archive types
+### Recall scopes
 
-| Archive | Purpose | Writers | Readers |
+| Scope | Purpose | Writers | Readers |
 |---|---|---|---|
-| Bear curated archive | Shared semantic recall over selected `core/` summaries, approved proposals, durable references. | Den/curate indexer | Attached role agents by policy |
-| Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. | Den/curate indexer | Bears/roles assigned to that Cabinet Mission |
-| Role-local archive | Optional later role-specific long-tail recall. | Role or Den by policy | Owning role |
+| Bear recall | Semantic recall over shared `core/` and approved role-local heads, approved proposal outcomes, durable references. | Den/curate `archive_index` runs | Attached role agents by policy + ACL |
+| Cabinet Mission recall | Optional cross-Bear semantic recall for a Cabinet Mission. | Den/curate indexer | Bears/roles assigned to that Mission |
 
-Prefer Cabinet Mission archives over a broad generic “technical” archive when knowledge needs to be shared across Bears for a Cabinet Mission. For Bear-scoped knowledge, the Bear curated archive is usually sufficient.
+Cross-corpus recall (Bear ↔ Cabinet) is policy-gated, not a default global merge ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §7).
 
-### Passage provenance
+### Passage registry
 
-Archive passage `metadata` should include:
-
-- `canonical_id`
-- `source_uri`
-- `source_path`
-- `source_role`
-- `version` or source commit
-- `hash`
-- `updated_at`
-- `indexed_by`
-- `index_kind`
-
-Tags should be coarse query filters, for example:
-
-- `bear:{bear_id}`
-- `source:core`
-- `mission:{mission_id}`
-- `kind:decision`
-- `role:curate`
-
-### Index mapping
-
-Letta passage create has no first-class external id/idempotency key and archive passages have no update endpoint. Den should maintain a source-to-passage mapping table for indexed material.
-
-Suggested table: `bear_archive_index_entries`.
-
-Fields:
-
-- `id uuid primary key`
-- `bear_id uuid not null`
-- `archive_id text not null`
-- `passage_id text not null`
-- `canonical_kind text not null`
-  - `core_memory`, `role_memory`, `cabinet`, `artifact_summary`, `proposal_summary`
-- `canonical_id text not null`
-- `source_uri text not null`
-- `source_path text null`
-- `source_role text null`
-- `source_version text not null`
-- `source_hash text not null`
-- `chunk_key text not null`
-- `chunk_index integer not null default 0`
-- `text_hash text not null`
-- `metadata jsonb not null default '{}'`
-- `tags text[] not null default '{}'`
-- `indexed_at timestamptz not null default now()`
-- `deleted_at timestamptz null`
-
-Recommended uniqueness:
-
-```text
-unique (bear_id, archive_id, canonical_id, chunk_key)
-```
+Vectors live in Qdrant; Den **Postgres** holds passage-registry metadata only ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §3): passage id, `embedding_standard`, `source_class`, canonical source ids (`bear_id`, `memory_id`, `scope_type`, `scope_profile`, `logical_path`, `kind`, `visibility`), `content_hash`, chunk bounds, `indexed_at`, supersession/delete state. The detailed registry schema and indexing job live in the [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 
 Sync behavior:
 
-1. If source hash is unchanged, do nothing.
-2. If source hash changed, delete the old passage and create a new passage.
-3. If canonical source is deleted, delete the passage and mark the index row deleted.
-4. Search results should verify canonical id/hash where strict correctness matters.
+1. unchanged `content_hash`: no-op;
+2. changed `content_hash`: re-embed and replace the passage;
+3. superseded/deleted canonical source: delete passages by source id + hash;
+4. recall results point back to canonical sources; verify `memory_id`/hash where strict correctness matters.
 
 ### Write boundary
 
-Agents may search attached archives, but shared archives should not be collaboratively maintained by every agent. Shared archive writes should go through Den/curate indexing workflows using `/v1/archives/{archive_id}/passages` rather than agent-scoped `archival_memory_insert`.
-
-`pair` can contribute technical notes to role-local memory and request curation. `review` decides whether to index a summary into the Bear curated archive, a Cabinet Mission archive, Cabinet, or `core/`.
+Agents may search recall scopes by policy, but the shared index is not collaboratively maintained by every agent. Indexing goes through Den/curate `archive_index` workflows. `pair` contributes role-local notes and requests curation; **`curate`** decides whether a summary is promoted to `core/`, proposed to Cabinet, and/or requested for recall indexing. Harvest (`archive_harvest`) produces canonical records; `archive_index` indexes them — the two lanes stay separate ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
 
 ## Core write strategy
 
-`review` writes `core/` through Den-mediated tools, not raw arbitrary paths.
+`curate` writes `core/` through Den-mediated tools, not raw arbitrary paths.
 
-The highest-risk part of this design is keeping `core/` clean. `core/` should not become an append-only dumping ground for role-local memories. Review must be able to **dream**, consolidate, defragment, rewrite, and prune shared memory so `core/` remains compact, current, and useful.
+The highest-risk part of this design is keeping `core/` clean. `core/` should not become an append-only dumping ground for role-local memories. Curate must be able to **dream**, consolidate, defragment, rewrite, and prune shared memory so `core/` remains compact, current, and useful.
 
-This makes memory maintenance a first-class review responsibility, not a later cleanup task.
+This makes memory maintenance a first-class curate responsibility, not a later cleanup task.
 
 ### Initial allowed core paths
 
@@ -406,14 +354,14 @@ Initial write modes:
 4. **Rewrite curated section** — replace a bounded generated/curated section with a cleaner summary.
 5. **Compact file** — summarize, deduplicate, and prune a whole `core/` file or a named section.
 
-Review dreaming/defragmentation should prefer cleaned summaries over raw copies. Broad patch application can come later, but review needs enough authority to maintain quality rather than only append.
+Curate dreaming/defragmentation should prefer cleaned summaries over raw copies. Broad patch application can come later, but curate needs enough authority to maintain quality rather than only append.
 
 ### Provenance
 
-Every core write should include frontmatter or inline provenance:
+Every core write should record provenance in the record's `metadata_json` (and a `memory_promotions` row):
 
 - proposal id;
-- source paths;
+- source memory ids / logical paths;
 - source roles;
 - reviewer role/agent;
 - timestamp;
@@ -424,25 +372,23 @@ Every core write should include frontmatter or inline provenance:
 
 ## Lifecycle state changes for source entries
 
-Promotion should not necessarily delete source memories.
+Promotion should not necessarily delete source memories. SQLite is append-only ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); lifecycle changes are expressed by new records and links, not destructive edits.
 
-When a proposal is approved, Den should optionally update source entry metadata or write a small sidecar marker indicating:
+When a proposal is approved, Den records the outcome via:
 
-- `promotion: approved`
-- `status: superseded` or `active`
-- `promoted_to: core/...` or Cabinet ref
-- `proposal_id`
-- `result_commit`
+- a `memory_promotions` row (source → target, action, reviewer, notes);
+- `supersedes_memory_id` set on a superseding record, with `invalid_at` marking the old head as no longer current ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md));
+- the resolved `memory_proposals` row (`status`, `reviewed_at`, payload pointers to `promoted_to`/Cabinet ref/`proposal_id`).
 
-Do not require this for MVP if editing source frontmatter is too expensive. A DB proposal record with `source_paths` is enough for the first slice.
+The superseded record is preserved as history (the audit trail), not deleted. A proposal record referencing `source_memory_id` is sufficient for the first slice.
 
 ---
 
-## Review run design
+## Curate run design
 
-Review is expected to be autonomous. Human intervention is a last resort for sensitive, ambiguous, or policy-blocked cases.
+Curate is expected to be autonomous. Human intervention is a last resort for sensitive, ambiguous, or policy-blocked cases.
 
-Review can run as:
+Curate can run as:
 
 1. **Scheduled curation cycle** controlled by Den.
 2. **Event-triggered review** after enough proposals or memory activity accumulates.
@@ -450,19 +396,19 @@ Review can run as:
 
 Initial implementation should support autonomous review first, with human review as an escalation path rather than the default path.
 
-A review run prompt should include:
+A curate run prompt should include:
 
 - Bear identity and purpose;
 - role, policy, and relevant Domains;
 - pending proposals;
 - recent role-local memory activity;
 - search/read tools;
-- semantic search tools over attached Letta Archives when available;
+- hybrid recall over the derived Qdrant index when configured (else SQL `LIKE`);
 - explicit instruction that role-local memory can remain local;
 - explicit instruction to prefer concise `core/` summaries over copying raw logs;
-- explicit instruction that archive passages are derived indexes and should point back to canonical sources.
+- explicit instruction that recall passages are derived indexes and should point back to canonical sources.
 
-Review should produce one of:
+Curate should produce one of:
 
 - approve core update;
 - propose Cabinet update;
@@ -482,7 +428,7 @@ For each selected memory file:
 
 - `Propose for core`
 - `Propose for Cabinet`
-- `Mark for review review`
+- `Mark for curate review`
 - `Mark local/final` (admin/curate only)
 
 ### Curation queue
@@ -521,7 +467,7 @@ Shows:
 - approve/reject forms;
 - resulting commit/path after approval.
 
-Human admins should be able to inspect, override, and manually review, but manual review is an operations fallback. The primary product posture is that the Bear can maintain its own memory through the review role.
+Human admins should be able to inspect, override, and manually review, but manual review is an operations fallback. The primary product posture is that the Bear can maintain its own memory through the `curate` role.
 
 ---
 
@@ -533,30 +479,30 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 ## Safety rules
 
-- `review` is the only agent role that can approve shared `core/` writes.
+- `curate` is the only agent role that can approve shared `core/` writes.
 - Human Bear admins can inspect, override, or manually approve through UI, but this is a fallback rather than the default workflow.
 - Non-curate roles can propose, not promote.
 - Work and watch should not see raw chat/pair memory except through `core/` or approved proposals.
 - Promotion should summarize and distill; do not copy raw logs into `core/`.
 - Cabinet promotion requires separate Cabinet policy.
-- Letta Archives are derived indexes; Den/curate owns shared archive indexing.
-- Non-curate roles must not independently archive `core/` content.
-- Destructive cleanup remains admin/operator action, not review autonomy.
+- The derived recall index is a derived view; Den/curate owns shared recall indexing.
+- Non-curate roles must not independently request recall indexing of `core/` content.
+- Destructive cleanup remains admin/operator action, not curate autonomy.
 
 ---
 
 ## Open questions
 
-1. Should proposals live only in Den DB, or also be mirrored into `review/proposals/` for agent visibility?
+1. Should proposals be readable by agents through a tool/projection, or remain Den-internal records surfaced only in UI?
 2. Should manual human approval and curate-agent approval use the same API path?
-3. Should source entry frontmatter be updated after approval, or is DB provenance sufficient for MVP?
-4. What are the first allowed `core/` paths and section conventions?
-5. Should `core/` writes live on the `review` branch, a separate `core` branch, or a sidecar-managed projection into all role views?
+3. Is a `memory_promotions` row + resolved proposal sufficient provenance for MVP, or is additional outcome metadata needed?
+4. What are the first allowed `core/` logical paths and section conventions?
+5. What `salience` scale and cumulative-salience threshold should trigger consolidation/synthesis ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md))?
 6. How should Cabinet proposal permissions differ from `core` proposal permissions?
-7. What bounded compaction/dreaming operations are safe enough for autonomous review to perform without human approval?
-8. What is the initial Bear archive attachment policy by role?
-9. How should Cabinet Mission archives be scoped and attached once Cabinet Missions and Bear↔Mission assignments are defined?
-10. Which `core/` sections should be indexed into Archives as summaries/pointers, and which should remain only in MemFS?
+7. What bounded compaction/consolidation operations are safe enough for autonomous curate to perform without human approval?
+8. What is the initial recall-scope attachment policy by role?
+9. How should Cabinet Mission recall scopes be scoped and attached once Cabinet Missions and Bear↔Mission assignments are defined?
+10. Which `core/` records should be indexed into the recall index, and which should remain canonical-only (e.g. `scratch`, raw `log`)?
 
 ---
 
@@ -564,4 +510,4 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step.
 
-The product priority remains: make review activity visible and overrideable, while keeping routine memory curation autonomous rather than making human approval the normal path.
+The product priority remains: make curate activity visible and overrideable, while keeping routine memory curation autonomous rather than making human approval the normal path.
