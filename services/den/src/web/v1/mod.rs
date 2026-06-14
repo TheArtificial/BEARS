@@ -17,12 +17,13 @@ use uuid::Uuid;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
+    errors::CustomError,
+    observability::{
+        chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
+        native_web_chat_stream::NativeWebChatUpstreamStream,
+    },
+    web::AppState,
     core::{
-        acp_sessions, archived_conversations, conversation_persistence,
-        bears::{
-            db::{self as bears_db, role_is_bear_admin},
-            BearProfile,
-        },
         tools::{
             arguments::DenToolChannelContext,
             constants::DEN_CONVERSATION_SET_TITLE,
@@ -31,12 +32,15 @@ use crate::{
         docket::{DocketService, PgDocketService},
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
-    errors::CustomError,
-    observability::{
-        chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
-        native_web_chat_stream::NativeWebChatUpstreamStream,
-    },
-    web::AppState,
+};
+use den_runtime::{
+    acp_sessions,
+    archived_conversations,
+    conversation_persistence,
+    bears::{
+            db::{self as bears_db, role_is_bear_admin},
+            BearProfile,
+        },
 };
 
 pub fn router() -> Router<AppState> {
@@ -433,7 +437,7 @@ fn map_persisted_history_page(
                 && storage_role == "assistant"
                 && matches!(
                     row.storage_message_type(),
-                    Ok(crate::core::conversation_message_types::ConversationMessageType::Assistant)
+                    Ok(den_runtime::conversation_message_types::ConversationMessageType::Assistant)
                 )
             {
                 last.text.push_str(&row.content_text);
@@ -568,7 +572,7 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
 }
 
 struct ConversationTitleRequest<'a> {
-    bear: &'a crate::core::bears::Bear,
+    bear: &'a den_runtime::bears::Bear,
     chat_agent_id: &'a str,
     user_id: i32,
     username: Option<&'a str>,
@@ -622,7 +626,7 @@ async fn maybe_handle_direct_set_conversation_title(
             protocol: Some("den_chat".to_string()),
         },
     };
-    let stores = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
     let value = run_den_tool(
         state.sqlx_pool(),
         state.config.as_ref(),
@@ -670,14 +674,14 @@ async fn maybe_handle_direct_capabilities_list(
     message: &str,
     request_id: Uuid,
 ) -> Result<Option<Response>, CustomError> {
-    if !crate::core::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
+    if !den_runtime::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
     }
     let text = crate::core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
     conversation_persistence::append_message(
         pool,
         canonical_conversation_id,
-        &crate::core::conversation_message_types::ConversationMessageWrite::assistant_turn(
+        &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
             text.clone(),
             serde_json::json!({
                 "type": "assistant_output",
@@ -737,7 +741,7 @@ async fn chat_send_native_inner(
     request_id: Uuid,
     user_id: i32,
     username: &str,
-    bear: crate::core::bears::Bear,
+    bear: den_runtime::bears::Bear,
     chat_binding_id: &str,
     conv_id: String,
 ) -> Result<Response, CustomError> {
@@ -788,7 +792,7 @@ async fn chat_send_native_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        &crate::core::conversation_message_types::ConversationMessageWrite::user_turn(
+        &den_runtime::conversation_message_types::ConversationMessageWrite::user_turn(
             body.message.trim(),
             serde_json::json!({
                 "type": "user_input",
@@ -813,14 +817,14 @@ async fn chat_send_native_inner(
 
     crate::observability::metrics::chat_send_runtime_native();
 
-    let stores = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
-    let deps = crate::core::native_runtime::NativeRuntimeDeps {
+    let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
+    let deps = den_runtime::native_runtime::NativeRuntimeDeps {
         pool: state.sqlx_pool(),
         config: state.config.as_ref(),
         stores: &stores,
     };
-    let runtime_stream = crate::core::native_runtime::start_native_web_chat_turn_event_stream(
-        crate::core::native_runtime::NativeWebChatTurnParams {
+    let runtime_stream = den_runtime::native_runtime::start_native_web_chat_turn_event_stream(
+        den_runtime::native_runtime::NativeWebChatTurnParams {
             deps: &deps,
             bear_id: bear.id,
             bear_slug: &bear.slug,
@@ -906,7 +910,7 @@ async fn chat_send_inner(
 #[cfg(test)]
 mod chat_history_map_tests {
     use super::*;
-    use crate::core::conversation_persistence::PersistedConversationMessage;
+    use den_runtime::conversation_persistence::PersistedConversationMessage;
 
     fn persisted_row(
         sequence_no: i64,

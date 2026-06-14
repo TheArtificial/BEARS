@@ -181,7 +181,7 @@ pub(crate) struct AcpConversationHistoryMessage {
 
 // Relocated to den-runtime (it is produced by the runtime compaction store); re-exported
 // here so existing `super::http_types::AcpCompactionStatusResponse` paths keep compiling.
-pub(crate) use crate::core::runtime_compaction_store::AcpCompactionStatusResponse;
+pub(crate) use den_runtime::runtime_compaction_store::AcpCompactionStatusResponse;
 
 #[derive(Debug, Serialize)]
 pub(super) struct AcpConversationHistoryResponse {

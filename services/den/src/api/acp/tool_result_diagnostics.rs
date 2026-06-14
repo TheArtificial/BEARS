@@ -1,4 +1,4 @@
-use crate::core::acp_tools::{acp_diag_phase, AcpToolStatus};
+use den_runtime::acp_tools::{acp_diag_phase, AcpToolStatus};
 
 pub(super) fn delivered_tool_result_diagnostic(parsed_status: AcpToolStatus) -> serde_json::Value {
     serde_json::json!({

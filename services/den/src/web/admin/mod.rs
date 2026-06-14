@@ -13,7 +13,10 @@ use minijinja::context;
 
 use crate::errors::CustomError;
 use crate::web::{self, AppState};
-use crate::{auth_backend::AuthSession, core::user};
+use crate::{
+    auth_backend::AuthSession,
+    core::user,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()

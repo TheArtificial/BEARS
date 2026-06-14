@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::core::{
+use den_runtime::{
     acp_events::acp_event_to_adapter_sse,
     native_runtime::openai_byte_stream_to_event_stream,
     runtime::bearwire_projection::{

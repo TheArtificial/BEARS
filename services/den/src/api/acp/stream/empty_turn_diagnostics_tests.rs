@@ -1,9 +1,9 @@
 use crate::{
     api::acp::{AcpGatewayEvent, AcpStreamContext},
-    core::{
-        runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
-        role_runtime::{RoleRuntime, RoleTurnScope},
-    },
+};
+use den_runtime::{
+    runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
+    role_runtime::{RoleRuntime, RoleTurnScope},
 };
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ fn test_context() -> AcpStreamContext {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
         .unwrap();
-    let registry = crate::core::acp_tool_turns::AcpToolTurnCoordinator::new();
+    let registry = den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new();
     let request_id = Uuid::new_v4();
     let role_runtime = RoleRuntime::new(registry.clone());
     let turn_scope = RoleTurnScope::acp_pair(
@@ -46,7 +46,7 @@ fn test_context() -> AcpStreamContext {
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
-        memory_stores: crate::core::memory::MemoryStoreManager::new(
+        memory_stores: den_runtime::memory::MemoryStoreManager::new(
             &crate::config::Config::test_stub(),
         ),
     }

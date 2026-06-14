@@ -30,8 +30,8 @@ use crate::{
         },
     },
     auth_backend::AuthSession,
-    core::user::db as user_db,
     errors::CustomError,
+    core::user::db as user_db,
 };
 
 /// OAuth authorization request with PKCE support

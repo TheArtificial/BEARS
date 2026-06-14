@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use time::Date;
 use uuid::Uuid;
 
-use crate::core::reflection_conversations::{
+use den_runtime::reflection_conversations::{
     ensure_memory_curate_conversation, memory_curate_conversation_key,
 };
 

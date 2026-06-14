@@ -19,23 +19,23 @@ use den_core::tools::review::{
 
 use crate::{
     config::Config,
-    core::{
-        bear_observations::{self, BearObservationRow},
-        bears::BearProfile,
-        conversation_events::{
+    errors::DenError,
+};
+use den_runtime::{
+    bear_observations::{self, BearObservationRow},
+    bears::BearProfile,
+    conversation_events::{
             memory_proposal_resolved_projection, memory_review_requested_projection,
             project_to_conversation, ProjectionProvenance, ProjectionSource,
         },
-        memory::{
+    memory::{
             create_observation, create_proposal, get_observation,
             get_proposal as db_get_proposal, list_proposals as db_list_proposals,
             mark_observation_review_queued_for_bear, promote_core_content,
             resolve_proposal as db_resolve_proposal, MemoryStoreManager,
         },
-        memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
-        reflection_conductor::{self, ProposalEnqueueParams},
-    },
-    errors::DenError,
+    memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
+    reflection_conductor::{self, ProposalEnqueueParams},
 };
 
 fn observation_record(row: &BearObservationRow) -> ObservationRecord {

@@ -17,8 +17,11 @@ use den_core::tools::web::{
 
 use crate::{
     config::Config,
-    core::{tools::support::validate_public_http_url, web_policy},
     errors::CustomError,
+    core::{
+        tools::support::validate_public_http_url,
+        web_policy,
+    },
 };
 
 pub(crate) struct DenWebFetcher<'a> {

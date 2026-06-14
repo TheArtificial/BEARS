@@ -10,11 +10,13 @@ use serde_json::{json, Value};
 
 use crate::{
     api::service::ApiState,
-    core::tools::{
+    errors::CustomError,
+    core::{
+        tools::{
         aliases::is_builtin_den_tool,
         session::{invoke_den_tool as run_den_tool, DenToolInvocationContext},
     },
-    errors::CustomError,
+    },
 };
 
 pub fn router() -> Router<ApiState> {

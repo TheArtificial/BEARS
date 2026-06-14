@@ -3,10 +3,12 @@ use uuid::Uuid;
 
 use crate::{
     api::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry,
-    core::{
-        acp_events::AcpGatewayEvent, acp_plan_mode,
-        acp_tool_turns::AcpToolResultRequest, turn_state,
-    },
+};
+use den_runtime::{
+    acp_events::AcpGatewayEvent,
+    acp_plan_mode,
+    acp_tool_turns::AcpToolResultRequest,
+    turn_state,
 };
 
 pub(in crate::api::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {

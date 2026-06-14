@@ -1,51 +1,19 @@
+// The native agent runtime moved to the `den-runtime` crate during the v1.4 split.
+// Modules below depend on it directly via `den_runtime::*` (the former flat
+// `pub use den_runtime::*` shims here were dropped in the final flip). What remains
+// in `core` are the den-binary-local subsystems and the den-side ACP edge.
 pub mod acp;
-pub use den_runtime::acp_events;
-pub use den_runtime::acp_plan_mode;
 pub use acp::runtime as acp_runtime;
-pub use den_runtime::acp_sessions;
 pub use acp::tokens as acp_tokens;
-pub use den_runtime::acp_tool_turns;
-pub use den_runtime::acp_tools;
-pub use den_runtime::acp_turn_controller;
 pub use acp::turn_runner as acp_turn_runner;
 pub mod api_utils;
-pub use den_runtime::bears;
-pub use den_runtime::llm;
-pub use den_runtime::llm::bifrost;
-pub use den_runtime::memory;
-pub use den_runtime::agent_loop;
-pub use den_runtime::native_runtime;
 pub mod sandbox;
 pub mod migration;
-pub use den_runtime::conversation;
-pub use den_runtime::archived_conversations;
-pub use den_runtime::conversation_events;
-pub use den_runtime::conversation_message_types;
-pub use den_runtime::conversation_persistence;
-pub use den_runtime::conversation_ids;
 pub mod tools;
 pub mod email;
-pub use den_runtime::agent_assist;
-pub use den_runtime::agent_assist::runtime_stream_parser;
-pub use den_runtime::bear_observations;
-pub use den_runtime::memory_curate_executor;
-pub use den_runtime::memory_proposals;
-pub use den_runtime::reflection;
-pub use den_runtime::reflection_conversations;
-pub use den_runtime::pair_reflection;
-pub use den_runtime::prompt_memory_block_store;
-pub use den_runtime::prompt_memory_blocks;
-pub use den_runtime::reflection_conductor;
-pub use den_runtime::runtime;
-pub use den_runtime::{
-    pair_turn, role_runtime, role_runtime_registry, runtime_bearwire_projection,
-    runtime_compaction, runtime_compaction_observability, runtime_compaction_store,
-    runtime_contracts, runtime_conversations, runtime_provider,
-};
 pub mod docket;
 pub mod s3;
 pub use tools::tool_descriptor_guidance;
-pub use den_runtime::turn_state;
 pub mod user;
 pub use tools::web_policy;
 pub mod work_plans;

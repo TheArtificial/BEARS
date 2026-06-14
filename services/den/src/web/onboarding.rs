@@ -12,11 +12,6 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     auth_backend::AuthSession,
-    core::bears::{
-        db::{self as bears_db, BEAR_ROLE_ADMIN},
-        provision,
-        templates::FIRST_BEAR_TEMPLATES,
-    },
     errors::CustomError,
     web::{
         bear_create_support::{
@@ -25,6 +20,13 @@ use crate::{
             NewBearForm,
         },
         render_template, AppState,
+    },
+};
+use den_runtime::{
+    bears::{
+        db::{self as bears_db, BEAR_ROLE_ADMIN},
+        provision,
+        templates::FIRST_BEAR_TEMPLATES,
     },
 };
 
@@ -206,7 +208,7 @@ async fn first_bear_post(
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
-    if crate::core::bears::templates::first_bear_template(&form.template_id).is_none() {
+    if den_runtime::bears::templates::first_bear_template(&form.template_id).is_none() {
         validation_errors.add("template_id", ValidationError::new("Choose a template."));
     }
     let slug_trim = form.slug.trim();

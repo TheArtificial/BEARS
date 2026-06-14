@@ -243,7 +243,7 @@ pub async fn run() -> Result<(), StartupError> {
         let worker_config = config.clone();
         task_set.spawn(async move {
             tracing::info!("Workers: memory_curate runner loop enabled");
-            crate::core::reflection_conductor::run_memory_curate_worker_loop(
+            den_runtime::reflection_conductor::run_memory_curate_worker_loop(
                 worker_pool,
                 worker_config,
                 t,

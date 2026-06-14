@@ -19,9 +19,14 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
-    core::{email, user, user::db as user_db, user::email_settings},
     errors::CustomError,
     web::{self, AppState},
+    core::{
+        email,
+        user,
+        user::db as user_db,
+        user::email_settings,
+    },
 };
 
 pub fn router() -> Router<AppState> {

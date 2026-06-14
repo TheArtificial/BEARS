@@ -2,13 +2,13 @@ use crate::{
     api::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext},
     api::acp::types::PersistedToolRequestEffect,
     api::acp::stream::support::AcpStreamDiagnostics,
-    core::{
-        acp_events::{
+};
+use den_runtime::{
+    acp_events::{
             map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
         },
-        runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
-        runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
-    },
+    runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
+    runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
 };
 
 pub(super) type AcpFrameResult = Result<

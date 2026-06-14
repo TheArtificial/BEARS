@@ -8,16 +8,16 @@ use uuid::Uuid;
 
 use crate::{
     api::service::ApiState,
-    core::{
-        archived_conversations,
-        bears::db as bears_db,
-        conversation_persistence::{
+    errors::CustomError,
+};
+use den_runtime::{
+    archived_conversations,
+    bears::db as bears_db,
+    conversation_persistence::{
             count_visible_messages, ensure_conversation_for_external_id, list_conversations_for_bear,
             list_messages_page,
         },
-        runtime_compaction_store::list_runtime_compaction_events,
-    },
-    errors::CustomError,
+    runtime_compaction_store::list_runtime_compaction_events,
 };
 
 use crate::api::acp::{

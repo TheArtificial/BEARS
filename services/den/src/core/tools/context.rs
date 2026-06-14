@@ -34,9 +34,8 @@ use den_core::tools::context::DenToolInvocationContext;
 
 use crate::{
     config::Config,
+    errors::DenError,
     core::{
-        bears::BearProfile,
-        memory::MemoryStoreManager,
         tools::{
             activity_payloads::{no_active_workplan_payload, plan_mode_workplan_payload},
             environment::DenEnvironmentOps,
@@ -51,7 +50,10 @@ use crate::{
             workflow::DenWorkPlanOps,
         },
     },
-    errors::DenError,
+};
+use den_runtime::{
+    bears::BearProfile,
+    memory::MemoryStoreManager,
 };
 
 /// The composition root binding every Den tool capability to the runtime.

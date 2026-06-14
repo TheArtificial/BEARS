@@ -4,9 +4,9 @@ use sqlx::PgPool;
 
 use crate::{
     config::Config,
-    core::memory::MemoryStoreManager,
     errors::CustomError,
 };
+use den_runtime::memory::MemoryStoreManager;
 
 pub struct NativeRuntimeBackfill;
 

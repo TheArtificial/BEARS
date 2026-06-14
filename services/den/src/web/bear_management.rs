@@ -18,22 +18,6 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::{AuthSession, SessionUser},
     config::Config,
-    core::{
-        acp_sessions, acp_tokens,
-        acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
-        archived_conversations,
-        bears::{
-            db as bears_db,
-            db::{
-                role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
-            },
-            provision, Bear, BearProfileBinding, BearProfile,
-        },
-        memory::tools::sqlite_collect_role_logical_paths,
-        memory_proposals::{self, CreateMemoryProposal},
-        pair_reflection, user,
-        user::db as user_db,
-    },
     errors::CustomError,
     web::{
         bear_create_support::{
@@ -44,6 +28,26 @@ use crate::{
         },
         render_template, AppState,
     },
+    core::{
+        acp_tokens,
+        user,
+        user::db as user_db,
+    },
+};
+use den_runtime::{
+    acp_sessions,
+    acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
+    archived_conversations,
+    bears::{
+            db as bears_db,
+            db::{
+                role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
+            },
+            provision, Bear, BearProfileBinding, BearProfile,
+        },
+    memory::tools::sqlite_collect_role_logical_paths,
+    memory_proposals::{self, CreateMemoryProposal},
+    pair_reflection,
 };
 
 pub fn router() -> Router<AppState> {
@@ -617,10 +621,10 @@ impl BearRoleViewRow {
 }
 
 async fn read_native_memory_content(
-    store: &crate::core::memory::BearMemoryStore,
+    store: &den_runtime::memory::BearMemoryStore,
     logical_path: &str,
 ) -> Result<Option<String>, CustomError> {
-    let value = crate::core::memory::tools::sqlite_memory_read(store, logical_path).await?;
+    let value = den_runtime::memory::tools::sqlite_memory_read(store, logical_path).await?;
     let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if !ok {
         return Ok(None);
@@ -674,7 +678,7 @@ async fn bear_work_surface_rows(
     bear_id: Uuid,
 ) -> Result<Vec<BearWorkSurfaceRow>, CustomError> {
     let mut rows = Vec::new();
-    let manager = crate::core::memory::MemoryStoreManager::new(config);
+    let manager = den_runtime::memory::MemoryStoreManager::new(config);
     let store = manager.store_for_bear(bear_id).await?;
 
     let core_paths =
@@ -1001,9 +1005,9 @@ async fn build_role_detail_view(
     let memory_allowed_prefixes: Vec<String> = Vec::new();
     let memory_recent_activity: Vec<BearMemoryActivityRow> = Vec::new();
     let (memory_status_label, memory_file_count) = {
-        let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+        let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
         let store = manager.store_for_bear(bear.id).await?;
-        match crate::core::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
+        match den_runtime::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
             Ok(status) => {
                 let available = status
                     .get("ok")
@@ -1021,7 +1025,7 @@ async fn build_role_detail_view(
         }
     };
 
-    let composed = crate::core::bears::compose_role_context(
+    let composed = den_runtime::bears::compose_role_context(
         bear,
         role,
         Some("Runtime/conversation context is injected when this role handles a specific task."),
@@ -1370,7 +1374,7 @@ async fn render_bear_details_page(
         let archived_ids =
             archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
-        let records = crate::core::conversation_persistence::list_conversations_for_bear(
+        let records = den_runtime::conversation_persistence::list_conversations_for_bear(
             state.sqlx_pool(),
             bear.id,
             200,
@@ -1419,7 +1423,7 @@ async fn render_bear_details_page(
         (rows, archived_count)
     };
 
-    let context_profile = crate::core::bears::context_profile_from_json(&bear.context_profile)?;
+    let context_profile = den_runtime::bears::context_profile_from_json(&bear.context_profile)?;
     let user_steering = context_profile
         .as_ref()
         .map(|p| p.user_steering.trim().to_string())
@@ -1430,18 +1434,18 @@ async fn render_bear_details_page(
         .filter(|s| !s.is_empty());
     let template_label = context_profile.as_ref().and_then(|p| {
         p.template_id.as_deref().and_then(|id| {
-            crate::core::bears::templates::first_bear_template(id)
+            den_runtime::bears::templates::first_bear_template(id)
                 .map(|template| template.name.to_string())
                 .or_else(|| Some(id.to_string()))
         })
     });
-    let chat_composed_prompt = crate::core::bears::compose_role_context(
+    let chat_composed_prompt = den_runtime::bears::compose_role_context(
         &bear,
         BearProfile::Chat,
         Some("Runtime/conversation context is injected when this role handles a specific chat."),
     )?
     .composed_prompt;
-    let pair_composed_prompt = crate::core::bears::compose_role_context(
+    let pair_composed_prompt = den_runtime::bears::compose_role_context(
         &bear,
         BearProfile::Pair,
         Some("Runtime/conversation context is injected when this role handles a specific ACP/client session."),
@@ -1462,10 +1466,10 @@ async fn render_bear_details_page(
     let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), bear.id).await?;
 
     let mem_health: Option<serde_json::Value> = {
-        let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+        let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
         match manager.store_for_bear(bear.id).await {
             Ok(store) => {
-                match crate::core::memory::tools::sqlite_memory_status(
+                match den_runtime::memory::tools::sqlite_memory_status(
                     &store,
                     BearProfile::Chat.as_str(),
                 )
@@ -2074,7 +2078,7 @@ async fn bear_conversations_get(
         let archived_ids =
             archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
-        let records = crate::core::conversation_persistence::list_conversations_for_bear(
+        let records = den_runtime::conversation_persistence::list_conversations_for_bear(
             state.sqlx_pool(),
             bear.id,
             200,
@@ -2149,7 +2153,7 @@ async fn bear_memory_get(
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = true;
-    let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
     let store = manager.store_for_bear(bear.id).await?;
     let requested_role = q.role.as_deref().unwrap_or("pair");
     let selected_role = requested_role
@@ -2187,7 +2191,7 @@ async fn bear_memory_get(
             recent_activity: Vec::new(),
             error: None,
         };
-        match crate::core::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
+        match den_runtime::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
             Ok(status) => {
                 let available = status
                     .get("ok")
@@ -2210,7 +2214,7 @@ async fn bear_memory_get(
     }
 
     let selected_tree =
-        match crate::core::memory::tools::sqlite_memory_browse(&store, selected_role.as_str()).await
+        match den_runtime::memory::tools::sqlite_memory_browse(&store, selected_role.as_str()).await
         {
             Ok(v) => {
                 let files = v
@@ -2226,7 +2230,7 @@ async fn bear_memory_get(
         };
 
     let search_results = if let Some(query) = search_query {
-        match crate::core::memory::tools::sqlite_memory_search(
+        match den_runtime::memory::tools::sqlite_memory_search(
             &store,
             selected_role.as_str(),
             query,
@@ -2269,7 +2273,7 @@ async fn bear_memory_get(
     };
 
     let selected_file = if let Some(path) = selected_path {
-        match crate::core::memory::tools::sqlite_memory_read(&store, path).await {
+        match den_runtime::memory::tools::sqlite_memory_read(&store, path).await {
             Ok(v) => {
                 if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
                     Some(serde_json::json!({
@@ -2439,7 +2443,7 @@ async fn bear_memory_delete_post(
         );
         return Ok(Redirect::to(&target).into_response());
     }
-    let manager = crate::core::memory::MemoryStoreManager::new(state.config.as_ref());
+    let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
     let store = manager.store_for_bear(bear.id).await?;
     let mut deleted = 0usize;
     for path in &paths {

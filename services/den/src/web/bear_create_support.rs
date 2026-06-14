@@ -7,18 +7,18 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
-    core::{
-        bears::{
+    errors::CustomError,
+    web::AppState,
+};
+use den_runtime::{
+    bears::{
             context_composition::{
                 BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
                 DEFAULT_ROLE_CONTRACT_VERSION,
             },
             context_profile_from_json, context_profile_to_json, db as bears_db, db::BearParams, templates::first_bear_template, Bear, BearProfile,
         },
-        agent_assist::{ModelOption, ToolOption},
-    },
-    errors::CustomError,
-    web::AppState,
+    agent_assist::{ModelOption, ToolOption},
 };
 
 /// Operator and member `<select>` for Letta `agent_type` (subset of Letta `AgentType`; empty = server default).
@@ -512,7 +512,7 @@ pub fn composed_system_prompt_for_profile_json(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    crate::core::bears::compose_role_context(&bear, BearProfile::Chat, None)
+    den_runtime::bears::compose_role_context(&bear, BearProfile::Chat, None)
         .map(|context| context.composed_prompt)
         .map_err(CustomError::from)
 }

@@ -13,24 +13,24 @@ use uuid::Uuid;
 
 use crate::{
     auth_backend::AuthSession,
-    core::{
-        bears::{
+    errors::CustomError,
+    web::{self, AppState},
+    core::user::db as user_db,
+};
+use den_runtime::{
+    bears::{
             context_profile_from_json, db as bears_db,             get_compiled_bear_config, list_bear_block_bindings,
             managed_blocks::BearCompiledConfigRow,
         },
-        conversation_persistence::{self, list_messages_page},
-        memory::{
+    conversation_persistence::{self, list_messages_page},
+    memory::{
             admin_inspect::{
                 bear_memory_admin_stats, get_memory_record_by_id, list_all_logical_paths,
                 list_recent_memory_records,
             },
             tools as sqlite_memory, MemoryStoreManager,
         },
-        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
-        user::db as user_db,
-    },
-    errors::CustomError,
-    web::{self, AppState},
+    prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
 };
 
 use super::bears::{
@@ -108,13 +108,13 @@ struct CompiledRolePromptRow {
     char_count: usize,
 }
 
-async fn load_bear(state: &AppState, id: Uuid) -> Result<crate::core::bears::Bear, CustomError> {
+async fn load_bear(state: &AppState, id: Uuid) -> Result<den_runtime::bears::Bear, CustomError> {
     bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))
 }
 
-fn bear_nav_context(bear: &crate::core::bears::Bear, active: &str) -> minijinja::Value {
+fn bear_nav_context(bear: &den_runtime::bears::Bear, active: &str) -> minijinja::Value {
     context! {
         bear,
         bear_nav_active => active,
@@ -124,7 +124,7 @@ fn bear_nav_context(bear: &crate::core::bears::Bear, active: &str) -> minijinja:
 async fn memory_stats_for_bear(
     state: &AppState,
     bear_id: Uuid,
-) -> Result<Option<crate::core::memory::BearMemoryAdminStats>, CustomError> {
+) -> Result<Option<den_runtime::memory::BearMemoryAdminStats>, CustomError> {
     let manager = MemoryStoreManager::new(state.config.as_ref());
     match bear_memory_admin_stats(&manager, state.config.as_ref(), bear_id).await {
         Ok(stats) => Ok(Some(stats)),
@@ -258,7 +258,7 @@ async fn memory_view(
         .await
         .unwrap_or_default();
     let proposals = if let Ok(store) = manager.store_for_bear(id).await {
-        crate::core::memory::store::list_memory_proposals(&store, None, 20)
+        den_runtime::memory::store::list_memory_proposals(&store, None, 20)
             .await
             .unwrap_or_default()
     } else {

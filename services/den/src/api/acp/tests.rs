@@ -10,7 +10,7 @@ use crate::core::tools::constants::{
     DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
     DEN_WORK_PLAN_UPDATE_PROVIDER,
 };
-use crate::core::prompt_memory_blocks::{
+use den_runtime::prompt_memory_blocks::{
     compile_prompt_memory_blocks, PromptMemoryBlock, PromptMemoryBlockScope,
     PromptMemoryBlockState, PromptMemoryBlockType, PromptMemoryCompilationInput,
 };
@@ -33,7 +33,7 @@ use crate::core::prompt_memory_blocks::{
             item.map_err(CustomError::from)
         }))
     }
-    use crate::{
+        use crate::{
         config::Config,
         errors::CustomError,
         api::{acp::{
@@ -53,7 +53,6 @@ use crate::core::prompt_memory_blocks::{
             tool_results::acp_tool_result_response_from_delivery,
         }, service::ApiState},
         core::{
-            acp_events::AcpGatewayEvent,
             acp_runtime::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
@@ -61,20 +60,24 @@ use crate::core::prompt_memory_blocks::{
             acp_turn_runner::{
                 ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             },
-            runtime_stream_parser::{
+        },
+    };
+    use den_runtime::{
+        acp_events::AcpGatewayEvent,
+        runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
                 runtime_byte_stream_to_event_stream,
                 runtime_stream_event_from_letta_json,
             },
-            runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
-            acp_sessions,
-            acp_tool_turns::{
+        runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
+        acp_sessions,
+        acp_tool_turns::{
                 AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
                 AcpToolTurnRegistration,
             },
-            acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
-            bears::BearProfile,
-            prompt_memory_block_store::{
+        acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
+        bears::BearProfile,
+        prompt_memory_block_store::{
                 archive_conflicting_prompt_memory_blocks,
                 archive_prompt_memory_blocks_superseded_by,
                 list_prompt_memory_blocks_for_bear_profile,
@@ -82,12 +85,11 @@ use crate::core::prompt_memory_blocks::{
                 upsert_prompt_memory_block, PromptMemoryBlockPatch,
                 PromptMemoryBlockQuery, PromptMemoryBlockWrite,
             },
-            acp_turn_controller::{
+        acp_turn_controller::{
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
-            agent_assist::PendingApprovalDenialMode,
-            role_runtime::{RoleRuntime, RoleTurnScope},
-        },
+        agent_assist::PendingApprovalDenialMode,
+        role_runtime::{RoleRuntime, RoleTurnScope},
     };
 
     fn prompt_memory_test_state(pool: sqlx::PgPool) -> ApiState {
@@ -95,17 +97,17 @@ use crate::core::prompt_memory_blocks::{
         ApiState {
             sqlx_pool: pool,
             config: config.clone(),
-            bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
+            bifrost: Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
             acp_tool_turns: AcpToolTurnCoordinator::new(),
-            acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(config.as_ref()),
+            acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
 
     fn prompt_memory_test_policy() -> AcpResolvedSessionPolicy {
         AcpResolvedSessionPolicy {
             mode_label: "Write",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::AllTools,
+            tool_enablement: den_runtime::acp_tools::AcpToolEnablementState::AllTools,
             plan_mode_state: None,
         }
     }
@@ -158,7 +160,7 @@ use crate::core::prompt_memory_blocks::{
         profile_slug: &str,
         session_id: &str,
         root: &String,
-    ) -> (crate::core::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
+    ) -> (den_runtime::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
         let selection = select_prompt_memory_blocks_for_runtime(
             pool,
             prompt_memory_runtime_query(bear_id, profile_slug, session_id, root),
@@ -441,7 +443,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let mut event = AcpGatewayEvent::ConversationResolved {
@@ -471,7 +473,7 @@ use crate::core::prompt_memory_blocks::{
             Some(resolved_conversation_id.as_str())
         );
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -481,7 +483,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(
+        let page = den_runtime::conversation_persistence::list_messages_page(
             &pool,
             canonical.id,
             None,
@@ -570,7 +572,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -595,7 +597,7 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -605,7 +607,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let tool_result = page
@@ -686,7 +688,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -711,7 +713,7 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -721,7 +723,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let tool_result = page
@@ -764,7 +766,7 @@ use crate::core::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            crate::core::runtime::contracts::RuntimeContinuation::ToolResult {
+            den_runtime::runtime::contracts::RuntimeContinuation::ToolResult {
                 tool_call_id,
                 approval_request_id,
                 status,
@@ -772,7 +774,7 @@ use crate::core::prompt_memory_blocks::{
             } => {
                 assert_eq!(tool_call_id, "tool-call-timeout");
                 assert_eq!(approval_request_id, None);
-                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Timeout);
+                assert_eq!(status, den_runtime::runtime::contracts::RuntimeToolResultStatus::Timeout);
                 assert_eq!(content, "timed out");
             }
             other => panic!("expected tool-result continuation, got {other:?}"),
@@ -792,8 +794,8 @@ use crate::core::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            crate::core::runtime::contracts::RuntimeContinuation::ToolResult { status, .. } => {
-                assert_eq!(status, crate::core::runtime::contracts::RuntimeToolResultStatus::Timeout);
+            den_runtime::runtime::contracts::RuntimeContinuation::ToolResult { status, .. } => {
+                assert_eq!(status, den_runtime::runtime::contracts::RuntimeToolResultStatus::Timeout);
             }
             other => panic!("expected tool-result continuation, got {other:?}"),
         }
@@ -812,7 +814,7 @@ use crate::core::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            crate::core::runtime::contracts::RuntimeContinuation::ApprovalDecision {
+            den_runtime::runtime::contracts::RuntimeContinuation::ApprovalDecision {
                 approval_request_id,
                 tool_call_id,
                 decision,
@@ -820,7 +822,7 @@ use crate::core::prompt_memory_blocks::{
             } => {
                 assert_eq!(approval_request_id, "approval-123");
                 assert_eq!(tool_call_id.as_deref(), Some("tool-call-approval"));
-                assert_eq!(decision, crate::core::runtime::contracts::RuntimeApprovalDecision::Deny);
+                assert_eq!(decision, den_runtime::runtime::contracts::RuntimeApprovalDecision::Deny);
                 assert_eq!(reason.as_deref(), Some("user denied"));
             }
             other => panic!("expected approval-decision continuation, got {other:?}"),
@@ -885,7 +887,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(tool_turns.clone()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
@@ -894,7 +896,7 @@ use crate::core::prompt_memory_blocks::{
             context,
             Vec::new(),
             false,
-            crate::core::role_runtime::RoleTurnGuard { guard: active_turn_guard },
+            den_runtime::role_runtime::RoleTurnGuard { guard: active_turn_guard },
         );
         stream.waiting_adapter_tool_result = Some((
             tool_call_id.clone(),
@@ -904,13 +906,13 @@ use crate::core::prompt_memory_blocks::{
         stream.turn_controller.on_tool_request(
             tool_call_id.clone(),
             "functions.fs.read_text_file".to_string(),
-            crate::core::acp_turn_controller::AcpToolExecutionRoute::DenServer,
+            den_runtime::acp_turn_controller::AcpToolExecutionRoute::DenServer,
         );
         stream.turn_controller.on_stream_end();
 
         let role_result = stream.context.role_runtime.turn_result(
-            crate::core::role_runtime::TurnResultStatus::Ok,
-            crate::core::role_runtime::TurnResultReason::StreamComplete,
+            den_runtime::role_runtime::TurnResultStatus::Ok,
+            den_runtime::role_runtime::TurnResultReason::StreamComplete,
             request_id,
             stream.context.turn_scope.clone(),
             false,
@@ -992,12 +994,12 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
-            crate::core::role_runtime::TurnResultStatus::Failed,
-            crate::core::role_runtime::TurnResultReason::RuntimeCleanup,
+            den_runtime::role_runtime::TurnResultStatus::Failed,
+            den_runtime::role_runtime::TurnResultReason::RuntimeCleanup,
             request_id,
             context.turn_scope.clone(),
             false,
@@ -1011,7 +1013,7 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1021,7 +1023,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1099,12 +1101,12 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
-            crate::core::role_runtime::TurnResultStatus::Cancelled,
-            crate::core::role_runtime::TurnResultReason::Cancelled,
+            den_runtime::role_runtime::TurnResultStatus::Cancelled,
+            den_runtime::role_runtime::TurnResultReason::Cancelled,
             request_id,
             context.turn_scope.clone(),
             false,
@@ -1118,7 +1120,7 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1128,7 +1130,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1207,12 +1209,12 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
-            crate::core::role_runtime::TurnResultStatus::Recovered,
-            crate::core::role_runtime::TurnResultReason::CompactedRetry,
+            den_runtime::role_runtime::TurnResultStatus::Recovered,
+            den_runtime::role_runtime::TurnResultReason::CompactedRetry,
             request_id,
             context.turn_scope.clone(),
             true,
@@ -1226,7 +1228,7 @@ use crate::core::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1236,7 +1238,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1275,7 +1277,7 @@ use crate::core::prompt_memory_blocks::{
         let session_id = format!("acp-session-{}", Uuid::new_v4());
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
-        let provenance = crate::core::conversation_events::ConversationEventProvenance {
+        let provenance = den_runtime::conversation_events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: session_id.clone(),
         };
@@ -1284,12 +1286,12 @@ use crate::core::prompt_memory_blocks::{
         content_json["acp_session_id"] = serde_json::json!(session_id.clone());
         content_json["client"] = serde_json::json!("zed");
         content_json["request_id"] = serde_json::json!(request_id.clone());
-        let record = crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+        let record = den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
             "dedup me",
             content_json,
             None,
         );
-        let context = crate::core::conversation_events::ConversationPersistenceContext {
+        let context = den_runtime::conversation_events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1300,14 +1302,14 @@ use crate::core::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        crate::core::conversation_events::persist_canonical_conversation_record(&context, &record)
+        den_runtime::conversation_events::persist_canonical_conversation_record(&context, &record)
             .await
             .expect("persist initial user prompt");
-        crate::core::conversation_events::persist_canonical_conversation_record(&context, &record)
+        den_runtime::conversation_events::persist_canonical_conversation_record(&context, &record)
             .await
             .expect("persist duplicate user prompt");
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1317,7 +1319,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
@@ -1356,7 +1358,7 @@ use crate::core::prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
 
         let build_record = |request_id: String| {
-            let provenance = crate::core::conversation_events::ConversationEventProvenance {
+            let provenance = den_runtime::conversation_events::ConversationEventProvenance {
                 source: "acp_prompt".to_string(),
                 scope_id: session_id.clone(),
             };
@@ -1365,14 +1367,14 @@ use crate::core::prompt_memory_blocks::{
             content_json["acp_session_id"] = serde_json::json!(session_id.clone());
             content_json["client"] = serde_json::json!("zed");
             content_json["request_id"] = serde_json::json!(request_id);
-            crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
                 "same text, new turn",
                 content_json,
                 None,
             )
         };
 
-        let context = crate::core::conversation_events::ConversationPersistenceContext {
+        let context = den_runtime::conversation_events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1383,20 +1385,20 @@ use crate::core::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
             &build_record(format!("req-{}", Uuid::new_v4())),
         )
         .await
         .expect("persist first user prompt");
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
             &build_record(format!("req-{}", Uuid::new_v4())),
         )
         .await
         .expect("persist second user prompt");
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1406,7 +1408,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
@@ -1427,7 +1429,7 @@ use crate::core::prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
         let tool_call_id = format!("call-{}", Uuid::new_v4());
-        let context = crate::core::conversation_events::ConversationPersistenceContext {
+        let context = den_runtime::conversation_events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1438,7 +1440,7 @@ use crate::core::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        let provenance = crate::core::conversation_events::ConversationEventProvenance {
+        let provenance = den_runtime::conversation_events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: session_id.clone(),
         };
@@ -1447,9 +1449,9 @@ use crate::core::prompt_memory_blocks::{
         prompt_json["acp_session_id"] = serde_json::json!(session_id.clone());
         prompt_json["client"] = serde_json::json!("zed");
         prompt_json["request_id"] = serde_json::json!(request_id.clone());
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            &den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
                 "read a file",
                 prompt_json,
                 None,
@@ -1458,9 +1460,9 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist user prompt");
 
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::tool_request(
+            &den_runtime::conversation_events::CanonicalConversationRecord::tool_request(
                 "functions.fs.read_text_file",
                 tool_call_id.clone(),
                 request_id.clone(),
@@ -1469,7 +1471,7 @@ use crate::core::prompt_memory_blocks::{
                 false,
                 None,
                 "den_server",
-                &crate::core::conversation_events::ConversationEventProvenance {
+                &den_runtime::conversation_events::ConversationEventProvenance {
                     source: "acp_runtime".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1478,9 +1480,9 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist tool request");
 
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::tool_result(
+            &den_runtime::conversation_events::CanonicalConversationRecord::tool_result(
                 Some("functions.fs.read_text_file".to_string()),
                 tool_call_id.clone(),
                 None,
@@ -1489,7 +1491,7 @@ use crate::core::prompt_memory_blocks::{
                 serde_json::json!({"path": "/tmp/acp-workspace/README.md"}),
                 serde_json::json!({"source": "test"}),
                 Some(request_id.clone()),
-                &crate::core::conversation_events::ConversationEventProvenance {
+                &den_runtime::conversation_events::ConversationEventProvenance {
                     source: "acp_tool_result".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1505,9 +1507,9 @@ use crate::core::prompt_memory_blocks::{
             "request_id": context.request_id,
             "role": "assistant"
         });
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            &den_runtime::conversation_events::CanonicalConversationRecord::visible_assistant_message(
                 "read complete",
                 assistant_json,
                 None,
@@ -1516,7 +1518,7 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist assistant output");
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1526,7 +1528,7 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let rows = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let rows = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical rows");
         let (messages, has_more, next_before) = map_canonical_history_page(&rows, 20);
@@ -1550,7 +1552,7 @@ use crate::core::prompt_memory_blocks::{
         let session_id = format!("acp-session-{}", Uuid::new_v4());
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
-        let context = crate::core::conversation_events::ConversationPersistenceContext {
+        let context = den_runtime::conversation_events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1561,11 +1563,11 @@ use crate::core::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
+            &den_runtime::conversation_events::CanonicalConversationRecord::conversation_resolved(
                 &conversation_id,
-                &crate::core::conversation_events::ConversationEventProvenance {
+                &den_runtime::conversation_events::ConversationEventProvenance {
                     source: "acp_runtime".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1574,7 +1576,7 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist conversation_resolved record");
 
-        let prompt_provenance = crate::core::conversation_events::ConversationEventProvenance {
+        let prompt_provenance = den_runtime::conversation_events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: context.persistence_scope_id.clone(),
         };
@@ -1583,9 +1585,9 @@ use crate::core::prompt_memory_blocks::{
         prompt_json["acp_session_id"] = serde_json::json!(session_id.clone());
         prompt_json["client"] = serde_json::json!("zed");
         prompt_json["request_id"] = serde_json::json!(request_id.clone());
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::visible_user_message(
+            &den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
                 "hello after resolution",
                 prompt_json,
                 None,
@@ -1594,9 +1596,9 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist user prompt");
 
-        crate::core::conversation_events::persist_canonical_conversation_record(
+        den_runtime::conversation_events::persist_canonical_conversation_record(
             &context,
-            &crate::core::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            &den_runtime::conversation_events::CanonicalConversationRecord::visible_assistant_message(
                 "resolved response",
                 serde_json::json!({
                     "source": "acp_runtime",
@@ -1611,7 +1613,7 @@ use crate::core::prompt_memory_blocks::{
         .await
         .expect("persist assistant output");
 
-        let canonical = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1621,12 +1623,12 @@ use crate::core::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let visible_count = crate::core::conversation_persistence::count_visible_messages(&pool, canonical.id)
+        let visible_count = den_runtime::conversation_persistence::count_visible_messages(&pool, canonical.id)
             .await
             .expect("count visible messages");
         assert_eq!(visible_count, 3, "conversation_resolved plus prompt/assistant should count as visible canonical records");
 
-        let rows = crate::core::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let rows = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical rows");
         assert!(rows.iter().any(|row| row.message_type == "workflow_event" && row.content_text.contains("Conversation resolved")));
@@ -2424,7 +2426,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_includes_message_role_variants_and_skips_diagnostic_only() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2481,7 +2483,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_prefers_den_rows_when_prompt_and_assistant_exist() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2518,7 +2520,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_diagnostic_only_rows_do_not_create_visible_history() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2551,7 +2553,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_with_only_user_rows_still_returns_den_visible_history() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2575,7 +2577,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_with_only_assistant_rows_still_returns_den_visible_history() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2599,7 +2601,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_read_eligibility_requires_visible_canonical_messages() {
-        use crate::core::conversation_persistence::PersistedConversationMessage;
+        use den_runtime::conversation_persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2736,7 +2738,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
-        let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask", None);
+        let policy = den_runtime::acp_tools::resolve_session_policy_for_mode("ask", None);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();
@@ -2744,10 +2746,10 @@ use crate::core::prompt_memory_blocks::{
         let state = crate::api::service::ApiState {
             sqlx_pool: pool,
             config: config.clone(),
-            bifrost: std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
-            acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
-            acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(config.as_ref()),
+            bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new(),
+            acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
             &state,
@@ -2844,9 +2846,9 @@ use crate::core::prompt_memory_blocks::{
             .connect_lazy("postgres://localhost/den_test")
             .unwrap();
         let role_runtime =
-            crate::core::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+            den_runtime::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
         let request_id = Uuid::new_v4();
-        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+        let turn_scope = den_runtime::role_runtime::RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-heartbeat-test",
             Some("conv-test".to_string()),
@@ -2876,7 +2878,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(
                 &crate::config::Config::test_stub(),
             ),
         };
@@ -2915,9 +2917,9 @@ use crate::core::prompt_memory_blocks::{
             .connect_lazy("postgres://localhost/den_test")
             .unwrap();
         let role_runtime =
-            crate::core::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+            den_runtime::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
         let request_id = Uuid::new_v4();
-        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+        let turn_scope = den_runtime::role_runtime::RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-heartbeat-gap-test",
             Some("conv-test".to_string()),
@@ -2947,7 +2949,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(
                 &crate::config::Config::test_stub(),
             ),
         };
@@ -3039,8 +3041,8 @@ use crate::core::prompt_memory_blocks::{
                 result_tx,
             })
             .unwrap();
-        let role_runtime = crate::core::role_runtime::RoleRuntime::new(registry.clone());
-        let turn_scope = crate::core::role_runtime::RoleTurnScope::acp_pair(
+        let role_runtime = den_runtime::role_runtime::RoleRuntime::new(registry.clone());
+        let turn_scope = den_runtime::role_runtime::RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-obligation-poll-test",
             Some("conv-test".to_string()),
@@ -3070,7 +3072,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(
                 &crate::config::Config::test_stub(),
             ),
         };
@@ -3242,7 +3244,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3263,7 +3265,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_visible_message_record_uses_transport_neutral_storage_shape() {
-        use crate::core::conversation_events::CanonicalConversationRecord;
+        use den_runtime::conversation_events::CanonicalConversationRecord;
 
         let record = CanonicalConversationRecord::visible_assistant_message(
             "hello from assistant",
@@ -3288,7 +3290,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_workflow_event_constructor_uses_transport_neutral_defaults() {
-        use crate::core::conversation_events::CanonicalConversationRecord;
+        use den_runtime::conversation_events::CanonicalConversationRecord;
 
         let record = CanonicalConversationRecord::workflow_event(
             "Turn outcome: ok / stream_complete",
@@ -3306,15 +3308,15 @@ use crate::core::prompt_memory_blocks::{
             } => {
                 assert_eq!(
                     message_type,
-                    crate::core::conversation_message_types::ConversationMessageType::WorkflowEvent
+                    den_runtime::conversation_message_types::ConversationMessageType::WorkflowEvent
                 );
                 assert_eq!(
                     role,
-                    Some(crate::core::conversation_message_types::ConversationMessageRole::System)
+                    Some(den_runtime::conversation_message_types::ConversationMessageRole::System)
                 );
                 assert_eq!(
                     visibility,
-                    crate::core::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                    den_runtime::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
                 );
                 assert_eq!(content_text, "Turn outcome: ok / stream_complete");
             }
@@ -3324,7 +3326,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_request_helper_builds_provenance_payload() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3360,7 +3362,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_helper_builds_provenance_payload() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3396,7 +3398,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_assistant_output_helper_builds_request_scoped_provenance_payload() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3427,7 +3429,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_event_dedup_key_serializes_to_stable_source_event_id() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3480,7 +3482,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_turn_outcome_helper_builds_provenance_payload() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3551,7 +3553,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3607,7 +3609,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope: turn_scope.clone(),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3698,7 +3700,7 @@ use crate::core::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
-        let cancel_registry = crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
+        let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
@@ -3737,7 +3739,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3883,7 +3885,7 @@ use crate::core::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
-        let cancel_registry = crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
+        let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
@@ -3922,7 +3924,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4079,7 +4081,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4226,7 +4228,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
@@ -4314,7 +4316,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
@@ -4446,7 +4448,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4588,7 +4590,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
@@ -4672,7 +4674,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
@@ -4826,7 +4828,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4925,7 +4927,7 @@ use crate::core::prompt_memory_blocks::{
     async fn runtime_tool_request_mapping_exposes_continuation_receiver_for_local_tools() {
         use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
         use crate::api::acp::stream::support::AcpStreamDiagnostics;
-        use crate::core::runtime_provider::RuntimeStreamEvent;
+        use den_runtime::runtime_provider::RuntimeStreamEvent;
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
@@ -4962,10 +4964,10 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let runtime_event = RuntimeStreamEvent::Semantic(
-            crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+            den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
                 tool_call_id: "call-cont-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 title: Some("Read text file".to_string()),
@@ -5005,10 +5007,10 @@ use crate::core::prompt_memory_blocks::{
         let session_id = "acp-test-session";
 
         let turn_failed = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::TurnFailed {
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnFailed {
                     turn: None,
-                    category: crate::core::runtime_provider::RuntimeErrorCategory::Internal,
+                    category: den_runtime::runtime_provider::RuntimeErrorCategory::Internal,
                     message: "runtime failed".to_string(),
                 },
             ),
@@ -5020,8 +5022,8 @@ use crate::core::prompt_memory_blocks::{
         assert!(matches!(turn_failed[1], AcpGatewayEvent::TurnResult { .. }));
 
         let turn_cancelled = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCancelled {
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCancelled {
                     turn: None,
                 },
             ),
@@ -5033,8 +5035,8 @@ use crate::core::prompt_memory_blocks::{
         assert!(matches!(turn_cancelled[1], AcpGatewayEvent::TurnResult { .. }));
 
         let generic_error = runtime_terminal_events(
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::Error {
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::Error {
                     message: "runtime error".to_string(),
                     detail: Some("detail".to_string()),
                     error_type: Some("runtime_error".to_string()),
@@ -5237,7 +5239,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
@@ -5367,7 +5369,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5497,7 +5499,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -5619,7 +5621,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5687,7 +5689,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_user_prompt_record_carries_prompt_scope_and_request_metadata() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5726,7 +5728,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_user_prompt_record_matches_prompt_flow_persistence_shape() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5773,7 +5775,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_conversation_resolved_record_carries_resolution_metadata() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5792,15 +5794,15 @@ use crate::core::prompt_memory_blocks::{
             } => {
                 assert_eq!(
                     message_type,
-                    crate::core::conversation_message_types::ConversationMessageType::WorkflowEvent
+                    den_runtime::conversation_message_types::ConversationMessageType::WorkflowEvent
                 );
                 assert_eq!(
                     role,
-                    Some(crate::core::conversation_message_types::ConversationMessageRole::System)
+                    Some(den_runtime::conversation_message_types::ConversationMessageRole::System)
                 );
                 assert_eq!(
                     visibility,
-                    crate::core::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                    den_runtime::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
                 );
                 assert_eq!(content_text, "Conversation resolved");
                 assert!(provider_message_id.is_none());
@@ -5849,7 +5851,7 @@ use crate::core::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         };
 
         let provenance = super::stream::runtime::acp_session_provenance(&context);
@@ -5888,15 +5890,15 @@ use crate::core::prompt_memory_blocks::{
                 Some("conv-helper".to_string()),
             ),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: crate::core::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
         });
-        let record = crate::core::conversation_events::CanonicalConversationRecord::conversation_resolved(
+        let record = den_runtime::conversation_events::CanonicalConversationRecord::conversation_resolved(
             "conv-validated",
             &provenance,
         );
 
         match record {
-            crate::core::conversation_events::CanonicalConversationRecord::StructuredEvent {
+            den_runtime::conversation_events::CanonicalConversationRecord::StructuredEvent {
                 content_json, ..
             } => {
                 assert_eq!(content_json["source"], "acp_stream");
@@ -5909,7 +5911,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_assistant_output_records_same_request_scope_for_duplicate_like_replays() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5948,7 +5950,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_timeout_record_preserves_timeout_status_and_diagnostic_phase() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5991,7 +5993,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_error_record_preserves_error_status_and_diagnostic_phase() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -6027,7 +6029,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn canonical_turn_outcome_records_cancellation_request_scope() {
-        use crate::core::conversation_events::{
+        use den_runtime::conversation_events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -6129,7 +6131,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_maps_pending_acp_selection_to_letta_agent_target() {
-        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("letta".to_string()),
         };
@@ -6150,7 +6152,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_routes_explicit_conv_directly_and_requires_bear_check() {
-        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("letta".to_string()),
         };
@@ -6188,7 +6190,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_never_archives_pending_or_default_targets() {
-        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("letta".to_string()),
         };

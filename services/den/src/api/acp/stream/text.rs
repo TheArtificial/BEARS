@@ -1,5 +1,6 @@
-use crate::{
-    core::{acp_events::AcpGatewayEvent, agent_assist::normalize_display_status_text},
+use den_runtime::{
+    acp_events::AcpGatewayEvent,
+    agent_assist::normalize_display_status_text,
 };
 
 use super::text_utils::{

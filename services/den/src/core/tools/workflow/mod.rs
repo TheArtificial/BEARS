@@ -8,11 +8,9 @@ use den_core::tools::workflow::WorkPlanOps;
 
 use crate::{
     config::Config,
+    errors::{CustomError, DenError},
     core::{
-        acp_plan_mode,
-        bears::BearProfile,
         docket::{DocketService, PgDocketService},
-        memory::{tools as sqlite_memory, MemoryStoreManager},
         tools::{
             activity_payloads::{activity_payload, plan_mode_workplan_payload},
             memory_write::source_acp_session_id,
@@ -24,7 +22,11 @@ use crate::{
             WorkPlanUpsert, WorkPlanVisibility,
         },
     },
-    errors::{CustomError, DenError},
+};
+use den_runtime::{
+    acp_plan_mode,
+    bears::BearProfile,
+    memory::{tools as sqlite_memory, MemoryStoreManager},
 };
 
 /// Concrete [`WorkPlanOps`] over the runtime pool/config/stores.

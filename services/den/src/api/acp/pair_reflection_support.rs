@@ -1,15 +1,15 @@
 use crate::{
     api::service::ApiState,
-    core::{
-        acp_sessions,
-        bears::{db as bears_db, BearProfile},
-        conversation_persistence,
-        memory::{create_proposal, tools as sqlite_memory},
-        memory_proposals::CreateMemoryProposal,
-        pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-        reflection_conductor,
-    },
     errors::CustomError,
+};
+use den_runtime::{
+    acp_sessions,
+    bears::{db as bears_db, BearProfile},
+    conversation_persistence,
+    memory::{create_proposal, tools as sqlite_memory},
+    memory_proposals::CreateMemoryProposal,
+    pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
+    reflection_conductor,
 };
 
 pub(crate) async fn run_pair_reflection_summary(

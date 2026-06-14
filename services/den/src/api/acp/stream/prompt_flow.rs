@@ -17,24 +17,26 @@ use crate::{
         auth::{self, ApiError},
         service::ApiState,
     },
+    errors::CustomError,
     core::{
-        acp_plan_mode,
         acp_runtime::{
             canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
             AcpConversationService,
         },
-        acp_sessions::{self, UpsertAcpSession},
-        conversation_events::{
-            persist_canonical_conversation_record, CanonicalConversationRecord,
-            ConversationEventProvenance, ConversationPersistenceContext,
-        },
         acp_tokens,
-        acp_tools::acp_client_tool_descriptors_for_client_context,
-        bears::{db as bears_db, BearProfile},
         docket::{DocketService, PgDocketService},
         work_plans::{self, WorkPlanLookup},
     },
-    errors::CustomError,
+};
+use den_runtime::{
+    acp_plan_mode,
+    acp_sessions::{self, UpsertAcpSession},
+    conversation_events::{
+            persist_canonical_conversation_record, CanonicalConversationRecord,
+            ConversationEventProvenance, ConversationPersistenceContext,
+        },
+    acp_tools::acp_client_tool_descriptors_for_client_context,
+    bears::{db as bears_db, BearProfile},
 };
 
 pub(in crate::api::acp) async fn run_prompt_flow(
@@ -134,7 +136,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
     );
     let (conversation_resolution, ensure_conversation_result) = conversation_runtime
         .ensure_prompt_conversation(
-            crate::core::runtime_contracts::EnsureConversationRequest {
+            den_runtime::runtime_contracts::EnsureConversationRequest {
                 bear_id: bear.id,
                 role: "pair".to_string(),
                 acp_session_id: session_id.to_string(),

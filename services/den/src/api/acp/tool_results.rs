@@ -6,10 +6,10 @@ use crate::{
         },
         AcpToolResultResponse,
     },
-    core::{
-        acp_tool_turns::{AcpToolResultDelivery, AcpToolTurnCoordinator},
-        acp_tools::AcpToolStatus,
-    },
+};
+use den_runtime::{
+    acp_tool_turns::{AcpToolResultDelivery, AcpToolTurnCoordinator},
+    acp_tools::AcpToolStatus,
 };
 
 pub(super) fn default_unavailable_context_budget() -> serde_json::Value {

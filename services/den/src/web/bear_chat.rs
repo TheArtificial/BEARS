@@ -9,10 +9,11 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
-    core::{bears::db as bears_db, user},
     errors::CustomError,
     web::{self, AppState},
+    core::user,
 };
+use den_runtime::bears::db as bears_db;
 
 /// Deep Chat view for one bear (`/bear/{slug}`); membership-checked.
 pub async fn bear_page(

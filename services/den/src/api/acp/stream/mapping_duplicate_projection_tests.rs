@@ -1,10 +1,10 @@
 use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
 use crate::api::acp::stream::support::AcpStreamDiagnostics;
 use crate::api::acp::AcpStreamContext;
-use crate::core::acp_tool_turns::AcpToolTurnCoordinator;
-use crate::core::acp_events::AcpGatewayEvent;
-use crate::core::role_runtime::{RoleRuntime, RoleTurnScope};
-use crate::core::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_runtime::acp_tool_turns::AcpToolTurnCoordinator;
+use den_runtime::acp_events::AcpGatewayEvent;
+use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
+use den_runtime::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -43,7 +43,7 @@ fn test_mapping_context() -> AcpStreamContext {
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
-        memory_stores: crate::core::memory::MemoryStoreManager::new(
+        memory_stores: den_runtime::memory::MemoryStoreManager::new(
             &crate::config::Config::test_stub(),
         ),
     }

@@ -2,24 +2,24 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{
-        acp_events::AcpGatewayEvent,
-        acp_sessions,
-        conversation_persistence::PersistedConversationMessage,
-        agent_assist::sanitize_visible_transcript_text,
-        runtime_compaction::{
+    errors::CustomError,
+};
+use den_runtime::{
+    acp_events::AcpGatewayEvent,
+    acp_sessions,
+    conversation_persistence::PersistedConversationMessage,
+    agent_assist::sanitize_visible_transcript_text,
+    runtime_compaction::{
             choose_compaction_decision, semantic_groups_from_runtime_messages,
             RuntimeCompactionDecision, RuntimeCompactionPolicy,
         },
-        runtime_compaction_observability::{
+    runtime_compaction_observability::{
             build_compaction_applied_event, build_compaction_skipped_event,
             RuntimeCompactionEvent,
         },
-        runtime_conversations::{
+    runtime_conversations::{
             RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
         },
-    },
-    errors::CustomError,
 };
 
 use super::{format_acp_session_timestamp, AcpConversationHistoryMessage};
@@ -117,7 +117,7 @@ pub(crate) fn runtime_compaction_event_for_history(
     let policy = default_runtime_compaction_policy();
     match runtime_compaction_decision_for_history(body, trigger.clone()) {
         Some(decision) => {
-            let artifact = crate::core::runtime_compaction::artifact_ref_from_decision(
+            let artifact = den_runtime::runtime_compaction::artifact_ref_from_decision(
                 format!("{conversation_id}:{}-{}", decision.selected_group_start, decision.selected_group_end),
                 &decision,
                 &policy,
@@ -143,24 +143,24 @@ fn build_iterative_summary_from_groups(groups: &[RuntimeSemanticGroup]) -> Runti
             group.end_message_id.as_deref().unwrap_or("end")
         );
         match group.kind {
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::UserTurn => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::UserTurn => {
                 push_unique_summary_value(&mut summary.active_user_goals, label);
             }
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::AssistantReply => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::AssistantReply => {
                 push_unique_summary_value(&mut summary.unresolved_followups, label);
             }
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::ToolInteraction
-            | crate::core::runtime_conversations::RuntimeSemanticGroupKind::ArtifactUpdate => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::ToolInteraction
+            | den_runtime::runtime_conversations::RuntimeSemanticGroupKind::ArtifactUpdate => {
                 push_unique_summary_value(&mut summary.artifact_refs, label);
             }
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::ApprovalInteraction => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::ApprovalInteraction => {
                 push_unique_summary_value(&mut summary.decisions_made, label);
             }
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::WorkflowUpdate => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::WorkflowUpdate => {
                 push_unique_summary_value(&mut summary.workflow_state_refs, label);
             }
-            crate::core::runtime_conversations::RuntimeSemanticGroupKind::PriorCompactionArtifact
-            | crate::core::runtime_conversations::RuntimeSemanticGroupKind::SystemEvent => {
+            den_runtime::runtime_conversations::RuntimeSemanticGroupKind::PriorCompactionArtifact
+            | den_runtime::runtime_conversations::RuntimeSemanticGroupKind::SystemEvent => {
                 push_unique_summary_value(&mut summary.important_constraints, label);
             }
         }

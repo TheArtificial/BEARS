@@ -1,7 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use crate::core::runtime_provider::{acp_requires_runtime, RuntimeStartupCapabilities};
+use den_runtime::runtime_provider::{acp_requires_runtime, RuntimeStartupCapabilities};
 use sqlx::PgPool;
 use thiserror::Error;
 

@@ -20,20 +20,22 @@ use crate::{
         auth::ApiError,
         service::ApiState,
     },
+    errors::CustomError,
     core::{
         acp_runtime::{is_acp_history_target, AcpConversationResolution},
-        acp_sessions,
-        acp_tools::AcpResolvedSessionPolicy,
-        bears::Bear,
-        conversation_events::{
+        user,
+    },
+};
+use den_runtime::{
+    acp_sessions,
+    acp_tools::AcpResolvedSessionPolicy,
+    bears::Bear,
+    conversation_events::{
             persist_canonical_conversation_record, CanonicalConversationRecord,
             ConversationEventProvenance, ConversationPersistenceContext,
         },
-        role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
-        runtime_provider::RoleRuntimeBinding,
-        user,
-    },
-    errors::CustomError,
+    role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
+    runtime_provider::RoleRuntimeBinding,
 };
 
 use super::sse_stream::AcpRuntimeSseStream;
@@ -137,7 +139,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     prompt: &str,
     pair_runtime_binding: &RoleRuntimeBinding,
     conversation_resolution: &AcpConversationResolution,
-    synthetic_session: &crate::core::acp_sessions::AcpSessionRow,
+    synthetic_session: &den_runtime::acp_sessions::AcpSessionRow,
     resolved_policy: &AcpResolvedSessionPolicy,
     current_activity_plan: &Option<crate::core::work_plans::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,

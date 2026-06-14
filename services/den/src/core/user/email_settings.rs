@@ -1,7 +1,11 @@
 use minijinja::context;
 use sqlx::{query, query_as, PgPool};
 
-use crate::{config::Config, core::email, errors::CustomError};
+use crate::{
+    config::Config,
+    errors::CustomError,
+    core::email,
+};
 
 pub struct UserEmailBasics {
     pub user_id: i32,

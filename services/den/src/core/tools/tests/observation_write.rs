@@ -5,8 +5,6 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        bears::{db, db::grant_membership, db::BearParams, BearProfile},
-        memory::MemoryStoreManager,
         tools::{
             arguments::DenToolChannelContext,
             constants::DEN_OBSERVATION_WRITE,
@@ -14,6 +12,10 @@ use crate::{
         },
         user::db::create_user,
     },
+};
+use den_runtime::{
+    bears::{db, db::grant_membership, db::BearParams, BearProfile},
+    memory::MemoryStoreManager,
 };
 
 async fn seed_watch_agent(

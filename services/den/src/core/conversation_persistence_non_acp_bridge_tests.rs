@@ -23,7 +23,7 @@ async fn persist_for_test(
     Ok(())
 }
 
-use crate::core::{
+use den_runtime::{
     bears::{db::BearParams, db::create_bear, BearProfile},
     conversation_events::{
         canonical_persistence_context, persist_projection, MemoryCurateCompletedPayload,

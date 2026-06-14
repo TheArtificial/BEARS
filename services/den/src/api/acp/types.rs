@@ -8,14 +8,14 @@ use uuid::Uuid;
 
 use crate::{
     api::{auth::ApiError, service::ApiState},
-    core::{
-        acp_events::AcpGatewayEvent,
-        acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
-        acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
-        memory::MemoryStoreManager,
-        role_runtime::{RoleRuntime, RoleTurnScope},
-    },
     errors::CustomError,
+};
+use den_runtime::{
+    acp_events::AcpGatewayEvent,
+    acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
+    acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
+    memory::MemoryStoreManager,
+    role_runtime::{RoleRuntime, RoleTurnScope},
 };
 
 use super::stream::support::AcpStreamDiagnostics;
@@ -56,7 +56,7 @@ pub(crate) fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AcpResolvedTurnContext {
-    pub(crate) policy: crate::core::acp_tools::AcpResolvedSessionPolicy,
+    pub(crate) policy: den_runtime::acp_tools::AcpResolvedSessionPolicy,
     pub(crate) workflow_state: serde_json::Value,
     pub(crate) effective_mode: String,
 }
@@ -122,8 +122,8 @@ pub(in crate::api::acp) type AcpFrameResult = Result<
 
 pub(in crate::api::acp) type AcpContinueToolPrepared = Result<
     (
-        crate::core::runtime_provider::RuntimeStreamContinuation,
-        crate::core::runtime_provider::RuntimeEventStream,
+        den_runtime::runtime_provider::RuntimeStreamContinuation,
+        den_runtime::runtime_provider::RuntimeEventStream,
         std::sync::Arc<std::sync::Mutex<AcpStreamDiagnostics>>,
     ),
     CustomError,

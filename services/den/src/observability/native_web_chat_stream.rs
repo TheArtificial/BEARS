@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{ready, Stream};
 use uuid::Uuid;
 
-use crate::core::runtime_contracts::{
+use den_runtime::runtime_contracts::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 

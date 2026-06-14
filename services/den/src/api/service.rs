@@ -23,7 +23,10 @@ use tracing::info_span;
 use crate::{
     auth_backend::Backend,
     config::Config,
-    core::{bifrost::BifrostClient, memory::MemoryStoreManager},
+};
+use den_runtime::{
+    bifrost::BifrostClient,
+    memory::MemoryStoreManager,
 };
 
 use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
@@ -44,10 +47,10 @@ pub struct ApiState {
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
     /// Process-local active ACP direct tool turns.
-    pub(crate) acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator,
+    pub(crate) acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator,
     /// Process-local active ACP stream cancellation signals.
     pub(crate) acp_turn_cancellations:
-        crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry,
+        den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry,
     /// Per-Bear SQLite memory stores (native runtime cognition).
     pub memory_stores: MemoryStoreManager,
 }
@@ -109,8 +112,8 @@ pub async fn create_api_app(
         sqlx_pool: sqlx_pool.clone(),
         config: config.clone(),
         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
-        acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
-        acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(
+        acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new(),
+        acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(
         ),
         memory_stores: MemoryStoreManager::new(config.as_ref()),
     };

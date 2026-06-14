@@ -13,12 +13,14 @@ use den_core::tools::prompt_memory::{
 };
 
 use crate::{
-    core::prompt_memory_block_store::{
+    errors::DenError,
+};
+use den_runtime::{
+    prompt_memory_block_store::{
         archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
         list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
         upsert_prompt_memory_block,
     },
-    errors::DenError,
 };
 
 /// Postgres-backed [`PromptMemoryStore`] over a pool reference.

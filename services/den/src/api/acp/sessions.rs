@@ -2,12 +2,12 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 
 use crate::{
-    core::{
-        acp_sessions,
-        prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
-        work_plans::WorkPlanProjection,
-    },
     errors::CustomError,
+    core::work_plans::WorkPlanProjection,
+};
+use den_runtime::{
+    acp_sessions,
+    prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
 };
 
 use super::{
@@ -70,7 +70,7 @@ pub(super) fn decode_acp_sessions_cursor(
 
 pub(crate) fn resolve_acp_turn_context(
     row: &acp_sessions::AcpSessionRow,
-    plan_mode_row: Option<&crate::core::acp_plan_mode::AcpPlanModeSessionRow>,
+    plan_mode_row: Option<&den_runtime::acp_plan_mode::AcpPlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> AcpResolvedTurnContext {
     let policy = super::resolve_session_policy_for_mode(
@@ -99,15 +99,15 @@ pub(crate) async fn acp_session_row_to_http_with_modes(
         list_prompt_memory_blocks_for_bear_profile(pool, row.bear_id, "pair").await?;
     let prompt_memory_diagnostic = Some(
         serde_json::json!({
-            "status": if prompt_memory_blocks.iter().any(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active) { "ok" } else { "empty" },
+            "status": if prompt_memory_blocks.iter().any(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active) { "ok" } else { "empty" },
             "source": "prompt_memory_blocks",
             "active_count": prompt_memory_blocks
                 .iter()
-                .filter(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .filter(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active)
                 .count(),
             "active_blocks": prompt_memory_blocks
                 .iter()
-                .filter(|block| block.state == crate::core::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .filter(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active)
                 .map(|block| serde_json::json!({
                     "id": block.id,
                     "scope": block.scope,

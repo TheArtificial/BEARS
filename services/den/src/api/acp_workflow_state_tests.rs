@@ -1,11 +1,13 @@
 use crate::core::{
-    acp_plan_mode::AcpPlanModeSessionRow,
-    acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
     tools::{
         descriptor::builtin_den_tool_descriptor_for_provider_name,
         memory_write::MemoryWriteEntryArguments,
         support::validate_memory_write_entry_semantics,
     },
+};
+use den_runtime::{
+    acp_plan_mode::AcpPlanModeSessionRow,
+    acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
     turn_state::{approval_status_label, workflow_state_label},
 };
 
@@ -14,7 +16,7 @@ use super::acp::prompt_context::acp_direct_tool_prompt_context;
 
 #[test]
 fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
-    let event = crate::core::acp_events::AcpGatewayEvent::PlanApprovalFallback {
+    let event = den_runtime::acp_events::AcpGatewayEvent::PlanApprovalFallback {
         plan_id: uuid::Uuid::nil(),
         title: "Example plan".to_string(),
         body: "Do the thing carefully".to_string(),
@@ -22,10 +24,10 @@ fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
         state: "submitted".to_string(),
         approval_status: "awaiting_human_approval".to_string(),
     };
-    assert!(crate::core::acp_events::acp_event_has_visible_output(
+    assert!(den_runtime::acp_events::acp_event_has_visible_output(
         &event
     ));
-    let frame = crate::core::acp_events::acp_event_to_adapter_sse(event);
+    let frame = den_runtime::acp_events::acp_event_to_adapter_sse(event);
     let raw = std::str::from_utf8(&frame).expect("utf8 sse frame");
     let payload: serde_json::Value =
         serde_json::from_str(raw.trim().strip_prefix("data: ").expect("sse data prefix"))
@@ -144,7 +146,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             bear_id: uuid::Uuid::nil(),
             bear_slug: "test".to_string(),
             binding_id: "agent".to_string(),
-            profile: Some(crate::core::bears::BearProfile::Pair),
+            profile: Some(den_runtime::bears::BearProfile::Pair),
             user_id: 1,
             username: Some("tester".to_string()),
             membership_role: None,
@@ -349,7 +351,7 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
 
 #[test]
 fn resolve_turn_context_returns_matching_policy_and_turn_state() {
-    let session = crate::core::acp_sessions::AcpSessionRow {
+    let session = den_runtime::acp_sessions::AcpSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),

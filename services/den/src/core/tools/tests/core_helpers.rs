@@ -1,7 +1,5 @@
-use crate::core::{
-    bears::BearProfile,
-    tools::descriptor::builtin_den_tool_descriptors_for_profile,
-};
+use crate::core::tools::descriptor::builtin_den_tool_descriptors_for_profile;
+use den_runtime::bears::BearProfile;
 use std::collections::HashSet;
 
 pub(super) fn names_for_profile(role: BearProfile) -> HashSet<&'static str> {

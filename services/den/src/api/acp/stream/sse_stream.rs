@@ -23,18 +23,18 @@ use crate::{
         acp::types::PersistedToolRequestEffect,
         service::ApiState,
     },
-    core::{
-        acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
-        acp_tool_turns::AcpToolResultRequest,
-        acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
-        role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
-        runtime_contracts::RuntimeConversationRef,
-        runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
-        bifrost::BifrostClient,
-        agent_assist::normalize_display_status_text,
-        tools::descriptor::den_tool_completion_status_text,
-    },
     errors::{CustomError, DenError},
+    core::tools::descriptor::den_tool_completion_status_text,
+};
+use den_runtime::{
+    acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
+    acp_tool_turns::AcpToolResultRequest,
+    acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
+    role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
+    runtime_contracts::RuntimeConversationRef,
+    runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
+    bifrost::BifrostClient,
+    agent_assist::normalize_display_status_text,
 };
 
 use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
@@ -45,7 +45,7 @@ const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
 pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) inner: Pin<
         Box<
-            dyn Stream<Item = Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>>
+            dyn Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
                 + Send,
         >,
     >,
@@ -366,7 +366,7 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::api::acp) fn new(
-        inner: impl Stream<Item = Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>>
+        inner: impl Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
             + Send
             + 'static,
         context: AcpStreamContext,
@@ -776,7 +776,7 @@ impl Stream for AcpRuntimeSseStream {
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. }) => {
                                                     if let RuntimeStreamEvent::Semantic(semantic) = event {
                                                         queued_events.extend(
-                                                            crate::core::runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events(semantic),
+                                                            den_runtime::runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events(semantic),
                                                         );
                                                     }
                                                 }
@@ -1031,9 +1031,9 @@ impl Stream for AcpRuntimeSseStream {
                         outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
                         "ACP starting runtime continuation for queued tool result"
                     );
-                    let prepared_continuation = match crate::core::acp_tool_turns::AcpToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
+                    let prepared_continuation = match den_runtime::acp_tool_turns::AcpToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
                         Ok(prepared) => prepared,
-                        Err(crate::core::acp_tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
+                        Err(den_runtime::acp_tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
                             display_tool_name,
                         }) => {
                             this.pending.push_back(acp_event_to_adapter_sse(

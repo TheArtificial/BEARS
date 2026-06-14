@@ -3,14 +3,16 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::{
-    bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    memory_proposals::{create, CreateMemoryProposal},
     tools::{
         arguments::DenToolChannelContext,
         constants::DEN_MEMORY_APPLY_CORE_UPDATE,
         session::{invoke_den_tool, DenToolInvocationContext},
     },
     user::db::create_user,
+};
+use den_runtime::{
+    bears::{db, db::grant_membership, db::BearParams, BearProfile},
+    memory_proposals::{create, CreateMemoryProposal},
 };
 
 async fn seed_curate_agent(
@@ -67,7 +69,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     let agent_id = format!("agent-{}", Uuid::new_v4());
     seed_curate_agent(&pool, bear_id, &agent_id).await?;
 
-    let conversation = crate::core::conversation_persistence::ensure_conversation_for_external_id(
+    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
         &pool,
         bear_id,
         Some(user_id),
@@ -126,7 +128,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     };
 
     let config = crate::config::Config::test_stub();
-    let stores = crate::core::memory::MemoryStoreManager::new(&config);
+    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
         &config,
@@ -144,7 +146,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
 
     assert!(payload.is_err());
 
-    let projection_context = crate::core::conversation_events::canonical_persistence_context(
+    let projection_context = den_runtime::conversation_events::canonical_persistence_context(
         pool.clone(),
         bear_id,
         Some(user_id),
@@ -154,11 +156,11 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         "acp-memory-apply-tool-session".to_string(),
         false,
     );
-    crate::core::conversation_events::persist_projection(
+    den_runtime::conversation_events::persist_projection(
         &projection_context,
-        &crate::core::conversation_events::memory_proposal_resolved_projection(
-            crate::core::conversation_events::ProjectionProvenance {
-                source: crate::core::conversation_events::ProjectionSource::DenTools,
+        &den_runtime::conversation_events::memory_proposal_resolved_projection(
+            den_runtime::conversation_events::ProjectionProvenance {
+                source: den_runtime::conversation_events::ProjectionSource::DenTools,
                 scope_id: "acp-memory-apply-tool-session".to_string(),
             },
             proposal.id,
@@ -173,7 +175,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     )
     .await?;
 
-    let messages = crate::core::conversation_persistence::list_messages_page(
+    let messages = den_runtime::conversation_persistence::list_messages_page(
         &pool,
         conversation.id,
         None,

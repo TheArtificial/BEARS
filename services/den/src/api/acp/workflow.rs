@@ -1,6 +1,10 @@
 use crate::{
     api::acp::workflow_guidance::render_turn_state_summary,
-    core::{acp_tools::AcpResolvedSessionPolicy, turn_state, work_plans::WorkPlanProjection},
+    core::work_plans::WorkPlanProjection,
+};
+use den_runtime::{
+    acp_tools::AcpResolvedSessionPolicy,
+    turn_state,
 };
 
 pub(crate) fn workflow_state_json(policy: &AcpResolvedSessionPolicy) -> serde_json::Value {
@@ -16,7 +20,7 @@ pub(crate) fn workflow_state_json_with_activity(
 
 pub(crate) fn workflow_state_json_from_sources(
     policy: &AcpResolvedSessionPolicy,
-    workplan_row: Option<&crate::core::acp_plan_mode::AcpPlanModeSessionRow>,
+    workplan_row: Option<&den_runtime::acp_plan_mode::AcpPlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> serde_json::Value {
     turn_state::turn_state_from_sources(policy, workplan_row, activity_plan)

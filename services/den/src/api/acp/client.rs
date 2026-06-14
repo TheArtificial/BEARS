@@ -3,11 +3,13 @@ use uuid::Uuid;
 
 use crate::{
     api::acp::AcpPromptRequest,
-    core::tools::{
+    errors::CustomError,
+    core::{
+        tools::{
         descriptor::builtin_den_tool_descriptors_for_pair_acp_surface,
         memfs::filter_client_tools_for_native_runtime,
     },
-    errors::CustomError,
+    },
 };
 
 pub(crate) fn tools_enabled_for_client(client: &str) -> bool {

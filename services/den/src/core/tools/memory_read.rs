@@ -14,12 +14,14 @@ use den_core::tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
 
 use crate::{
     config::Config,
+    errors::{CustomError, DenError},
     core::{
-        bears::BearProfile,
-        memory::{tools as sqlite_memory, MemoryStoreManager},
         tools::{prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext},
     },
-    errors::{CustomError, DenError},
+};
+use den_runtime::{
+    bears::BearProfile,
+    memory::{tools as sqlite_memory, MemoryStoreManager},
 };
 
 /// Concrete [`RoleMemoryStore`] over the runtime config (native SQLite + legacy MemFS).

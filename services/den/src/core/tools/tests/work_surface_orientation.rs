@@ -1,7 +1,6 @@
 use serde_json::json;
 
 use crate::core::{
-    bears::BearProfile,
     tools::{
         session::DenToolInvocationContext,
         work_surface::{
@@ -10,6 +9,7 @@ use crate::core::{
         },
     },
 };
+use den_runtime::bears::BearProfile;
 
 fn context_for(role: BearProfile) -> DenToolInvocationContext {
     DenToolInvocationContext {

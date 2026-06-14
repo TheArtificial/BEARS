@@ -17,9 +17,11 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
-    core::user::email_settings::{self, UserEmailBasics, UserEmailSettings, VerifyAttemptStatus},
     errors::CustomError,
     web::{self, AppState},
+    core::{
+        user::email_settings::{self, UserEmailBasics, UserEmailSettings, VerifyAttemptStatus},
+    },
 };
 
 static VERIFY_TOKEN: &str = "send_token";
@@ -206,7 +208,7 @@ async fn verify_email_process(
         verify_outcome.status,
         VerifyAttemptStatus::Success | VerifyAttemptStatus::Redundant
     ) {
-        let bears = crate::core::bears::db::list_bears_for_user(&sqlx_pool, user_id).await?;
+        let bears = den_runtime::bears::db::list_bears_for_user(&sqlx_pool, user_id).await?;
         if bears.is_empty() {
             return Ok(Redirect::to("/onboarding/first-bear").into_response());
         }

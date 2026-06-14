@@ -9,9 +9,12 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::core::reflection_conductor::*;
-use crate::core::{
-    bears::BearProfile, memory::MemoryStoreManager, memory_curate_executor, memory_proposals,
+use den_runtime::reflection_conductor::*;
+use den_runtime::{
+    bears::BearProfile,
+    memory::MemoryStoreManager,
+    memory_curate_executor,
+    memory_proposals,
 };
 
 

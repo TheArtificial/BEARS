@@ -2,18 +2,18 @@ use sqlx::PgPool;
 
 use crate::{
     config::Config,
-    core::{
-        acp_sessions,
-        bears::{model::BearProfile, Bear},
-        conversation_persistence,
-        native_runtime::NativeRuntimeConversationBackend,
-        role_runtime_registry::DenNativeProfileRegistry,
-        runtime_contracts::{
+    errors::CustomError,
+};
+use den_runtime::{
+    acp_sessions,
+    bears::{model::BearProfile, Bear},
+    conversation_persistence,
+    native_runtime::NativeRuntimeConversationBackend,
+    role_runtime_registry::DenNativeProfileRegistry,
+    runtime_contracts::{
             EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
             RuntimeConversationBackend, RuntimeConversationRef,
         },
-    },
-    errors::CustomError,
 };
 
 // Pure conversation-id predicates now live in `den-runtime`; re-export them so this module's
@@ -274,7 +274,7 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     binding: &RoleRuntimeBinding,
     conversation: &RuntimeConversationRef,
-) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
+) -> Result<den_runtime::runtime_contracts::RuntimeHistoryPage, CustomError> {
     backend.load_history(binding, conversation).await.map_err(CustomError::from)
 }
 

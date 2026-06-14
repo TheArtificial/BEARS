@@ -9,16 +9,18 @@ use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 use crate::{
     config::Config,
+    startup::run_sqlx_migrations,
     core::{
         acp_tokens,
-        bears::{
+        user::{self, db as user_db, email_settings},
+    },
+};
+use den_runtime::{
+    bears::{
             db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
             provision::{self},
             runtime_plan::default_runtime_plan,
         },
-        user::{self, db as user_db, email_settings},
-    },
-    startup::run_sqlx_migrations,
 };
 
 pub const SMOKE_USERNAME: &str = "alice";

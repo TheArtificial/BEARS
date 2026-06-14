@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::{api::service::ApiState, core::user, errors::CustomError};
+use crate::{
+    api::service::ApiState,
+    errors::CustomError,
+    core::user,
+};
 
 #[derive(Serialize, ToSchema)]
 pub struct UserResponse {

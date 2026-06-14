@@ -11,11 +11,11 @@ use uuid::Uuid;
 use den_core::tools::identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser};
 
 use crate::{
-    core::{
-        bears::{db as bears_db, BearProfile},
-        user,
-    },
     errors::{CustomError, DenError},
+    core::user,
+};
+use den_runtime::{
+    bears::{db as bears_db, BearProfile},
 };
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {

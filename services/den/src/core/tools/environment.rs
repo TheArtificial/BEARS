@@ -7,15 +7,15 @@ use den_core::tools::environment::EnvironmentOps;
 
 use crate::{
     config::Config,
+    errors::{CustomError, DenError},
     core::{
-        bears::BearProfile,
         tools::{
             memory_read::memory_status_value, memory_write::source_acp_session_id,
             session::DenToolInvocationContext,
         },
     },
-    errors::{CustomError, DenError},
 };
+use den_runtime::bears::BearProfile;
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.
 pub(crate) struct DenEnvironmentOps<'a> {

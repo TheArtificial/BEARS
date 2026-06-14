@@ -1,11 +1,11 @@
 use crate::core::{
-    bears::BearProfile,
     tools::{
         aliases::is_builtin_den_tool,
         constants::*,
         descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
     },
 };
+use den_runtime::bears::BearProfile;
 use std::collections::HashSet;
 
 #[test]

@@ -1,11 +1,7 @@
 use crate::{
     config::Config,
+    errors::CustomError,
     core::{
-        bears::BearProfile,
-        prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
-        prompt_memory_blocks::{
-            PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
-        },
         tools::{
             arguments::DenToolChannelContext,
             memory_read::memory_status_value,
@@ -13,7 +9,13 @@ use crate::{
             session::DenToolInvocationContext,
         },
     },
-    errors::CustomError,
+};
+use den_runtime::{
+    bears::BearProfile,
+    prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
+    prompt_memory_blocks::{
+            PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
+        },
 };
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
@@ -249,9 +251,9 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
             .await
             .expect("seed prompt memory block");
     }
-    let selection = crate::core::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
+    let selection = den_runtime::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
         &pool,
-        crate::core::prompt_memory_block_store::PromptMemoryBlockQuery {
+        den_runtime::prompt_memory_block_store::PromptMemoryBlockQuery {
             bear_id: Some(bear_id),
             profile_slug,
             session_id: &session_id,
@@ -260,9 +262,9 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
     )
     .await
     .expect("runtime selection");
-    let compiled = crate::core::prompt_memory_blocks::compile_prompt_memory_blocks(
+    let compiled = den_runtime::prompt_memory_blocks::compile_prompt_memory_blocks(
         &selection.blocks,
-        crate::core::prompt_memory_blocks::PromptMemoryCompilationInput {
+        den_runtime::prompt_memory_blocks::PromptMemoryCompilationInput {
             role: profile_slug,
             work_surfaces: std::slice::from_ref(&work_surface),
             session_id: &session_id,

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::core::{
+use den_runtime::{
     runtime_stream_parser::runtime_byte_stream_to_event_stream,
     runtime_stream_parser::runtime_stream_event_from_letta_json,
     runtime_contracts::{RuntimeEventParser, RuntimeStreamEvent},
@@ -23,20 +23,20 @@ async fn continuation_byte_stream_adapter_emits_semantic_event_and_terminal_comp
     let first = stream.next().await.expect("first event").expect("ok event");
     assert!(matches!(
         first,
-        RuntimeStreamEvent::Semantic(crate::core::runtime_contracts::RuntimeSemanticEvent::AssistantTextDelta { text })
+        RuntimeStreamEvent::Semantic(den_runtime::runtime_contracts::RuntimeSemanticEvent::AssistantTextDelta { text })
             if text == "hello"
     ));
 
     let second = stream.next().await.expect("terminal event").expect("ok event");
     assert!(matches!(
         second,
-        RuntimeStreamEvent::Semantic(crate::core::runtime_contracts::RuntimeSemanticEvent::TurnCompleted { .. })
+        RuntimeStreamEvent::Semantic(den_runtime::runtime_contracts::RuntimeSemanticEvent::TurnCompleted { .. })
     ));
 }
 
 #[tokio::test]
 async fn requires_approval_pause_does_not_synthesize_turn_completion() {
-    use crate::core::runtime_contracts::RuntimeSemanticEvent;
+    use den_runtime::runtime_contracts::RuntimeSemanticEvent;
 
     // A turn that pauses for approval (tool request + `requires_approval` stop) then closes
     // its byte stream must NOT get a synthetic `TurnCompleted`. The turn is awaiting a tool

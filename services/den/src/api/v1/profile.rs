@@ -13,8 +13,8 @@ use crate::{
         oauth::{error::OAuthError, jwt::create_jwt_manager},
         service::ApiState,
     },
-    core::user,
     errors::CustomError,
+    core::user,
 };
 
 #[derive(Serialize, ToSchema)]

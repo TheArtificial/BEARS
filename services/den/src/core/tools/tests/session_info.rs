@@ -1,5 +1,4 @@
 use crate::core::{
-    bears::BearProfile,
     tools::{
         constants::{
             DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_MEMORY_READ_PROVIDER,
@@ -10,6 +9,7 @@ use crate::core::{
         descriptor::builtin_den_tool_descriptors_for_profile,
     },
 };
+use den_runtime::bears::BearProfile;
 
 #[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {

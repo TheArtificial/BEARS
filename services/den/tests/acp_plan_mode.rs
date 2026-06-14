@@ -1,11 +1,9 @@
 //! Integration coverage for ACP pair plan mode. Requires `DATABASE_URL`.
 
-use den::{
-    core::{
-        acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
-        bears::{db as bears_db, db::BearParams, BearProfile},
-    },
-    startup::run_sqlx_migrations,
+use den::startup::run_sqlx_migrations;
+use den_runtime::{
+    acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
+    bears::{db as bears_db, db::BearParams, BearProfile},
 };
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;

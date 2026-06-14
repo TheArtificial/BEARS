@@ -15,12 +15,12 @@ use uuid::Uuid;
 use den_core::tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
 use crate::{
-    core::{
-        bears::BearProfile,
-        memory::{tools as sqlite_memory, MemoryStoreManager},
-        tools::session::DenToolInvocationContext,
-    },
     errors::DenError,
+    core::tools::session::DenToolInvocationContext,
+};
+use den_runtime::{
+    bears::BearProfile,
+    memory::{tools as sqlite_memory, MemoryStoreManager},
 };
 
 /// Concrete [`WorkSurfaceOps`] over the runtime memory stores.

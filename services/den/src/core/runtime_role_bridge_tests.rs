@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::{
+        use den_runtime::{
         acp_tool_turns::AcpToolTurnCoordinator,
         acp_turn_controller::AcpActiveTurnCancelRegistry,
         role_runtime::{

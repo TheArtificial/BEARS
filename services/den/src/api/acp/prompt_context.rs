@@ -7,23 +7,23 @@ use crate::{
             runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
         },
     }, service::ApiState},
-    core::{
-        acp_plan_mode,
-        acp_tools::AcpResolvedSessionPolicy,
-        prompt_memory_block_store::{
+    errors::CustomError,
+    core::work_plans::WorkPlanProjection,
+};
+use den_runtime::{
+    acp_plan_mode,
+    acp_tools::AcpResolvedSessionPolicy,
+    prompt_memory_block_store::{
             select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
             PromptMemoryRuntimeSelection,
         },
-        prompt_memory_blocks::{
+    prompt_memory_blocks::{
             compile_prompt_memory_blocks, render_prompt_memory_block_context,
             PromptMemoryCompilationInput,
         },
-        runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
-        runtime_compaction_observability::RuntimeCompactionEventStatus,
-        runtime_conversations::RuntimeCompactionTriggerKind,
-        work_plans::WorkPlanProjection,
-    },
-    errors::CustomError,
+    runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
+    runtime_compaction_observability::RuntimeCompactionEventStatus,
+    runtime_conversations::RuntimeCompactionTriggerKind,
 };
 
 
@@ -266,7 +266,7 @@ pub(super) async fn acp_plan_mode_prompt_context(
 }
 
 #[cfg(test)]
-use crate::core::prompt_memory_blocks::{
+use den_runtime::prompt_memory_blocks::{
     PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
 };
 

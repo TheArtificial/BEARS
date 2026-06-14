@@ -13,8 +13,8 @@ use crate::{
         oauth::OAuthScope,
         service::ApiState,
     },
-    core::acp_tokens,
     errors::CustomError,
+    core::acp_tokens,
 };
 
 pub(in crate::api::acp) async fn auth_check(

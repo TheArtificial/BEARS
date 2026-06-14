@@ -83,7 +83,7 @@ pub struct AppState {
     template_env: Environment<'static>,
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
-    pub bifrost: std::sync::Arc<crate::core::bifrost::BifrostClient>,
+    pub bifrost: std::sync::Arc<den_runtime::bifrost::BifrostClient>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
 
@@ -99,7 +99,7 @@ impl AppState {
         config: Arc<Config>,
     ) -> Self {
         let bifrost =
-            std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
         Self {
             sqlx_pool,
             template_env,
@@ -175,7 +175,7 @@ pub async fn server_with_state(
     let memory_serve =
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
-    let bifrost = std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
+    let bifrost = std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
 
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(

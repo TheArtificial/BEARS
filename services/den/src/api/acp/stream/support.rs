@@ -5,13 +5,13 @@ use crate::{
     api::acp::{
         AcpStreamContext,
     },
-    core::{
-        acp_events::{
+};
+use den_runtime::{
+    acp_events::{
             acp_event_adapter_type, acp_event_has_visible_output, AcpGatewayEvent,
             ToolCallAccumulator,
         },
-        acp_turn_controller::AcpTurnController,
-    },
+    acp_turn_controller::AcpTurnController,
 };
 
 
@@ -116,44 +116,44 @@ impl AcpStreamDiagnostics {
 
     pub(in crate::api::acp) fn observe_runtime_event(
         &mut self,
-        event: &crate::core::runtime_provider::RuntimeStreamEvent,
+        event: &den_runtime::runtime_provider::RuntimeStreamEvent,
     ) {
         self.parsed_events += 1;
         let runtime_type = match event {
-            crate::core::runtime_provider::RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
+            den_runtime::runtime_provider::RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
                 "untranslated_provider_event"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "assistant_text_delta"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::StatusText { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::StatusText { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "status_text"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::RunProgress { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::RunProgress { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "run_progress"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::RunPaused { reason, .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::RunPaused { reason, .. },
             ) => {
                 if reason == "awaiting_approval" || reason == "requires_approval" {
                     self.saw_requires_approval_stop = true;
                 }
                 "run_paused"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id,
                     ..
                 },
@@ -163,22 +163,22 @@ impl AcpStreamDiagnostics {
                 *count += 1;
                 "tool_call_requested"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::ToolCallFinished { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallFinished { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "tool_call_finished"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::Error { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::Error { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "error"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::ConversationResolved {
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::ConversationResolved {
                     conversation,
                 },
             ) => {
@@ -188,21 +188,21 @@ impl AcpStreamDiagnostics {
                 }
                 "conversation_resolved"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCompleted { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCompleted { .. },
             ) => {
                 self.saw_turn_complete = true;
                 "turn_completed"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::TurnFailed { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnFailed { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "turn_failed"
             }
-            crate::core::runtime_provider::RuntimeStreamEvent::Semantic(
-                crate::core::runtime_provider::RuntimeSemanticEvent::TurnCancelled { .. },
+            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
+                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCancelled { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;

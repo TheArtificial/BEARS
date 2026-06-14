@@ -5,6 +5,8 @@ use crate::core::{
         ensure_acp_session_conversation_with_backend, AcpConversationSelectionSource,
         AcpConversationService,
     },
+};
+use den_runtime::{
     acp_sessions::AcpSessionRow,
     runtime_contracts::{
         classify_runtime_error, runtime_error_is_conflict_pending_approval,
@@ -170,7 +172,7 @@ async fn ensure_prompt_conversation_reuses_resolved_session_conversation() {
 async fn conversation_service_skips_backend_verify_for_canonical_rows(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::core::{
+        use den_runtime::{
         bears::{db::create_bear, db::BearParams},
         conversation_persistence::ensure_conversation_for_external_id,
     };
@@ -221,7 +223,7 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
 async fn native_conversation_backend_persists_den_conv_rows(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::core::{
+        use den_runtime::{
         bears::{db::create_bear, db::BearParams},
         conversation_persistence::get_conversation_for_external_id,
         native_runtime::NativeRuntimeConversationBackend,
