@@ -4,7 +4,7 @@
 //! prefer fixing warnings locally and shrinking those module allows over time.
 pub mod api;
 pub use den_http::auth_backend;
-pub mod build_info;
+pub use den_http::build_info;
 pub use den_core::config;
 pub mod core;
 pub use den_http::errors;

@@ -7,6 +7,7 @@
 //! - [`user`] / [`email`] — the identity layer the auth backend depends on.
 pub mod api_utils;
 pub mod auth_backend;
+pub mod build_info;
 pub mod email;
 pub mod errors;
 pub mod user;

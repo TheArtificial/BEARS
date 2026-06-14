@@ -40,6 +40,7 @@ validator = { version = "0.20", features = ["derive"] }
 
 [build-dependencies]
 minijinja-embed = "2.7.0"
+time = { version = "0.3.37", features = ["formatting"] }
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
-use crate::core::tools::constants::{
+use den_core::tools::constants::{
     DEN_PLAN_MODE_CANCEL_PROVIDER, DEN_PLAN_MODE_ENTER_PROVIDER,
     DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
     DEN_PLAN_MODE_STATUS_PROVIDER, DEN_WORK_PLAN_GET_STATUS_PROVIDER,

@@ -246,7 +246,7 @@ pub(super) async fn permission_result_inner(
     let result = if matches!(decision, "allow_once" | "allow_url" | "allow_host") {
         invoke_acp_den_tool(
             &pending.context,
-            crate::core::tools::constants::DEN_WEB_FETCH,
+            den_core::tools::constants::DEN_WEB_FETCH,
             &pending.provider_name,
             &pending.tool_call_id,
             pending.approval_request_id.as_deref(),

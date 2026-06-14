@@ -408,7 +408,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             items.iter().any(|item| {
                 item.get("name")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|name| name == crate::core::tools::constants::DEN_CONVERSATION_SET_TITLE_PROVIDER)
+                    .is_some_and(|name| name == den_core::tools::constants::DEN_CONVERSATION_SET_TITLE_PROVIDER)
             })
         });
     tracing::info!(

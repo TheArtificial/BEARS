@@ -686,7 +686,7 @@ async fn maybe_handle_direct_capabilities_list(
     if !den_runtime::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
     }
-    let text = crate::core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
+    let text = den_core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
     conversation_persistence::append_message(
         pool,
         canonical_conversation_id,
