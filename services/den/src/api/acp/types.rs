@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     api::{auth::ApiError, service::ApiState},
     core::{
-        acp_letta_events::AcpGatewayEvent,
+        acp_events::AcpGatewayEvent,
         acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
         acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
         memory::MemoryStoreManager,

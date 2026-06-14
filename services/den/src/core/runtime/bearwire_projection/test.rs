@@ -1,5 +1,5 @@
 use crate::core::{
-    acp_letta_events::AcpGatewayEvent,
+    acp_events::AcpGatewayEvent,
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
     },

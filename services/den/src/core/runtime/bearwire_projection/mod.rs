@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 use crate::core::{
-    acp_letta_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
+    acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
     runtime_contracts::{
         RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
     },

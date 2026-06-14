@@ -6,7 +6,7 @@ use futures::Stream;
 
 use crate::{
     core::{
-        letta_runtime_stream_parser::{
+        runtime_stream_parser::{
             find_sse_frame_end, strip_trailing_sse_delimiter_owned,
         },
         llm::{openai_sse_frame_to_runtime_events, OpenAiStreamAccumulator},

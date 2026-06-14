@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::{config::Config, core::letta::LettaModelOption, errors::CustomError};
+use crate::{config::Config, core::agent_assist::ModelOption, errors::CustomError};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BifrostModelMetadata {
@@ -25,7 +25,7 @@ pub struct BifrostModelMetadata {
 }
 
 impl BifrostModelMetadata {
-    pub fn to_letta_model_option(&self) -> LettaModelOption {
+    pub fn to_letta_model_option(&self) -> ModelOption {
         let label = match (self.display_name.as_deref(), self.max_output_tokens) {
             (Some(name), Some(out)) => format!(
                 "{} ({} ctx / {} out)",
@@ -46,7 +46,7 @@ impl BifrostModelMetadata {
                 format_tokens(self.context_window)
             ),
         };
-        LettaModelOption {
+        ModelOption {
             handle: self.handle.clone(),
             label,
             context_window: Some(self.context_window),

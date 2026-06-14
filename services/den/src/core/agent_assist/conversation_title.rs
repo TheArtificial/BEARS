@@ -65,7 +65,7 @@ pub fn first_user_message_text_for_title(messages_body: &Value) -> Option<String
             continue;
         }
         let text = message_text(inner).or_else(|| message_text(msg))?;
-        let without_harness = super::strip_letta_harness_for_user(&text);
+        let without_harness = super::strip_harness_for_user(&text);
         let cleaned = strip_noise_for_title_source(&without_harness);
         if cleaned.trim().is_empty() {
             continue;

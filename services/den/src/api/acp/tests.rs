@@ -49,7 +49,7 @@ use crate::core::prompt_memory_blocks::{
             tool_results::acp_tool_result_response_from_delivery,
         }, service::ApiState},
         core::{
-            acp_letta_events::AcpGatewayEvent,
+            acp_events::AcpGatewayEvent,
             acp_runtime::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
@@ -57,7 +57,7 @@ use crate::core::prompt_memory_blocks::{
             acp_turn_runner::{
                 ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             },
-            letta_runtime_stream_parser::{
+            runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
                 runtime_byte_stream_to_event_stream,
                 runtime_stream_event_from_letta_json,
@@ -81,7 +81,7 @@ use crate::core::prompt_memory_blocks::{
             acp_turn_controller::{
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
-            letta::PendingApprovalDenialMode,
+            agent_assist::PendingApprovalDenialMode,
             role_runtime::{RoleRuntime, RoleTurnScope},
         },
     };

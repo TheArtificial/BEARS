@@ -11,7 +11,7 @@ static SYSTEM_REMINDER_BLOCKS: OnceLock<Regex> = OnceLock::new();
 static SUBAGENT_FORK_BLOB: OnceLock<Regex> = OnceLock::new();
 
 /// Human-visible assistant (and title-derived) text: remove reminder markup and subagent fork noise.
-pub fn strip_letta_harness_for_user(s: &str) -> String {
+pub fn strip_harness_for_user(s: &str) -> String {
     sanitize_visible_transcript_text(s)
 }
 
@@ -128,28 +128,28 @@ mod tests {
     #[test]
     fn strips_subagent_fork_in_system_reminder() {
         let s = "If you want, I can help.\n<system-reminder>\nYou have been forked from the primary conversational thread to run as an independent subagent.\nYou CANNOT ask questions mid-execution - all instructions are provided upfront.\n</system-reminder>";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out.trim(), "If you want, I can help.");
     }
 
     #[test]
     fn strips_system_underscore_tag() {
         let s = "Hi\n<system_reminder>x</system_reminder>";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out, "Hi");
     }
 
     #[test]
     fn truncates_unclosed_opener() {
         let s = "Hello <system-reminder>oops";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out, "Hello");
     }
 
     #[test]
     fn subagent_blob_plaintext_without_tags() {
         let s = "Line one.\nYou have been forked from the primary conversational thread to run as an independent subagent.\nYou CANNOT ask questions mid-execution - all instructions are provided upfront.\n";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out.trim(), "Line one.");
     }
 
@@ -183,14 +183,14 @@ mod tests {
     #[test]
     fn strips_acp_prompt_scaffolding_prefix_when_tags_are_lost() {
         let s = "ACP workflow state for this session: workflow_id=123 workflow_state=submitted submitted_plan_present=true approval_status=awaiting_human_approval execution_unlocked=false. Workflow state is authoritative; artifact path is audit context only.\n\nPlease implement the fix.";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out, "Please implement the fix.");
     }
 
     #[test]
     fn strips_authoritative_workflow_state_prefix_when_tags_are_lost() {
         let s = "AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`Plan`; tool_classes=read_only; workplan.state=`submitted`; state_authority=current turn capabilities override prior-turn assumptions.\n\nWhat changed?";
-        let out = strip_letta_harness_for_user(s);
+        let out = strip_harness_for_user(s);
         assert_eq!(out, "What changed?");
     }
 }

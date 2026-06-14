@@ -6,9 +6,9 @@ use crate::{
         AcpStreamContext,
     },
     core::{
-        acp_letta_events::{
+        acp_events::{
             acp_event_adapter_type, acp_event_has_visible_output, AcpGatewayEvent,
-            LettaToolCallAccumulator,
+            ToolCallAccumulator,
         },
         acp_turn_controller::AcpTurnController,
     },
@@ -46,7 +46,7 @@ pub(in crate::api::acp) struct AcpStreamDiagnostics {
     pub(in crate::api::acp) native_event_types: BTreeMap<String, usize>,
     pub(in crate::api::acp) adapter_event_types: BTreeMap<String, usize>,
     pub(in crate::api::acp) tool_request_counts: BTreeMap<String, usize>,
-    pub(in crate::api::acp) tool_call_accumulator: LettaToolCallAccumulator,
+    pub(in crate::api::acp) tool_call_accumulator: ToolCallAccumulator,
     pub(in crate::api::acp) untranslated_event_classes: BTreeMap<String, usize>,
     pub(in crate::api::acp) unmapped_event_samples: Vec<String>,
     pub(in crate::api::acp) run_ids: Vec<String>,

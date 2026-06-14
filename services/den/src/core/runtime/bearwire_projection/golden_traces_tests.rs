@@ -2,7 +2,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use crate::core::{
-    acp_letta_events::acp_event_to_adapter_sse,
+    acp_events::acp_event_to_adapter_sse,
     native_runtime::openai_byte_stream_to_event_stream,
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,

@@ -7,7 +7,7 @@ fn semantic_turn_completed_uses_direct_gateway_projection_shape() {
     );
     assert!(matches!(
         projected.as_slice(),
-        [crate::core::acp_letta_events::AcpGatewayEvent::TurnComplete { outcome }]
+        [crate::core::acp_events::AcpGatewayEvent::TurnComplete { outcome }]
             if outcome == "ok"
     ));
 }
@@ -23,7 +23,7 @@ fn semantic_run_paused_uses_direct_gateway_projection_shape() {
     );
     assert!(matches!(
         projected.as_slice(),
-        [crate::core::acp_letta_events::AcpGatewayEvent::StatusText { text }]
+        [crate::core::acp_events::AcpGatewayEvent::StatusText { text }]
             if text == "Waiting for approval."
     ));
 }

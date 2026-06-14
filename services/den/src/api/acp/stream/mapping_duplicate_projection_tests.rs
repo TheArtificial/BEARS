@@ -2,7 +2,7 @@ use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_ev
 use crate::api::acp::stream::support::AcpStreamDiagnostics;
 use crate::api::acp::AcpStreamContext;
 use crate::core::acp_tool_turns::AcpToolTurnCoordinator;
-use crate::core::acp_letta_events::AcpGatewayEvent;
+use crate::core::acp_events::AcpGatewayEvent;
 use crate::core::role_runtime::{RoleRuntime, RoleTurnScope};
 use crate::core::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;

@@ -1,5 +1,5 @@
 pub mod acp;
-pub use acp::letta_events as acp_letta_events;
+pub use acp::events as acp_events;
 pub use acp::plan_mode as acp_plan_mode;
 pub use acp::runtime as acp_runtime;
 pub use acp::sessions as acp_sessions;
@@ -24,8 +24,8 @@ pub use conversation::message_types as conversation_message_types;
 pub use conversation::persistence as conversation_persistence;
 pub mod tools;
 pub mod email;
-pub mod letta;
-pub use letta::runtime_stream_parser as letta_runtime_stream_parser;
+pub mod agent_assist;
+pub use agent_assist::runtime_stream_parser;
 pub use memory::bear_observations;
 pub use memory::curate_executor as memory_curate_executor;
 pub use memory::proposals as memory_proposals;

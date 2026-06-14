@@ -2,8 +2,8 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use crate::core::{
-    letta_runtime_stream_parser::runtime_byte_stream_to_event_stream,
-    letta_runtime_stream_parser::runtime_stream_event_from_letta_json,
+    runtime_stream_parser::runtime_byte_stream_to_event_stream,
+    runtime_stream_parser::runtime_stream_event_from_letta_json,
     runtime_contracts::{RuntimeEventParser, RuntimeStreamEvent},
 };
 

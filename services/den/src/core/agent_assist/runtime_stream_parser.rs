@@ -69,9 +69,9 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
         "ping" => None,
         "assistant_message" => {
             let text =
-                crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
+                crate::core::acp_events::letta_stream_text_preserving_whitespace(inner)
                     .or_else(|| {
-                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
+                        crate::core::acp_events::letta_stream_text_preserving_whitespace(
                             event,
                         )
                     })
@@ -92,10 +92,10 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                         .map(str::to_string)
                 })
                 .or_else(|| {
-                    crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
+                    crate::core::acp_events::letta_stream_text_preserving_whitespace(inner)
                 })
                 .or_else(|| {
-                    crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event)
+                    crate::core::acp_events::letta_stream_text_preserving_whitespace(event)
                 })
                 .unwrap_or_default();
             Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
@@ -221,9 +221,9 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     }),
             }),
         ),
-        _ => crate::core::acp_letta_events::native_letta_conversation_resolved_event(event).map(
+        _ => crate::core::acp_events::native_letta_conversation_resolved_event(event).map(
             |evt| match evt {
-                crate::core::acp_letta_events::AcpGatewayEvent::ConversationResolved {
+                crate::core::acp_events::AcpGatewayEvent::ConversationResolved {
                     conversation_id,
                 } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
                     conversation: crate::core::runtime_contracts::RuntimeConversationRef {

@@ -1,5 +1,5 @@
 use crate::{
-    core::{acp_letta_events::AcpGatewayEvent, letta::normalize_display_status_text},
+    core::{acp_events::AcpGatewayEvent, agent_assist::normalize_display_status_text},
 };
 
 use super::text_utils::{

@@ -3,7 +3,7 @@ use crate::{
     api::acp::types::PersistedToolRequestEffect,
     api::acp::stream::support::AcpStreamDiagnostics,
     core::{
-        acp_letta_events::{
+        acp_events::{
             map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
         },
         runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,

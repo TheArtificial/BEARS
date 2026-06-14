@@ -3,10 +3,10 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        acp_letta_events::AcpGatewayEvent,
+        acp_events::AcpGatewayEvent,
         acp_sessions,
         conversation_persistence::PersistedConversationMessage,
-        letta::sanitize_visible_transcript_text,
+        agent_assist::sanitize_visible_transcript_text,
         runtime_compaction::{
             choose_compaction_decision, semantic_groups_from_runtime_messages,
             RuntimeCompactionDecision, RuntimeCompactionPolicy,

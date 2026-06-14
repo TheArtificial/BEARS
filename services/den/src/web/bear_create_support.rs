@@ -15,7 +15,7 @@ use crate::{
             },
             context_profile_from_json, context_profile_to_json, db as bears_db, db::BearParams, templates::first_bear_template, Bear, BearProfile,
         },
-        letta::{LettaModelOption, LettaToolOption},
+        agent_assist::{ModelOption, ToolOption},
     },
     errors::CustomError,
     web::AppState,
@@ -66,13 +66,13 @@ pub const LETTA_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
 /// If the bear already has a `default_model` not returned by the catalog, keep it selectable (legacy / BYOK).
 pub fn ensure_stored_model_in_options_for_handle(
     stored_model: Option<&str>,
-    mut options: Vec<LettaModelOption>,
-) -> Vec<LettaModelOption> {
+    mut options: Vec<ModelOption>,
+) -> Vec<ModelOption> {
     if let Some(h) = stored_model.map(str::trim).filter(|s| !s.is_empty()) {
         if !options.iter().any(|m| m.handle == h) {
             options.insert(
                 0,
-                LettaModelOption {
+                ModelOption {
                     handle: h.to_string(),
                     label: format!("{h} (stored on bear)"),
                     context_window: None,
@@ -85,7 +85,7 @@ pub fn ensure_stored_model_in_options_for_handle(
 }
 
 pub fn validate_default_model_for_letta(
-    letta_fetch: &Option<Result<Vec<LettaModelOption>, CustomError>>,
+    letta_fetch: &Option<Result<Vec<ModelOption>, CustomError>>,
     default_model_trim: &str,
     validation_errors: &mut ValidationErrors,
 ) {
@@ -206,7 +206,7 @@ pub async fn bear_configuration_page_context(
         letta_model_options,
         letta_models_fetch_error,
         letta_tools_configured => false,
-        letta_tool_options => Vec::<LettaToolOption>::new(),
+        letta_tool_options => Vec::<ToolOption>::new(),
         letta_tools_fetch_error => Option::<String>::None,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
     }
@@ -269,7 +269,7 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
 /// Bifrost-first model list for bear create flows that do not depend on Letta.
 pub async fn model_catalog_select_context(
     state: &AppState,
-) -> (bool, Vec<LettaModelOption>, Option<String>) {
+) -> (bool, Vec<ModelOption>, Option<String>) {
     if state.bifrost.is_enabled() {
         match state.bifrost.list_models().await {
             Ok(models) if models.is_empty() => (
@@ -297,7 +297,7 @@ pub async fn model_catalog_select_context(
 }
 
 pub fn validate_default_model_for_catalog(
-    catalog_fetch: &Option<Result<Vec<LettaModelOption>, CustomError>>,
+    catalog_fetch: &Option<Result<Vec<ModelOption>, CustomError>>,
     default_model_trim: &str,
     validation_errors: &mut ValidationErrors,
 ) {
@@ -322,7 +322,7 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
         letta_model_options,
         letta_models_fetch_error,
         letta_tools_configured => false,
-        letta_tool_options => Vec::<LettaToolOption>::new(),
+        letta_tool_options => Vec::<ToolOption>::new(),
         letta_tools_fetch_error => Option::<String>::None,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
     }

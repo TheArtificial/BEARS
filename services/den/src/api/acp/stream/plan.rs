@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     api::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry,
     core::{
-        acp_letta_events::AcpGatewayEvent, acp_plan_mode,
+        acp_events::AcpGatewayEvent, acp_plan_mode,
         acp_tool_turns::AcpToolResultRequest, turn_state,
     },
 };

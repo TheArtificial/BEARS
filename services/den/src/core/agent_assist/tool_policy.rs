@@ -6,7 +6,7 @@
 //! **Git-backed memory:** `git_enabled: true` on create/patch matches Context Repository / memfs
 //! server-side flags (see Letta API agent create docs).
 
-use super::LettaToolOption;
+use super::ToolOption;
 
 /// Tool `name` values (as returned by Letta `GET /v1/tools/`) to never attach to bears.
 pub const LEGACY_MEMORY_TOOL_NAMES: &[&str] = &[
@@ -28,7 +28,7 @@ pub fn is_legacy_memory_tool_name(name: &str) -> bool {
 }
 
 /// Build id → tool name map from the Letta catalog (latest id wins if duplicated).
-fn id_to_name_map(catalog: &[LettaToolOption]) -> std::collections::HashMap<String, String> {
+fn id_to_name_map(catalog: &[ToolOption]) -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
     for t in catalog {
         m.insert(t.id.clone(), t.label.clone());
@@ -39,7 +39,7 @@ fn id_to_name_map(catalog: &[LettaToolOption]) -> std::collections::HashMap<Stri
 /// Drop selected tool ids whose catalog name matches a legacy memory tool. Ids not present in
 /// `catalog` are kept (forward-compatible with new tools).
 pub fn filter_legacy_memory_tool_ids(
-    catalog: &[LettaToolOption],
+    catalog: &[ToolOption],
     selected_ids: &[String],
 ) -> Vec<String> {
     let map = id_to_name_map(catalog);
@@ -62,11 +62,11 @@ mod tests {
     #[test]
     fn filters_known_legacy_by_label() {
         let catalog = vec![
-            LettaToolOption {
+            ToolOption {
                 id: "a".into(),
                 label: "core_memory_append".into(),
             },
-            LettaToolOption {
+            ToolOption {
                 id: "b".into(),
                 label: "memory_insert".into(),
             },
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn keeps_unknown_ids() {
-        let catalog: Vec<LettaToolOption> = vec![];
+        let catalog: Vec<ToolOption> = vec![];
         let out = filter_legacy_memory_tool_ids(&catalog, &["unknown-1".into()]);
         assert_eq!(out, vec!["unknown-1"]);
     }

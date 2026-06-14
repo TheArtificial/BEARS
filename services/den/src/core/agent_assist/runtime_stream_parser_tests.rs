@@ -1,5 +1,5 @@
 use crate::core::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
-use crate::core::letta_runtime_stream_parser::runtime_stream_event_from_letta_json;
+use crate::core::runtime_stream_parser::runtime_stream_event_from_letta_json;
 
 #[test]
 fn reasoning_message_maps_to_semantic_status_text() {

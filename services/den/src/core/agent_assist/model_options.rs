@@ -6,7 +6,7 @@
 ///
 /// Constructed from Bifrost model metadata (see [`crate::core::llm::bifrost`]).
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct LettaModelOption {
+pub struct ModelOption {
     /// Value for the agent `model` / Den `default_model` (e.g. `gpt-4o`).
     pub handle: String,
     /// Human-facing label for the operator UI.
@@ -19,7 +19,7 @@ pub struct LettaModelOption {
 
 /// One selectable tool row for multi-select (`tool_ids` on create/patch).
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct LettaToolOption {
+pub struct ToolOption {
     pub id: String,
     pub label: String,
 }

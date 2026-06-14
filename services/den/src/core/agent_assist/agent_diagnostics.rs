@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LettaBlockRow {
+pub struct AgentBlockRow {
     pub id: Option<String>,
     pub label: Option<String>,
     /// Rough size of the block payload for overview tables (characters).
@@ -14,15 +14,15 @@ pub struct LettaBlockRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LettaToolRow {
+pub struct AgentToolRow {
     pub id: String,
     pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LettaAgentDiagnostics {
-    pub blocks: Vec<LettaBlockRow>,
-    pub tools: Vec<LettaToolRow>,
+pub struct AgentDiagnostics {
+    pub blocks: Vec<AgentBlockRow>,
+    pub tools: Vec<AgentToolRow>,
     pub raw_json: String,
 }
 
@@ -61,7 +61,7 @@ fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
-fn tool_rows_from_array(arr: &[Value]) -> Vec<LettaToolRow> {
+fn tool_rows_from_array(arr: &[Value]) -> Vec<AgentToolRow> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::<String>::new();
     for t in arr {
@@ -76,7 +76,7 @@ fn tool_rows_from_array(arr: &[Value]) -> Vec<LettaToolRow> {
         if id.is_empty() || !seen.insert(id.clone()) {
             continue;
         }
-        out.push(LettaToolRow { id, name });
+        out.push(AgentToolRow { id, name });
     }
     out
 }
@@ -90,9 +90,9 @@ fn agent_blocks_array(v: &Value) -> Option<&Vec<Value>> {
     })
 }
 
-impl LettaAgentDiagnostics {
+impl AgentDiagnostics {
     pub fn from_agent_json(v: &Value) -> Self {
-        let v = super::unwrap_letta_agent_document(v);
+        let v = super::unwrap_agent_document(v);
         let raw_json = serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
 
         let mut blocks = Vec::new();
@@ -103,7 +103,7 @@ impl LettaAgentDiagnostics {
                     .map(block_value_char_count)
                     .or_else(|| b.get("content").map(block_value_char_count));
                 let content = block_body_text(b);
-                blocks.push(LettaBlockRow {
+                blocks.push(AgentBlockRow {
                     id: pick_str(b, &["id"]),
                     label: pick_str(b, &["label", "name"]),
                     char_count,
@@ -142,7 +142,7 @@ mod tests {
             "blocks": [{"id": "b1", "label": "human", "value": "abc"}],
             "tools": [{"id": "tool-1", "name": "grep"}]
         });
-        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let d = AgentDiagnostics::from_agent_json(&v);
         assert_eq!(d.blocks.len(), 1);
         assert_eq!(d.blocks[0].label.as_deref(), Some("human"));
         assert_eq!(d.blocks[0].char_count, Some(3));
@@ -158,7 +158,7 @@ mod tests {
             "memory": {"blocks": [{"id": "b2", "label": "persona", "value": "x"}]},
             "tools": []
         });
-        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let d = AgentDiagnostics::from_agent_json(&v);
         assert_eq!(d.blocks.len(), 1);
         assert_eq!(d.blocks[0].label.as_deref(), Some("persona"));
         assert_eq!(d.blocks[0].content.as_deref(), Some("x"));
@@ -171,7 +171,7 @@ mod tests {
             "blocks": [{"id": "b1", "label": "cfg", "value": {"k": 1}}],
             "tools": []
         });
-        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let d = AgentDiagnostics::from_agent_json(&v);
         assert!(d.blocks[0].content.as_ref().unwrap().contains("\"k\""));
     }
 
@@ -181,7 +181,7 @@ mod tests {
             "id": "agent-x",
             "tools": ["tool-1", {"tool_id": "tool-2", "tool_name": "grep"}, "tool-1"]
         });
-        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let d = AgentDiagnostics::from_agent_json(&v);
         assert_eq!(d.tools.len(), 2);
         assert_eq!(d.tools[0].id, "tool-1");
         assert_eq!(d.tools[1].id, "tool-2");

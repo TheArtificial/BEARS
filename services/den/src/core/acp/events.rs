@@ -508,14 +508,14 @@ fn native_letta_tool_request_event_with_args(
 /// low-cost guardrail that reconstructs partial tool-call deltas into exactly one
 /// `AcpGatewayEvent::ToolRequest` and prevents early/duplicate local tool execution.
 #[derive(Debug, Default)]
-pub struct LettaToolCallAccumulator {
+pub struct ToolCallAccumulator {
     names: BTreeMap<String, String>,
     argument_buffers: BTreeMap<String, String>,
     emitted: BTreeMap<String, usize>,
     openai_delta_index_ids: BTreeMap<String, String>,
 }
 
-impl LettaToolCallAccumulator {
+impl ToolCallAccumulator {
     pub fn pending_argument_buffers(&self) -> usize {
         self.argument_buffers.len()
     }
@@ -752,7 +752,7 @@ fn tool_call_args_raw<'a>(
 
 pub fn map_native_letta_stream_event_to_acp_event_with_accumulator(
     event: &serde_json::Value,
-    accumulator: &mut LettaToolCallAccumulator,
+    accumulator: &mut ToolCallAccumulator,
 ) -> Option<AcpGatewayEvent> {
     if let Some(mapped) = accumulator.observe(event) {
         return Some(mapped);
@@ -1169,7 +1169,7 @@ mod tests {
             "args": { "path": "/workspace/a.txt" },
             "approval_request_id": "approval-call-seed",
         });
-        let mut accumulator = LettaToolCallAccumulator::default();
+        let mut accumulator = ToolCallAccumulator::default();
         let mapped =
             map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
                 .expect("mapped event");
@@ -1199,7 +1199,7 @@ mod tests {
                 "arguments": serde_json::json!({ "path": "/workspace/a.txt" }).to_string(),
             },
         });
-        let mut accumulator = LettaToolCallAccumulator::default();
+        let mut accumulator = ToolCallAccumulator::default();
         let mapped =
             map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
                 .expect("mapped event");
@@ -1335,7 +1335,7 @@ mod tests {
 
     #[test]
     fn accumulates_openai_style_tool_call_deltas() {
-        let mut accumulator = LettaToolCallAccumulator::default();
+        let mut accumulator = ToolCallAccumulator::default();
         let first = serde_json::json!({
             "type": "chat.completion.chunk",
             "choices": [{

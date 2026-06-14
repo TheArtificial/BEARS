@@ -2,7 +2,7 @@
 //! controller, tool turns, plan mode, the legacy Letta event mapping, and the
 //! ACP runtime glue.
 
-pub mod letta_events;
+pub mod events;
 pub mod plan_mode;
 pub mod runtime;
 pub mod sessions;

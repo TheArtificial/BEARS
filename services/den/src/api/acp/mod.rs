@@ -57,7 +57,7 @@ use crate::{
         service::ApiState,
     },
     core::{
-        acp_letta_events::AcpGatewayEvent,
+        acp_events::AcpGatewayEvent,
         acp_tools::{acp_provider_tool_names_for_client_context, resolve_session_policy_for_mode},
         acp_turn_controller::AcpActiveTurnCancelHandle,
         acp_turn_runner::{
