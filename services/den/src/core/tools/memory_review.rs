@@ -35,7 +35,7 @@ use crate::{
         memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
         reflection_conductor::{self, ProposalEnqueueParams},
     },
-    errors::{CustomError, DenError},
+    errors::DenError,
 };
 
 fn observation_record(row: &BearObservationRow) -> ObservationRecord {
@@ -165,8 +165,7 @@ impl<'a> DenMemoryReviewStore<'a> {
                 proposal_ids: vec![proposal.id],
             },
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
 
         Ok(proposal)
     }

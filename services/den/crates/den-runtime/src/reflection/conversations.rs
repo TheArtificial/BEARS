@@ -2,10 +2,8 @@ use sqlx::{PgPool, Row};
 use time::Date;
 use uuid::Uuid;
 
-use crate::{
-    core::conversation_persistence,
-    errors::CustomError,
-};
+use crate::conversation_persistence;
+use den_core::DenError;
 
 pub const MEMORY_CURATE_LANE: &str = "memory_curate";
 
@@ -38,7 +36,7 @@ pub async fn ensure_memory_curate_conversation(
     bear_id: Uuid,
     role_agent_id: Option<&str>,
     conversation_date: Date,
-) -> Result<ReflectionConversationRow, CustomError> {
+) -> Result<ReflectionConversationRow, DenError> {
     let conversation_key = memory_curate_conversation_key(conversation_date);
     let external_conversation_id =
         memory_curate_external_conversation_id(bear_id, conversation_date);
@@ -85,7 +83,7 @@ pub async fn touch_memory_curate_conversation(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_date: Date,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE reflection_conversations
@@ -108,7 +106,7 @@ pub async fn bind_memory_curate_run_conversation(
     bear_id: Uuid,
     reflection_run_id: Uuid,
     conversation_id: &str,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         UPDATE bear_reflection_runs
@@ -132,7 +130,7 @@ pub async fn get_memory_curate_conversation(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_date: Date,
-) -> Result<Option<ReflectionConversationRow>, CustomError> {
+) -> Result<Option<ReflectionConversationRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, bear_id, role_agent_id, lane, conversation_date, conversation_key,
@@ -168,15 +166,6 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionConversationRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::postgres::PgPoolOptions;
-
-    async fn test_pool() -> Option<PgPool> {
-        let database_url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
-        let pool = PgPoolOptions::new().connect(&database_url).await.ok()?;
-        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
-        Some(pool)
-    }
 
     #[test]
     fn memory_curate_external_conversation_id_is_conv_prefixed() {
@@ -184,31 +173,5 @@ mod tests {
         let date = Date::from_calendar_date(2026, time::Month::June, 8).expect("valid date");
         let external_id = memory_curate_external_conversation_id(bear_id, date);
         assert!(external_id.starts_with("conv-memory-curate-"));
-    }
-
-    #[tokio::test]
-    async fn ensure_memory_curate_conversation_is_idempotent_per_day() {
-        let Some(pool) = test_pool().await else {
-            return;
-        };
-        let bear_id = Uuid::new_v4();
-        let date = Date::from_calendar_date(2026, time::Month::June, 8).expect("valid date");
-
-        let first = ensure_memory_curate_conversation(&pool, bear_id, Some("curate-agent"), date)
-            .await
-            .expect("ensure first");
-        let second = ensure_memory_curate_conversation(&pool, bear_id, Some("curate-agent"), date)
-            .await
-            .expect("ensure second");
-
-        assert_eq!(first.id, second.id);
-        assert_eq!(
-            first.conversation_key,
-            memory_curate_conversation_key(date)
-        );
-        assert!(second
-            .conversation_id
-            .as_deref()
-            .is_some_and(|id| id.starts_with("conv-memory-curate-")));
     }
 }

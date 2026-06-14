@@ -62,6 +62,12 @@ pub mod agent_loop;
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;
 
+/// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
+pub mod reflection;
+
+/// Pair reflection: projects pair-turn reflection completions into conversations.
+pub mod pair_reflection;
+
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
 pub use runtime::bearwire_projection as runtime_bearwire_projection;
@@ -86,3 +92,5 @@ pub use conversation::archived as archived_conversations;
 pub use conversation::events as conversation_events;
 pub use conversation::message_types as conversation_message_types;
 pub use conversation::persistence as conversation_persistence;
+pub use reflection::conductor as reflection_conductor;
+pub use reflection::conversations as reflection_conversations;

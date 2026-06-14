@@ -30,12 +30,12 @@ pub use den_runtime::agent_assist::runtime_stream_parser;
 pub use den_runtime::bear_observations;
 pub use den_runtime::memory_curate_executor;
 pub use den_runtime::memory_proposals;
-pub mod reflection;
-pub use reflection::conversations as reflection_conversations;
-pub mod pair_reflection;
+pub use den_runtime::reflection;
+pub use den_runtime::reflection_conversations;
+pub use den_runtime::pair_reflection;
 pub use den_runtime::prompt_memory_block_store;
 pub use den_runtime::prompt_memory_blocks;
-pub use reflection::conductor as reflection_conductor;
+pub use den_runtime::reflection_conductor;
 pub use den_runtime::runtime;
 pub use den_runtime::{
     pair_turn, role_runtime, role_runtime_registry, runtime_bearwire_projection,
@@ -59,3 +59,7 @@ mod runtime_role_bridge_tests;
 mod runtime_bearwire_bridge_tests;
 #[cfg(test)]
 mod conversation_persistence_non_acp_bridge_tests;
+#[cfg(test)]
+mod reflection_conductor_bridge_tests;
+#[cfg(test)]
+mod reflection_conversations_bridge_tests;

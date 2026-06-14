@@ -4,15 +4,13 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    core::{
-        bears::BearProfile,
-        conversation_events::{
-            project_to_conversation, PairReflectionCompletedPayload, Projection,
-            ProjectionEvent, ProjectionProvenance, ProjectionSource,
-        },
+    bears::BearProfile,
+    conversation_events::{
+        project_to_conversation, PairReflectionCompletedPayload, Projection, ProjectionEvent,
+        ProjectionProvenance, ProjectionSource,
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairReflectionRunRow {
@@ -56,7 +54,7 @@ pub struct CompletePairReflectionRun<'a> {
 pub async fn create_run(
     pool: &PgPool,
     params: CreatePairReflectionRun<'_>,
-) -> Result<PairReflectionRunRow, CustomError> {
+) -> Result<PairReflectionRunRow, DenError> {
     let row = sqlx::query(
         r#"
         INSERT INTO pair_reflection_runs (
@@ -123,7 +121,7 @@ fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionR
 pub async fn complete_run(
     pool: &PgPool,
     params: CompletePairReflectionRun<'_>,
-) -> Result<PairReflectionRunRow, CustomError> {
+) -> Result<PairReflectionRunRow, DenError> {
     let row = sqlx::query(
         r#"
         UPDATE pair_reflection_runs
@@ -154,7 +152,7 @@ pub async fn list_recent_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
     limit: i64,
-) -> Result<Vec<PairReflectionRunRow>, CustomError> {
+) -> Result<Vec<PairReflectionRunRow>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT id, bear_id, user_id, acp_session_id, conversation_id, trigger,
