@@ -167,9 +167,25 @@ Each step keeps the workspace green and is behavior-free; idiom tightening for m
 1. Workspace skeleton + **`den-core`** (mechanical moves + `crate::` → `den_core::`).
 2. **`den-llm`** (stable leaf).
 3. **`den-memory`** (trait face ready now), **`den-docket`** (after Docket Phase 1 module lands), **`den-tools`**.
-4. **`den-runtime`** (implements the inversion traits).
+4. **`den-runtime`** (implements the inversion traits). **Scoped 2026-06 — see *v1.4* below.**
 5. **`den-acp`**, then **`den-api`**, **`den-web`** (edges).
 6. The original `den` crate collapses to the thin binary: startup, DI, router composition.
+
+#### v1.4 — `den-runtime` extraction plan (scoped 2026-06)
+
+Survey result: `core/` is already a clean layer (**no `core/` module imports `crate::api` or `crate::web`**), the extracted leaves are pure (`den-core`-only), and `den-llm` already keeps the SSE→`RuntimeStreamEvent` mapping out of the leaf to avoid a `llm → runtime` cycle. So `den-runtime` is a cohesive lift of the runtime subsystems plus the `ToolContext` impl.
+
+**Goes into `den-runtime`:** `agent_loop`, `native_runtime`, `runtime` (provider / `contracts` = `runtime_contracts` / `role_registry` / compaction / conversations / `turn_state` / `pair_turn` / `bearwire_projection`), the `core/llm` glue (`bifrost`/`stream` SSE mapping), `bears` (provisioning/registry/db), `conversation` (events + persistence) *(decision: kept in `den-runtime`, not a separate leaf)*, `reflection` + `pair_reflection`, the `core/memory` glue over the `den-memory` leaf (curation/`curate_executor`/prompt-block store/blocks), `work_plans` (docket projection), `sandbox`, `migration`, and the `DenToolContext` capability impls (`core/tools/*` impl side) — i.e. `den-runtime` **implements `den-tools::ToolContext`** (all 10 sub-traits) and consumes `den-docket::DocketService` + the `den-memory`/`den-llm` leaves.
+
+**Stays out:** `acp/` → `den-acp`; `api/` → `den-api`; `web/` + `observability/` + `s3/` → `den-web`; `user/` + `email/` + `auth_backend` → the thin `den` binary *(decision)*.
+
+**Boundary resolutions (names are misleading; both are runtime concerns, move into `den-runtime` to avoid a `den-runtime → den-acp` cycle):**
+- `acp::tool_turns` (`acp_tool_turns`) — consumed by `core/runtime`; it is tool-turn coordination, not ACP protocol. Relocate under `runtime` in `den-runtime`.
+- `work_plans` — docket projection used by `runtime` and the tool impls; lands in `den-runtime` (depends on the `den-docket` leaf).
+
+**Decision: rename off `letta` now (not deferred).** The retained native helpers in `core/letta/` (runtime stream parser, assistant display/title, agent JSON projections, model/tool option types, tool policy) and `acp::letta_events` (which holds the native `AcpGatewayEvent`) are renamed off the `letta` name before/with the lift.
+
+**Extraction order (each step keeps the workspace green + its own commit):** rename off `letta` → `runtime` (+`runtime_contracts`, `acp_tool_turns`, `work_plans`) → `core/llm` glue → `native_runtime` → `agent_loop` → `bears` → `conversation` → `reflection`/`pair_reflection` → `core/memory` glue → `DenToolContext` impls → flip `den` onto `den-runtime`, drop the flat shims.
 
 ### v2 — Deferred refinements
 
