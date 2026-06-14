@@ -13,8 +13,8 @@ use crate::{
         native_runtime::openai_byte_stream_to_event_stream,
         runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 /// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.
 const NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -23,7 +23,7 @@ const NATIVE_LLM_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 enum LazyAgentStepState {
     Init {
-        fut: Pin<Box<dyn Future<Output = Result<RuntimeEventStream, CustomError>> + Send>>,
+        fut: Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>,
     },
     Streaming(RuntimeEventStream),
 }
@@ -61,7 +61,7 @@ impl LazyAgentStepStream {
                         handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
                         "LLM chat/completions handshake timed out"
                     );
-                    Err(CustomError::System(format!(
+                    Err(DenError::System(format!(
                         "LLM chat/completions handshake timed out after {}s",
                         NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
                     )))
@@ -74,7 +74,7 @@ impl LazyAgentStepStream {
                         error = %err,
                         "LLM chat/completions handshake failed"
                     );
-                    Err(err.into())
+                    Err(err)
                 }
                 Ok(Ok(byte_stream)) => {
                     tracing::info!(
@@ -88,7 +88,7 @@ impl LazyAgentStepStream {
                         byte_stream,
                         NATIVE_LLM_STREAM_IDLE_TIMEOUT,
                     )
-                    .map_err(CustomError::from);
+                    .map_err(DenError::from);
                     Ok(openai_byte_stream_to_event_stream(byte_stream))
                 }
             }
@@ -100,7 +100,7 @@ impl LazyAgentStepStream {
 }
 
 impl Stream for LazyAgentStepStream {
-    type Item = Result<RuntimeStreamEvent, CustomError>;
+    type Item = Result<RuntimeStreamEvent, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -151,7 +151,7 @@ impl Stream for LazyAgentStepStream {
 pub async fn run_agent_step_stream(
     llm: &LlmClient,
     session: &AgentLoopSession,
-) -> Result<RuntimeEventStream, CustomError> {
+) -> Result<RuntimeEventStream, DenError> {
     let messages = repair_tool_call_message_chain(session.messages.clone());
     tracing::info!(
         session_key = %session.session_key,

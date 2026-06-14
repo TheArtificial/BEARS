@@ -36,7 +36,7 @@ fn semantic_events_to_adapter_types(events: Vec<RuntimeStreamEvent>) -> Vec<Stri
 }
 
 async fn collect_adapter_types_from_openai_sse(frames: &str) -> Vec<String> {
-    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::CustomError>(
+    let source = futures::stream::iter(vec![Ok::<Bytes, den_core::DenError>(
         Bytes::from(frames.to_string()),
     )]);
     let mut stream = openai_byte_stream_to_event_stream(source);

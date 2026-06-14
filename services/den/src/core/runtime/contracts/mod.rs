@@ -1,4 +1,5 @@
-use crate::{config::Config, errors::CustomError};
+use crate::config::Config;
+use den_core::DenError;
 use bytes::Bytes;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -142,9 +143,9 @@ pub struct RuntimeEventParser {
 }
 
 pub type RuntimeByteStream =
-    Pin<Box<dyn Stream<Item = Result<Bytes, crate::errors::CustomError>> + Send + 'static>>;
+    Pin<Box<dyn Stream<Item = Result<Bytes, den_core::DenError>> + Send + 'static>>;
 pub type RuntimeEventStream = Pin<
-    Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static>,
+    Box<dyn Stream<Item = Result<RuntimeStreamEvent, den_core::DenError>> + Send + 'static>,
 >;
 
 pub type RuntimeParserFn = fn(&serde_json::Value) -> Option<RuntimeStreamEvent>;
@@ -277,7 +278,7 @@ pub enum RuntimeErrorCategory {
 pub trait RuntimeHealthCheck {
     fn compatibility_backend_name(&self) -> &'static str;
     fn enabled(&self) -> bool;
-    async fn check_health(&self) -> Result<String, CustomError>;
+    async fn check_health(&self) -> Result<String, DenError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,7 +306,7 @@ pub trait RoleProfileRegistry {
         &self,
         bear_id: uuid::Uuid,
         profile: &str,
-    ) -> Result<Option<RoleRuntimeBinding>, CustomError>;
+    ) -> Result<Option<RoleRuntimeBinding>, DenError>;
 }
 
 #[allow(async_fn_in_trait)]
@@ -313,13 +314,13 @@ pub trait AcpConversationRuntime {
     async fn ensure_session_conversation(
         &self,
         request: EnsureConversationRequest,
-    ) -> Result<EnsureConversationResult, CustomError>;
+    ) -> Result<EnsureConversationResult, DenError>;
 
     async fn load_history(
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<RuntimeHistoryPage, CustomError>;
+    ) -> Result<RuntimeHistoryPage, DenError>;
 }
 
 /// ACP/native conversation materialization backend (create, verify, load_history).
@@ -328,40 +329,40 @@ pub trait RuntimeConversationBackend {
     async fn create_conversation(
         &self,
         binding: &RoleRuntimeBinding,
-    ) -> Result<RuntimeConversationRef, CustomError>;
+    ) -> Result<RuntimeConversationRef, DenError>;
 
     async fn verify_conversation_belongs_to_binding(
         &self,
         binding: &RoleRuntimeBinding,
         conversation_id: &str,
-    ) -> Result<(), CustomError>;
+    ) -> Result<(), DenError>;
 
     async fn load_history(
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<RuntimeHistoryPage, CustomError>;
+    ) -> Result<RuntimeHistoryPage, DenError>;
 }
 
 #[allow(async_fn_in_trait)]
 pub trait RoleRunner {
-    async fn check_health(&self) -> Result<String, CustomError>;
+    async fn check_health(&self) -> Result<String, DenError>;
 }
 
 #[allow(async_fn_in_trait)]
 pub trait InteractionRunStore {
-    async fn check_health(&self) -> Result<String, CustomError>;
+    async fn check_health(&self) -> Result<String, DenError>;
 }
 
 pub trait ToolActuatorRegistry {}
 
 #[allow(async_fn_in_trait)]
 pub trait RetrievalService {
-    async fn check_health(&self) -> Result<String, CustomError>;
+    async fn check_health(&self) -> Result<String, DenError>;
 }
 
 /// Classify a runtime-facing error into a stable Den-owned category for ACP/runner policy.
-pub fn classify_runtime_error(err: &CustomError) -> RuntimeErrorCategory {
+pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
     let message = err.to_string().to_ascii_lowercase();
     if message.contains("waiting on an unresolved tool approval")
         || message.contains("waiting for approval")
@@ -375,7 +376,7 @@ pub fn classify_runtime_error(err: &CustomError) -> RuntimeErrorCategory {
         RuntimeErrorCategory::Misconfigured
     } else if message.contains("not found for this bear") {
         RuntimeErrorCategory::InvalidIdentity
-    } else if matches!(err, CustomError::Authorization(_)) {
+    } else if matches!(err, DenError::Authorization(_)) {
         RuntimeErrorCategory::PermissionDenied
     } else if message.contains("timed out") || message.contains("timeout") {
         RuntimeErrorCategory::Timeout
@@ -386,11 +387,11 @@ pub fn classify_runtime_error(err: &CustomError) -> RuntimeErrorCategory {
     }
 }
 
-pub fn runtime_error_is_conflict_pending_approval(err: &CustomError) -> bool {
+pub fn runtime_error_is_conflict_pending_approval(err: &DenError) -> bool {
     classify_runtime_error(err) == RuntimeErrorCategory::ConflictPendingApproval
 }
 
-pub fn runtime_error_is_no_active_runs_cancel(err: &CustomError) -> bool {
+pub fn runtime_error_is_no_active_runs_cancel(err: &DenError) -> bool {
     err.to_string()
         .to_ascii_lowercase()
         .contains("no active runs to cancel")

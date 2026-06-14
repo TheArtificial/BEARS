@@ -36,8 +36,8 @@ use crate::{
             session::{invoke_den_tool, DenToolInvocationContext},
         },
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_secs(120);
@@ -62,12 +62,12 @@ pub struct NativeWebChatLoopRuntime {
 }
 
 type ToolExecFuture =
-    Pin<Box<dyn Future<Output = Result<ChatMessage, CustomError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<ChatMessage, DenError>> + Send>>;
 type NextStepFuture =
-    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, CustomError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
 enum LoopPhase {
-    Streaming(Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>>),
+    Streaming(Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>),
     ExecutingTools {
         calls: Vec<ChatToolCall>,
         index: usize,
@@ -228,13 +228,13 @@ impl NativeWebChatLoopStream {
             let session = runtime
                 .session_store
                 .get(&runtime.session_key)
-                .ok_or_else(|| CustomError::System("native web chat session not found".to_string()))?;
+                .ok_or_else(|| DenError::System("native web chat session not found".to_string()))?;
             let raw = run_agent_step_stream(&runtime.llm, &session).await?;
             Ok(NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session))
         }));
     }
 
-    fn poll_tool_execution(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RuntimeStreamEvent, CustomError>>> {
+    fn poll_tool_execution(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RuntimeStreamEvent, DenError>>> {
         let LoopPhase::ExecutingTools {
             calls,
             index,
@@ -306,7 +306,7 @@ impl NativeWebChatLoopStream {
 }
 
 impl Stream for NativeWebChatLoopStream {
-    type Item = Result<RuntimeStreamEvent, CustomError>;
+    type Item = Result<RuntimeStreamEvent, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.pending_out.pop_front() {
@@ -376,7 +376,7 @@ impl Stream for NativeWebChatLoopStream {
                             Some(session) => session,
                             None => {
                                 self.phase = LoopPhase::Finished;
-                                return Poll::Ready(Some(Err(CustomError::System(
+                                return Poll::Ready(Some(Err(DenError::System(
                                     "native web chat session not found".to_string(),
                                 ))));
                             }
@@ -419,7 +419,7 @@ impl Stream for NativeWebChatLoopStream {
 async fn execute_one_web_chat_den_tool(
     runtime: &NativeWebChatLoopRuntime,
     call: ChatToolCall,
-) -> Result<ChatMessage, CustomError> {
+) -> Result<ChatMessage, DenError> {
     let provider_name = call.function.name.clone();
     let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
         .map(|descriptor| descriptor.name.to_string())

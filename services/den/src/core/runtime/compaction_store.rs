@@ -4,19 +4,19 @@ use sqlx::{PgPool, Row};
 use crate::{
     api::acp::AcpCompactionStatusResponse,
     core::runtime_compaction_observability::RuntimeCompactionEvent,
-    errors::CustomError,
 };
+use den_core::DenError;
 
 pub async fn record_runtime_compaction_event(
     pool: &PgPool,
     event: &RuntimeCompactionEvent,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     let event_hash = runtime_compaction_event_hash(event)?;
     let boundary = serde_json::to_value(&event.boundary).map_err(|err| {
-        CustomError::System(format!("serialize compaction boundary: {err}"))
+        DenError::System(format!("serialize compaction boundary: {err}"))
     })?;
     let artifact = serde_json::to_value(&event.artifact).map_err(|err| {
-        CustomError::System(format!("serialize compaction artifact: {err}"))
+        DenError::System(format!("serialize compaction artifact: {err}"))
     })?;
     sqlx::query(
         r#"
@@ -48,7 +48,7 @@ pub async fn record_runtime_compaction_event(
     .bind(&event.diagnostic)
     .execute(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("insert runtime_compaction_events: {err}")))?;
+    .map_err(|err| DenError::Database(format!("insert runtime_compaction_events: {err}")))?;
     Ok(())
 }
 
@@ -56,7 +56,7 @@ pub(crate) async fn list_runtime_compaction_events(
     pool: &PgPool,
     conversation_id: &str,
     limit: i64,
-) -> Result<Vec<AcpCompactionStatusResponse>, CustomError> {
+) -> Result<Vec<AcpCompactionStatusResponse>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -76,36 +76,36 @@ pub(crate) async fn list_runtime_compaction_events(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|err| CustomError::Database(format!("select runtime_compaction_events: {err}")))?;
+    .map_err(|err| DenError::Database(format!("select runtime_compaction_events: {err}")))?;
 
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         let artifact = row
             .try_get::<Option<serde_json::Value>, _>("artifact")
-            .map_err(|err| CustomError::Database(format!("decode compaction artifact: {err}")))?;
+            .map_err(|err| DenError::Database(format!("decode compaction artifact: {err}")))?;
         items.push(AcpCompactionStatusResponse {
             status: row
                 .try_get::<String, _>("status")
-                .map_err(|err| CustomError::Database(format!("decode compaction status: {err}")))?,
+                .map_err(|err| DenError::Database(format!("decode compaction status: {err}")))?,
             policy_version: row.try_get::<String, _>("policy_version").map_err(|err| {
-                CustomError::Database(format!("decode compaction policy_version: {err}"))
+                DenError::Database(format!("decode compaction policy_version: {err}"))
             })?,
             source_group_start: row
                 .try_get::<Option<i32>, _>("source_group_start")
                 .map_err(|err| {
-                    CustomError::Database(format!("decode compaction source_group_start: {err}"))
+                    DenError::Database(format!("decode compaction source_group_start: {err}"))
                 })?
                 .map(|v| v as usize),
             source_group_end: row
                 .try_get::<Option<i32>, _>("source_group_end")
                 .map_err(|err| {
-                    CustomError::Database(format!("decode compaction source_group_end: {err}"))
+                    DenError::Database(format!("decode compaction source_group_end: {err}"))
                 })?
                 .map(|v| v as usize),
             diagnostic: row
                 .try_get::<Option<String>, _>("diagnostic")
                 .map_err(|err| {
-                    CustomError::Database(format!("decode compaction diagnostic: {err}"))
+                    DenError::Database(format!("decode compaction diagnostic: {err}"))
                 })?,
             artifact,
             context_envelope: None,
@@ -115,7 +115,7 @@ pub(crate) async fn list_runtime_compaction_events(
     Ok(items)
 }
 
-fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<String, CustomError> {
+fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<String, DenError> {
     let payload = serde_json::json!({
         "conversation_id": event.conversation_id,
         "trigger": format!("{:?}", event.trigger),
@@ -128,7 +128,7 @@ fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<Strin
         "diagnostic": event.diagnostic,
     });
     let bytes = serde_json::to_vec(&payload)
-        .map_err(|err| CustomError::System(format!("serialize compaction event hash payload: {err}")))?;
+        .map_err(|err| DenError::System(format!("serialize compaction event hash payload: {err}")))?;
     let digest = Sha256::digest(bytes);
     Ok(format!("{:x}", digest))
 }

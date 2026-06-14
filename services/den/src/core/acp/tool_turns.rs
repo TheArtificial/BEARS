@@ -13,8 +13,8 @@ use crate::{
     core::runtime_provider::{
         RuntimeApprovalDecision, RuntimeContinuation, RuntimeToolResultStatus,
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 const ACTIVE_TURN_TTL: Duration = Duration::from_secs(10 * 60);
 
@@ -295,14 +295,14 @@ impl AcpToolTurnCoordinator {
         session_id: &str,
         request_id: Uuid,
         conversation_id: Option<String>,
-    ) -> Result<AcpActiveTurnGuard, CustomError> {
+    ) -> Result<AcpActiveTurnGuard, DenError> {
         let mut active_turns = self.active_turns.lock().map_err(|_| {
-            CustomError::System("ACP active turn registry lock poisoned".to_string())
+            DenError::System("ACP active turn registry lock poisoned".to_string())
         })?;
         let now = Instant::now();
         active_turns.retain(|_, turn| turn.deadline_at > now);
         if let Some(existing) = active_turns.get(session_id) {
-            return Err(CustomError::ValidationError(format!(
+            return Err(DenError::ValidationError(format!(
                 "ACP turn already active for this session: {}",
                 existing.diagnostic()
             )));
@@ -349,12 +349,12 @@ impl AcpToolTurnCoordinator {
         format!("{session_id}\n{tool_call_id}")
     }
 
-    pub fn register(&self, registration: AcpToolTurnRegistration) -> Result<(), CustomError> {
+    pub fn register(&self, registration: AcpToolTurnRegistration) -> Result<(), DenError> {
         let key = Self::key(&registration.acp_session_id, &registration.tool_call_id);
         let mut turns = self
             .turns
             .lock()
-            .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
+            .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let now = Instant::now();
         let acp_session_id = registration.acp_session_id.clone();
         let tool_call_id = registration.tool_call_id.clone();
@@ -393,12 +393,12 @@ impl AcpToolTurnCoordinator {
         session_id: &str,
         tool_call_id: &str,
         mut body: AcpToolResultRequest,
-    ) -> Result<AcpToolResultDelivery, CustomError> {
+    ) -> Result<AcpToolResultDelivery, DenError> {
         let key = Self::key(session_id, tool_call_id);
         let mut turns = self
             .turns
             .lock()
-            .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
+            .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let Some(turn) = turns.get_mut(&key) else {
             tracing::warn!(
                 acp_session_id = %session_id,
@@ -414,7 +414,7 @@ impl AcpToolTurnCoordinator {
                     || cached.acp_session_id != session_id
                     || cached.tool_call_id != tool_call_id
                 {
-                    return Err(CustomError::Authorization(
+                    return Err(DenError::Authorization(
                         "tool result does not match the authenticated ACP session".to_string(),
                     ));
                 }
@@ -434,13 +434,13 @@ impl AcpToolTurnCoordinator {
             || turn.acp_session_id != session_id
             || turn.tool_call_id != tool_call_id
         {
-            return Err(CustomError::Authorization(
+            return Err(DenError::Authorization(
                 "tool result does not match the authenticated ACP session".to_string(),
             ));
         }
         if let Some(body_tool_call_id) = body.tool_call_id.as_deref().filter(|s| !s.is_empty()) {
             if body_tool_call_id != turn.tool_call_id {
-                return Err(CustomError::ValidationError(format!(
+                return Err(DenError::ValidationError(format!(
                     "tool result call id mismatch: expected {}, got {}",
                     turn.tool_call_id, body_tool_call_id
                 )));
@@ -452,7 +452,7 @@ impl AcpToolTurnCoordinator {
             .filter(|s| !s.is_empty())
         {
             if turn.approval_request_id.as_deref() != Some(body_approval_request_id) {
-                return Err(CustomError::ValidationError(format!(
+                return Err(DenError::ValidationError(format!(
                     "tool result approval request id mismatch: expected {:?}, got {}",
                     turn.approval_request_id, body_approval_request_id
                 )));
@@ -460,7 +460,7 @@ impl AcpToolTurnCoordinator {
         }
         if let Some(body_tool_name) = body.tool_name.as_deref().filter(|s| !s.is_empty()) {
             if body_tool_name != turn.tool_name {
-                return Err(CustomError::ValidationError(format!(
+                return Err(DenError::ValidationError(format!(
                     "tool result name mismatch: expected {}, got {}",
                     turn.tool_name, body_tool_name
                 )));
@@ -744,9 +744,9 @@ impl AcpToolTurnCoordinator {
         }
     }
 
-    fn cache_settled_result(&self, result: AcpSettledToolResult) -> Result<(), CustomError> {
+    fn cache_settled_result(&self, result: AcpSettledToolResult) -> Result<(), DenError> {
         let mut settled = self.settled_results.lock().map_err(|_| {
-            CustomError::System("ACP settled tool result cache lock poisoned".to_string())
+            DenError::System("ACP settled tool result cache lock poisoned".to_string())
         })?;
         prune_settled_results(&mut settled);
         settled.insert(
@@ -885,7 +885,7 @@ mod tests {
             .deliver_result(7, "meta", "session-1", "call-1", body)
             .expect_err("mismatched approval id must be rejected");
         assert!(
-            matches!(err, CustomError::ValidationError(_)),
+            matches!(err, DenError::ValidationError(_)),
             "expected ValidationError, got {err:?}"
         );
     }

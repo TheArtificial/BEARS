@@ -34,7 +34,7 @@ use crate::{
         agent_assist::normalize_display_status_text,
         tools::descriptor::den_tool_completion_status_text,
     },
-    errors::CustomError,
+    errors::{CustomError, DenError},
 };
 
 use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
@@ -843,6 +843,7 @@ impl Stream for AcpRuntimeSseStream {
                             return self.poll_next(cx);
                         }
                         Err(err) => {
+                            let err: DenError = err.into();
                             if looks_like_runtime_waiting_for_approval_error(&err) {
                                 let tool_turns = this.context.tool_turns.clone();
                                 let acp_session_id = this.context.acp_session_id.clone();

@@ -304,6 +304,7 @@ pub async fn verify_acp_conversation_belongs_to_binding_with_backend<B: RuntimeC
     backend
         .verify_conversation_belongs_to_binding(binding, conversation_id)
         .await
+        .map_err(CustomError::from)
 }
 
 pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
@@ -311,7 +312,7 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     binding: &RoleRuntimeBinding,
     conversation: &RuntimeConversationRef,
 ) -> Result<crate::core::runtime_contracts::RuntimeHistoryPage, CustomError> {
-    backend.load_history(binding, conversation).await
+    backend.load_history(binding, conversation).await.map_err(CustomError::from)
 }
 
 /// Den-owned ACP conversation lifecycle entrypoint. Keeps session/bootstrap policy out of

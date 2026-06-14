@@ -5,7 +5,7 @@ use std::fmt;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_core::DenError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,9 +98,9 @@ pub struct AcpPlanModeSessionRow {
 }
 
 impl AcpPlanModeSessionRow {
-    pub fn parsed_state(&self) -> Result<AcpPlanModeState, CustomError> {
+    pub fn parsed_state(&self) -> Result<AcpPlanModeState, DenError> {
         AcpPlanModeState::parse(&self.state).ok_or_else(|| {
-            CustomError::System(format!("unknown ACP plan mode state `{}`", self.state))
+            DenError::System(format!("unknown ACP plan mode state `{}`", self.state))
         })
     }
 }
@@ -171,7 +171,7 @@ pub async fn list_for_bear(
     bear_id: Uuid,
     include_closed: bool,
     limit: i64,
-) -> Result<Vec<AcpPlanModeSessionRow>, CustomError> {
+) -> Result<Vec<AcpPlanModeSessionRow>, DenError> {
     let limit = limit.clamp(1, 100);
     let query = format!(
         r#"
@@ -197,7 +197,7 @@ pub async fn active_for_session(
     user_id: i32,
     bear_id: Uuid,
     acp_session_id: &str,
-) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = format!(
         r#"
         SELECT {SELECT_COLUMNS}
@@ -224,7 +224,7 @@ pub async fn get_by_id_for_bear(
     user_id: i32,
     bear_id: Uuid,
     plan_mode_id: Uuid,
-) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = format!(
         r#"
         SELECT {SELECT_COLUMNS}
@@ -247,7 +247,7 @@ pub async fn get_for_session(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
-) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = if plan_mode_id.is_some() {
         format!(
             r#"
@@ -281,14 +281,14 @@ pub async fn get_for_session(
 pub async fn enter_plan_mode(
     pool: &PgPool,
     params: EnterPlanModeParams,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     if params.acp_session_id.trim().is_empty() {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "acp_session_id is required".to_string(),
         ));
     }
     if params.bear_slug.trim().is_empty() {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "bear_slug is required".to_string(),
         ));
     }
@@ -335,17 +335,17 @@ pub async fn enter_plan_mode(
 pub async fn submit_plan_artifact(
     pool: &PgPool,
     params: SubmitPlanModeParams,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     let title = params.title.trim();
     let body = params.body.trim();
     let artifact_path = params.artifact_path.trim();
     if title.is_empty() {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "plan title is required".to_string(),
         ));
     }
     if body.is_empty() {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "plan body is required".to_string(),
         ));
     }
@@ -353,7 +353,7 @@ pub async fn submit_plan_artifact(
         || !artifact_path.starts_with("pair/plans/")
         || !artifact_path.ends_with(".md")
     {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "plan artifact path must be under pair/plans/ and end with .md".to_string(),
         ));
     }
@@ -367,9 +367,9 @@ pub async fn submit_plan_artifact(
         params.plan_mode_id,
     )
     .await?
-    .ok_or_else(|| CustomError::NotFound("active ACP plan mode session not found".to_string()))?;
+    .ok_or_else(|| DenError::NotFound("active ACP plan mode session not found".to_string()))?;
     if !current.parsed_state()?.is_open() {
-        return Err(CustomError::ValidationError(
+        return Err(DenError::ValidationError(
             "ACP plan mode session is already closed".to_string(),
         ));
     }
@@ -423,10 +423,10 @@ pub async fn approve_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Uuid,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
@@ -449,10 +449,10 @@ pub async fn reject_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Uuid,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
@@ -475,13 +475,13 @@ pub async fn cancel_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     let current = if let Some(plan_mode_id) = plan_mode_id {
         get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
     } else {
         get_for_session(pool, user_id, bear_id, acp_session_id, None).await?
     }
-    .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
+    .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
@@ -502,12 +502,12 @@ async fn close_with_state(
     plan_mode_id: Uuid,
     state: AcpPlanModeState,
     event_type: &str,
-) -> Result<AcpPlanModeSessionRow, CustomError> {
+) -> Result<AcpPlanModeSessionRow, DenError> {
     if matches!(
         state,
         AcpPlanModeState::Active | AcpPlanModeState::Submitted
     ) {
-        return Err(CustomError::System(
+        return Err(DenError::System(
             "close_with_state requires a closed state".to_string(),
         ));
     }
@@ -537,7 +537,7 @@ async fn close_with_state(
         .bind(state.as_str())
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| CustomError::NotFound("open ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("open ACP plan mode session not found".to_string()))?;
     let updated = row_from_sql(&row);
     append_event(
         &mut tx,
@@ -555,7 +555,7 @@ async fn append_event(
     row: &AcpPlanModeSessionRow,
     event_type: &str,
     event_payload: Value,
-) -> Result<(), CustomError> {
+) -> Result<(), DenError> {
     sqlx::query(
         r#"
         INSERT INTO acp_plan_mode_events (

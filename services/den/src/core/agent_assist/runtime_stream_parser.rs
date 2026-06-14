@@ -3,8 +3,8 @@ use crate::{
         RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
         RuntimeStreamEvent,
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 pub fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
@@ -26,9 +26,9 @@ pub fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
     frame
 }
 
-pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, CustomError> {
+pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, DenError> {
     let text = std::str::from_utf8(body).map_err(|_| {
-        CustomError::System(format!(
+        DenError::System(format!(
             "invalid UTF-8 in continuation SSE event body ({} bytes)",
             body.len()
         ))
@@ -52,7 +52,7 @@ pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Va
     }
     serde_json::from_str::<serde_json::Value>(joined)
         .map(Some)
-        .map_err(|e| CustomError::System(format!("invalid continuation SSE JSON: {e}")))
+        .map_err(|e| DenError::System(format!("invalid continuation SSE JSON: {e}")))
 }
 
 pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
@@ -243,7 +243,7 @@ pub fn runtime_byte_stream_to_event_stream(
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
     let mut queued_events: std::collections::VecDeque<
-        Result<RuntimeStreamEvent, CustomError>,
+        Result<RuntimeStreamEvent, DenError>,
     > = std::collections::VecDeque::new();
     let mut finished = false;
     let mut saw_terminal_or_pause = false;
@@ -299,7 +299,7 @@ pub fn runtime_byte_stream_to_event_stream(
                         )));
                     }
                 } else {
-                    queued_events.push_back(Err(CustomError::System(format!(
+                    queued_events.push_back(Err(DenError::System(format!(
                         "continuation SSE stream ended with incomplete frame ({} bytes)",
                         buffer.len()
                     ))));

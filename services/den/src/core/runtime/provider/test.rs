@@ -6,12 +6,12 @@ use crate::{
         RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory,
         RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeToolResultStatus,
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 #[test]
 fn runtime_error_categories_are_stable_for_acp_policy() {
-    let approval = CustomError::System(
+    let approval = DenError::System(
         "Letta continue HTTP 409: waiting on an unresolved tool approval".to_string(),
     );
     assert_eq!(
@@ -20,7 +20,7 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
     );
     assert!(runtime_error_is_conflict_pending_approval(&approval));
 
-    let misconfigured = CustomError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
+    let misconfigured = DenError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
     assert_eq!(
         classify_runtime_error(&misconfigured),
         RuntimeErrorCategory::Misconfigured

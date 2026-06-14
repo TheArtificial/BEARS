@@ -14,8 +14,8 @@ use crate::{
         llm::ChatToolCall,
         runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step};
@@ -33,7 +33,7 @@ type ApprovalPauseFuture =
     Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
 
 pub struct SessionTrackingStream {
-    inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>,
     session_key: String,
     store: AgentLoopSessionStore,
     assistant_text: String,
@@ -54,7 +54,7 @@ pub struct SessionTrackingStream {
 
 impl SessionTrackingStream {
     pub fn new(
-        inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>>,
+        inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>,
         session: &AgentLoopSession,
         store: AgentLoopSessionStore,
         pool: sqlx::PgPool,
@@ -204,7 +204,7 @@ fn upsert_assistant_tool_step_in_messages(
 }
 
 impl Stream for SessionTrackingStream {
-    type Item = Result<RuntimeStreamEvent, CustomError>;
+    type Item = Result<RuntimeStreamEvent, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.finished {

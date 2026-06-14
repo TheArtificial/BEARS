@@ -6,8 +6,8 @@ use crate::{
         acp_tool_turns::AcpToolTurnCoordinator,
         acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleRuntimeRole {
@@ -211,7 +211,7 @@ impl AcpTurnLifecycleRuntime {
         &self,
         context: AcpTurnLifecycleContext,
         request_id: Uuid,
-    ) -> Result<AcpTurnLifecycleLease, CustomError> {
+    ) -> Result<AcpTurnLifecycleLease, DenError> {
         let turn_scope = RoleTurnScope::acp_pair(
             context.bear_id,
             context.acp_session_id,
@@ -290,7 +290,7 @@ impl RoleRuntime {
         &self,
         scope: RoleTurnScope,
         request_id: Uuid,
-    ) -> Result<RoleTurnGuard, CustomError> {
+    ) -> Result<RoleTurnGuard, DenError> {
         let guard = self.tool_turns.acquire_active_turn(
             &scope.channel_id,
             request_id,

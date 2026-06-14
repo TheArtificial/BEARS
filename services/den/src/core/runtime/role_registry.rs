@@ -11,8 +11,8 @@ use crate::{
         bears::{db as bears_db, model::BearProfile},
         runtime_contracts::{RoleProfileRegistry, RoleRuntimeBinding},
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 pub struct DenNativeProfileRegistry<'a> {
     pool: &'a PgPool,
@@ -27,7 +27,7 @@ impl<'a> DenNativeProfileRegistry<'a> {
         &self,
         bear_id: Uuid,
         profile: BearProfile,
-    ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
+    ) -> Result<Option<RoleRuntimeBinding>, DenError> {
         let binding_id = bears_db::profile_binding_id(self.pool, bear_id, profile)
             .await?
             .filter(|id| !id.trim().is_empty())
@@ -45,9 +45,9 @@ impl RoleProfileRegistry for DenNativeProfileRegistry<'_> {
         &self,
         bear_id: Uuid,
         profile: &str,
-    ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
+    ) -> Result<Option<RoleRuntimeBinding>, DenError> {
         let profile = BearProfile::from_str(profile).map_err(|_| {
-            CustomError::ValidationError(format!("unknown bear profile: {profile}"))
+            DenError::ValidationError(format!("unknown bear profile: {profile}"))
         })?;
         self.resolve_binding(bear_id, profile).await
     }

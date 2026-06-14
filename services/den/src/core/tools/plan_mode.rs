@@ -28,7 +28,7 @@ use crate::{
         tools::{session::DenToolInvocationContext, support::clean_optional},
         turn_state,
     },
-    errors::{CustomError, DenError},
+    errors::DenError,
 };
 
 type WorkplanPayloadFn = fn(&AcpPlanModeSessionRow) -> Value;
@@ -81,8 +81,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 previous_permission_mode,
             },
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
         acp_sessions::set_current_mode(
             self.pool,
             context.user_id,
@@ -91,7 +90,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             "plan",
         )
         .await
-        .map_err(CustomError::into_den)?;
+        .map_err(DenError::from)?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
@@ -114,8 +113,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             context.bear_id,
             acp_session_id,
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
         let workplan = row
             .as_ref()
             .map(self.workplan_payload)
@@ -140,8 +138,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             plan_mode_id,
         )
-        .await
-        .map_err(CustomError::into_den)?
+        .await?
         .ok_or_else(|| {
             DenError::NotFound("submitted ACP plan mode session not found".to_string())
         })?;
@@ -158,8 +155,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             current.id,
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
         acp_sessions::set_current_mode(
             self.pool,
             context.user_id,
@@ -168,7 +164,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             "write",
         )
         .await
-        .map_err(CustomError::into_den)?;
+        .map_err(DenError::from)?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
@@ -199,8 +195,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             plan_mode_id,
         )
-        .await
-        .map_err(CustomError::into_den)?
+        .await?
         .ok_or_else(|| {
             DenError::NotFound("active ACP plan mode session not found".to_string())
         })?;
@@ -226,7 +221,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 }),
             )
             .await
-            .map_err(CustomError::into_den)?;
+            .map_err(DenError::from)?;
             written
                 .get("path")
                 .and_then(|v| v.as_str())
@@ -246,8 +241,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 approval_request_id: Some(format!("plan-mode-{}", current_plan.id)),
             },
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
         acp_sessions::set_current_mode(
             self.pool,
             context.user_id,
@@ -256,7 +250,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             "plan",
         )
         .await
-        .map_err(CustomError::into_den)?;
+        .map_err(DenError::from)?;
         let storage = "sqlite";
         Ok(PlanModeExitView {
             workplan: (self.workplan_payload)(&row),
@@ -289,8 +283,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             acp_session_id,
             plan_mode_id,
         )
-        .await
-        .map_err(CustomError::into_den)?;
+        .await?;
         acp_sessions::set_current_mode(
             self.pool,
             context.user_id,
@@ -299,7 +292,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             "ask",
         )
         .await
-        .map_err(CustomError::into_den)?;
+        .map_err(DenError::from)?;
         Ok(PlanModeView {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(

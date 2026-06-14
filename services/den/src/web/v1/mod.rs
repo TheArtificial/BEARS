@@ -838,6 +838,9 @@ async fn chat_send_native_inner(
 
     crate::observability::metrics::chat_send_started();
 
+    let runtime_stream = futures::StreamExt::map(runtime_stream, |item| {
+        item.map_err(crate::errors::CustomError::from)
+    });
     let upstream = NativeWebChatUpstreamStream::new(runtime_stream, request_id);
     let stream = BearChannelSseProxyStream::new(
         upstream,

@@ -30,8 +30,8 @@ use crate::{
             RoleRuntimeBinding, StartTurnRequest,
         },
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
 
@@ -73,7 +73,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
     async fn create_conversation(
         &self,
         binding: &RoleRuntimeBinding,
-    ) -> Result<RuntimeConversationRef, CustomError> {
+    ) -> Result<RuntimeConversationRef, DenError> {
         let id = format!("den-conv-{}", Uuid::new_v4().simple());
         if let Some(pool) = &self.pool {
             if let Some(bear_id) = bear_id_from_native_binding(binding) {
@@ -95,7 +95,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         &self,
         binding: &RoleRuntimeBinding,
         conversation_id: &str,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), DenError> {
         let Some(pool) = &self.pool else {
             return Ok(());
         };
@@ -109,7 +109,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         )
         .await?;
         if found.is_none() {
-            return Err(CustomError::ValidationError(format!(
+            return Err(DenError::ValidationError(format!(
                 "conversation {conversation_id} does not belong to bear"
             )));
         }
@@ -120,7 +120,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         &self,
         binding: &RoleRuntimeBinding,
         conversation: &RuntimeConversationRef,
-    ) -> Result<RuntimeHistoryPage, CustomError> {
+    ) -> Result<RuntimeHistoryPage, DenError> {
         let Some(pool) = &self.pool else {
             return Ok(RuntimeHistoryPage {
                 records: Vec::new(),
@@ -214,11 +214,11 @@ async fn build_session(
     client_tools: Option<&serde_json::Value>,
     stream_tokens: bool,
     tool_messages: Vec<ChatMessage>,
-) -> Result<AgentLoopSession, CustomError> {
+) -> Result<AgentLoopSession, DenError> {
     let llm = LlmClient::new(deps.config);
     let bear = crate::core::bears::db::get_bear(deps.pool, bear_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     let include_prompt_memory =
         profile.include_prompt_memory && runtime_context.is_none();
     let assembled = assemble_native_turn_for_bear(
@@ -281,7 +281,7 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     conversation_id: &str,
     session_id: &str,
     prompt: &str,
-) -> Result<String, CustomError> {
+) -> Result<String, DenError> {
     let profile = NativeCapabilityProfile::for_profile(role);
     let session = build_session(
         deps,
@@ -330,7 +330,7 @@ pub struct NativeWebChatTurnParams<'a> {
 /// Browser web chat turn (`BearProfile::Chat`) over the native in-process loop.
 pub async fn start_native_web_chat_turn_event_stream(
     params: NativeWebChatTurnParams<'_>,
-) -> Result<RuntimeEventStream, CustomError> {
+) -> Result<RuntimeEventStream, DenError> {
     let assembly_started = std::time::Instant::now();
     let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
@@ -391,14 +391,14 @@ pub async fn start_native_web_chat_turn_event_stream(
 
 pub async fn start_native_acp_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
-) -> Result<RuntimeEventStream, CustomError> {
+) -> Result<RuntimeEventStream, DenError> {
     start_native_profile_turn_event_stream(request, BearProfile::Pair).await
 }
 
 pub async fn start_native_profile_turn_event_stream(
     request: AcpTurnStartRequest<'_>,
     role: BearProfile,
-) -> Result<RuntimeEventStream, CustomError> {
+) -> Result<RuntimeEventStream, DenError> {
     let profile = NativeCapabilityProfile::for_profile(role);
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.state.sqlx_pool.clone());
@@ -459,13 +459,13 @@ pub async fn start_native_profile_turn_event_stream(
 pub async fn continue_native_profile_turn_event_stream(
     request: AcpTurnContinueRequest<'_>,
     _role: BearProfile,
-) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {
+) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     continue_native_acp_turn_event_stream(request).await
 }
 
 pub async fn continue_native_acp_turn_event_stream(
     request: AcpTurnContinueRequest<'_>,
-) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {
+) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     let acp_session_id = request.acp_session_id;
     let conversation_id = request.conversation.id.clone();
     let session_key = agent_loop_session_key(&conversation_id, acp_session_id);
@@ -524,9 +524,9 @@ pub async fn continue_native_acp_turn_event_stream(
     });
     let session = SESSION_STORE
         .get(&session_key)
-        .ok_or_else(|| CustomError::System("native agent loop session not found".to_string()))?;
+        .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     if session.step >= session.max_steps {
-        return Err(CustomError::System(
+        return Err(DenError::System(
             "native agent loop reached max steps".to_string(),
         ));
     }

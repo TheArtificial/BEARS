@@ -21,13 +21,17 @@ use crate::core::prompt_memory_blocks::{
 
     fn acp_test_runtime_event_stream(
         bytes: impl Stream<Item = Result<Bytes, CustomError>> + Send + 'static,
-    ) -> crate::core::runtime_contracts::RuntimeEventStream {
-        runtime_byte_stream_to_event_stream(
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>> {
+        let bytes = futures::StreamExt::map(bytes, |item| item.map_err(crate::errors::DenError::from));
+        let events = runtime_byte_stream_to_event_stream(
             Box::pin(bytes),
             RuntimeEventParser {
                 parse_json_event: runtime_stream_event_from_letta_json,
             },
-        )
+        );
+        Box::pin(futures::StreamExt::map(events, |item| {
+            item.map_err(CustomError::from)
+        }))
     }
     use crate::{
         config::Config,
@@ -2329,7 +2333,7 @@ use crate::core::prompt_memory_blocks::{
 
     #[test]
     fn concurrent_letta_run_conflict_is_not_stale_approval() {
-        let err = CustomError::System(
+        let err = crate::errors::DenError::System(
             "Letta send message HTTP 409 Conflict: another run is still processing this conversation"
                 .to_string(),
         );
@@ -2876,8 +2880,9 @@ use crate::core::prompt_memory_blocks::{
                 &crate::config::Config::test_stub(),
             ),
         };
-        let inner: crate::core::runtime_contracts::RuntimeEventStream =
-            Box::pin(futures::stream::pending());
+        let inner: std::pin::Pin<
+            Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>,
+        > = Box::pin(futures::stream::pending());
         let mut stream = AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard)
             .with_status_heartbeat_interval(std::time::Duration::from_millis(40));
 
@@ -2946,8 +2951,9 @@ use crate::core::prompt_memory_blocks::{
                 &crate::config::Config::test_stub(),
             ),
         };
-        let inner: crate::core::runtime_contracts::RuntimeEventStream =
-            Box::pin(futures::stream::pending());
+        let inner: std::pin::Pin<
+            Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>,
+        > = Box::pin(futures::stream::pending());
         let mut stream = AcpRuntimeSseStream::new(
             inner,
             context,
@@ -3068,12 +3074,11 @@ use crate::core::prompt_memory_blocks::{
                 &crate::config::Config::test_stub(),
             ),
         };
-        let inner: crate::core::runtime_contracts::RuntimeEventStream = Box::pin(
-            PendingThenAssistant {
+        let inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>> =
+            Box::pin(PendingThenAssistant {
                 polls: 0,
                 emitted: false,
-            },
-        );
+            });
         let mut stream =
             AcpRuntimeSseStream::new(inner, context, Vec::new(), false, active_turn_guard);
 

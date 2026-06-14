@@ -1,6 +1,6 @@
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
-pub(crate) fn looks_like_runtime_waiting_for_approval_error(err: &CustomError) -> bool {
+pub(crate) fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
     crate::core::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
 }
 

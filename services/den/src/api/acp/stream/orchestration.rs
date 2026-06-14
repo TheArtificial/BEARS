@@ -165,7 +165,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         request_id,
     ) {
         Ok(lease) => lease,
-        Err(err) => return Ok(Err(err)),
+        Err(err) => return Ok(Err(err.into())),
     };
     let role_runtime = lifecycle_lease.role_runtime.clone();
     let turn_scope = lifecycle_lease.turn_scope.clone();
@@ -196,7 +196,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     .await
     {
         Ok(upstream) => upstream,
-        Err(err) => return Ok(Err(err)),
+        Err(err) => return Ok(Err(err.into())),
     };
 
     let materialized_session = acp_sessions::find_for_user_bear_session(
@@ -274,6 +274,9 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
 
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan.as_ref().map(|plan| serde_json::json!(plan));
+    let event_upstream = futures::StreamExt::map(event_upstream, |item| {
+        item.map_err(crate::errors::CustomError::from)
+    });
     let stream = AcpRuntimeSseStream::new(
         event_upstream,
         AcpStreamContext {

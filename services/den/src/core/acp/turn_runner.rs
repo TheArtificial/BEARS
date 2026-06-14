@@ -11,7 +11,7 @@ use crate::{
             RuntimeStreamContinuation, RoleRuntimeBinding,
         },
     },
-    errors::CustomError,
+    errors::{CustomError, DenError},
 };
 
 /// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
@@ -73,7 +73,7 @@ pub struct AcpTurnStreamContext {
     pub max_steps: u32,
 }
 
-pub fn looks_like_runtime_waiting_for_approval_error(err: &CustomError) -> bool {
+pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
     crate::core::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
 }
 
@@ -135,13 +135,13 @@ pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversati
 
 pub async fn start_acp_turn_event_stream_with_retries(
     request: AcpTurnStartRequest<'_>,
-) -> Result<RuntimeEventStream, CustomError> {
+) -> Result<RuntimeEventStream, DenError> {
     crate::core::native_runtime::start_native_acp_turn_event_stream(request).await
 }
 
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
-) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), CustomError> {
+) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     crate::core::native_runtime::continue_native_acp_turn_event_stream(request).await
 }
 

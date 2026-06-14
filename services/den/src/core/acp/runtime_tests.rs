@@ -13,7 +13,7 @@ use crate::core::{
         RuntimeHistoryPage,
     },
 };
-use crate::errors::CustomError;
+use crate::errors::DenError;
 
 struct MockConversationBackend {
     created_id: String,
@@ -25,7 +25,7 @@ impl RuntimeConversationBackend for MockConversationBackend {
     async fn create_conversation(
         &self,
         _binding: &RoleRuntimeBinding,
-    ) -> Result<RuntimeConversationRef, CustomError> {
+    ) -> Result<RuntimeConversationRef, DenError> {
         Ok(RuntimeConversationRef {
             id: self.created_id.clone(),
         })
@@ -35,7 +35,7 @@ impl RuntimeConversationBackend for MockConversationBackend {
         &self,
         _binding: &RoleRuntimeBinding,
         _conversation_id: &str,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), DenError> {
         self.verify_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
@@ -45,7 +45,7 @@ impl RuntimeConversationBackend for MockConversationBackend {
         &self,
         _binding: &RoleRuntimeBinding,
         _conversation: &RuntimeConversationRef,
-    ) -> Result<RuntimeHistoryPage, CustomError> {
+    ) -> Result<RuntimeHistoryPage, DenError> {
         Ok(RuntimeHistoryPage {
             records: Vec::new(),
             raw_payload: None,
@@ -55,7 +55,7 @@ impl RuntimeConversationBackend for MockConversationBackend {
 
 #[test]
 fn runtime_error_classifier_maps_pending_approval_conflicts() {
-    let err = CustomError::System(
+    let err = DenError::System(
         "Letta continue HTTP 409: waiting for approval".to_string(),
     );
     assert_eq!(
@@ -67,7 +67,7 @@ fn runtime_error_classifier_maps_pending_approval_conflicts() {
 
 #[test]
 fn runtime_error_classifier_maps_no_active_runs_cancel() {
-    let err = CustomError::System("no active runs to cancel".to_string());
+    let err = DenError::System("no active runs to cancel".to_string());
     assert!(runtime_error_is_no_active_runs_cancel(&err));
 }
 

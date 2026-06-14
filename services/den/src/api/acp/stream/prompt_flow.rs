@@ -224,7 +224,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
                 )
                 .await
                 .map_err(|err| {
-                    let (status, code, message) = acp_error_status_message(&err);
+                    let (status, code, message) = acp_error_status_message(&err.into());
                     ApiError::new(status, code, message)
                 })?;
                 acp_sessions::set_current_mode(
@@ -288,7 +288,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
             .await
             .map_err(|err| {
-                let (status, code, message) = acp_error_status_message(&err);
+                let (status, code, message) = acp_error_status_message(&err.into());
                 ApiError::new(status, code, message)
             })?;
     let session_mode =

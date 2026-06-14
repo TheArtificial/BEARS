@@ -12,14 +12,14 @@ use crate::{
         llm::{openai_sse_frame_to_runtime_events, OpenAiStreamAccumulator},
         runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
     },
-    errors::CustomError,
 };
+use den_core::DenError;
 
 pub fn openai_byte_stream_to_event_stream(
-    parsed: impl Stream<Item = Result<bytes::Bytes, CustomError>> + Send + Unpin + 'static,
+    parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
-    let mut queued_events: VecDeque<Result<RuntimeStreamEvent, CustomError>> = VecDeque::new();
+    let mut queued_events: VecDeque<Result<RuntimeStreamEvent, DenError>> = VecDeque::new();
     let mut finished = false;
     let mut saw_terminal_or_pause = false;
     let mut accumulator = OpenAiStreamAccumulator::default();
@@ -60,7 +60,7 @@ pub fn openai_byte_stream_to_event_stream(
                                 queued_events.push_back(Ok(event));
                             }
                         }
-                        Err(err) => queued_events.push_back(Err(err)),
+                        Err(err) => queued_events.push_back(Err(err.into())),
                     }
                 }
                 if accumulator.should_detach_upstream() {
@@ -96,7 +96,7 @@ pub fn openai_byte_stream_to_event_stream(
                         )));
                     }
                 } else if !buffer.is_empty() {
-                    queued_events.push_back(Err(CustomError::System(format!(
+                    queued_events.push_back(Err(DenError::System(format!(
                         "OpenAI SSE stream ended with incomplete frame ({} bytes)",
                         buffer.len()
                     ))));

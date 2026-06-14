@@ -11,7 +11,7 @@ use crate::{
         native_runtime::openai_byte_stream_to_event_stream,
         runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
     },
-    errors::CustomError,
+    errors::DenError,
 };
 
 #[tokio::test]
@@ -20,7 +20,7 @@ async fn tool_call_finish_does_not_synthesize_turn_completed() {
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"memory_read\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
         "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
     );
-    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::CustomError>(
+    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::DenError>(
         Bytes::from_static(frames.as_bytes()),
     )]);
     let mut stream = openai_byte_stream_to_event_stream(source);
@@ -54,7 +54,7 @@ async fn stop_finish_detaches_without_waiting_for_upstream_close() {
         emitted: bool,
     }
     impl Stream for HangAfterFirst {
-        type Item = Result<Bytes, CustomError>;
+        type Item = Result<Bytes, DenError>;
         fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             if self.emitted {
                 UPSTREAM_POLLED_AFTER_STOP.store(true, Ordering::SeqCst);
@@ -109,7 +109,7 @@ async fn tool_calls_finish_detaches_without_waiting_for_upstream_close() {
         emitted: bool,
     }
     impl Stream for HangAfterFirst {
-        type Item = Result<Bytes, CustomError>;
+        type Item = Result<Bytes, DenError>;
         fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             if self.emitted {
                 UPSTREAM_POLLED_AFTER_TOOL_FINISH.store(true, Ordering::SeqCst);
