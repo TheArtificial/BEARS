@@ -56,6 +56,25 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 **Exit:** tool tests for both paths.
 
+## Phase 3.5 — Temporal + bounded graph recall legs
+
+Extends the hybrid retriever ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6) beyond vector + keyword + anchors with two cheap legs, both over **canonical SQLite** (no new store). Borrowed from Hindsight's TEMPR (temporal + graph strategies) without adopting its graph/temporal store.
+
+**Temporal leg.**
+
+- Parse explicit/relative time expressions in the query ("last spring", "in June", "before the migration") into a time range; filter/boost candidates by `valid_from`/`invalid_at` (event time) and `created_at` (transaction time) — ADR-0041 §7 bi-temporal-lite.
+- Point-in-time recall: "as of `<date>`" returns the record that was the valid head at that time (walk the supersession chain), not only the current head.
+- Recency stays a ranking factor for untimed queries.
+
+**Bounded graph leg (record↔entity expansion).**
+
+- Starting from entities resolved in the query/turn context, expand over the **bipartite** record↔entity relation graph (`memory_relations`): entity → its records → co-occurring entities → their records.
+- **Depth-capped (default 2 hops), read-only, retrieval-time only.** No stored transitive edges, no inference, no entity↔entity edges — consistent with [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) anti-RDF guardrails. This is query expansion, not a knowledge graph.
+- Only `recall_effect != gate` relations participate; access-bearing gating still applies via the required `AccessContext` (the `memory_access_rules` query) before results return.
+- Answers indirect queries ("where does Alice work?") by reaching `Alice → works_at → Google → located_in → Mountain View` through shared-entity hops.
+
+**Exit:** recall tests for (a) a relative-time query resolving to the correct historical head, and (b) a 2-hop entity query returning a record never directly matched by vector/keyword; both respect `AccessContext`.
+
 ## Phase 4 — Cabinet integration
 
 - Cabinet pipeline ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)) uses **same** `bears-embed-v1` into Qdrant (`source_class=cabinet_passage`).

@@ -62,6 +62,7 @@ Anti-RDF guardrails (invariants):
 - **Objects are resolved entity ids, never literals.**
 - **Relations are a curated descriptor registry, not open IRIs.**
 - **No inference:** relations are stored facts; no transitive closure, ontology, or inverse-derivation.
+- **Retrieval-time traversal is allowed; stored graph structure is not.** Recall may walk the **bipartite** record↔entity links at query time — depth-capped, read-only — to expand candidates via shared entities ([ADR-0041](adr-0041-archival-recall-and-async-curation.md) §6, [DERIVED_RECALL Phase 3.5](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)). This persists nothing, derives no new edges, and never creates entity↔entity links — it is query expansion, not inference or a knowledge graph.
 - **Class is a closed, immutable 2-value enum** (`descriptive | access_bearing`) owned by the relation descriptor.
 - **Flexibility comes from bounded qualifiers, not type proliferation** (property-graph-lite): an edge may carry a small, descriptor-allowed set of typed qualifiers (e.g. `confidence`, `is_primary`, `source_handle`).
 
