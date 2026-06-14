@@ -37,6 +37,7 @@ Legacy Letta/MemFS notes are archived under [`../archive/letta/`](../archive/let
 ## Deployment
 
 - [deployment/deployment.md](deployment/deployment.md)
+- [operations plan](operations-plan.md) — data classification, backup/restore, DR, monitoring
 
 ## Planning and roadmap
 

@@ -30,6 +30,7 @@ Session storage uses the same database (tower-sessions SQLx store); session migr
 ## Deployment
 
 - **Docker** — root `Dockerfile` produces one image; set env in the orchestrator (same as local). See [den-deploy.md](den-deploy.md).
+- **Operations strategy** — backup/restore, data classification (canonical vs derived), DR rebuild order, and monitoring policy live in the [operations plan](operations-plan.md).
 
 ## Logging
 
