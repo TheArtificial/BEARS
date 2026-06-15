@@ -9,6 +9,7 @@
 
 use den::{config::Config, startup::run_sqlx_migrations};
 use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
+use den_runtime::memory::tools::sqlite_memory_search;
 use den_runtime::recall::{
     recall_for_turn, reconcile::list_indexable_heads, render_recall_block, DeterministicEmbedder,
     IndexRequest, QdrantRecall, RecallIndexer,
@@ -244,6 +245,84 @@ async fn list_indexable_heads_selects_latest_and_filters_policy() {
     assert_eq!(req.kind, "summary");
     assert_eq!(req.scope_type, "shared");
     assert!(req.content_text.contains("new core body"), "{req:?}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Phase 3 keyword fallback: `sqlite_memory_search` is the `memory_search` tool's non-vector
+/// path. Infra-free (temp SQLite, no Postgres/Qdrant). Asserts the role-scope boundary — a
+/// `work`-role search sees shared (core) memory and its own role-local notes, but **not** another
+/// role's profile-local memory (AGENTS.md: `work` must not read raw `pair/`) — plus the unified
+/// provenance shape (`memory_id`, `path`, `snippet`, `strategy: "keyword"`, null `score`).
+#[tokio::test]
+async fn keyword_memory_search_scopes_to_shared_plus_own_role() {
+    let tmp = std::env::temp_dir().join(format!("den-recall-search-{}", Uuid::new_v4()));
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
+
+    let stores = MemoryStoreManager::new(&config);
+    let bear_id = Uuid::new_v4();
+    let store = stores.store_for_bear(bear_id).await.expect("temp store");
+
+    // A distinctive token present in all three records so only scope, not content, gates results.
+    let token = "zephyrcalibration";
+    let shared = append_memory_record(
+        &store,
+        &LogicalMemoryPath::shared_core("summary"),
+        "summary",
+        "curate",
+        None,
+        &format!("shared core note about {token}"),
+        &json!({}),
+    )
+    .await
+    .expect("write shared");
+    let work = append_memory_record(
+        &store,
+        &LogicalMemoryPath::profile_local("work", "note"),
+        "note",
+        "work",
+        None,
+        &format!("work-local note about {token}"),
+        &json!({}),
+    )
+    .await
+    .expect("write work-local");
+    let pair = append_memory_record(
+        &store,
+        &LogicalMemoryPath::profile_local("pair", "note"),
+        "note",
+        "pair",
+        None,
+        &format!("pair-local note about {token}"),
+        &json!({}),
+    )
+    .await
+    .expect("write pair-local");
+
+    let result = sqlite_memory_search(&store, "work", token, 10)
+        .await
+        .expect("keyword search");
+
+    assert_eq!(result["storage"], "sqlite");
+    assert_eq!(result["strategy"], "keyword");
+    let hits = result["hits"].as_array().expect("hits array");
+    let ids: Vec<&str> = hits
+        .iter()
+        .filter_map(|h| h["memory_id"].as_str())
+        .collect();
+    assert!(ids.contains(&shared.memory_id.as_str()), "shared visible to work: {ids:?}");
+    assert!(ids.contains(&work.memory_id.as_str()), "own role-local visible: {ids:?}");
+    assert!(
+        !ids.contains(&pair.memory_id.as_str()),
+        "another role's profile-local must not leak: {ids:?}"
+    );
+
+    // Provenance shape: path present, score null (keyword is unranked), snippet carries content.
+    let first = &hits[0];
+    assert!(first["path"].is_string(), "{first}");
+    assert!(first["score"].is_null(), "{first}");
+    assert!(first["snippet"].as_str().unwrap().contains(token), "{first}");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

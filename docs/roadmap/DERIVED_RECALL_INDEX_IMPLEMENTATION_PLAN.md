@@ -49,7 +49,7 @@ Complements existing **key memory projection** (path anchors); does not replace 
 ## Phase 2 — Bear recall in turn context  ✅ landed (retrieval + assembler section)
 
 - ✅ `den-runtime::recall::query` (`recall_for_turn`): embeds the turn query via `EmbeddingClient` (embedder-agnostic, same `PassageEmbedder` trait as the indexer), runs a `bear_id` + `source_class` + `embedding_standard`-scoped Qdrant vector search (`QdrantRecall::search`), then dedupes to the best-scoring chunk per `memory_id` and returns the top *N* (default 5) `RecalledPassage`s. The chunk `text` is now denormalized into the Qdrant payload (ADR-0038 §2 derived data) so recall renders snippets with **no** SQLite round-trip.
-- ✅ Context assembler (`assemble_native_turn_for_bear`): best-effort `## Recalled memory` section appended after the key-memory projection block, with a ~2.6k-char budget and per-snippet truncation. `render_recall_block` drops any passage whose `logical_path` already appears in the projection text, so **recall never duplicates anchors**. Recall is skipped for the `chat` profile and for empty queries.
+- ✅ Context assembler (`assemble_native_turn_for_bear`): best-effort `## Recalled memory` section appended after the key-memory projection block, with a ~2.6k-char budget and per-snippet truncation. `render_recall_block` drops any passage whose `logical_path` already appears in the projection text, so **recall never duplicates anchors**. Recall is skipped only for empty queries (all profiles, including `chat`, get projection + recall when configured).
 - ✅ Fail-open everywhere: unset `QDRANT_URL`, a disabled embedding client (no `LLM_API_URL`), or any transport error yields no recall section rather than failing the turn. Access-bearing gating is a no-op today (no access rules yet) and lands with the entity layer (Phase 6).
 - ✅ Diagnostic JSON (`recall_query`: status, raw_hits, passages, embedding_standard) surfaced on `AssembledNativeTurn.recall_diagnostic` alongside `key_memory_projection`.
 
@@ -57,12 +57,15 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 > **Follow-ups (not blocking):** richer query text (session focus / primary work surface, not just the human message); persisting `recall_diagnostic` to turn telemetry; live exercise with a real embedding key (shared with the Phase 1 live-worker follow-up).
 
-## Phase 3 — Hybrid `memory_search`
+## Phase 3 — Hybrid `memory_search`  ✅ landed
 
-- Vector path when Qdrant configured; retain SQL `LIKE` fallback.
-- Return provenance: logical_path, memory_id, score, snippet.
+- ✅ The model-facing `memory_search` tool is hybrid in the concrete `DenRoleMemoryStore::search` (orchestration in `den-core` stays runtime-agnostic): the derived **vector** index when `QDRANT_URL` + embeddings are configured **and** it yields hits, otherwise the SQL `LIKE` **keyword** fallback. Fail-open — any recall error logs + degrades to keyword rather than failing the tool.
+- ✅ Both paths are **role-scoped to the same visibility**: shared (core) records OR the calling role's own profile-local records, so semantic recall honors the role-local boundary (AGENTS.md: `work` must not read raw `pair/`). Vector path uses a nested `should` (shared ∨ `scope_profile = role`) inside the mandatory bear scope (`den-runtime::recall::query::role_scope_filter` via `search_bear_memory_for_role`); the keyword `LIKE` query was broadened from `scope_profile = role` to `(scope_type = 'shared' OR scope_profile = role)` to match.
+- ✅ Unified provenance across both strategies: `{ memory_id, path, kind, score, snippet }` plus a top-level `strategy` (`vector` | `keyword`) and `storage` (`vector` | `sqlite`); `score` is null for the unranked keyword path. Vector results carry the recall `diagnostic`.
 
-**Exit:** tool tests for both paths.
+**Exit:** ✅ tool tests for both paths — infra-free unit tests for the role-scope filter shape + vector→JSON provenance shaping (`recall::query`), an infra-free keyword-path test proving the role boundary (shared + own role visible, another role's profile-local excluded) with the unified shape, and the existing gated **live Postgres + Qdrant** retrieval test covering the shared `search_passages` core.
+
+> **Follow-ups (not blocking):** the Phase 2 turn-assembler recall is still bear-wide (no role scope) — apply the same `role_scope_filter` there once the active role is threaded through the assembler. True result *merging* (vector ∪ keyword) instead of vector-primary-with-fallback is a possible later enhancement.
 
 ## Phase 3.5 — Temporal + bounded graph recall legs
 

@@ -52,6 +52,10 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             
     }
 
+    /// Hybrid `memory_search` (ADR-0038 Phase 3): the derived **vector** recall index when it is
+    /// configured and yields hits, otherwise the SQL `LIKE` **keyword** fallback. Both paths are
+    /// scoped to memory visible to `role` (shared + own role-local). Fail-open: any recall error
+    /// degrades to keyword search rather than failing the tool.
     async fn search(
         &self,
         bear_id: Uuid,
@@ -59,11 +63,31 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         query: &str,
         limit: i64,
     ) -> Result<Value, DenError> {
+        let vector_limit = usize::try_from(limit).unwrap_or(10);
+        match den_runtime::recall::search_bear_memory_for_role(
+            self.config,
+            bear_id,
+            role.as_str(),
+            query,
+            vector_limit,
+        )
+        .await
+        {
+            Ok(projection) if !projection.passages.is_empty() => {
+                return Ok(den_runtime::recall::recall_projection_to_search_json(
+                    &projection,
+                    query,
+                ));
+            }
+            // Recall disabled or no semantic hits — fall through to keyword search.
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "recall vector search failed; falling back to keyword search");
+            }
+        }
         let stores = MemoryStoreManager::new(self.config);
         let store = stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_search(&store, role.as_str(), query, limit)
-            .await
-            
+        sqlite_memory::sqlite_memory_search(&store, role.as_str(), query, limit).await
     }
 
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {

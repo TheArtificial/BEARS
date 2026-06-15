@@ -162,6 +162,11 @@ pub async fn sqlite_memory_read(
     }))
 }
 
+/// Keyword (`LIKE`) memory search — the fallback path for `memory_search` when the derived
+/// recall index is unavailable. Scoped to memory **visible to `role`**: shared (core) records
+/// OR this role's own profile-local records (matching the vector path's `role_scope_filter`, so
+/// both strategies honor the same role-local boundary). Provenance mirrors the vector path
+/// (`memory_id`, `path`, `snippet`); `score` is `null` since keyword matching is unranked.
 pub async fn sqlite_memory_search(
     store: &BearMemoryStore,
     role: &str,
@@ -169,11 +174,13 @@ pub async fn sqlite_memory_search(
     limit: i64,
 ) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
-    let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String)>(
         r"
-        SELECT memory_id, logical_path, content_text, sequence_no
+        SELECT memory_id, logical_path, content_text, sequence_no, kind
         FROM memory_records
-        WHERE bear_id = ? AND scope_profile = ? AND content_text LIKE ?
+        WHERE bear_id = ?
+          AND (scope_type = 'shared' OR scope_profile = ?)
+          AND content_text LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
         ",
@@ -187,10 +194,12 @@ pub async fn sqlite_memory_search(
     .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
-        .map(|(memory_id, path, content, sequence_no)| {
+        .map(|(memory_id, path, content, sequence_no, kind)| {
             json!({
                 "memory_id": memory_id,
                 "path": path,
+                "kind": kind,
+                "score": Value::Null,
                 "snippet": content.chars().take(240).collect::<String>(),
                 "sequence_no": sequence_no,
             })
@@ -200,6 +209,7 @@ pub async fn sqlite_memory_search(
         "ok": true,
         "configured": true,
         "storage": "sqlite",
+        "strategy": "keyword",
         "query": query,
         "hits": hits,
     }))
