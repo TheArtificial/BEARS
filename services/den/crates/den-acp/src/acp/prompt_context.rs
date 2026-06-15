@@ -7,7 +7,7 @@ use crate::{
             runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
         },
     },
-    service::ApiState,
+    service::DenState,
 };
 use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
@@ -125,7 +125,7 @@ fn runtime_compaction_prompt_context(
 }
 
 pub(super) async fn acp_direct_tool_prompt_context_with_activity(
-    state: &ApiState,
+    state: &DenState,
     bear_id: Uuid,
     session_id: &str,
     cwd: &str,
@@ -233,7 +233,7 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
 }
 
 pub(super) async fn acp_plan_mode_prompt_context(
-    state: &crate::service::ApiState,
+    state: &crate::service::DenState,
     bear_id: Uuid,
     user_id: i32,
     session_id: &str,

@@ -14,7 +14,7 @@ use crate::{
         },
         responses::acp_error_response,
     },
-    service::ApiState,
+    service::DenState,
 };
 use den_http::errors::CustomError;
 use den_runtime::{
@@ -33,7 +33,7 @@ use crate::acp::{
 use super::auth::authenticate_acp_code_token;
 
 pub(in crate::acp) async fn compact_session(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
@@ -50,7 +50,7 @@ pub(in crate::acp) async fn compact_session(
 }
 
 pub(super) async fn compact_session_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
@@ -126,7 +126,7 @@ pub(super) async fn compact_session_inner(
 }
 
 pub(in crate::acp) async fn close_session(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Option<Json<serde_json::Value>>,
@@ -145,7 +145,7 @@ pub(in crate::acp) async fn close_session(
 }
 
 pub(in crate::acp) async fn cancel_session(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Option<Json<serde_json::Value>>,
@@ -164,7 +164,7 @@ pub(in crate::acp) async fn cancel_session(
 }
 
 pub(super) async fn cancel_session_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
@@ -244,7 +244,7 @@ pub(super) async fn cancel_session_inner(
 }
 
 pub(super) async fn close_session_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,

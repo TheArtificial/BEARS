@@ -15,7 +15,7 @@ use crate::{
         responses::{acp_error_response, api_auth_error_response},
         tool_results::acp_tool_result_response_from_delivery,
     },
-    service::ApiState,
+    service::DenState,
     core::acp_tokens,
 };
 use den_http::errors::CustomError;
@@ -28,7 +28,7 @@ use den_runtime::{
 use super::auth::authenticate_acp_code_token_with_auth;
 
 pub(in crate::acp) async fn tool_result(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id, tool_call_id)): Path<(String, String, String)>,
     headers: HeaderMap,
     Json(body): Json<ToolResultRequest>,
@@ -62,7 +62,7 @@ pub(in crate::acp) async fn tool_result(
 }
 
 pub(super) async fn tool_result_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     tool_call_id: String,

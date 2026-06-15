@@ -4,7 +4,7 @@ use tokio::sync::{oneshot, Mutex as TokioMutex};
 use uuid::Uuid;
 
 use crate::{
-    service::ApiState,
+    service::DenState,
     core::web_policy,
 };
 use den_runtime::{
@@ -83,4 +83,4 @@ pub(in crate::acp) struct PendingWebFetchApproval {
 }
 
 #[allow(dead_code)]
-pub(crate) fn _state_marker(_: &ApiState) {}
+pub(crate) fn _state_marker(_: &DenState) {}

@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_runtime::{
     archived_conversations,
@@ -29,7 +29,7 @@ use crate::acp::{
 use super::auth::authenticate_acp_code_token;
 
 pub(in crate::acp) async fn conversations(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpConversationsQuery>,
     headers: HeaderMap,
@@ -42,7 +42,7 @@ pub(in crate::acp) async fn conversations(
 }
 
 pub(super) async fn conversations_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     query: AcpConversationsQuery,
     headers: HeaderMap,
@@ -89,7 +89,7 @@ pub(super) async fn conversations_inner(
 }
 
 pub(in crate::acp) async fn conversation_history(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, conversation_id)): Path<(String, String)>,
     Query(query): Query<AcpConversationHistoryQuery>,
     headers: HeaderMap,
@@ -102,7 +102,7 @@ pub(in crate::acp) async fn conversation_history(
 }
 
 pub(super) async fn conversation_history_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     conversation_id: String,
     query: AcpConversationHistoryQuery,

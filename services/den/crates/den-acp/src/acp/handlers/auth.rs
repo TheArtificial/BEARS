@@ -8,14 +8,14 @@ use uuid::Uuid;
 
 use crate::{
     acp::responses::acp_error_response,
-    service::ApiState,
+    service::DenState,
     core::acp_tokens,
 };
 use den_http::errors::CustomError;
 use den_oauth::{auth, oauth::OAuthScope};
 
 pub(in crate::acp) async fn auth_check(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Response {
@@ -34,7 +34,7 @@ pub(in crate::acp) async fn auth_check(
 }
 
 pub(in crate::acp) async fn authenticate_acp_code_token(
-    state: &ApiState,
+    state: &DenState,
     headers: &HeaderMap,
     slug: &str,
 ) -> Result<i32, CustomError> {
@@ -46,7 +46,7 @@ pub(in crate::acp) async fn authenticate_acp_code_token(
 }
 
 pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
-    state: &ApiState,
+    state: &DenState,
     token: &str,
     slug: &str,
 ) -> Result<acp_tokens::AcpTokenAuth, CustomError> {

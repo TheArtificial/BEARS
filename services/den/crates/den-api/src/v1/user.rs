@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_http::user;
 
@@ -109,7 +109,7 @@ pub struct PasswordResetConfirmResponse {
     pub message: String,
 }
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new()
         .route("/register", post(register))
         .route("/login", post(login))
@@ -129,7 +129,7 @@ pub fn router() -> Router<ApiState> {
     )
 )]
 async fn register(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, CustomError> {
     // Validate input
@@ -185,7 +185,7 @@ async fn register(
     )
 )]
 async fn login(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, CustomError> {
     // Validate input
@@ -257,7 +257,7 @@ async fn login(
     )
 )]
 async fn request_password_reset(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Json(request): Json<PasswordResetRequest>,
 ) -> Result<Json<PasswordResetResponse>, CustomError> {
     // Validate input
@@ -297,7 +297,7 @@ async fn request_password_reset(
     )
 )]
 async fn confirm_password_reset(
-    State(_state): State<ApiState>,
+    State(_state): State<DenState>,
     Json(request): Json<PasswordResetConfirmRequest>,
 ) -> Result<Json<PasswordResetConfirmResponse>, CustomError> {
     // Validate input

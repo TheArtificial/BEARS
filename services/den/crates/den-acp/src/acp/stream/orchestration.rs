@@ -16,7 +16,7 @@ use crate::{
         acp_error_status_message, acp_stream_tokens_enabled,
         history::pending_session_title_update_event, GatewayEvent, AcpStreamContext,
     },
-    service::ApiState,
+    service::DenState,
     core::{
         acp_runtime::{is_acp_history_target, AcpConversationResolution},
         user,
@@ -48,7 +48,7 @@ pub(in crate::acp) struct AcpStreamSetup {
 }
 
 pub(in crate::acp) async fn build_acp_stream_setup(
-    state: &ApiState,
+    state: &DenState,
     user_id: i32,
     bear: &Bear,
     session_id: &str,
@@ -128,7 +128,7 @@ pub(in crate::acp) async fn build_acp_stream_setup(
 }
 
 pub(in crate::acp) async fn build_acp_sse_response(
-    state: ApiState,
+    state: DenState,
     user_id: i32,
     request_id: Uuid,
     session_id: &str,

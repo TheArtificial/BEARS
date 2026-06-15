@@ -2,7 +2,7 @@
 //!
 //! Carved out of `den-api` (v1.5+ den-acp sub-split). Owns the ACP protocol HTTP
 //! surface (`acp/**`), the residual native ACP protocol modules (`core/acp/*`:
-//! sessions / tokens / runtime / turn_runner), the shared [`service::ApiState`]
+//! sessions / tokens / runtime / turn_runner), the shared [`service::DenState`]
 //! (Option B: the lower edge owns the state both surfaces share), and the
 //! `/internal/den-tools/invoke` endpoint.
 //!
@@ -19,4 +19,4 @@ mod acp_turn_state_alignment_tests;
 #[cfg(test)]
 mod acp_workflow_state_tests;
 
-pub use service::ApiState;
+pub use service::DenState;

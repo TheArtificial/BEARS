@@ -2,11 +2,11 @@
 //!
 //! The runtime-side turn *contracts* (request inputs, stream context, conversation
 //! materialization) live in `den-runtime`; this module re-exports them and keeps the
-//! edge-only wrappers that wire `ApiState`/tool-turn coordination into the native runtime.
+//! edge-only wrappers that wire `DenState`/tool-turn coordination into the native runtime.
 
 use uuid::Uuid;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::DenError;
 use den_runtime::{
     tool_turns::ToolTurnCoordinator,
@@ -21,7 +21,7 @@ pub use den_runtime::turn_runner::{
 };
 
 pub struct AcpStaleRuntimeCleanupParams {
-    pub state: ApiState,
+    pub state: DenState,
     pub tool_turns: ToolTurnCoordinator,
     pub acp_session_id: String,
     pub bear_id: Uuid,

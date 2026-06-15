@@ -1,4 +1,4 @@
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
@@ -11,7 +11,7 @@ use den_runtime::{
 };
 
 pub(crate) async fn run_pair_reflection_summary(
-    state: &ApiState,
+    state: &DenState,
     session: &acp_sessions::AcpSessionRow,
     trigger: &str,
 ) -> Result<(), CustomError> {

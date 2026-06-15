@@ -1,7 +1,7 @@
 use axum::{response::Json, routing::get, Router};
 use utoipa::OpenApi;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -22,7 +22,7 @@ use crate::service::ApiState;
 )]
 pub struct ApiDoc;
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new().route("/api-docs/openapi.json", get(serve_openapi))
 }
 

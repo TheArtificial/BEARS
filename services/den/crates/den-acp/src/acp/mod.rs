@@ -53,7 +53,7 @@ use crate::{
         },
         tool_results::default_unavailable_context_budget,
     },
-    service::ApiState,
+    service::DenState,
     core::{
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
@@ -79,7 +79,7 @@ use self::{
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new()
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
         .route("/bears/{slug}/sessions/{session_id}", get(get_acp_session))
@@ -178,7 +178,7 @@ use self::{
 };
 
 async fn prompt(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpPromptRequest>,
@@ -199,7 +199,7 @@ async fn prompt(
 
 
 async fn prompt_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,

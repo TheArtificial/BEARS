@@ -8,7 +8,7 @@ use axum::{
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_http::user;
 use den_oauth::oauth::{error::OAuthError, jwt::create_jwt_manager};
@@ -38,7 +38,7 @@ pub struct ProfileResponse {
     pub week_start_day: i32,
 }
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new().route("/me", get(get_profile))
 }
 
@@ -53,7 +53,7 @@ pub fn router() -> Router<ApiState> {
 )]
 /// Get authenticated user's profile
 pub async fn get_profile(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
     // Extract Bearer token from Authorization header

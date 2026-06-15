@@ -13,7 +13,7 @@ use crate::{
         stream::orchestration::{build_acp_sse_response, build_acp_stream_setup},
         AcpPromptRequest,
     },
-    service::ApiState,
+    service::DenState,
     core::{
         acp_runtime::{
             canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
@@ -38,7 +38,7 @@ use den_runtime::{
 };
 
 pub(in crate::acp) async fn run_prompt_flow(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: axum::http::HeaderMap,

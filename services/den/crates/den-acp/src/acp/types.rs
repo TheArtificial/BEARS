@@ -6,7 +6,7 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
 use den_runtime::{
@@ -147,4 +147,4 @@ pub struct AdapterContract {
     pub(super) version: u32,
 }
 
-pub(super) fn _state_marker(_: &ApiState) {}
+pub(super) fn _state_marker(_: &DenState) {}

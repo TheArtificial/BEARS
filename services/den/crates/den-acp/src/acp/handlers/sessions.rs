@@ -16,7 +16,7 @@ use crate::{
         tool_results::default_unavailable_context_budget,
         ACP_SESSIONS_PAGE_SIZE,
     },
-    service::ApiState,
+    service::DenState,
     core::{
         acp_tokens,
         docket::{DocketService, PgDocketService, WorkPlanLookup},
@@ -69,7 +69,7 @@ fn runtime_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<Stri
 
 
 pub(in crate::acp) async fn get_acp_session_prompt_memory(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     Query(query): Query<AcpPromptMemoryQuery>,
     headers: HeaderMap,
@@ -82,7 +82,7 @@ pub(in crate::acp) async fn get_acp_session_prompt_memory(
 }
 
 pub(super) async fn get_acp_session_prompt_memory_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     query: AcpPromptMemoryQuery,
@@ -147,7 +147,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
 }
 
 pub(in crate::acp) async fn list_acp_sessions(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpSessionsListQuery>,
     headers: HeaderMap,
@@ -160,7 +160,7 @@ pub(in crate::acp) async fn list_acp_sessions(
 }
 
 pub(super) async fn list_acp_sessions_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     query: AcpSessionsListQuery,
     headers: HeaderMap,
@@ -229,7 +229,7 @@ pub(super) async fn list_acp_sessions_inner(
 }
 
 pub(in crate::acp) async fn get_acp_session(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
@@ -241,7 +241,7 @@ pub(in crate::acp) async fn get_acp_session(
 }
 
 pub(in crate::acp) async fn get_acp_session_runtime(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
@@ -253,7 +253,7 @@ pub(in crate::acp) async fn get_acp_session_runtime(
 }
 
 pub(super) async fn get_acp_session_runtime_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
@@ -379,7 +379,7 @@ pub(super) async fn get_acp_session_runtime_inner(
 }
 
 pub(in crate::acp) async fn set_session_mode(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpSetModeRequest>,
@@ -392,7 +392,7 @@ pub(in crate::acp) async fn set_session_mode(
 }
 
 pub(in crate::acp) async fn post_adapter_environment(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpAdapterEnvironmentRequest>,
@@ -405,7 +405,7 @@ pub(in crate::acp) async fn post_adapter_environment(
 }
 
 pub(super) async fn post_adapter_environment_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
@@ -489,7 +489,7 @@ pub(super) async fn post_adapter_environment_inner(
 }
 
 pub(super) async fn set_session_mode_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
@@ -657,7 +657,7 @@ pub(super) async fn set_session_mode_inner(
 }
 
 pub(super) async fn get_acp_session_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     headers: HeaderMap,

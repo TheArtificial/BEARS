@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    service::ApiState,
+    service::DenState,
     core::tools::{aliases::is_builtin_den_tool, session::DenToolInvocationContext},
 };
 use den_http::errors::CustomError;
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new().route("/den-tools/invoke", post(invoke_den_tool))
 }
 
@@ -34,7 +34,7 @@ struct InvokeDenToolResponse {
 }
 
 async fn invoke_den_tool(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     headers: HeaderMap,
     Json(payload): Json<InvokeDenToolRequest>,
 ) -> Response {
@@ -92,7 +92,7 @@ async fn invoke_den_tool(
     }
 }
 
-fn authorize_internal_request(state: &ApiState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+fn authorize_internal_request(state: &DenState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     let expected = state.config.den_internal_token.trim();
     if expected.is_empty() {
         return Ok(());

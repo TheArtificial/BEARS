@@ -20,7 +20,7 @@ use crate::{
         RoleRuntimeBinding, default_tool_continue_stream_context,
     },
     acp::types::PersistedToolRequestEffect,
-    service::ApiState,
+    service::DenState,
     core::tools::descriptor::den_tool_completion_status_text,
 };
 use den_http::errors::{CustomError, DenError};
@@ -849,7 +849,7 @@ impl Stream for AcpRuntimeSseStream {
                                 let pair_agent_id = this.context.pair_agent_id.clone();
                                 let run_ids = this.diagnostics.run_ids.clone();
                                 let request_id = this.context.request_id;
-                                let cleanup_state = ApiState {
+                                let cleanup_state = DenState {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
@@ -1050,7 +1050,7 @@ impl Stream for AcpRuntimeSseStream {
                     };
                     this.diagnostics.saw_tool_return_ack = true;
                     let config = this.context.config.clone();
-                    let api_state = ApiState {
+                    let api_state = DenState {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
@@ -1109,7 +1109,7 @@ impl Stream for AcpRuntimeSseStream {
                     let pair_agent_id = this.context.pair_agent_id.clone();
                     let run_ids = this.diagnostics.run_ids.clone();
                     let request_id = this.context.request_id;
-                    let cleanup_state = ApiState {
+                    let cleanup_state = DenState {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
@@ -1144,7 +1144,7 @@ impl Stream for AcpRuntimeSseStream {
                     let pair_agent_id = this.context.pair_agent_id.clone();
                     let run_ids = this.diagnostics.run_ids.clone();
                     let request_id = this.context.request_id;
-                    let cleanup_state = ApiState {
+                    let cleanup_state = DenState {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),

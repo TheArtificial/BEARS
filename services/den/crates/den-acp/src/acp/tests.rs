@@ -52,7 +52,7 @@ use den_runtime::prompt_memory_blocks::{
             },
             tool_results::acp_tool_result_response_from_delivery,
         },
-        service::ApiState,
+        service::DenState,
         core::{
             acp_runtime::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
@@ -93,9 +93,9 @@ use den_runtime::prompt_memory_blocks::{
         role_runtime::{RoleRuntime, RoleTurnScope},
     };
 
-    fn prompt_memory_test_state(pool: sqlx::PgPool) -> ApiState {
+    fn prompt_memory_test_state(pool: sqlx::PgPool) -> DenState {
         let config = Arc::new(Config::test_stub());
-        ApiState {
+        DenState {
             sqlx_pool: pool,
             config: config.clone(),
             bifrost: Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
@@ -2744,7 +2744,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();
         let config = std::sync::Arc::new(den_core::config::Config::test_stub());
-        let state = crate::service::ApiState {
+        let state = crate::service::DenState {
             sqlx_pool: pool,
             config: config.clone(),
             bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),

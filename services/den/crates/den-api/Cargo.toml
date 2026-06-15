@@ -6,10 +6,11 @@ edition = "2021"
 # den-api: the JSON/REST + OAuth HTTP edge of the den binary. It owns the public
 # API service (`service::create_api_app`), the v1 user/profile/oauth routes, the
 # OAuth2 authorization server, and the OpenAPI docs. It composes the ACP surface
-# by mounting `den_acp::acp` + `den_acp::internal` and sharing
-# `den_acp::service::ApiState`. It sits above den-acp, den-http (identity/error
-# foundation), den-oauth, den-runtime (tool/runtime execution), den-docket (work
-# plans), and den-core.
+# by mounting `den_acp::acp` + `den_acp::internal`, and shares the protocol-neutral
+# `den_runtime::DenState` (ADR-0043: state lives in the runtime, not in either
+# edge). It sits above den-acp, den-http (identity/error foundation), den-oauth,
+# den-runtime (tool/runtime execution + DenState), den-docket (work plans), and
+# den-core.
 
 [lints]
 workspace = true

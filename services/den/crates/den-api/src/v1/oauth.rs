@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::service::ApiState;
+use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_oauth::oauth::{db, jwt::create_jwt_manager};
 
@@ -47,7 +47,7 @@ pub struct RevokeTokenResponse {
     pub message: String,
 }
 
-pub fn router() -> Router<ApiState> {
+pub fn router() -> Router<DenState> {
     Router::new()
         .route("/tokens", get(list_tokens))
         .route("/tokens/revoke", post(revoke_token))
@@ -64,7 +64,7 @@ pub fn router() -> Router<ApiState> {
     )
 )]
 async fn list_tokens(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     headers: HeaderMap,
 ) -> Result<Json<ListTokensResponse>, CustomError> {
     // Extract and validate Bearer token
@@ -127,7 +127,7 @@ async fn list_tokens(
     )
 )]
 async fn revoke_token(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     headers: HeaderMap,
     Json(request): Json<RevokeTokenRequest>,
 ) -> Result<Json<RevokeTokenResponse>, CustomError> {

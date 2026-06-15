@@ -57,6 +57,10 @@ pub mod acp_sessions;
 /// Runtime-side turn contracts (start/continue request inputs + materialization).
 pub mod turn_runner;
 
+/// Shared application state for the Den HTTP edges (protocol-agnostic; ADR-0043).
+pub mod state;
+pub use state::DenState;
+
 /// The native agent loop: assembly, step streaming, approvals, transcript projection.
 pub mod agent_loop;
 

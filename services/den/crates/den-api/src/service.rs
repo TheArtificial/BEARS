@@ -31,11 +31,12 @@ use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
 
 use std::sync::Arc;
 
-// `ApiState` lives in `den-acp` now (v1.5+ sub-split, Option B). Re-exported so the
-// retained `crate::service::ApiState` paths in `v1`/`docs` resolve unchanged.
-pub use den_acp::service::ApiState;
+// `DenState` lives in `den-runtime` (below every HTTP edge) per ADR-0043, so the
+// JSON/REST edge no longer depends on the ACP edge for shared state. Re-exported
+// so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
+pub use den_runtime::DenState;
 
-async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
+async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, StatusCode> {
     sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&state.sqlx_pool)
         .await
@@ -88,7 +89,7 @@ pub async fn create_api_app(
     let api_server_url = config.api_server_url.clone();
 
     // Create API application state (owned by den-acp; built via its constructor).
-    let api_state = ApiState::new(
+    let api_state = DenState::new(
         sqlx_pool.clone(),
         config.clone(),
         Arc::new(BifrostClient::new(config.as_ref())),

@@ -11,7 +11,7 @@ use crate::{
         compat::acp_compatibility_error_response, responses::acp_error_response,
         AcpPermissionDecisionRequest, AcpPermissionDecisionResponse,
     },
-    service::ApiState,
+    service::DenState,
     core::{
         acp_tokens,
         web_policy,
@@ -34,7 +34,7 @@ use crate::acp::{
 use super::auth::authenticate_acp_code_token_with_auth;
 
 pub(in crate::acp) async fn permission_result(
-    State(state): State<ApiState>,
+    State(state): State<DenState>,
     Path((slug, session_id, permission_id)): Path<(String, String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpPermissionDecisionRequest>,
@@ -50,7 +50,7 @@ pub(in crate::acp) async fn permission_result(
 }
 
 pub(super) async fn permission_result_inner(
-    state: ApiState,
+    state: DenState,
     slug: String,
     session_id: String,
     permission_id: String,

@@ -58,7 +58,7 @@ fn overflow_context(
     }
 }
 
-/// Shared dependencies for internal native profile turns (no full `ApiState` required).
+/// Shared dependencies for internal native profile turns (no full `DenState` required).
 pub struct NativeRuntimeDeps<'a> {
     pub pool: &'a PgPool,
     pub config: &'a Config,
