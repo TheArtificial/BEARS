@@ -71,7 +71,7 @@ pub async fn ensure_conversation_for_external_id(
     current_title: Option<&str>,
 ) -> Result<ConversationRecord, DenError> {
     let inserted_row = sqlx::query(
-        r#"
+        r"
         INSERT INTO conversations (
             bear_id,
             created_by_user_id,
@@ -82,7 +82,7 @@ pub async fn ensure_conversation_for_external_id(
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(created_by_user_id)
@@ -97,14 +97,14 @@ pub async fn ensure_conversation_for_external_id(
         row
     } else {
         sqlx::query(
-            r#"
+            r"
             UPDATE conversations
             SET source_acp_session_id = COALESCE($3, conversations.source_acp_session_id),
                 current_title = COALESCE($4, conversations.current_title)
             WHERE bear_id = $1
               AND external_conversation_id = $2
             RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(external_conversation_id)
@@ -142,12 +142,12 @@ pub async fn get_conversation_by_id(
     conversation_id: Uuid,
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
         FROM conversations
         WHERE id = $1
         LIMIT 1
-        "#,
+        ",
     )
     .bind(conversation_id)
     .fetch_optional(pool)
@@ -185,13 +185,13 @@ pub async fn get_conversation_for_external_id(
     external_conversation_id: &str,
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
         FROM conversations
         WHERE bear_id = $1
           AND external_conversation_id = $2
         LIMIT 1
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(external_conversation_id)
@@ -230,11 +230,11 @@ pub async fn delete_conversation_for_external_id(
     external_conversation_id: &str,
 ) -> Result<u64, DenError> {
     let result = sqlx::query(
-        r#"
+        r"
         DELETE FROM conversations
         WHERE bear_id = $1
           AND external_conversation_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(external_conversation_id)
@@ -255,13 +255,13 @@ pub async fn set_conversation_title(
         return Ok(0);
     }
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE conversations
         SET current_title = $3,
             updated_at = NOW()
         WHERE bear_id = $1
           AND external_conversation_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(external_conversation_id)
@@ -278,13 +278,13 @@ pub async fn list_conversations_for_bear(
     limit: i64,
 ) -> Result<Vec<ConversationRecord>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
         FROM conversations
         WHERE bear_id = $1
         ORDER BY updated_at DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(limit.clamp(1, 200))
@@ -325,14 +325,14 @@ pub async fn list_messages_page(
     limit: i64,
 ) -> Result<Vec<PersistedConversationMessage>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT sequence_no, message_type, role, visibility, content_text, provider_message_id, created_at
         FROM conversation_messages
         WHERE conversation_id = $1
           AND ($2::bigint IS NULL OR sequence_no < $2)
         ORDER BY sequence_no DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(before_sequence_no)
@@ -390,13 +390,13 @@ pub async fn append_message(
 
     if let Some(source_event_id) = source_event_id {
         if let Some(existing_sequence_no) = sqlx::query_scalar::<_, i64>(
-            r#"
+            r"
             SELECT sequence_no
             FROM conversation_messages
             WHERE conversation_id = $1
               AND source_event_id = $2
             LIMIT 1
-            "#,
+            ",
         )
         .bind(conversation_id)
         .bind(source_event_id)
@@ -412,13 +412,13 @@ pub async fn append_message(
     }
 
     let allocator_row = sqlx::query(
-        r#"
+        r"
         UPDATE conversations
         SET next_message_sequence = next_message_sequence + 1,
             updated_at = NOW()
         WHERE id = $1
         RETURNING next_message_sequence - 1 AS sequence_no
-        "#,
+        ",
     )
     .bind(conversation_id)
     .fetch_one(&mut *tx)
@@ -430,7 +430,7 @@ pub async fn append_message(
         .map_err(|err| DenError::Database(format!("decode allocated sequence_no: {err}")))?;
 
     if let Err(err) = sqlx::query(
-        r#"
+        r"
         INSERT INTO conversation_messages (
             conversation_id,
             sequence_no,
@@ -455,7 +455,7 @@ pub async fn append_message(
             $9,
             COALESCE($10::timestamptz, NOW())
         )
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(sequence_no)
@@ -476,13 +476,13 @@ pub async fn append_message(
 
         let duplicate_sequence_no = if source_event_id.is_some() {
             sqlx::query_scalar::<_, i64>(
-                r#"
+                r"
                 SELECT sequence_no
                 FROM conversation_messages
                 WHERE conversation_id = $1
                   AND source_event_id = $2
                 LIMIT 1
-                "#,
+                ",
             )
             .bind(conversation_id)
             .bind(source_event_id)
@@ -525,7 +525,7 @@ pub async fn insert_message_if_absent(
     let provider_message_id = message.provider_message_id.as_deref();
     let created_at = message.created_at.as_deref();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO conversation_messages (
             conversation_id,
             sequence_no,
@@ -542,7 +542,7 @@ pub async fn insert_message_if_absent(
             COALESCE($9::timestamptz, NOW())
         )
         ON CONFLICT (conversation_id, sequence_no) DO NOTHING
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(sequence_no)
@@ -564,12 +564,12 @@ pub async fn count_visible_messages(
     conversation_id: Uuid,
 ) -> Result<i64, DenError> {
     sqlx::query_scalar::<_, i64>(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM conversation_messages
         WHERE conversation_id = $1
           AND visibility != 'diagnostic_only'
-        "#,
+        ",
     )
     .bind(conversation_id)
     .fetch_one(pool)

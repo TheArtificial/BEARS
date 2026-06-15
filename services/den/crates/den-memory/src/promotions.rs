@@ -18,12 +18,12 @@ pub async fn append_memory_promotion(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO memory_promotions (
             promotion_id, bear_id, sequence_no, source_memory_id, target_memory_id,
             action, created_at, notes
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
+        ",
     )
     .bind(&promotion_id)
     .bind(store.bear_id().to_string())

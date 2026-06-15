@@ -28,11 +28,11 @@ impl<'a> DenNativeProfileRegistry<'a> {
         // on the `den`-crate `bears` subsystem (a `den-runtime → den` cycle); the bears
         // subsystem keeps its own copy for the edge call sites until it, too, lands here.
         let row: Option<(String,)> = sqlx::query_as(
-            r#"
+            r"
             SELECT binding_id
             FROM bear_profile_bindings
             WHERE bear_id = $1 AND profile = $2
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(profile.as_str())

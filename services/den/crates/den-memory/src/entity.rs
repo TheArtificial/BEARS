@@ -66,12 +66,12 @@ pub async fn create_entity(
     let sequence_no = store.next_sequence().await?;
     let created_at = now_rfc3339()?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO entities (
             entity_id, bear_id, sequence_no, type, display_name, resolution, trust,
             canonical_ref, superseded_by_entity_id, metadata_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-        "#,
+        ",
     )
     .bind(&entity_id)
     .bind(store.bear_id().to_string())
@@ -106,12 +106,12 @@ pub async fn get_entity(
     entity_id: &str,
 ) -> Result<Option<EntityRow>, DenError> {
     let row = sqlx::query_as::<_, EntitySqlRow>(
-        r#"
+        r"
         SELECT entity_id, sequence_no, type, display_name, resolution, trust,
                canonical_ref, superseded_by_entity_id, metadata_json, created_at
         FROM entities
         WHERE bear_id = ? AND entity_id = ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(entity_id)
@@ -149,14 +149,14 @@ pub async fn list_entities(
 ) -> Result<Vec<EntityRow>, DenError> {
     let rows = if let Some(t) = type_filter {
         sqlx::query_as::<_, EntitySqlRow>(
-            r#"
+            r"
             SELECT entity_id, sequence_no, type, display_name, resolution, trust,
                    canonical_ref, superseded_by_entity_id, metadata_json, created_at
             FROM entities
             WHERE bear_id = ? AND type = ?
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id().to_string())
         .bind(t)
@@ -165,14 +165,14 @@ pub async fn list_entities(
         .await
     } else {
         sqlx::query_as::<_, EntitySqlRow>(
-            r#"
+            r"
             SELECT entity_id, sequence_no, type, display_name, resolution, trust,
                    canonical_ref, superseded_by_entity_id, metadata_json, created_at
             FROM entities
             WHERE bear_id = ?
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id().to_string())
         .bind(limit)
@@ -193,13 +193,13 @@ pub async fn attach_handle(
     trust: EntityTrust,
 ) -> Result<EntityHandleRow, DenError> {
     if let Some(existing) = sqlx::query_as::<_, EntityHandleSqlRow>(
-        r#"
+        r"
         SELECT handle_id, entity_id, handle_type, handle_value, source, trust, state, created_at
         FROM entity_handles
         WHERE bear_id = ? AND entity_id = ? AND handle_type = ? AND handle_value = ?
           AND state = 'active'
         LIMIT 1
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(entity_id)
@@ -215,11 +215,11 @@ pub async fn attach_handle(
     let handle_id = Uuid::new_v4().to_string();
     let created_at = now_rfc3339()?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO entity_handles (
             handle_id, bear_id, entity_id, handle_type, handle_value, source, trust, state, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
-        "#,
+        ",
     )
     .bind(&handle_id)
     .bind(store.bear_id().to_string())
@@ -261,12 +261,12 @@ pub async fn list_handles(
     entity_id: &str,
 ) -> Result<Vec<EntityHandleRow>, DenError> {
     let rows = sqlx::query_as::<_, EntityHandleSqlRow>(
-        r#"
+        r"
         SELECT handle_id, entity_id, handle_type, handle_value, source, trust, state, created_at
         FROM entity_handles
         WHERE bear_id = ? AND entity_id = ? AND state = 'active'
         ORDER BY created_at ASC
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(entity_id)
@@ -284,12 +284,12 @@ pub async fn find_entity_by_handle(
     handle_value: &str,
 ) -> Result<Option<EntityRow>, DenError> {
     let entity_id = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT entity_id FROM entity_handles
         WHERE bear_id = ? AND handle_type = ? AND handle_value = ? AND state = 'active'
         ORDER BY created_at ASC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(handle_type)
@@ -371,11 +371,11 @@ pub async fn merge_entities(
     }
 
     sqlx::query(
-        r#"
+        r"
         UPDATE entities
         SET resolution = 'merged', superseded_by_entity_id = ?
         WHERE bear_id = ? AND entity_id = ?
-        "#,
+        ",
     )
     .bind(&survivor.entity_id)
     .bind(store.bear_id().to_string())
@@ -385,11 +385,11 @@ pub async fn merge_entities(
     .map_err(|e| DenError::System(format!("merge entity update failed: {e}")))?;
 
     sqlx::query(
-        r#"
+        r"
         UPDATE entity_handles
         SET entity_id = ?
         WHERE bear_id = ? AND entity_id = ? AND state = 'active'
-        "#,
+        ",
     )
     .bind(&survivor.entity_id)
     .bind(store.bear_id().to_string())

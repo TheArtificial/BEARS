@@ -157,7 +157,7 @@ async fn source_policy(
     normalized: &NormalizedWebUrl,
 ) -> Result<Option<String>, CustomError> {
     let row: Option<(String,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT policy
         FROM bear_web_sources
         WHERE bear_id = $1
@@ -167,7 +167,7 @@ async fn source_policy(
                  CASE policy WHEN 'blocked' THEN 0 WHEN 'preferred' THEN 1 ELSE 2 END,
                  priority DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&normalized.url)
@@ -184,7 +184,7 @@ async fn approval_exists(
     scope_value: &str,
 ) -> Result<bool, CustomError> {
     let exists: bool = sqlx::query_scalar(
-        r#"
+        r"
         SELECT EXISTS(
             SELECT 1
             FROM bear_web_approvals
@@ -194,7 +194,7 @@ async fn approval_exists(
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > now())
         )
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(scope_kind)
@@ -241,23 +241,23 @@ pub async fn record_web_approval(
     let expires_expr = ttl_seconds
         .map(|seconds| format!("now() + interval '{} seconds'", seconds.clamp(1, 86_400)));
     let sql = if expires_expr.is_some() {
-        r#"
+        r"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
         VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' seconds')::interval)
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
                       expires_at = EXCLUDED.expires_at
-        "#
+        "
     } else {
-        r#"
+        r"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
         VALUES ($1, $2, $3, $4, $5, NULL)
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
                       expires_at = NULL
-        "#
+        "
     };
     let mut query = sqlx::query(sql)
         .bind(bear_id)
@@ -291,13 +291,13 @@ pub async fn record_web_fetch_attempt(
     params: WebFetchAuditParams<'_>,
 ) -> Result<(), CustomError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_web_fetches (
             bear_id, session_id, tool_call_id, url, final_url, host,
             execution_location, approval_kind, http_status, content_type, bytes
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.session_id)
@@ -320,14 +320,14 @@ pub async fn preferred_hosts_for_bear(
     bear_id: Uuid,
 ) -> Result<Vec<String>, CustomError> {
     let rows: Vec<(String,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT scope_value
         FROM bear_web_sources
         WHERE bear_id = $1
           AND scope_kind = 'host'
           AND policy = 'preferred'
         ORDER BY priority DESC, scope_value ASC
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)

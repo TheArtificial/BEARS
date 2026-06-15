@@ -378,7 +378,7 @@ async fn profile_detail_view(
     };
     let role = profile
         .parse::<BearProfile>()
-        .map_err(|err| CustomError::NotFound(err.to_string()))?;
+        .map_err(CustomError::NotFound)?;
     let role_detail = build_role_detail_view(&state, &bear, role).await?;
     web::render_template(
         &state,
@@ -708,7 +708,7 @@ async fn add_web_source_action(
         }
     };
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, label, policy, priority)
         VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
         ON CONFLICT (bear_id, scope_kind, scope_value)
@@ -716,7 +716,7 @@ async fn add_web_source_action(
                       policy = EXCLUDED.policy,
                       priority = EXCLUDED.priority,
                       updated_at = now()
-        "#,
+        ",
     )
     .bind(id)
     .bind(scope_kind)

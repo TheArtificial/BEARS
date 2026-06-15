@@ -30,12 +30,12 @@ pub async fn create_memory_observation(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO memory_observations (
             observation_id, bear_id, sequence_no, summary, salience, logical_path,
             source_json, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)
-        "#,
+        ",
     )
     .bind(observation_id)
     .bind(store.bear_id().to_string())
@@ -65,12 +65,12 @@ pub async fn get_memory_observation(
     observation_id: &str,
 ) -> Result<Option<SqliteMemoryObservation>, DenError> {
     let row = sqlx::query_as::<_, ObservationSqlRow>(
-        r#"
+        r"
         SELECT observation_id, sequence_no, summary, logical_path, status,
                proposal_id, source_json, created_at
         FROM memory_observations
         WHERE bear_id = ? AND observation_id = ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(observation_id)
@@ -86,11 +86,11 @@ pub async fn mark_observation_review_queued(
     proposal_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE memory_observations
         SET status = 'review_queued', proposal_id = ?
         WHERE bear_id = ? AND observation_id = ?
-        "#,
+        ",
     )
     .bind(proposal_id)
     .bind(store.bear_id().to_string())

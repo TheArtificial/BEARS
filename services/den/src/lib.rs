@@ -249,7 +249,7 @@ pub async fn run() -> Result<(), StartupError> {
     };
 
     if let Some(token) = worker_token_opt.clone() {
-        let t = token.clone();
+        let t = token;
         let worker_pool = sqlx_pool.clone();
         let worker_config = config.clone();
         task_set.spawn(async move {
@@ -269,7 +269,7 @@ pub async fn run() -> Result<(), StartupError> {
 
     if let Some(token) = worker_token_opt.clone() {
         if config.qdrant_url.is_some() {
-            let t = token.clone();
+            let t = token;
             let worker_pool = sqlx_pool.clone();
             let worker_config = config.clone();
             task_set.spawn(async move {
@@ -331,10 +331,10 @@ async fn shutdown_signal() {
         };
 
         tokio::select! {
-            _ = ctrl_c => {
+            () = ctrl_c => {
                 tracing::info!("Initiating graceful shutdown due to Ctrl+C");
             },
-            _ = terminate => {
+            () = terminate => {
                 tracing::info!("Initiating graceful shutdown due to SIGTERM");
             },
         }

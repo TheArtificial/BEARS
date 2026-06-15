@@ -200,7 +200,7 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
         resolution.resolved_conversation = Some(conversation.clone());
         resolution.history_target = Some(conversation.clone());
         resolution.archive_target = Some(conversation.clone());
-        resolution.upstream_target = conversation.id.clone();
+        resolution.upstream_target = conversation.id;
         created = true;
     }
     let conversation = resolution

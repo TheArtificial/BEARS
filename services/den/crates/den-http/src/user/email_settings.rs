@@ -400,7 +400,7 @@ pub async fn set_admin_email_verified(
     };
 
     let res = sqlx::query(
-        r#"
+        r"
         UPDATE email_configs
         SET
             verified_at = $1,
@@ -408,7 +408,7 @@ pub async fn set_admin_email_verified(
         WHERE user_id = $2
           AND active = true
           AND email_address = (SELECT email FROM users WHERE id = $2)
-        "#,
+        ",
     )
     .bind(verified_at)
     .bind(user_id)
@@ -423,8 +423,8 @@ pub async fn set_admin_email_verified(
             .ok_or_else(|| DenError::NotFound(format!("user {user_id} not found")))?;
 
         sqlx::query(
-            r#"INSERT INTO email_configs (user_id, email_address, active, verified_at)
-               VALUES ($1, $2, true, NOW())"#,
+            r"INSERT INTO email_configs (user_id, email_address, active, verified_at)
+               VALUES ($1, $2, true, NOW())",
         )
         .bind(user_id)
         .bind(&email)

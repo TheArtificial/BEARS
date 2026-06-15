@@ -210,7 +210,7 @@ impl DeterministicEmbedder {
         (0..self.dimensions as usize)
             .map(|i| {
                 let b = seed_bytes[i % seed_bytes.len()];
-                ((b as f32) / 255.0) - 0.5
+                (f32::from(b) / 255.0) - 0.5
             })
             .collect()
     }

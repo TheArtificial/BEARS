@@ -28,19 +28,19 @@ pub async fn create_memory_proposal(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO memory_proposals (
             proposal_id, bear_id, sequence_no, suggested_action, sensitivity,
             requires_human, status, payload_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        "#,
+        ",
     )
     .bind(&proposal_id)
     .bind(store.bear_id().to_string())
     .bind(sequence_no)
     .bind(suggested_action)
     .bind(sensitivity)
-    .bind(if requires_human { 1 } else { 0 })
+    .bind(i32::from(requires_human))
     .bind(payload.to_string())
     .bind(&created_at)
     .execute(store.pool())
@@ -62,13 +62,13 @@ pub async fn list_memory_proposals(
 ) -> Result<Vec<SqliteMemoryProposal>, DenError> {
     let rows = if let Some(status) = status {
         sqlx::query_as::<_, (String, i64, String, String, String)>(
-            r#"
+            r"
             SELECT proposal_id, sequence_no, status, payload_json, created_at
             FROM memory_proposals
             WHERE bear_id = ? AND status = ?
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id().to_string())
         .bind(status)
@@ -77,13 +77,13 @@ pub async fn list_memory_proposals(
         .await
     } else {
         sqlx::query_as::<_, (String, i64, String, String, String)>(
-            r#"
+            r"
             SELECT proposal_id, sequence_no, status, payload_json, created_at
             FROM memory_proposals
             WHERE bear_id = ?
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id().to_string())
         .bind(limit)
@@ -131,11 +131,11 @@ pub async fn resolve_memory_proposal(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         UPDATE memory_proposals
         SET status = ?, payload_json = ?, reviewed_at = ?
         WHERE bear_id = ? AND proposal_id = ?
-        "#,
+        ",
     )
     .bind(status)
     .bind(payload.to_string())
@@ -146,10 +146,10 @@ pub async fn resolve_memory_proposal(
     .await
     .map_err(|e| DenError::System(format!("sqlite resolve proposal failed: {e}")))?;
     let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
-        r#"
+        r"
         SELECT proposal_id, sequence_no, status, payload_json, created_at
         FROM memory_proposals WHERE bear_id = ? AND proposal_id = ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(proposal_id)

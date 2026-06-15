@@ -104,7 +104,7 @@ pub async fn create_api_app(
     let session_layer = create_session_layer(session_store, config.as_ref());
 
     // Configure authentication
-    let auth_layer = create_auth_layer(sqlx_pool.clone(), session_layer);
+    let auth_layer = create_auth_layer(sqlx_pool, session_layer);
 
     // Build the main router with proper authentication layer ordering.
     let mut main_router = Router::new()

@@ -33,7 +33,7 @@ pub async fn upsert_prompt_memory_block(
     write: &PromptMemoryBlockWrite,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO prompt_memory_blocks (
             block_id,
             bear_id,
@@ -67,7 +67,7 @@ pub async fn upsert_prompt_memory_block(
             supersedes_block_id = EXCLUDED.supersedes_block_id,
             metadata = EXCLUDED.metadata,
             updated_at = now()
-        "#,
+        ",
     )
     .bind(&write.block_id)
     .bind(write.bear_id)
@@ -95,7 +95,7 @@ pub async fn patch_prompt_memory_block(
     patch: &PromptMemoryBlockPatch,
 ) -> Result<(), DenError> {
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE prompt_memory_blocks
         SET state = $2,
             title = $3,
@@ -105,7 +105,7 @@ pub async fn patch_prompt_memory_block(
             metadata = $7,
             updated_at = now()
         WHERE block_id = $1
-        "#,
+        ",
     )
     .bind(block_id)
     .bind(state_to_db(patch.state))
@@ -130,7 +130,7 @@ pub async fn list_prompt_memory_blocks_for_runtime(
     query: PromptMemoryBlockQuery<'_>,
 ) -> Result<Vec<PromptMemoryBlock>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
         FROM prompt_memory_blocks
         WHERE state = 'active'
@@ -142,7 +142,7 @@ pub async fn list_prompt_memory_blocks_for_runtime(
             OR (scope = 'work_surface' AND work_surface = ANY($4))
           )
         ORDER BY priority DESC, updated_at DESC
-        "#,
+        ",
     )
     .bind(query.bear_id)
     .bind(query.profile_slug)
@@ -161,13 +161,13 @@ pub async fn list_prompt_memory_blocks_for_bear_profile(
     profile_slug: &str,
 ) -> Result<Vec<PromptMemoryBlock>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT block_id, scope, block_type, state, profile_slug, work_surface, session_id, title, body, priority
         FROM prompt_memory_blocks
         WHERE bear_id = $1
           AND profile_slug = $2
         ORDER BY updated_at DESC, priority DESC
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile_slug)
@@ -185,14 +185,14 @@ pub async fn archive_prompt_memory_blocks_superseded_by(
     supersedes_block_id: &str,
 ) -> Result<u64, DenError> {
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE prompt_memory_blocks
         SET state = 'archived', updated_at = now()
         WHERE bear_id = $1
           AND profile_slug = $2
           AND block_id = $3
           AND state <> 'archived'
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile_slug)
@@ -208,7 +208,7 @@ pub async fn archive_conflicting_prompt_memory_blocks(
     write: &PromptMemoryBlockWrite,
 ) -> Result<u64, DenError> {
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE prompt_memory_blocks
         SET state = 'archived', updated_at = now()
         WHERE bear_id = $1
@@ -219,7 +219,7 @@ pub async fn archive_conflicting_prompt_memory_blocks(
           AND block_type = $5
           AND COALESCE(work_surface, '') = COALESCE($6, '')
           AND COALESCE(session_id, '') = COALESCE($7, '')
-        "#,
+        ",
     )
     .bind(write.bear_id)
     .bind(&write.profile_slug)

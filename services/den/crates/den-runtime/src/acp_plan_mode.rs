@@ -159,12 +159,12 @@ fn row_from_sql(row: &PgRow) -> AcpPlanModeSessionRow {
     }
 }
 
-const SELECT_COLUMNS: &str = r#"
+const SELECT_COLUMNS: &str = r"
     id, user_id, bear_id, bear_slug, acp_session_id, state, reason, requested_by,
     previous_permission_mode, plan_artifact_path, plan_title, plan_body,
     approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
     created_at, updated_at
-"#;
+";
 
 pub async fn list_for_bear(
     pool: &PgPool,
@@ -174,14 +174,14 @@ pub async fn list_for_bear(
 ) -> Result<Vec<AcpPlanModeSessionRow>, DenError> {
     let limit = limit.clamp(1, 100);
     let query = format!(
-        r#"
+        r"
         SELECT {SELECT_COLUMNS}
         FROM acp_plan_mode_sessions
         WHERE bear_id = $1
           AND ($2 OR state IN ('active', 'submitted'))
         ORDER BY updated_at DESC
         LIMIT $3
-        "#
+        "
     );
     let rows = sqlx::query(&query)
         .bind(bear_id)
@@ -199,7 +199,7 @@ pub async fn active_for_session(
     acp_session_id: &str,
 ) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = format!(
-        r#"
+        r"
         SELECT {SELECT_COLUMNS}
         FROM acp_plan_mode_sessions
         WHERE user_id = $1
@@ -208,7 +208,7 @@ pub async fn active_for_session(
           AND state IN ('active', 'submitted')
         ORDER BY updated_at DESC
         LIMIT 1
-        "#
+        "
     );
     let row = sqlx::query(&query)
         .bind(user_id)
@@ -226,11 +226,11 @@ pub async fn get_by_id_for_bear(
     plan_mode_id: Uuid,
 ) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = format!(
-        r#"
+        r"
         SELECT {SELECT_COLUMNS}
         FROM acp_plan_mode_sessions
         WHERE id = $1 AND user_id = $2 AND bear_id = $3
-        "#
+        "
     );
     let row = sqlx::query(&query)
         .bind(plan_mode_id)
@@ -250,21 +250,21 @@ pub async fn get_for_session(
 ) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
     let query = if plan_mode_id.is_some() {
         format!(
-            r#"
+            r"
             SELECT {SELECT_COLUMNS}
             FROM acp_plan_mode_sessions
             WHERE id = $4 AND user_id = $1 AND bear_id = $2 AND acp_session_id = $3
-            "#
+            "
         )
     } else {
         format!(
-            r#"
+            r"
             SELECT {SELECT_COLUMNS}
             FROM acp_plan_mode_sessions
             WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
             ORDER BY updated_at DESC
             LIMIT 1
-            "#
+            "
         )
     };
     let mut q = sqlx::query(&query)
@@ -300,14 +300,14 @@ pub async fn enter_plan_mode(
         existing
     } else {
         let query = format!(
-            r#"
+            r"
             INSERT INTO acp_plan_mode_sessions (
                 user_id, bear_id, bear_slug, acp_session_id, state, reason,
                 requested_by, previous_permission_mode
             )
             VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)
             RETURNING {SELECT_COLUMNS}
-            "#
+            "
         );
         let row = sqlx::query(&query)
             .bind(params.user_id)
@@ -375,7 +375,7 @@ pub async fn submit_plan_artifact(
     }
 
     let query = format!(
-        r#"
+        r"
         UPDATE acp_plan_mode_sessions
         SET state = 'submitted',
             plan_title = $5,
@@ -385,7 +385,7 @@ pub async fn submit_plan_artifact(
             updated_at = NOW()
         WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND acp_session_id = $4
         RETURNING {SELECT_COLUMNS}
-        "#
+        "
     );
     let row = sqlx::query(&query)
         .bind(current.id)
@@ -513,7 +513,7 @@ async fn close_with_state(
     }
     let mut tx = pool.begin().await?;
     let query = format!(
-        r#"
+        r"
         UPDATE acp_plan_mode_sessions
         SET state = $5,
             approved_by_user_id = CASE WHEN $5 = 'approved' THEN $2 ELSE approved_by_user_id END,
@@ -527,7 +527,7 @@ async fn close_with_state(
           AND ($4 = '' OR acp_session_id = $4)
           AND state IN ('active', 'submitted')
         RETURNING {SELECT_COLUMNS}
-        "#
+        "
     );
     let row = sqlx::query(&query)
         .bind(plan_mode_id)
@@ -557,12 +557,12 @@ async fn append_event(
     event_payload: Value,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO acp_plan_mode_events (
             plan_mode_id, user_id, bear_id, acp_session_id, event_type, event_payload
         )
         VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
+        ",
     )
     .bind(row.id)
     .bind(row.user_id)

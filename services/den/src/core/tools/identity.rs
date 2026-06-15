@@ -41,12 +41,12 @@ impl BearDirectory for DenBearDirectory<'_> {
         binding_id: &str,
     ) -> Result<Option<BearProfile>, DenError> {
         let row: Option<(String,)> = sqlx::query_as(
-            r#"
+            r"
             SELECT profile
             FROM bear_profile_bindings
             WHERE bear_id = $1
               AND binding_id = $2
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(binding_id)

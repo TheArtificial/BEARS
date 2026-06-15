@@ -41,14 +41,14 @@ pub async fn create(
 ) -> Result<BearObservationRow, DenError> {
     let logical_path = observation_logical_path(params.observation_id);
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_observations (
             bear_id, observation_id, summary, salience, payload_ref, source, logical_path
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id, bear_id, observation_id, summary, salience, payload_ref, source,
                   logical_path, status, proposal_id, created_at, reviewed_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.observation_id)
@@ -69,14 +69,14 @@ pub async fn mark_review_queued(
     proposal_id: Uuid,
 ) -> Result<BearObservationRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_observations
         SET status = 'review_queued',
             proposal_id = $3
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, observation_id, summary, salience, payload_ref, source,
                   logical_path, status, proposal_id, created_at, reviewed_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(observation_row_id)
@@ -92,12 +92,12 @@ pub async fn get_for_bear(
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, observation_id, summary, salience, payload_ref, source,
                logical_path, status, proposal_id, created_at, reviewed_at
         FROM bear_observations
         WHERE bear_id = $1 AND observation_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(observation_id)

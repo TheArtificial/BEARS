@@ -112,13 +112,13 @@ pub async fn append_relation(
     };
 
     let sql = format!(
-        r#"
+        r"
         INSERT INTO {table} (
             link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
             qualifiers_json, author_profile, author_agent_id, confidence, state,
             supersedes_link_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?)
-        "#
+        "
     );
     sqlx::query(&sql)
         .bind(&link_id)
@@ -157,14 +157,14 @@ pub async fn list_relations_for_source(
     limit: i64,
 ) -> Result<Vec<RelationRow>, DenError> {
     let rows = sqlx::query_as::<_, RelationSqlRow>(
-        r#"
+        r"
         SELECT link_id, sequence_no, src_memory_id, entity_id, relation, class,
                qualifiers_json, author_profile, state, created_at
         FROM memory_links
         WHERE bear_id = ? AND src_memory_id = ? AND state = 'active'
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(src_memory_id)
@@ -182,14 +182,14 @@ pub async fn list_relations_for_entity(
     limit: i64,
 ) -> Result<Vec<RelationRow>, DenError> {
     let rows = sqlx::query_as::<_, RelationSqlRow>(
-        r#"
+        r"
         SELECT link_id, sequence_no, src_memory_id, entity_id, relation, class,
                qualifiers_json, author_profile, state, created_at
         FROM memory_links
         WHERE bear_id = ? AND entity_id = ? AND state = 'active'
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(entity_id)
@@ -207,13 +207,13 @@ pub async fn list_access_rules_for_source(
     src_memory_id: &str,
 ) -> Result<Vec<RelationRow>, DenError> {
     let rows = sqlx::query_as::<_, AccessRuleSqlRow>(
-        r#"
+        r"
         SELECT link_id, sequence_no, src_memory_id, entity_id, relation,
                qualifiers_json, author_profile, state, created_at
         FROM memory_access_rules
         WHERE bear_id = ? AND src_memory_id = ? AND state = 'active'
         ORDER BY sequence_no DESC
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(src_memory_id)

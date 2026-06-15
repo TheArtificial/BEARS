@@ -27,7 +27,7 @@ pub(super) fn encode_acp_sessions_cursor(row: &acp_sessions::AcpSessionRow) -> S
     });
     URL_SAFE_NO_PAD.encode(
         serde_json::to_string(&payload)
-            .unwrap_or_else(|_| r#"{}"#.to_string())
+            .unwrap_or_else(|_| r"{}".to_string())
             .as_bytes(),
     )
 }

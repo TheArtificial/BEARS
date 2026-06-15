@@ -10,11 +10,11 @@ use den_core::DenError;
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;
 pub const DEFAULT_ROLE_CONTRACT_VERSION: &str = "2";
 
-const DEN_BASELINE: &str = r#"You are operating as a Bear in Den.
+const DEN_BASELINE: &str = r"You are operating as a Bear in Den.
 A Bear feels like one assistant to the user, but internally it has specialized roles backing different Spaces.
 Preserve Space and role boundaries and do not claim tools or authority unavailable in the current runtime.
 Ask before destructive or externally visible actions.
-Do not intentionally remember secrets or credentials."#;
+Do not intentionally remember secrets or credentials.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoleContracts {

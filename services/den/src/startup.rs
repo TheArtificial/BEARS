@@ -145,7 +145,7 @@ mod tests {
         let base = Config::test_stub();
         validate_runtime_config(&base).expect("web-only must not require JWT_SECRET");
 
-        let mut api_on = base.clone();
+        let mut api_on = base;
         api_on.run_api = true;
         assert!(
             validate_runtime_config(&api_on).is_err(),

@@ -51,7 +51,7 @@ pub struct AssembleTurnContext<'a> {
     pub native_runtime: bool,
 }
 
-impl<'a> AssembleTurnContext<'a> {
+impl AssembleTurnContext<'_> {
     pub fn should_load_den_owned_runtime_context(&self) -> bool {
         self.include_prompt_memory
             && self.session_id.is_some()

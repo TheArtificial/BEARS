@@ -52,7 +52,7 @@ pub async fn ensure_memory_curate_conversation(
     .await?;
 
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO reflection_conversations (
             bear_id, role_agent_id, lane, conversation_date, conversation_key, conversation_id
         )
@@ -65,7 +65,7 @@ pub async fn ensure_memory_curate_conversation(
             last_used_at = NOW()
         RETURNING id, bear_id, role_agent_id, lane, conversation_date, conversation_key,
                   conversation_id, created_at, last_used_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(role_agent_id)
@@ -85,13 +85,13 @@ pub async fn touch_memory_curate_conversation(
     conversation_date: Date,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE reflection_conversations
         SET last_used_at = NOW()
         WHERE bear_id = $1
           AND lane = $2
           AND conversation_date = $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(MEMORY_CURATE_LANE)
@@ -108,14 +108,14 @@ pub async fn bind_memory_curate_run_conversation(
     conversation_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE bear_reflection_runs
         SET conversation_id = $3
         WHERE bear_id = $1
           AND id = $2
           AND lane = $4
           AND (conversation_id IS NULL OR btrim(conversation_id) = '')
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(reflection_run_id)
@@ -132,14 +132,14 @@ pub async fn get_memory_curate_conversation(
     conversation_date: Date,
 ) -> Result<Option<ReflectionConversationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, role_agent_id, lane, conversation_date, conversation_key,
                conversation_id, created_at, last_used_at
         FROM reflection_conversations
         WHERE bear_id = $1
           AND lane = $2
           AND conversation_date = $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(MEMORY_CURATE_LANE)

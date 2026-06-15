@@ -19,7 +19,7 @@ pub struct InvitingUser {
 
 pub async fn by_user_id(db_pool: &PgPool, user_id: i32) -> Result<Vec<Invite>, DenError> {
     let invites = sqlx::query_as::<_, Invite>(
-        r#"
+        r"
         SELECT
             invites.id,
             invites.code,
@@ -29,7 +29,7 @@ pub async fn by_user_id(db_pool: &PgPool, user_id: i32) -> Result<Vec<Invite>, D
         FROM invites
         LEFT JOIN users ON invites.new_user_id = users.id
         WHERE invites.user_id = $1
-        "#,
+        ",
     )
     .bind(user_id)
     .fetch_all(db_pool)
@@ -51,14 +51,14 @@ pub async fn create(db_pool: &PgPool, user_id: i32, code: &str) -> Result<i32, D
 
 pub async fn check(db_pool: &PgPool, code: &str) -> Result<Option<InvitingUser>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT
             users.username AS inviting_username,
             users.display_name AS inviting_display_name
         FROM invites
         LEFT JOIN users ON invites.user_id = users.id
         WHERE invites.code = $1 AND invites.new_user_id IS NULL
-        "#,
+        ",
     )
     .bind(code)
     .fetch_optional(db_pool)

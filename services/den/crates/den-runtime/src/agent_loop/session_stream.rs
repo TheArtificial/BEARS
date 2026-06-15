@@ -298,9 +298,7 @@ impl Stream for SessionTrackingStream {
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();
                     let acp_session_id = self.acp_session_id.clone();
-                    let tool_call_id = tool_call_id.clone();
-                    let tool_name = tool_name.clone();
-                    let arguments_value = arguments.clone();
+                    let arguments_value = arguments;
                     self.pending_tool_event = Some(event);
                     self.pending_approval = Some(Box::pin(async move {
                         maybe_pause_for_tool_approval(

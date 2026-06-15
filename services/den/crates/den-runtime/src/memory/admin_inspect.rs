@@ -137,12 +137,12 @@ pub async fn list_all_logical_paths(
 ) -> Result<Vec<String>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT DISTINCT logical_path
         FROM memory_records
         WHERE bear_id = ? AND logical_path IS NOT NULL
         ORDER BY logical_path ASC
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .fetch_all(store.pool())
@@ -158,12 +158,12 @@ pub async fn get_memory_record_by_id(
 ) -> Result<Option<MemoryRecordRow>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let row = sqlx::query(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND memory_id = ?
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .bind(memory_id)
@@ -207,13 +207,13 @@ pub async fn count_records_by_kind(
 ) -> Result<Vec<MemoryCountBucket>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT kind AS label, COUNT(*) AS count
         FROM memory_records
         WHERE bear_id = ?
         GROUP BY kind
         ORDER BY count DESC, label ASC
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .fetch_all(store.pool())
@@ -238,13 +238,13 @@ pub async fn count_records_by_profile(
 ) -> Result<Vec<MemoryCountBucket>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT COALESCE(scope_profile, 'core') AS label, COUNT(*) AS count
         FROM memory_records
         WHERE bear_id = ?
         GROUP BY COALESCE(scope_profile, 'core')
         ORDER BY count DESC, label ASC
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .fetch_all(store.pool())
@@ -269,11 +269,11 @@ pub async fn head_entry_count(
 ) -> Result<i64, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(DISTINCT logical_path)
         FROM memory_records
         WHERE bear_id = ? AND logical_path IS NOT NULL AND visibility = 'normal'
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .fetch_one(store.pool())
@@ -300,7 +300,7 @@ pub async fn list_path_summaries(
 ) -> Result<Vec<PathSummary>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT m.logical_path, m.scope_type, m.scope_profile, m.kind,
                m.memory_id AS head_memory_id, m.created_at AS head_created_at,
                agg.version_count
@@ -313,7 +313,7 @@ pub async fn list_path_summaries(
         ) agg ON agg.logical_path = m.logical_path AND agg.max_seq = m.sequence_no
         WHERE m.bear_id = ? AND m.logical_path IS NOT NULL
         ORDER BY m.logical_path ASC
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .bind(bear_id.to_string())
@@ -344,13 +344,13 @@ pub async fn get_memory_record_detail(
 ) -> Result<Option<MemoryRecordDetail>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let row = sqlx::query(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, author_profile,
                author_agent_id, visibility, supersedes_memory_id, logical_path,
                work_surface_ref, content_text, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND memory_id = ?
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .bind(memory_id)
@@ -394,14 +394,14 @@ pub async fn list_recent_memory_records(
 ) -> Result<Vec<MemoryRecordRow>, DenError> {
     let store = manager.store_for_bear(bear_id).await?;
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ?
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .bind(limit.clamp(1, 50))
@@ -416,6 +416,7 @@ pub async fn list_recent_memory_records(
 }
 
 /// Keyword search across **all** of a Bear's memory (every role/scope), newest first.
+///
 /// Case-insensitive `content_text LIKE` — the always-available fallback when semantic
 /// recall (Qdrant) is unconfigured. `query` is matched literally (LIKE metacharacters escaped).
 pub async fn search_memory_records(
@@ -427,14 +428,14 @@ pub async fn search_memory_records(
     let store = manager.store_for_bear(bear_id).await?;
     let pattern = format!("%{}%", escape_like(query));
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND content_text LIKE ? ESCAPE '\'
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(bear_id.to_string())
     .bind(pattern)

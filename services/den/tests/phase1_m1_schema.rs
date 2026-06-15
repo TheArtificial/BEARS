@@ -51,13 +51,13 @@ async fn m1_users_extended_columns_exist() {
     apply_migrations(&pool).await;
 
     let n: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'users'
           AND column_name = 'is_admin'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -66,13 +66,13 @@ async fn m1_users_extended_columns_exist() {
     assert_eq!(n, 1, "users missing is_admin");
 
     let webui_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'users'
           AND column_name = 'webui_account_id'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -97,13 +97,13 @@ async fn m1b_bears_has_system_prompt_column() {
     apply_migrations(&pool).await;
 
     let n: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
           AND column_name = 'system_prompt'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -125,13 +125,13 @@ async fn m1b_bears_letta_agent_id_absent() {
     apply_migrations(&pool).await;
 
     let n: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
           AND column_name = 'letta_agent_id'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -153,13 +153,13 @@ async fn m1c_bears_letta_sync_columns_exist() {
     apply_migrations(&pool).await;
 
     let n: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
           AND column_name IN ('letta_agent_type', 'letta_tool_ids')
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -187,12 +187,12 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
         "bear_subscriptions",
     ] {
         let n: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name = $1
-            "#,
+            ",
         )
         .bind(table)
         .fetch_one(&pool)
@@ -202,13 +202,13 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
     }
 
     let bear_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
           AND column_name IN ('memfs_repo_path', 'provisioning_version')
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -216,7 +216,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
     assert_eq!(bear_cols, 2, "bears missing multi-agent columns");
 
     let role_check: String = sqlx::query_scalar(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
@@ -224,7 +224,7 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
           AND c.contype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE '%watch%'
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -246,13 +246,13 @@ async fn m1d_bears_runtime_plan_column_exists() {
     apply_migrations(&pool).await;
 
     let n: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
           AND column_name = 'runtime_plan'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -279,12 +279,12 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
         "reflection_conversations",
     ] {
         let n: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name = $1
-            "#,
+            ",
         )
         .bind(table)
         .fetch_one(&pool)
@@ -294,7 +294,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
     }
 
     let run_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -316,7 +316,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
             'completed_at',
             'created_at'
           )
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -327,13 +327,13 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
     );
 
     let item_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bear_reflection_run_items'
           AND column_name IN ('id', 'run_id', 'item_kind', 'item_id', 'status', 'created_at')
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -344,7 +344,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
     );
 
     let conversation_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -360,7 +360,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
             'created_at',
             'last_used_at'
           )
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -371,7 +371,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
     );
 
     let status_check: String = sqlx::query_scalar(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
@@ -379,7 +379,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
           AND c.contype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE '%needs_human_review%'
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -388,14 +388,14 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
     assert!(status_check.contains("needs_human_review"));
 
     let unique_constraint_count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
         WHERE t.relname = 'reflection_conversations'
           AND c.contype = 'u'
           AND c.conname = 'uq_reflection_conversations_bear_lane_date'
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -420,12 +420,12 @@ async fn work_plan_tables_columns_and_constraints_exist() {
 
     for table in ["bear_work_plans", "bear_work_plan_events"] {
         let n: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name = $1
-            "#,
+            ",
         )
         .bind(table)
         .fetch_one(&pool)
@@ -435,7 +435,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
     }
 
     let work_plan_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -454,7 +454,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
             'handoff_intent_path',
             'handoff_task_id'
           )
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -465,7 +465,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
     );
 
     let event_cols: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -480,7 +480,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
             'event_payload',
             'created_at'
           )
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -491,7 +491,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
     );
 
     let visibility_check: String = sqlx::query_scalar(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
@@ -499,7 +499,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
           AND c.contype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE '%handoff_requested%'
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await
@@ -508,7 +508,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
     assert!(visibility_check.contains("handoff_requested"));
 
     let event_type_check: String = sqlx::query_scalar(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         INNER JOIN pg_class t ON t.oid = c.conrelid
@@ -516,7 +516,7 @@ async fn work_plan_tables_columns_and_constraints_exist() {
           AND c.contype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE '%handoff_requested%'
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await

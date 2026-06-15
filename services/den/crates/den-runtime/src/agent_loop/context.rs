@@ -341,7 +341,7 @@ pub async fn load_transcript_messages(
     conversation_id: &str,
 ) -> Result<Vec<ChatMessage>, DenError> {
     let history_rows = sqlx::query_as::<_, (String, String, Value)>(
-        r#"
+        r"
         SELECT message_type, content_text, content_json
         FROM conversation_messages
         WHERE conversation_id = (
@@ -355,7 +355,7 @@ pub async fn load_transcript_messages(
         )
         ORDER BY sequence_no ASC
         LIMIT 80
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(bear_id)

@@ -456,11 +456,11 @@ use den_runtime::prompt_memory_blocks::{
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let stored_session_resolved = sqlx::query_scalar::<_, Option<String>>(
-            r#"
+            r"
             SELECT resolved_conversation_id
             FROM acp_sessions
             WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
-            "#,
+            ",
         )
         .bind(user_id)
         .bind(bear_id)
@@ -497,11 +497,11 @@ use den_runtime::prompt_memory_blocks::{
             .expect("conversation_resolved workflow event persisted");
         assert_eq!(resolved_event.content_text, "Conversation resolved");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(resolved_event.sequence_no)
@@ -616,11 +616,11 @@ use den_runtime::prompt_memory_blocks::{
             .expect("tool_result event persisted");
         assert_eq!(tool_result.content_text, "Tool result: functions.fs.read_text_file");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(tool_result.sequence_no)
@@ -734,11 +734,11 @@ use den_runtime::prompt_memory_blocks::{
             })
             .expect("error-like tool_result event persisted");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(tool_result.sequence_no)
@@ -1032,11 +1032,11 @@ use den_runtime::prompt_memory_blocks::{
             .expect("failed turn_outcome persisted");
         assert_eq!(turn_outcome.content_text, "Turn outcome: failed / runtime_cleanup");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(turn_outcome.sequence_no)
@@ -1141,11 +1141,11 @@ use den_runtime::prompt_memory_blocks::{
             })
             .expect("cancelled turn_outcome persisted");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(turn_outcome.sequence_no)
@@ -1249,11 +1249,11 @@ use den_runtime::prompt_memory_blocks::{
             })
             .expect("recovered turn_outcome persisted");
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(turn_outcome.sequence_no)
@@ -1329,11 +1329,11 @@ use den_runtime::prompt_memory_blocks::{
         assert_eq!(user_messages.len(), 1, "duplicate prompt provenance should dedup canonical persistence");
 
         let content_json: serde_json::Value = sqlx::query_scalar(
-            r#"
+            r"
             SELECT content_json
             FROM conversation_messages
             WHERE conversation_id = $1 AND sequence_no = $2
-            "#,
+            ",
         )
         .bind(canonical.id)
         .bind(user_messages[0].sequence_no)
@@ -6084,7 +6084,7 @@ data: "hello"}"#;
 
     #[tokio::test]
     async fn sse_parser_rejects_invalid_json_with_parse_path_empty() {
-        let body = br#"data: not-json"#;
+        let body = br"data: not-json";
         assert!(parse_sse_event_body_to_json(body).is_err());
         let frames = b"data: not-json\n\n";
         let source = futures::stream::iter(vec![Ok(Bytes::from_static(frames))]);

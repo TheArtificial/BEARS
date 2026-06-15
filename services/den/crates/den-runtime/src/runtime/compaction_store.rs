@@ -39,7 +39,7 @@ pub async fn record_runtime_compaction_event(
         DenError::System(format!("serialize compaction artifact: {err}"))
     })?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO runtime_compaction_events (
             conversation_id,
             trigger,
@@ -54,7 +54,7 @@ pub async fn record_runtime_compaction_event(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (conversation_id, event_hash) DO NOTHING
-        "#,
+        ",
     )
     .bind(&event.conversation_id)
     .bind(format!("{:?}", event.trigger))
@@ -78,7 +78,7 @@ pub async fn list_runtime_compaction_events(
     limit: i64,
 ) -> Result<Vec<AcpCompactionStatusResponse>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT
             status,
             policy_version,
@@ -90,7 +90,7 @@ pub async fn list_runtime_compaction_events(
         WHERE conversation_id = $1
         ORDER BY created_at DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(limit)

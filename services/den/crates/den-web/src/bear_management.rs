@@ -513,12 +513,12 @@ async fn bear_web_sources(
             time::OffsetDateTime,
         ),
     >(
-        r#"
+        r"
         SELECT id, scope_kind, scope_value, label, policy, priority, created_at
         FROM bear_web_sources
         WHERE bear_id = $1
         ORDER BY policy ASC, priority DESC, scope_kind ASC, scope_value ASC
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -556,7 +556,7 @@ async fn bear_web_approvals(
             Option<time::OffsetDateTime>,
         ),
     >(
-        r#"
+        r"
         SELECT a.id,
                a.scope_kind,
                a.scope_value,
@@ -569,7 +569,7 @@ async fn bear_web_approvals(
         LEFT JOIN users u ON u.id = a.approved_by_user_id
         WHERE a.bear_id = $1 AND a.revoked_at IS NULL
         ORDER BY a.created_at DESC
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -611,13 +611,13 @@ async fn bear_web_fetches(
     bear_id: Uuid,
 ) -> Result<Vec<BearWebFetchRow>, CustomError> {
     let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<i32>, Option<String>, Option<i64>, time::OffsetDateTime)>(
-        r#"
+        r"
         SELECT url, final_url, host, execution_location, approval_kind, http_status, content_type, bytes, fetched_at
         FROM bear_web_fetches
         WHERE bear_id = $1
         ORDER BY fetched_at DESC
         LIMIT 25
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -669,7 +669,7 @@ async fn bear_plan_mode_rows(
             time::OffsetDateTime,
         ),
     >(
-        r#"
+        r"
         SELECT s.id,
                s.user_id,
                u.username,
@@ -685,7 +685,7 @@ async fn bear_plan_mode_rows(
         WHERE s.bear_id = $1
         ORDER BY s.updated_at DESC
         LIMIT 10
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)

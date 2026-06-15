@@ -71,13 +71,13 @@ impl BearMemoryStore {
             .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
         let logical_path = logical.to_logical_path();
         sqlx::query(
-            r#"
+            r"
             INSERT INTO memory_records (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
                 visibility, logical_path, work_surface_ref
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+            ",
         )
         .bind(&memory_id)
         .bind(self.bear_id.to_string())
@@ -149,7 +149,7 @@ pub async fn head_record_for_logical_path(
     logical_path: &str,
 ) -> Result<Option<MemoryRecordRow>, DenError> {
     let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
@@ -161,7 +161,7 @@ pub async fn head_record_for_logical_path(
           )
         ORDER BY sequence_no DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(store.bear_id.to_string())
     .bind(logical_path)
@@ -194,7 +194,7 @@ pub async fn list_profile_local_head_records(
 ) -> Result<Vec<MemoryRecordRow>, DenError> {
     let rows = if let Some(surface) = work_surface_ref {
         sqlx::query_as::<_, MemoryRecordSqlRow>(
-            r#"
+            r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                    logical_path, work_surface_ref, metadata_json, created_at
             FROM memory_records
@@ -207,7 +207,7 @@ pub async fn list_profile_local_head_records(
               )
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id.to_string())
         .bind(profile)
@@ -217,7 +217,7 @@ pub async fn list_profile_local_head_records(
         .await
     } else {
         sqlx::query_as::<_, MemoryRecordSqlRow>(
-            r#"
+            r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                    logical_path, work_surface_ref, metadata_json, created_at
             FROM memory_records
@@ -230,7 +230,7 @@ pub async fn list_profile_local_head_records(
               )
             ORDER BY sequence_no DESC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(store.bear_id.to_string())
         .bind(profile)
@@ -248,14 +248,14 @@ pub async fn list_records_for_logical_path(
     limit: i64,
 ) -> Result<Vec<MemoryRecordRow>, DenError> {
     let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
-        r#"
+        r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ?
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(store.bear_id.to_string())
     .bind(logical_path)

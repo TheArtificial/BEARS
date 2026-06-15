@@ -83,11 +83,11 @@ pub async fn create_for_bear(
 
     let mut tx = pool.begin().await?;
     let row: (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO acp_tokens (user_id, name, token_hash, scopes)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(name)
@@ -97,10 +97,10 @@ pub async fn create_for_bear(
     .await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO acp_token_bears (token_id, bear_id)
         VALUES ($1, $2)
-        "#,
+        ",
     )
     .bind(row.0)
     .bind(bear_id)
@@ -119,7 +119,7 @@ pub async fn list_for_user(
     user_id: i32,
 ) -> Result<Vec<AcpTokenListRow>, CustomError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT t.id,
                t.name,
                t.scopes,
@@ -135,7 +135,7 @@ pub async fn list_for_user(
         INNER JOIN bears b ON b.id = tb.bear_id
         WHERE t.user_id = $1
         ORDER BY t.created_at DESC, b.slug
-        "#,
+        ",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -173,11 +173,11 @@ pub async fn revoke_for_user(
     token_id: Uuid,
 ) -> Result<(), CustomError> {
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE acp_tokens
         SET revoked_at = NOW()
         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        "#,
+        ",
     )
     .bind(token_id)
     .bind(user_id)
@@ -219,7 +219,7 @@ pub async fn authenticate_for_bear_slug_with_scopes(
 ) -> Result<Option<AcpTokenAuth>, CustomError> {
     let hash = token_hash(raw_token);
     let row: Option<(Uuid, i32, serde_json::Value)> = sqlx::query_as(
-        r#"
+        r"
         SELECT t.id, t.user_id, t.scopes
         FROM acp_tokens t
         INNER JOIN acp_token_bears tb ON tb.token_id = t.id
@@ -229,7 +229,7 @@ pub async fn authenticate_for_bear_slug_with_scopes(
           AND b.slug = $2
           AND t.revoked_at IS NULL
           AND (t.expires_at IS NULL OR t.expires_at > NOW())
-        "#,
+        ",
     )
     .bind(hash)
     .bind(bear_slug)

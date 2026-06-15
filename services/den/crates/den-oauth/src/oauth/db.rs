@@ -503,7 +503,7 @@ pub async fn create_admin_access_token(
         ));
     }
 
-    let expires_at = OffsetDateTime::now_utc() + Duration::hours(expires_in_hours as i64);
+    let expires_at = OffsetDateTime::now_utc() + Duration::hours(i64::from(expires_in_hours));
     let scopes_json = scopes_to_json(scopes);
 
     let record = sqlx::query!(
@@ -1154,11 +1154,11 @@ mod tests {
     async fn test_authorization_code_flow(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         // Create test user first
         let user = sqlx::query_as::<_, (i32,)>(
-            r#"
+            r"
             INSERT INTO users (email, username, passhash)
             VALUES ($1, $2, $3)
             RETURNING id
-            "#,
+            ",
         )
         .bind("testuser1@example.com")
         .bind("testuser1")
@@ -1224,11 +1224,11 @@ mod tests {
     async fn test_access_token_operations(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         // Create test user first
         let user = sqlx::query_as::<_, (i32,)>(
-            r#"
+            r"
             INSERT INTO users (email, username, passhash)
             VALUES ($1, $2, $3)
             RETURNING id
-            "#,
+            ",
         )
         .bind("testtokenuser@example.com")
         .bind("testtokenuser")

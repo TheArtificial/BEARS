@@ -99,12 +99,12 @@ pub async fn sqlite_memory_browse(
     role: &str,
 ) -> Result<Value, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT DISTINCT logical_path
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
         ORDER BY logical_path ASC
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(role)
@@ -170,13 +170,13 @@ pub async fn sqlite_memory_search(
 ) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
     let rows = sqlx::query_as::<_, (String, String, String, i64)>(
-        r#"
+        r"
         SELECT memory_id, logical_path, content_text, sequence_no
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND content_text LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(role)
@@ -210,12 +210,12 @@ pub async fn sqlite_collect_role_logical_paths(
     role: &str,
 ) -> Result<Vec<String>, DenError> {
     sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT DISTINCT logical_path
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
         ORDER BY logical_path ASC
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(role)
@@ -230,13 +230,13 @@ pub async fn sqlite_list_plan_artifacts(
     limit: i64,
 ) -> Result<Value, DenError> {
     let rows = sqlx::query_as::<_, (String, String, String, i64)>(
-        r#"
+        r"
         SELECT memory_id, logical_path, content_text, sequence_no
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path LIKE ?
         ORDER BY sequence_no DESC
         LIMIT ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(role)
@@ -265,11 +265,11 @@ pub async fn sqlite_memory_status(
     role: &str,
 ) -> Result<Value, DenError> {
     let file_count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(DISTINCT logical_path)
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ?
-        "#,
+        ",
     )
     .bind(store.bear_id().to_string())
     .bind(role)

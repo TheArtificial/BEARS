@@ -25,7 +25,7 @@ pub struct UserAuth {
 
 pub async fn get_users(db_pool: &PgPool) -> Result<Vec<User>, DenError> {
     let users = sqlx::query_as::<_, User>(
-        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users"#,
+        r"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users",
     )
     .fetch_all(db_pool)
     .await?;
@@ -53,7 +53,7 @@ pub async fn create_user(
 
 pub async fn get_user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<User>, DenError> {
     let user = sqlx::query_as::<_, User>(
-        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE id = $1"#,
+        r"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(db_pool)
@@ -80,13 +80,13 @@ pub async fn get_user_by_username(
     username: &str,
 ) -> Result<Option<UserAuth>, DenError> {
     let user = sqlx::query_as::<_, UserAuth>(
-        r#"
+        r"
         SELECT id, username, passhash,
                is_admin,
                theme
         FROM users
         WHERE username = $1
-        "#,
+        ",
     )
     .bind(username)
     .fetch_optional(db_pool)
@@ -96,7 +96,7 @@ pub async fn get_user_by_username(
 
 pub async fn get_user_by_email(db_pool: &PgPool, email: &str) -> Result<Option<User>, DenError> {
     let user = sqlx::query_as::<_, User>(
-        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE email = $1"#,
+        r"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE email = $1",
     )
     .bind(email)
     .fetch_optional(db_pool)
@@ -109,13 +109,13 @@ pub async fn get_user_auth_by_email(
     email: &str,
 ) -> Result<Option<UserAuth>, DenError> {
     let user = sqlx::query_as::<_, UserAuth>(
-        r#"
+        r"
         SELECT id, username, passhash,
                is_admin,
                theme
         FROM users
         WHERE email = $1
-        "#,
+        ",
     )
     .bind(email)
     .fetch_optional(db_pool)

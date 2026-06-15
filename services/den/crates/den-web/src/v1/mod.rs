@@ -375,7 +375,7 @@ async fn chat_history(
         })
     };
 
-    let limit = q.limit.unwrap_or(50).clamp(1, 100) as i64;
+    let limit = i64::from(q.limit.unwrap_or(50).clamp(1, 100));
     let before_sequence_no = q
         .before
         .as_deref()

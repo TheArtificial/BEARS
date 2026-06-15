@@ -84,7 +84,7 @@ async fn retire_legacy_memory_links_table(pool: &SqlitePool) -> Result<(), DenEr
 }
 
 /// `memory_links` read view (must mirror `schema.sql`).
-const MEMORY_LINKS_VIEW_SQL: &str = r#"
+const MEMORY_LINKS_VIEW_SQL: &str = r"
 CREATE VIEW IF NOT EXISTS memory_links AS
     SELECT link_id, bear_id, sequence_no, src_memory_id, entity_id, relation,
            qualifiers_json, author_profile, author_agent_id, confidence, state,
@@ -95,7 +95,7 @@ CREATE VIEW IF NOT EXISTS memory_links AS
            qualifiers_json, author_profile, author_agent_id, confidence, state,
            supersedes_link_id, created_at, 'access_bearing' AS class
     FROM memory_access_rules
-"#;
+";
 
 async fn drop_entity_ref_column_if_present(
     pool: &SqlitePool,
@@ -118,7 +118,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
 
     let migration = async {
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE memory_records_new (
                 memory_id TEXT PRIMARY KEY,
                 bear_id TEXT NOT NULL,
@@ -136,14 +136,14 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 logical_path TEXT NULL,
                 work_surface_ref TEXT NULL
             )
-            "#,
+            ",
         )
         .execute(pool)
         .await
         .map_err(|e| DenError::System(format!("create memory_records_new failed: {e}")))?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO memory_records_new (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
@@ -166,7 +166,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 logical_path,
                 work_surface_ref
             FROM memory_records
-            "#,
+            ",
         )
         .execute(pool)
         .await

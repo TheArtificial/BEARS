@@ -22,13 +22,13 @@ pub async fn list_passages(
     embedding_standard: &str,
 ) -> Result<Vec<ExistingPassage>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT chunk_index, content_hash, point_id
         FROM recall_passages
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND deleted_at IS NULL
         ORDER BY chunk_index
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(memory_id)
@@ -55,11 +55,11 @@ pub async fn list_indexed_memory_ids(
     embedding_standard: &str,
 ) -> Result<Vec<String>, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT DISTINCT memory_id
         FROM recall_passages
         WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(embedding_standard)
@@ -77,11 +77,11 @@ pub async fn passage_stats(
     embedding_standard: &str,
 ) -> Result<(i64, i64), DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT COUNT(*) AS passages, COUNT(DISTINCT memory_id) AS memories
         FROM recall_passages
         WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(embedding_standard)
@@ -111,7 +111,7 @@ pub async fn upsert_passage(
     point_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO recall_passages (
             bear_id, memory_id, logical_path, chunk_index, content_hash,
             embedding_standard, source_class, point_id, indexed_at, deleted_at
@@ -124,7 +124,7 @@ pub async fn upsert_passage(
             point_id = EXCLUDED.point_id,
             indexed_at = NOW(),
             deleted_at = NULL
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(memory_id)
@@ -149,13 +149,13 @@ pub async fn delete_passages_for_memory(
     embedding_standard: &str,
 ) -> Result<Vec<String>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         UPDATE recall_passages
         SET deleted_at = NOW()
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND deleted_at IS NULL
         RETURNING point_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(memory_id)
@@ -177,13 +177,13 @@ pub async fn delete_passages_for_chunks_ge(
     min_chunk_index: i32,
 ) -> Result<Vec<String>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         UPDATE recall_passages
         SET deleted_at = NOW()
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND chunk_index >= $4 AND deleted_at IS NULL
         RETURNING point_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(memory_id)

@@ -259,7 +259,7 @@ async fn build_session(
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
     let model = llm.resolve_model(bear.default_model.as_deref());
     let session = AgentLoopSession {
-        session_key: session_key.clone(),
+        session_key,
         bear_id,
         conversation_id: conversation_id.to_string(),
         messages,

@@ -24,12 +24,12 @@ async fn seed_watch_agent(
     agent_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
         VALUES ($1, 'watch', $2, $2)
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(agent_id)
@@ -116,13 +116,13 @@ async fn observation_write_persists_and_enqueues_memory_curate(
     assert!(payload["proposal_id"].is_string());
 
     let queued = sqlx::query_scalar::<_, i64>(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM bear_reflection_runs
         WHERE bear_id = $1
           AND lane = 'memory_curate'
           AND trigger = 'watch_observation'
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_one(&pool)

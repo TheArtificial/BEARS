@@ -120,7 +120,7 @@ pub async fn create(
     params: CreateMemoryProposal<'_>,
 ) -> Result<MemoryProposalRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_memory_proposals (
             bear_id, source_profile, source_agent_id, source_paths, source_refs,
             proposal_type, suggested_action, target_ref, title, summary, rationale,
@@ -135,7 +135,7 @@ pub async fn create(
                   proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
                   reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                   result_path, result_commit, created_at, reviewed_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.source_profile.as_str())
@@ -168,7 +168,7 @@ pub async fn list_for_bear(
     limit: i64,
 ) -> Result<Vec<MemoryProposalRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                proposal_type, suggested_action, target_ref, title, summary, rationale,
                proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
@@ -179,7 +179,7 @@ pub async fn list_for_bear(
           AND ($2::text IS NULL OR status = $2)
         ORDER BY created_at DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(status)
@@ -207,7 +207,7 @@ pub async fn resolve_for_bear(
     params: ProposalResolutionParams<'_>,
 ) -> Result<MemoryProposalRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_memory_proposals
         SET status = $3,
             reviewer_profile = $4,
@@ -223,7 +223,7 @@ pub async fn resolve_for_bear(
                   proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
                   reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
                   result_path, result_commit, created_at, reviewed_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.proposal_id)
@@ -249,7 +249,7 @@ pub async fn get_for_bear(
     proposal_id: Uuid,
 ) -> Result<Option<MemoryProposalRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
                proposal_type, suggested_action, target_ref, title, summary, rationale,
                proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
@@ -257,7 +257,7 @@ pub async fn get_for_bear(
                result_path, result_commit, created_at, reviewed_at
         FROM bear_memory_proposals
         WHERE bear_id = $1 AND id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(proposal_id)

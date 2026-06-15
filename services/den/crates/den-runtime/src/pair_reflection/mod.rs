@@ -56,7 +56,7 @@ pub async fn create_run(
     params: CreatePairReflectionRun<'_>,
 ) -> Result<PairReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO pair_reflection_runs (
             bear_id, user_id, acp_session_id, conversation_id, trigger,
             status, considered_message_count, considered_memory_paths, diagnostic
@@ -65,7 +65,7 @@ pub async fn create_run(
         RETURNING id, bear_id, user_id, acp_session_id, conversation_id, trigger,
                   status, summary_path, summary_commit, considered_message_count,
                   considered_memory_paths, diagnostic, created_at, completed_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.user_id)
@@ -123,7 +123,7 @@ pub async fn complete_run(
     params: CompletePairReflectionRun<'_>,
 ) -> Result<PairReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE pair_reflection_runs
         SET status = $2,
             summary_path = $3,
@@ -134,7 +134,7 @@ pub async fn complete_run(
         RETURNING id, bear_id, user_id, acp_session_id, conversation_id, trigger,
                   status, summary_path, summary_commit, considered_message_count,
                   considered_memory_paths, diagnostic, created_at, completed_at
-        "#,
+        ",
     )
     .bind(params.id)
     .bind(params.status)
@@ -154,7 +154,7 @@ pub async fn list_recent_for_bear(
     limit: i64,
 ) -> Result<Vec<PairReflectionRunRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, user_id, acp_session_id, conversation_id, trigger,
                status, summary_path, summary_commit, considered_message_count,
                considered_memory_paths, diagnostic, created_at, completed_at
@@ -162,7 +162,7 @@ pub async fn list_recent_for_bear(
         WHERE bear_id = $1
         ORDER BY created_at DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(limit.clamp(1, 100))

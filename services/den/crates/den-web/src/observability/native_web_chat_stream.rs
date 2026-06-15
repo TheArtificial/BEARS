@@ -34,7 +34,7 @@ pub fn runtime_semantic_to_bear_channel_events(
             ..
         } => {
             let display_summary = summary
-                .clone()
+                
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![serde_json::json!({

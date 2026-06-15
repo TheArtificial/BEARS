@@ -167,7 +167,7 @@ pub struct RuntimeCleanupRequest {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeCleanupResult {
     pub payload: serde_json::Value,
 }
@@ -193,7 +193,7 @@ impl ToolCallFinishStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeSemanticEvent {
     AssistantTextDelta {
         text: String,
@@ -253,7 +253,7 @@ pub enum RuntimeSemanticEvent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     Semantic(RuntimeSemanticEvent),
     UntranslatedProviderEvent {

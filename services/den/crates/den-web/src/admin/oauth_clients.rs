@@ -631,7 +631,7 @@ pub async fn pkce_test_action(
         );
 
         let test_result = match result {
-            Ok(_) => PKCETestResult {
+            Ok(()) => PKCETestResult {
                 success: true,
                 message: "PKCE validation successful!".to_string(),
                 validation_details: format!(
@@ -871,12 +871,12 @@ async fn generate_token_view(
 
     // Get all active users
     let users = sqlx::query_as::<_, (i32, String, String, String)>(
-        r#"
+        r"
         SELECT id, username, display_name, email
         FROM users
         WHERE active = true
         ORDER BY username
-        "#,
+        ",
     )
     .fetch_all(&state.sqlx_pool)
     .await?;
@@ -938,7 +938,7 @@ pub async fn generate_token_action(
 
         // Validate that the user exists
         let user_exists = sqlx::query_scalar::<_, bool>(
-            r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND active = true)"#,
+            r"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND active = true)",
         )
         .bind(user_id)
         .fetch_one(&state.sqlx_pool)
@@ -989,7 +989,7 @@ pub async fn generate_token_action(
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
                 users => sqlx::query_as::<_, (i32, String, String, String)>(
-                    r#"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"#
+                    r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
                 )
                 .fetch_all(&state.sqlx_pool)
                 .await?,
@@ -1071,7 +1071,7 @@ pub async fn generate_token_action(
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
                 users => sqlx::query_as::<_, (i32, String, String, String)>(
-                    r#"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"#
+                    r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
                 )
                 .fetch_all(&state.sqlx_pool)
                 .await?,

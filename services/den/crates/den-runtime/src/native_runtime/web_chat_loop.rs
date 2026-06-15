@@ -286,7 +286,7 @@ impl NativeWebChatLoopStream {
                         &call,
                         ToolCallFinishStatus::Error,
                         summary.clone(),
-                        Some(summary.clone()),
+                        Some(summary),
                     ),
                 ));
                 results.push(ChatMessage {

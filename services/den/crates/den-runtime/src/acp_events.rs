@@ -577,7 +577,7 @@ impl ToolCallAccumulator {
             .unwrap_or_else(|| "0".to_string());
         if let Some(id) = tool_call_id(Some(tool_call), &serde_json::Value::Null, event) {
             self.openai_delta_index_ids
-                .insert(index_key.clone(), id.clone());
+                .insert(index_key.clone(), id);
         }
         let tool_call_id = self.openai_delta_index_ids.get(&index_key)?.clone();
         if self.emitted.contains_key(&tool_call_id) {
@@ -596,9 +596,9 @@ impl ToolCallAccumulator {
         let synthetic = serde_json::json!({
             "message_type": "function_call",
             "tool_call": {
-                "name": tool_name.clone(),
+                "name": tool_name,
                 "tool_call_id": tool_call_id.clone(),
-                "arguments": args.clone(),
+                "arguments": args,
             }
         });
         let mapped = native_letta_tool_request_event_with_args(

@@ -134,7 +134,7 @@ pub(in crate::api::acp) fn runtime_terminal_events(
             context: runtime_context,
         }) => {
             let terminal_request_id = upstream_request_id
-                .clone()
+                
                 .unwrap_or_else(|| request_id.to_string());
             Some(vec![
                 AcpGatewayEvent::Error {
@@ -417,7 +417,7 @@ impl AcpRuntimeSseStream {
         if let Some(update) = self.turn_controller.take_status_update() {
             self.enqueue_adapter_event(
                 AcpGatewayEvent::StatusText {
-                    text: update.text.to_string(),
+                    text: update.text,
                 },
                 false,
             );
@@ -914,7 +914,7 @@ impl Stream for AcpRuntimeSseStream {
                         this.context.turn_scope.clone(),
                         true,
                         serde_json::json!({
-                            "cleanup": cleanup.clone(),
+                            "cleanup": cleanup,
                             "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                         }),
                     );

@@ -20,12 +20,12 @@ async fn seed_pair_agent(
     agent_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
         VALUES ($1, 'pair', $2, $2)
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(agent_id)

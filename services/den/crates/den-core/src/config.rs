@@ -198,7 +198,7 @@ impl Config {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Could not parse URL for CORS origin (value={raw:?}): {e}")
+                    tracing::warn!("Could not parse URL for CORS origin (value={raw:?}): {e}");
                 }
             }
         }

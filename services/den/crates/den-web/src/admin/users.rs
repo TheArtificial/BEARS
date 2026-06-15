@@ -70,11 +70,7 @@ impl From<crate::core::user::User> for UserForm {
             username: record.username,
             display_name: record.display_name,
             email: record.email,
-            email_verified: if record.email_verified.unwrap_or(false) {
-                1
-            } else {
-                0
-            },
+            email_verified: i32::from(record.email_verified.unwrap_or(false)),
             theme: record.theme,
             week_start_day: record.week_start_day,
         }
@@ -343,8 +339,8 @@ pub async fn send_test_email_action(
         Ok(c) => c,
         Err(_) => {
             sqlx::query(
-                r#"INSERT INTO email_configs (user_id, email_address, active, verified_at)
-                   VALUES ($1, $2, true, NOW())"#,
+                r"INSERT INTO email_configs (user_id, email_address, active, verified_at)
+                   VALUES ($1, $2, true, NOW())",
             )
             .bind(user.id)
             .bind(&user.email)

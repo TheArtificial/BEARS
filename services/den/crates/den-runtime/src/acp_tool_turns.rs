@@ -312,7 +312,7 @@ impl AcpToolTurnCoordinator {
             started_at: now,
             deadline_at: now + ACTIVE_TURN_TTL,
         };
-        active_turns.insert(session_id.to_string(), turn.clone());
+        active_turns.insert(session_id.to_string(), turn);
         Ok(AcpActiveTurnGuard {
             coordinator: self.clone(),
             session_id: session_id.to_string(),
@@ -676,7 +676,7 @@ impl AcpToolTurnCoordinator {
                 } else {
                     RuntimeApprovalDecision::Deny
                 },
-                reason: Some(content.clone()),
+                reason: Some(content),
             }
         } else {
             RuntimeContinuation::ToolResult {

@@ -24,13 +24,13 @@ pub struct BearParams<'a> {
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
-        r#"
+        r"
         SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -39,13 +39,13 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
 
 pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
-        r#"
+        r"
         SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
-        "#,
+        ",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -81,7 +81,7 @@ pub async fn update_bear(
     params: BearParams<'_>,
 ) -> Result<(), DenError> {
     let r = sqlx::query(
-        r#"
+        r"
         UPDATE bears
         SET slug = $1,
             name = $2,
@@ -93,7 +93,7 @@ pub async fn update_bear(
             letta_tool_ids = $8,
             updated_at = NOW()
         WHERE id = $9
-        "#,
+        ",
     )
     .bind(params.slug)
     .bind(params.name)
@@ -123,14 +123,14 @@ pub async fn create_bear_with_context_profile(
     params: BearParams<'_>,
 ) -> Result<Uuid, DenError> {
     let row: (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO bears (
             slug, name, description, system_prompt, default_model, tools_enabled,
             letta_agent_type, letta_tool_ids, context_profile
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
-        "#,
+        ",
     )
     .bind(params.slug)
     .bind(params.name)
@@ -153,13 +153,13 @@ pub async fn update_bear_context_profile(
     system_prompt: &str,
 ) -> Result<(), DenError> {
     let r = sqlx::query(
-        r#"
+        r"
         UPDATE bears
         SET context_profile = $1,
             system_prompt = $2,
             updated_at = NOW()
         WHERE id = $3
-        "#,
+        ",
     )
     .bind(context_profile)
     .bind(system_prompt)
@@ -191,11 +191,11 @@ pub async fn grant_membership(
     role: Option<&str>,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO user_bear (user_id, bear_id, role)
         VALUES ($1, $2, $3)
         ON CONFLICT (user_id, bear_id) DO UPDATE SET role = EXCLUDED.role
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(bear_id)
@@ -245,7 +245,7 @@ pub async fn list_members_for_bear(
     bear_id: Uuid,
 ) -> Result<Vec<BearMemberRow>, DenError> {
     sqlx::query_as::<_, BearMemberRow>(
-        r#"
+        r"
         SELECT ub.user_id, u.username, u.display_name, ub.role
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
@@ -253,7 +253,7 @@ pub async fn list_members_for_bear(
         ORDER BY
             CASE WHEN lower(btrim(coalesce(ub.role, ''))) = 'admin' THEN 0 ELSE 1 END,
             u.username
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -263,12 +263,12 @@ pub async fn list_members_for_bear(
 
 pub async fn count_bear_admins(pool: &PgPool, bear_id: Uuid) -> Result<i64, DenError> {
     let n: (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM user_bear
         WHERE bear_id = $1
           AND lower(btrim(coalesce(role, ''))) = 'admin'
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_one(pool)
@@ -302,13 +302,13 @@ pub struct MembershipRow {
 
 pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, DenError> {
     sqlx::query_as::<_, MembershipRow>(
-        r#"
+        r"
         SELECT ub.user_id, u.username, ub.bear_id, b.slug AS bear_slug, b.name AS bear_name, ub.role
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         INNER JOIN bears b ON b.id = ub.bear_id
         ORDER BY u.username, b.slug
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -320,7 +320,7 @@ pub async fn list_bears_for_user(
     user_id: i32,
 ) -> Result<Vec<BearWithMembership>, DenError> {
     sqlx::query_as::<_, BearWithMembership>(
-        r#"
+        r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at,
@@ -329,7 +329,7 @@ pub async fn list_bears_for_user(
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1
         ORDER BY b.slug
-        "#,
+        ",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -344,14 +344,14 @@ pub async fn bear_for_user_by_slug(
     slug: &str,
 ) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
-        r#"
+        r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(slug)
@@ -374,9 +374,9 @@ pub async fn user_may_use_bear(
     bear_id: Uuid,
 ) -> Result<bool, DenError> {
     let n: (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT COUNT(*)::bigint FROM user_bear WHERE user_id = $1 AND bear_id = $2
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(bear_id)
@@ -391,11 +391,11 @@ pub async fn ensure_bear_profile_binding_rows(
 ) -> Result<(), DenError> {
     for profile in BearProfile::ALL {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
             VALUES ($1, $2, $3)
             ON CONFLICT (bear_id, profile) DO NOTHING
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(profile.as_str())
@@ -411,7 +411,7 @@ pub async fn list_bear_profile_bindings(
     bear_id: Uuid,
 ) -> Result<Vec<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
-        r#"
+        r"
         SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
                last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
                created_at, updated_at
@@ -425,7 +425,7 @@ pub async fn list_bear_profile_bindings(
             WHEN 'watch' THEN 5
             ELSE 99
         END
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -439,13 +439,13 @@ pub async fn get_bear_profile_binding(
     profile: BearProfile,
 ) -> Result<Option<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
-        r#"
+        r"
         SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
                last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
                created_at, updated_at
         FROM bear_profile_bindings
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -461,11 +461,11 @@ pub async fn profile_binding_id(
     profile: BearProfile,
 ) -> Result<Option<String>, DenError> {
     let row: Option<(String,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT binding_id
         FROM bear_profile_bindings
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -481,11 +481,11 @@ pub async fn profile_letta_agent_id(
     profile: BearProfile,
 ) -> Result<Option<String>, DenError> {
     let row: Option<(Option<String>,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT letta_agent_id
         FROM bear_profile_bindings
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -500,14 +500,14 @@ pub async fn mark_bear_profile_binding_provisioning(
     profile: BearProfile,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, updated_at)
         VALUES ($1, $2, $3, 'provisioning', NOW())
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET provisioning_status = 'provisioning',
                       last_provisioning_error = NULL,
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -527,7 +527,7 @@ pub async fn mark_bear_profile_binding_ready(
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (
             bear_id, profile, binding_id, letta_agent_id, provisioning_status,
             last_provisioned_version, last_synced_at, last_provisioning_error, config_hash, updated_at
@@ -542,7 +542,7 @@ pub async fn mark_bear_profile_binding_ready(
                       last_provisioning_error = NULL,
                       config_hash = EXCLUDED.config_hash,
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -563,7 +563,7 @@ pub async fn mark_bear_profile_binding_synced(
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE bear_profile_bindings
         SET provisioning_status = 'ready',
             last_provisioned_version = $3,
@@ -572,7 +572,7 @@ pub async fn mark_bear_profile_binding_synced(
             config_hash = $4::jsonb,
             updated_at = NOW()
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -590,13 +590,13 @@ pub async fn mark_bear_profile_binding_drifted(
     message: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE bear_profile_bindings
         SET provisioning_status = 'drifted',
             last_provisioning_error = $3,
             updated_at = NOW()
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -613,7 +613,7 @@ pub async fn mark_bear_profile_binding_failed(
     message: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (
             bear_id, profile, binding_id, provisioning_status, last_provisioning_error, updated_at
         )
@@ -622,7 +622,7 @@ pub async fn mark_bear_profile_binding_failed(
         DO UPDATE SET provisioning_status = 'failed',
                       last_provisioning_error = EXCLUDED.last_provisioning_error,
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -638,13 +638,13 @@ pub async fn list_bear_skills(
     bear_id: Uuid,
 ) -> Result<Vec<BearSkillManifestEntry>, DenError> {
     sqlx::query_as::<_, BearSkillManifestEntry>(
-        r#"
+        r"
         SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_profiles,
                installed_at, last_verified_at, created_at, updated_at
         FROM bear_skills_manifest
         WHERE bear_id = $1
         ORDER BY skill_name, skill_version
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -659,11 +659,11 @@ pub async fn propose_skill(
     skill_payload: &serde_json::Value,
 ) -> Result<Uuid, DenError> {
     let row: (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO bear_skill_proposals (bear_id, proposed_by_agent_id, skill_payload)
         VALUES ($1, $2, $3::jsonb)
         RETURNING id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(proposed_by_agent_id)
@@ -678,14 +678,14 @@ pub async fn list_pending_skill_proposals(
     bear_id: Uuid,
 ) -> Result<Vec<BearSkillProposal>, DenError> {
     sqlx::query_as::<_, BearSkillProposal>(
-        r#"
+        r"
         SELECT bear_id, id, proposed_by_agent_id, proposed_at, skill_payload, status,
                reviewed_at, rejection_reason, resulting_manifest_bear_id,
                resulting_manifest_skill_name, resulting_manifest_skill_version, updated_at
         FROM bear_skill_proposals
         WHERE bear_id = $1 AND status = 'pending_review'
         ORDER BY proposed_at, id
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -700,13 +700,13 @@ pub async fn backfill_default_letta_agent_type(
     default: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE bears
         SET letta_agent_type = $2,
             updated_at = NOW()
         WHERE id = $1
           AND (letta_agent_type IS NULL OR btrim(letta_agent_type) = '')
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(default)
@@ -722,13 +722,13 @@ pub async fn ensure_default_runtime_plan(
     default_json: &serde_json::Value,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         UPDATE bears
         SET runtime_plan = $2::jsonb,
             updated_at = NOW()
         WHERE id = $1
           AND runtime_plan IS NULL
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(default_json)

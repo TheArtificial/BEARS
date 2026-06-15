@@ -333,7 +333,7 @@ pub async fn render_template(
         ..ctx
     };
     let template_env = state.template_env.clone();
-    if let Some((template_tag, _)) = template_id.replace("/", "-").clone().split_once('.') {
+    if let Some((template_tag, _)) = template_id.replace('/', "-").split_once('.') {
         let merged_ctx = match auth_session.user {
             Some(user) => minijinja::context! {
                 template_tag => template_tag,

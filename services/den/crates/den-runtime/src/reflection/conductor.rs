@@ -69,7 +69,7 @@ pub async fn create_run(
     params: CreateReflectionRun<'_>,
 ) -> Result<ReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_reflection_runs (
             bear_id, lane, trigger, status, role_agent_id,
             conversation_id, conversation_key, conversation_date,
@@ -80,7 +80,7 @@ pub async fn create_run(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(params.bear_id)
     .bind(params.lane)
@@ -236,7 +236,7 @@ pub async fn list_queued_memory_curate_runs(
     limit: i64,
 ) -> Result<Vec<ReflectionRunRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, bear_id, lane, trigger, status, role_agent_id,
                conversation_id, conversation_key, conversation_date,
                input_summary, output_summary, error,
@@ -247,7 +247,7 @@ pub async fn list_queued_memory_curate_runs(
           AND status = 'queued'
         ORDER BY created_at ASC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(limit.clamp(1, 200))
@@ -261,7 +261,7 @@ pub async fn claim_next_memory_curate_run(
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         WITH next_run AS (
             SELECT id
             FROM bear_reflection_runs
@@ -281,7 +281,7 @@ pub async fn claim_next_memory_curate_run(
                   runs.role_agent_id, runs.conversation_id, runs.conversation_key,
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_optional(pool)
@@ -315,7 +315,7 @@ pub async fn mark_memory_curate_started(
     reflection_run_id: Uuid,
 ) -> Result<ReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_reflection_runs
         SET status = 'started',
             started_at = COALESCE(started_at, NOW())
@@ -324,7 +324,7 @@ pub async fn mark_memory_curate_started(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(reflection_run_id)
@@ -342,7 +342,7 @@ pub async fn mark_memory_curate_completed(
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_reflection_runs
         SET status = 'completed',
             output_summary = $3,
@@ -353,7 +353,7 @@ pub async fn mark_memory_curate_completed(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(reflection_run_id)
@@ -372,7 +372,7 @@ pub async fn mark_memory_curate_failed(
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_reflection_runs
         SET status = 'failed',
             error = $3,
@@ -382,7 +382,7 @@ pub async fn mark_memory_curate_failed(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(reflection_run_id)
@@ -512,10 +512,10 @@ async fn record_memory_curate_run_item(
     status: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_reflection_run_items (run_id, item_kind, item_id, status)
         VALUES ($1, 'memory_proposal', $2, $3)
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(proposal_id.to_string())
@@ -627,10 +627,10 @@ pub async fn run_memory_curate_worker_loop(
 ) -> Result<(), DenError> {
     loop {
         tokio::select! {
-            _ = worker_token.cancelled() => {
+            () = worker_token.cancelled() => {
                 break;
             }
-            _ = tokio::time::sleep(poll_interval) => {}
+            () = tokio::time::sleep(poll_interval) => {}
         }
 
         let bear_ids = list_bears_with_queued_memory_curate_runs(&pool).await?;
@@ -656,13 +656,13 @@ pub async fn run_memory_curate_worker_loop(
 
 async fn list_bears_with_queued_memory_curate_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
-        r#"
+        r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'memory_curate'
           AND status = 'queued'
         ORDER BY bear_id
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -686,12 +686,12 @@ fn proposal_ids_from_summary(summary: &serde_json::Value) -> Vec<Uuid> {
 // conversation-projection machinery — recall indexing is invisible plumbing.
 // ---------------------------------------------------------------------------
 
-const RECALL_INDEX_RETURNING: &str = r#"
+const RECALL_INDEX_RETURNING: &str = r"
     RETURNING id, bear_id, lane, trigger, status, role_agent_id,
               conversation_id, conversation_key, conversation_date,
               input_summary, output_summary, error,
               started_at, completed_at, created_at
-"#;
+";
 
 /// Enqueue a derived-recall reconcile for a Bear. **Coalesces**: if a `recall_index` run is
 /// already queued for the Bear, returns `None` rather than piling up duplicate work.
@@ -701,7 +701,7 @@ pub async fn enqueue_recall_index(
     trigger: &str,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
         SELECT $1, 'recall_index', $2, 'queued', '{}'::jsonb, '{}'::jsonb
         WHERE NOT EXISTS (
@@ -712,7 +712,7 @@ pub async fn enqueue_recall_index(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(trigger)
@@ -748,7 +748,7 @@ async fn claim_next_recall_index_run(
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         WITH next_run AS (
             SELECT id
             FROM bear_reflection_runs
@@ -765,7 +765,7 @@ async fn claim_next_recall_index_run(
                   runs.role_agent_id, runs.conversation_id, runs.conversation_key,
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_optional(pool)
@@ -814,12 +814,12 @@ async fn mark_recall_index_failed(
 
 async fn list_bears_with_queued_recall_index_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
-        r#"
+        r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'recall_index' AND status = 'queued'
         ORDER BY bear_id
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -890,8 +890,8 @@ pub async fn run_recall_index_worker_loop(
 ) -> Result<(), DenError> {
     loop {
         tokio::select! {
-            _ = worker_token.cancelled() => { break; }
-            _ = tokio::time::sleep(poll_interval) => {}
+            () = worker_token.cancelled() => { break; }
+            () = tokio::time::sleep(poll_interval) => {}
         }
 
         let bear_ids = list_bears_with_queued_recall_index_runs(&pool).await?;

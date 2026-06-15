@@ -7,11 +7,11 @@ use den_core::DenError;
 
 pub async fn list_for_bear(pool: &PgPool, bear_id: Uuid) -> Result<HashSet<String>, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT conversation_id
         FROM archived_conversations
         WHERE bear_id = $1
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -30,7 +30,7 @@ pub async fn set_archived(
 ) -> Result<(), DenError> {
     if archived {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO archived_conversations (
                 bear_id, conversation_id, archived_by_user_id, source
             )
@@ -40,7 +40,7 @@ pub async fn set_archived(
                 source = EXCLUDED.source,
                 archived_at = NOW(),
                 updated_at = NOW()
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(conversation_id)
@@ -50,10 +50,10 @@ pub async fn set_archived(
         .await?;
     } else {
         sqlx::query(
-            r#"
+            r"
             DELETE FROM archived_conversations
             WHERE bear_id = $1 AND conversation_id = $2
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(conversation_id)

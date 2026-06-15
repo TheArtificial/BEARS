@@ -16,12 +16,12 @@ pub async fn create_reflection_run_outcome(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO reflection_run_outcomes (
             run_id, bear_id, sequence_no, lane, trigger, status,
             input_summary, proposal_ids_json, created_at
         ) VALUES (?, ?, ?, ?, ?, 'running', ?, '[]', ?)
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(store.bear_id().to_string())
@@ -49,11 +49,11 @@ pub async fn complete_reflection_run_outcome(
     let ids_json = serde_json::to_string(proposal_ids)
         .map_err(|e| DenError::System(format!("proposal ids json failed: {e}")))?;
     sqlx::query(
-        r#"
+        r"
         UPDATE reflection_run_outcomes
         SET status = ?, output_summary = ?, proposal_ids_json = ?, completed_at = ?
         WHERE bear_id = ? AND run_id = ?
-        "#,
+        ",
     )
     .bind(status)
     .bind(output_summary)

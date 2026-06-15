@@ -221,11 +221,11 @@ pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
 pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
     for block in system_block_seed_data() {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO system_blocks (key, kind, scope, status)
             VALUES ($1, $2, $3, 'published')
             ON CONFLICT (key) DO NOTHING
-            "#,
+            ",
         )
         .bind(block.key)
         .bind(block.kind.as_str())
@@ -235,11 +235,11 @@ pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
 
         let hash = content_hash(&block.content);
         let existing: Option<(i64,)> = sqlx::query_as(
-            r#"
+            r"
             SELECT id
             FROM system_block_versions
             WHERE block_key = $1 AND content_hash = $2
-            "#,
+            ",
         )
         .bind(block.key)
         .bind(&hash)
@@ -250,24 +250,24 @@ pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
             id
         } else {
             let next_version: (i32,) = sqlx::query_as(
-                r#"
+                r"
                 SELECT COALESCE(MAX(version_number), 0)::integer + 1
                 FROM system_block_versions
                 WHERE block_key = $1
-                "#,
+                ",
             )
             .bind(block.key)
             .fetch_one(pool)
             .await?;
 
             let inserted: (i64,) = sqlx::query_as(
-                r#"
+                r"
                 INSERT INTO system_block_versions (
                     block_key, version_number, content, change_summary, content_hash
                 )
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING id
-                "#,
+                ",
             )
             .bind(block.key)
             .bind(next_version.0)
@@ -280,13 +280,13 @@ pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
         };
 
         sqlx::query(
-            r#"
+            r"
             UPDATE system_blocks
             SET status = 'published',
                 current_published_version_id = $2,
                 updated_at = now()
             WHERE key = $1
-            "#,
+            ",
         )
         .bind(block.key)
         .bind(version_id)
@@ -298,11 +298,11 @@ pub async fn seed_system_blocks(pool: &PgPool) -> Result<(), DenError> {
 
 pub async fn list_system_blocks(pool: &PgPool) -> Result<Vec<SystemBlockRow>, DenError> {
     sqlx::query_as::<_, SystemBlockRow>(
-        r#"
+        r"
         SELECT key, kind, scope, status, current_published_version_id
         FROM system_blocks
         ORDER BY key
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -314,12 +314,12 @@ pub async fn list_system_block_versions(
     block_key: &str,
 ) -> Result<Vec<SystemBlockVersionRow>, DenError> {
     sqlx::query_as::<_, SystemBlockVersionRow>(
-        r#"
+        r"
         SELECT id, block_key, version_number, content, change_summary, content_hash
         FROM system_block_versions
         WHERE block_key = $1
         ORDER BY version_number DESC
-        "#,
+        ",
     )
     .bind(block_key)
     .fetch_all(pool)
@@ -332,12 +332,12 @@ pub async fn list_bear_block_bindings(
     bear_id: Uuid,
 ) -> Result<Vec<BearBlockBindingRow>, DenError> {
     sqlx::query_as::<_, BearBlockBindingRow>(
-        r#"
+        r"
         SELECT bear_id, block_key, mode, custom_content, forked_from_version_id, last_reviewed_version_id
         FROM bear_block_bindings
         WHERE bear_id = $1
         ORDER BY block_key
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -355,7 +355,7 @@ pub async fn upsert_bear_block_binding(
     last_reviewed_version_id: Option<i64>,
 ) -> Result<(), DenError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_block_bindings (
             bear_id, block_key, mode, custom_content, forked_from_version_id, last_reviewed_version_id
         )
@@ -366,7 +366,7 @@ pub async fn upsert_bear_block_binding(
                       forked_from_version_id = EXCLUDED.forked_from_version_id,
                       last_reviewed_version_id = EXCLUDED.last_reviewed_version_id,
                       updated_at = now()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(block_key)
@@ -384,7 +384,7 @@ pub async fn resolve_managed_blocks_for_bear(
     bear: &Bear,
 ) -> Result<ResolvedManagedBlockSet, DenError> {
     let rows: Vec<ManagedBlockResolutionRow> = sqlx::query_as(
-        r#"
+        r"
         SELECT sb.key,
                sb.kind,
                sb.scope,
@@ -402,7 +402,7 @@ pub async fn resolve_managed_blocks_for_bear(
                ON bbb.bear_id = $1 AND bbb.block_key = sb.key
         WHERE sb.status = 'published'
         ORDER BY sb.key
-        "#,
+        ",
     )
     .bind(bear.id)
     .fetch_all(pool)
@@ -525,7 +525,7 @@ pub async fn upsert_compiled_bear_config(
         DenError::Parsing(format!("serialize compiled resolved managed blocks: {e}"))
     })?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_compiled_configs (
             bear_id,
             compiled_version,
@@ -547,7 +547,7 @@ pub async fn upsert_compiled_bear_config(
                       config_hash = EXCLUDED.config_hash,
                       compiled_at = now(),
                       updated_at = now()
-        "#,
+        ",
     )
     .bind(compiled.bear_id)
     .bind(compiled.compiled_version)
@@ -566,7 +566,7 @@ pub async fn get_compiled_bear_config(
     bear_id: Uuid,
 ) -> Result<Option<BearCompiledConfigRow>, DenError> {
     sqlx::query_as::<_, BearCompiledConfigRow>(
-        r#"
+        r"
         SELECT bear_id,
                compiled_version,
                resolved_blocks_json,
@@ -576,7 +576,7 @@ pub async fn get_compiled_bear_config(
                config_hash
         FROM bear_compiled_configs
         WHERE bear_id = $1
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_optional(pool)

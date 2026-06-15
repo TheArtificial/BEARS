@@ -87,7 +87,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         public_web_origin => state.config.web_public_origin(),
         rows => rows,
         overall_ok => payload.health.ok,
-        checked_at => payload.health.checked_at.clone(),
+        checked_at => payload.health.checked_at,
         json_path => "/status.json",
         deploy_rows => deploy_rows,
         ghcr_note => ghcr_note,

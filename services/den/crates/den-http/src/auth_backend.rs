@@ -113,7 +113,7 @@ impl AuthnBackend for Backend {
             }
 
             match verify_password(creds.password, &db_user.passhash) {
-                Ok(_) => Ok(Some(SessionUser {
+                Ok(()) => Ok(Some(SessionUser {
                     id: db_user.id,
                     username: db_user.username,
                     passhash: db_user.passhash,

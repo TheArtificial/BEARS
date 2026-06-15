@@ -30,12 +30,12 @@ pub async fn create_native_approval(
 ) -> Result<String, DenError> {
     let approval_id = Uuid::new_v4().to_string();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO native_runtime_approvals (
             approval_id, bear_id, conversation_id, acp_session_id,
             tool_call_id, tool_name, arguments_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        "#,
+        ",
     )
     .bind(&approval_id)
     .bind(bear_id)
@@ -61,11 +61,11 @@ pub async fn decide_native_approval(
         NativeApprovalDecision::Deny => "denied",
     };
     sqlx::query(
-        r#"
+        r"
         UPDATE native_runtime_approvals
         SET status = $2, decision_reason = $3, decided_at = NOW()
         WHERE approval_id = $1
-        "#,
+        ",
     )
     .bind(approval_id)
     .bind(status)

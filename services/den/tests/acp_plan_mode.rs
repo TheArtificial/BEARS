@@ -19,11 +19,11 @@ async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
     let username = format!("pm{}", &suffix[..18]);
     let email = format!("{username}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name, passhash)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(&username)
@@ -62,7 +62,7 @@ async fn insert_role_agent(
     agent_id: &str,
 ) {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
         VALUES ($1, $2, $3, 'ready', NOW())
         ON CONFLICT (bear_id, profile)
@@ -70,7 +70,7 @@ async fn insert_role_agent(
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(role.as_str())

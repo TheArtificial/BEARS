@@ -37,7 +37,7 @@ pub fn spawn_persist_native_agent_step(
         conversation_id,
         Some(acp_session_id.clone()),
         request_id.clone(),
-        acp_session_id.clone(),
+        acp_session_id,
         false,
     );
     if !assistant_text.trim().is_empty() {

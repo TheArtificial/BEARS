@@ -170,7 +170,7 @@ async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid
 async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid, config: &Config) -> Result<()> {
     let model = smoke_default_model(config);
     sqlx::query(
-        r#"
+        r"
         UPDATE bears
         SET default_model = $2
         WHERE id = $1
@@ -180,7 +180,7 @@ async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid, config: &Co
             OR default_model LIKE 'letta/%'
             OR strpos(default_model, '/') = 0
           )
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(model)
@@ -203,7 +203,7 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
     let token_hash = acp_tokens::hash_raw_token_for_seed(SMOKE_ACP_TOKEN);
     let mut tx = pool.begin().await?;
     let row: (uuid::Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO acp_tokens (user_id, name, token_hash, scopes, revoked_at, expires_at)
         VALUES ($1, 'Smoke ACP token', $2, $3, NULL, NULL)
         ON CONFLICT (token_hash) DO UPDATE
@@ -213,7 +213,7 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
             revoked_at = NULL,
             expires_at = NULL
         RETURNING id
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(token_hash)
@@ -225,11 +225,11 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
     .await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO acp_token_bears (token_id, bear_id)
         VALUES ($1, $2)
         ON CONFLICT DO NOTHING
-        "#,
+        ",
     )
     .bind(row.0)
     .bind(bear_id)
