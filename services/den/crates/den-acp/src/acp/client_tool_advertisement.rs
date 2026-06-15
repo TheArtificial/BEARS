@@ -707,18 +707,27 @@ mod tests {
     use super::*;
     use den_runtime::client_tools::*;
 
-    // ADR-0043 s5b2 transcription guard: the den-acp wire table must match the
-    // (about-to-be-removed) core descriptor wire fields exactly. This proves the
-    // relocated wire-method data is correct before the core fields are deleted.
+    // ADR-0043 s5b2: the ACP wire-method table now owns the adapter/client wire
+    // names (removed from the protocol-neutral core descriptor) and feeds them into
+    // the advertised descriptor.
     #[test]
-    fn acp_wire_table_matches_legacy_core_descriptor_fields() {
+    fn acp_wire_methods_feed_descriptor_advertisement() {
+        // EditFile carries the only non-empty aliases, exercising the full shape.
+        let edit = acp_wire(ClientToolName::EditFile);
+        assert_eq!(edit.adapter_method, "bears/edit_file");
+        assert_eq!(edit.client_method, "fs/edit_file");
+        assert_eq!(edit.adapter_aliases, &["bears/replace_text"]);
+        assert_eq!(edit.client_aliases, &["fs/replace_text"]);
+
+        let advertised = client_tool_descriptor(ClientToolName::EditFile);
+        let description = advertised["description"].as_str().unwrap_or("");
+        assert!(description.contains("bears/edit_file"), "{description}");
+        assert!(description.contains("fs/edit_file"), "{description}");
+
         for tool in ClientToolName::all() {
             let wire = acp_wire(*tool);
-            let d = tool.descriptor();
-            assert_eq!(wire.adapter_method, d.adapter_method, "{:?}", tool);
-            assert_eq!(wire.adapter_aliases, d.adapter_aliases, "{:?}", tool);
-            assert_eq!(wire.client_method, d.client_method, "{:?}", tool);
-            assert_eq!(wire.client_aliases, d.client_aliases, "{:?}", tool);
+            assert!(!wire.adapter_method.is_empty(), "{tool:?}");
+            assert!(!wire.client_method.is_empty(), "{tool:?}");
         }
     }
 
