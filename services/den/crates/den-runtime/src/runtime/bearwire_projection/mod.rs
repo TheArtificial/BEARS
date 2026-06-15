@@ -140,3 +140,6 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod golden_traces_tests;
