@@ -18,7 +18,7 @@ use den_core::tools::descriptor::{
 };
 
 #[derive(Debug)]
-pub enum AcpGatewayEvent {
+pub enum GatewayEvent {
     AssistantTextDelta {
         text: String,
     },
@@ -92,14 +92,14 @@ pub enum AcpGatewayEvent {
     },
 }
 
-pub fn letta_inner(msg: &serde_json::Value) -> &serde_json::Value {
+pub fn provider_inner(msg: &serde_json::Value) -> &serde_json::Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
         _ => msg,
     }
 }
 
-pub fn letta_stream_text_preserving_whitespace(inner: &serde_json::Value) -> Option<String> {
+pub fn provider_stream_text_preserving_whitespace(inner: &serde_json::Value) -> Option<String> {
     let content = inner.get("content")?;
     if let Some(s) = content.as_str() {
         return Some(s.to_string());
@@ -121,10 +121,10 @@ pub fn letta_stream_text_preserving_whitespace(inner: &serde_json::Value) -> Opt
     found_text.then_some(out)
 }
 
-pub fn map_native_letta_stream_event_to_acp_event(
+pub fn map_provider_stream_event_to_gateway_event(
     event: &serde_json::Value,
-) -> Option<AcpGatewayEvent> {
-    let inner = letta_inner(event);
+) -> Option<GatewayEvent> {
+    let inner = provider_inner(event);
     let message_type = inner
         .get("message_type")
         .and_then(|v| v.as_str())
@@ -133,11 +133,11 @@ pub fn map_native_letta_stream_event_to_acp_event(
     match message_type {
         "ping" => None,
         "assistant_message" => {
-            let text = letta_stream_text_preserving_whitespace(inner)
-                .or_else(|| letta_stream_text_preserving_whitespace(event))
+            let text = provider_stream_text_preserving_whitespace(inner)
+                .or_else(|| provider_stream_text_preserving_whitespace(event))
                 .unwrap_or_default();
             if let Some(tool_name) = pseudo_tool_call_name(&text) {
-                Some(AcpGatewayEvent::Error {
+                Some(GatewayEvent::Error {
                     message: format!(
                         "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
                     ),
@@ -150,10 +150,10 @@ pub fn map_native_letta_stream_event_to_acp_event(
                     })),
                 })
             } else {
-                Some(AcpGatewayEvent::AssistantTextDelta { text })
+                Some(GatewayEvent::AssistantTextDelta { text })
             }
         }
-        "reasoning_message" => Some(AcpGatewayEvent::StatusText {
+        "reasoning_message" => Some(GatewayEvent::StatusText {
             text: inner
                 .get("reasoning")
                 .and_then(|v| v.as_str())
@@ -164,11 +164,11 @@ pub fn map_native_letta_stream_event_to_acp_event(
                         .and_then(|v| v.as_str())
                         .map(str::to_string)
                 })
-                .or_else(|| letta_stream_text_preserving_whitespace(inner))
-                .or_else(|| letta_stream_text_preserving_whitespace(event))
+                .or_else(|| provider_stream_text_preserving_whitespace(inner))
+                .or_else(|| provider_stream_text_preserving_whitespace(event))
                 .unwrap_or_default(),
         }),
-        "error_message" => Some(AcpGatewayEvent::Error {
+        "error_message" => Some(GatewayEvent::Error {
             message: event
                 .get("message")
                 .and_then(|v| v.as_str())
@@ -195,13 +195,13 @@ pub fn map_native_letta_stream_event_to_acp_event(
                 .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
             if stop_reason == "end_turn" {
-                Some(AcpGatewayEvent::TurnComplete {
+                Some(GatewayEvent::TurnComplete {
                     outcome: "ok".to_string(),
                 })
             } else if stop_reason == "requires_approval" {
                 None
             } else {
-                Some(AcpGatewayEvent::Error {
+                Some(GatewayEvent::Error {
                     message: format!(
                         "Letta stopped before producing assistant output: {stop_reason}"
                     ),
@@ -220,12 +220,12 @@ pub fn map_native_letta_stream_event_to_acp_event(
             )
         }
         "tool_return_message" => None,
-        _ => native_letta_conversation_resolved_event(event)
+        _ => conversation_resolved_gateway_event(event)
             .or_else(|| extract_stream_text_delta(event)),
     }
 }
 
-fn extract_stream_text_delta(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
+fn extract_stream_text_delta(event: &serde_json::Value) -> Option<GatewayEvent> {
     let kind = stream_text_delta_kind(event);
     let (kind, text) = match kind {
         Some(StreamTextDeltaKind::Assistant) => (
@@ -250,8 +250,8 @@ fn extract_stream_text_delta(event: &serde_json::Value) -> Option<AcpGatewayEven
         return None;
     }
     match kind {
-        StreamTextDeltaKind::Assistant => Some(AcpGatewayEvent::AssistantTextDelta { text }),
-        StreamTextDeltaKind::Reasoning => Some(AcpGatewayEvent::StatusText { text }),
+        StreamTextDeltaKind::Assistant => Some(GatewayEvent::AssistantTextDelta { text }),
+        StreamTextDeltaKind::Reasoning => Some(GatewayEvent::StatusText { text }),
     }
 }
 
@@ -303,7 +303,7 @@ fn stream_assistant_delta_text(event: &serde_json::Value) -> Option<String> {
         }
     }
     if let Some(delta) = event.get("delta") {
-        if let Some(text) = letta_stream_text_preserving_whitespace(delta) {
+        if let Some(text) = provider_stream_text_preserving_whitespace(delta) {
             return Some(text);
         }
     }
@@ -352,7 +352,7 @@ fn native_letta_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
     has_letta_approval_request: bool,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     native_letta_tool_request_event_with_args(event, inner, has_letta_approval_request, None, None)
 }
 
@@ -362,7 +362,7 @@ fn native_letta_tool_request_event_with_args(
     has_letta_approval_request: bool,
     args_override: Option<serde_json::Value>,
     tool_name_override: Option<&str>,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let acp_tool = AcpToolName::from_provider_alias(tool_name);
@@ -413,7 +413,7 @@ fn native_letta_tool_request_event_with_args(
             if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
                 return None;
             }
-            return Some(AcpGatewayEvent::Error {
+            return Some(GatewayEvent::Error {
                 message: format!(
                     "Letta requested {} without a {missing} argument.",
                     descriptor.provider_name
@@ -463,7 +463,7 @@ fn native_letta_tool_request_event_with_args(
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let (result_tx, result_rx) = oneshot::channel();
-    Some(AcpGatewayEvent::ToolRequest {
+    Some(GatewayEvent::ToolRequest {
         request_id,
         turn_id,
         tool_call_id,
@@ -506,7 +506,7 @@ fn native_letta_tool_request_event_with_args(
 ///
 /// Keep this accumulator even if it looks vestigial in the clean/native case. It is a
 /// low-cost guardrail that reconstructs partial tool-call deltas into exactly one
-/// `AcpGatewayEvent::ToolRequest` and prevents early/duplicate local tool execution.
+/// `GatewayEvent::ToolRequest` and prevents early/duplicate local tool execution.
 #[derive(Debug, Default)]
 pub struct ToolCallAccumulator {
     names: BTreeMap<String, String>,
@@ -524,8 +524,8 @@ impl ToolCallAccumulator {
         self.names.len()
     }
 
-    pub fn observe(&mut self, event: &serde_json::Value) -> Option<AcpGatewayEvent> {
-        let inner = letta_inner(event);
+    pub fn observe(&mut self, event: &serde_json::Value) -> Option<GatewayEvent> {
+        let inner = provider_inner(event);
         let message_type = inner
             .get("message_type")
             .and_then(|v| v.as_str())
@@ -569,7 +569,7 @@ impl ToolCallAccumulator {
     fn observe_openai_tool_call_delta(
         &mut self,
         event: &serde_json::Value,
-    ) -> Option<AcpGatewayEvent> {
+    ) -> Option<GatewayEvent> {
         let tool_call = openai_stream_tool_call_delta(event)?;
         let index_key = tool_call
             .get("index")
@@ -750,19 +750,19 @@ fn tool_call_args_raw<'a>(
         .or_else(|| event.get("arguments"))
 }
 
-pub fn map_native_letta_stream_event_to_acp_event_with_accumulator(
+pub fn map_provider_stream_event_to_gateway_event_with_accumulator(
     event: &serde_json::Value,
     accumulator: &mut ToolCallAccumulator,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     if let Some(mapped) = accumulator.observe(event) {
         return Some(mapped);
     }
-    map_native_letta_stream_event_to_acp_event(event)
+    map_provider_stream_event_to_gateway_event(event)
 }
 
-pub fn native_letta_conversation_resolved_event(
+pub fn conversation_resolved_gateway_event(
     event: &serde_json::Value,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     let conversation_id = event
         .get("conversation_id")
         .or_else(|| event.get("conversationId"))
@@ -775,7 +775,7 @@ pub fn native_letta_conversation_resolved_event(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if ty == "conversation_resolved" || message_type == "conversation_resolved" {
-        Some(AcpGatewayEvent::ConversationResolved {
+        Some(GatewayEvent::ConversationResolved {
             conversation_id: conversation_id.to_string(),
         })
     } else {
@@ -783,58 +783,58 @@ pub fn native_letta_conversation_resolved_event(
     }
 }
 
-pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
+pub fn gateway_event_adapter_type(event: &GatewayEvent) -> &'static str {
     match event {
-        AcpGatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
-        AcpGatewayEvent::StatusText { .. } => "status_text",
-        AcpGatewayEvent::TurnComplete { .. } => "turn_complete",
-        AcpGatewayEvent::TurnResult { .. } => "turn_result",
-        AcpGatewayEvent::Error { .. } => "error",
-        AcpGatewayEvent::ToolRequest { .. } => "tool_request",
-        AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
-        AcpGatewayEvent::PlanUpdate { .. }
-        | AcpGatewayEvent::PlanUpdateJson { .. }
-        | AcpGatewayEvent::PlanApprovalFallback { .. } => "plan_update",
-        AcpGatewayEvent::ModeUpdate { .. } => "mode_update",
-        AcpGatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
-        AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
+        GatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
+        GatewayEvent::StatusText { .. } => "status_text",
+        GatewayEvent::TurnComplete { .. } => "turn_complete",
+        GatewayEvent::TurnResult { .. } => "turn_result",
+        GatewayEvent::Error { .. } => "error",
+        GatewayEvent::ToolRequest { .. } => "tool_request",
+        GatewayEvent::PermissionRequest { .. } => "permission_request",
+        GatewayEvent::PlanUpdate { .. }
+        | GatewayEvent::PlanUpdateJson { .. }
+        | GatewayEvent::PlanApprovalFallback { .. } => "plan_update",
+        GatewayEvent::ModeUpdate { .. } => "mode_update",
+        GatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
+        GatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
 }
 
-pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
+pub fn gateway_event_has_visible_output(event: &GatewayEvent) -> bool {
     match event {
-        AcpGatewayEvent::AssistantTextDelta { text } | AcpGatewayEvent::StatusText { text } => {
+        GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
             !text.is_empty()
         }
-        AcpGatewayEvent::Error { .. } => true,
-        AcpGatewayEvent::TurnComplete { .. }
-        | AcpGatewayEvent::TurnResult { .. }
-        | AcpGatewayEvent::ToolRequest { .. }
-        | AcpGatewayEvent::PermissionRequest { .. }
-        | AcpGatewayEvent::PlanApprovalFallback { .. } => true,
-        AcpGatewayEvent::PlanUpdate { .. }
-        | AcpGatewayEvent::PlanUpdateJson { .. }
-        | AcpGatewayEvent::ModeUpdate { .. }
-        | AcpGatewayEvent::ConversationResolved { .. }
-        | AcpGatewayEvent::SessionInfoUpdate { .. } => false,
+        GatewayEvent::Error { .. } => true,
+        GatewayEvent::TurnComplete { .. }
+        | GatewayEvent::TurnResult { .. }
+        | GatewayEvent::ToolRequest { .. }
+        | GatewayEvent::PermissionRequest { .. }
+        | GatewayEvent::PlanApprovalFallback { .. } => true,
+        GatewayEvent::PlanUpdate { .. }
+        | GatewayEvent::PlanUpdateJson { .. }
+        | GatewayEvent::ModeUpdate { .. }
+        | GatewayEvent::ConversationResolved { .. }
+        | GatewayEvent::SessionInfoUpdate { .. } => false,
     }
 }
 
-pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
+pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
     let mapped = match event {
-        AcpGatewayEvent::AssistantTextDelta { text } => serde_json::json!({
+        GatewayEvent::AssistantTextDelta { text } => serde_json::json!({
             "type": "assistant_text_delta",
             "text": text,
         }),
-        AcpGatewayEvent::StatusText { text } => serde_json::json!({
+        GatewayEvent::StatusText { text } => serde_json::json!({
             "type": "status_text",
             "text": text,
         }),
-        AcpGatewayEvent::TurnComplete { outcome } => serde_json::json!({
+        GatewayEvent::TurnComplete { outcome } => serde_json::json!({
             "type": "turn_complete",
             "outcome": outcome,
         }),
-        AcpGatewayEvent::TurnResult {
+        GatewayEvent::TurnResult {
             status,
             reason,
             request_id,
@@ -850,7 +850,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "retryable": retryable,
             "diagnostics": diagnostics,
         }),
-        AcpGatewayEvent::Error {
+        GatewayEvent::Error {
             message,
             detail,
             error_type,
@@ -871,7 +871,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             }
             mapped
         }
-        AcpGatewayEvent::ToolRequest {
+        GatewayEvent::ToolRequest {
             request_id,
             turn_id,
             tool_call_id,
@@ -911,7 +911,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 },
             })
         }
-        AcpGatewayEvent::PermissionRequest {
+        GatewayEvent::PermissionRequest {
             request_id,
             permission_id,
             tool_call_id,
@@ -936,7 +936,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::SessionInfoUpdate {
+        GatewayEvent::SessionInfoUpdate {
             title,
             updated_at,
             meta,
@@ -955,7 +955,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             }
             mapped
         }
-        AcpGatewayEvent::PlanUpdate(plan) => serde_json::json!({
+        GatewayEvent::PlanUpdate(plan) => serde_json::json!({
             "type": "plan_update",
             "plan_id": plan.id,
             "version": plan.version,
@@ -996,7 +996,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::PlanUpdateJson { entries } => serde_json::json!({
+        GatewayEvent::PlanUpdateJson { entries } => serde_json::json!({
             "type": "plan_update",
             "entries": entries,
             "diagnostic": {
@@ -1005,7 +1005,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::PlanApprovalFallback {
+        GatewayEvent::PlanApprovalFallback {
             plan_id,
             title,
             body,
@@ -1044,7 +1044,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::ModeUpdate { mode } => serde_json::json!({
+        GatewayEvent::ModeUpdate { mode } => serde_json::json!({
             "type": "mode_update",
             "mode": mode,
             "diagnostic": {
@@ -1053,7 +1053,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::ConversationResolved { conversation_id } => serde_json::json!({
+        GatewayEvent::ConversationResolved { conversation_id } => serde_json::json!({
             "type": "conversation_resolved",
             "conversation_id": conversation_id,
         }),
@@ -1090,9 +1090,9 @@ mod tests {
             "fs_list_directory",
             serde_json::json!({ "path": "/workspace" }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 tool_name,
                 kind,
                 args,
@@ -1112,9 +1112,9 @@ mod tests {
             "fs_search_files",
             serde_json::json!({ "path": "/workspace", "query": "needle" }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 tool_name,
                 kind,
                 args,
@@ -1139,9 +1139,9 @@ mod tests {
                 "new_text": "after"
             }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 approval_required,
                 approval_request_id,
                 approval_reason,
@@ -1171,10 +1171,10 @@ mod tests {
         });
         let mut accumulator = ToolCallAccumulator::default();
         let mapped =
-            map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
+            map_provider_stream_event_to_gateway_event_with_accumulator(&event, &mut accumulator)
                 .expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 approval_required,
                 approval_request_id,
                 ..
@@ -1201,10 +1201,10 @@ mod tests {
         });
         let mut accumulator = ToolCallAccumulator::default();
         let mapped =
-            map_native_letta_stream_event_to_acp_event_with_accumulator(&event, &mut accumulator)
+            map_provider_stream_event_to_gateway_event_with_accumulator(&event, &mut accumulator)
                 .expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 approval_request_id,
                 ..
             } => {
@@ -1224,9 +1224,9 @@ mod tests {
                 "new_text": "after"
             }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest {
+            GatewayEvent::ToolRequest {
                 tool_name,
                 kind,
                 args,
@@ -1247,9 +1247,9 @@ mod tests {
             "fs_search_files",
             serde_json::json!({ "path": "/workspace" }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::Error {
+            GatewayEvent::Error {
                 error_type,
                 message,
                 context,
@@ -1269,9 +1269,9 @@ mod tests {
             "fs_edit_file",
             serde_json::json!({ "path": "/workspace/a.txt", "old_text": "before" }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::Error {
+            GatewayEvent::Error {
                 error_type,
                 message,
                 context,
@@ -1291,8 +1291,8 @@ mod tests {
             "type": "message_delta",
             "choices": [{ "delta": { "role": "assistant", "content": "hello" } }]
         });
-        match map_native_letta_stream_event_to_acp_event(&event) {
-            Some(AcpGatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, "hello"),
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, "hello"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1303,8 +1303,8 @@ mod tests {
             "type": "chat.completion.chunk",
             "choices": [{ "delta": { "content": " world" } }]
         });
-        match map_native_letta_stream_event_to_acp_event(&event) {
-            Some(AcpGatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, " world"),
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, " world"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1315,8 +1315,8 @@ mod tests {
             "type": "reasoning_delta",
             "delta": { "text": "thinking" }
         });
-        match map_native_letta_stream_event_to_acp_event(&event) {
-            Some(AcpGatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1327,8 +1327,8 @@ mod tests {
             "type": "chat.completion.chunk",
             "choices": [{ "delta": { "reasoning_content": "thinking" } }]
         });
-        match map_native_letta_stream_event_to_acp_event(&event) {
-            Some(AcpGatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1352,7 +1352,7 @@ mod tests {
                 }
             }]
         });
-        assert!(map_native_letta_stream_event_to_acp_event_with_accumulator(
+        assert!(map_provider_stream_event_to_gateway_event_with_accumulator(
             &first,
             &mut accumulator
         )
@@ -1371,9 +1371,9 @@ mod tests {
                 }
             }]
         });
-        match map_native_letta_stream_event_to_acp_event_with_accumulator(&second, &mut accumulator)
+        match map_provider_stream_event_to_gateway_event_with_accumulator(&second, &mut accumulator)
         {
-            Some(AcpGatewayEvent::ToolRequest {
+            Some(GatewayEvent::ToolRequest {
                 tool_call_id,
                 tool_name,
                 args,
@@ -1395,9 +1395,9 @@ mod tests {
             "message_type": "assistant_message",
             "content": "to=functions.fs_edit_file {\"path\":\"/workspace/README.md\"}"
         });
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::Error {
+            GatewayEvent::Error {
                 error_type,
                 context,
                 ..
@@ -1417,7 +1417,7 @@ mod tests {
             "status": "success",
             "tool_return": "hello"
         });
-        assert!(map_native_letta_stream_event_to_acp_event(&event).is_none());
+        assert!(map_provider_stream_event_to_gateway_event(&event).is_none());
     }
 
     #[test]
@@ -1430,8 +1430,8 @@ mod tests {
                 "new_text": "after"
             }),
         );
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
-        let bytes = acp_event_to_adapter_sse(mapped);
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
+        let bytes = gateway_event_to_adapter_sse(mapped);
         let raw = std::str::from_utf8(&bytes).expect("utf8 sse");
         assert!(raw.contains("\"type\":\"tool_request\""));
         assert!(raw.contains("\"tool_name\":\"fs_edit_file\""));
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn list_directory_sse_policy_includes_entry_limit() {
-        let event = AcpGatewayEvent::ToolRequest {
+        let event = GatewayEvent::ToolRequest {
             request_id: "request-1".to_string(),
             turn_id: "turn-1".to_string(),
             tool_call_id: "call-1".to_string(),
@@ -1456,7 +1456,7 @@ mod tests {
             result_tx: None,
             result_rx: None,
         };
-        let bytes = acp_event_to_adapter_sse(event);
+        let bytes = gateway_event_to_adapter_sse(event);
         let raw = std::str::from_utf8(&bytes).expect("utf8 sse");
         assert!(raw.contains("\"max_entries\":1000"));
         assert!(raw.contains("\"risk\":\"read_only\""));

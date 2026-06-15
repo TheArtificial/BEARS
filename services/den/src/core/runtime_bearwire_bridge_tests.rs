@@ -2,7 +2,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use den_runtime::{
-    acp_events::acp_event_to_adapter_sse,
+    gateway_events::gateway_event_to_adapter_sse,
     native_runtime::openai_byte_stream_to_event_stream,
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
@@ -118,7 +118,7 @@ fn golden_semantic_status_text_projects_to_adapter_sse() {
     });
     let types = mapped
         .into_iter()
-        .map(acp_event_to_adapter_sse)
+        .map(gateway_event_to_adapter_sse)
         .flat_map(|chunk| adapter_sse_event_types(&[chunk]))
         .collect::<Vec<_>>();
     assert_eq!(types, vec!["status_text".to_string()]);

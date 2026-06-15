@@ -2,7 +2,7 @@ use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_
 use crate::acp::stream::support::AcpStreamDiagnostics;
 use crate::acp::AcpStreamContext;
 use den_runtime::tool_turns::ToolTurnCoordinator;
-use den_runtime::acp_events::AcpGatewayEvent;
+use den_runtime::gateway_events::GatewayEvent;
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
 use den_runtime::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;
@@ -69,7 +69,7 @@ async fn semantic_assistant_text_delta_emits_once_not_twice() {
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
-        AcpGatewayEvent::AssistantTextDelta { ref text } if text == "hello"
+        GatewayEvent::AssistantTextDelta { ref text } if text == "hello"
     ));
     assert!(effect.is_none());
     assert!(adapter_result_rx.is_none());
@@ -93,7 +93,7 @@ async fn semantic_turn_completed_emits_single_turn_complete() {
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
-        AcpGatewayEvent::TurnComplete { ref outcome } if outcome == "ok"
+        GatewayEvent::TurnComplete { ref outcome } if outcome == "ok"
     ));
 }
 
@@ -122,7 +122,7 @@ async fn requires_approval_stop_after_tool_request_is_not_unmapped() {
     .expect("tool mapping should succeed");
 
     assert_eq!(events.len(), 1);
-    assert!(matches!(events[0], AcpGatewayEvent::ToolRequest { .. }));
+    assert!(matches!(events[0], GatewayEvent::ToolRequest { .. }));
     assert!(diagnostics.unmapped_event_samples.is_empty());
 
     let pause_event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {

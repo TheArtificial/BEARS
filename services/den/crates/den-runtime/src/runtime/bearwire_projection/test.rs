@@ -1,5 +1,5 @@
 use crate::{
-    acp_events::AcpGatewayEvent,
+    gateway_events::GatewayEvent,
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
     },
@@ -18,7 +18,7 @@ fn semantic_assistant_text_projects_to_bearwire_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::AssistantTextDelta { text }] if text == "hello"
+        [GatewayEvent::AssistantTextDelta { text }] if text == "hello"
     ));
 }
 
@@ -30,7 +30,7 @@ fn semantic_turn_completed_projects_to_bearwire_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::TurnComplete { outcome }] if outcome == "ok"
+        [GatewayEvent::TurnComplete { outcome }] if outcome == "ok"
     ));
 }
 
@@ -46,7 +46,7 @@ fn semantic_run_paused_projects_to_status_text_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::StatusText { text }] if text == "Waiting for approval."
+        [GatewayEvent::StatusText { text }] if text == "Waiting for approval."
     ));
 }
 
@@ -68,7 +68,7 @@ fn semantic_tool_call_projects_to_tool_request_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::ToolRequest {
+        [GatewayEvent::ToolRequest {
             tool_call_id,
             tool_name,
             approval_required,
@@ -93,7 +93,7 @@ fn semantic_turn_failed_projects_to_error_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::Error {
+        [GatewayEvent::Error {
             message,
             error_type,
             ..
@@ -110,7 +110,7 @@ fn semantic_turn_cancelled_projects_to_cancelled_error_gateway_event() {
 
     assert!(matches!(
         mapped.as_slice(),
-        [AcpGatewayEvent::Error {
+        [GatewayEvent::Error {
             error_type,
             ..
         }] if error_type.as_deref() == Some("runtime_turn_cancelled")

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_events::AcpGatewayEvent,
+    gateway_events::GatewayEvent,
     acp_sessions,
     conversation_persistence::PersistedConversationMessage,
     agent_assist::sanitize_visible_transcript_text,
@@ -220,7 +220,7 @@ pub(super) async fn pending_session_title_update_event(
     bear_id: Uuid,
     bear_slug: &str,
     acp_session_id: &str,
-) -> Result<Option<AcpGatewayEvent>, CustomError> {
+) -> Result<Option<GatewayEvent>, CustomError> {
     let Some(session) =
         acp_sessions::find_for_user_bear_session(pool, user_id, bear_slug, acp_session_id).await?
     else {
@@ -263,7 +263,7 @@ pub(super) fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) 
 
 fn session_title_update_event_from_row(
     session: &acp_sessions::AcpSessionRow,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     let title = session
         .conversation_title
         .as_deref()
@@ -278,7 +278,7 @@ fn session_title_update_event_from_row(
         (Some(_), None) => true,
         _ => false,
     };
-    needs_sync.then_some(AcpGatewayEvent::SessionInfoUpdate {
+    needs_sync.then_some(GatewayEvent::SessionInfoUpdate {
         title: Some(title),
         updated_at: session
             .conversation_title_updated_at

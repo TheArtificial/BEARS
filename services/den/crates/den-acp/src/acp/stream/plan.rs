@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry;
 use den_runtime::{
-    acp_events::AcpGatewayEvent,
+    gateway_events::GatewayEvent,
     plan_mode,
     tool_turns::ToolResultRequest,
     turn_state,
@@ -19,7 +19,7 @@ pub(in crate::acp) fn mode_from_den_tool_result(result: &ToolResultRequest) -> O
 
 pub(in crate::acp) fn plan_update_from_den_tool_result(
     result: &ToolResultRequest,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     if let Some(plan) = result.structured_content.get("plan") {
         let items = plan.get("items").and_then(Value::as_array)?;
         let entries = items
@@ -29,7 +29,7 @@ pub(in crate::acp) fn plan_update_from_den_tool_result(
         if entries.is_empty() {
             return None;
         }
-        return Some(AcpGatewayEvent::PlanUpdateJson { entries });
+        return Some(GatewayEvent::PlanUpdateJson { entries });
     }
 
     plan_approval_fallback_from_tool_result(result)
@@ -51,7 +51,7 @@ pub(in crate::acp) fn plan_approval_fallback_payload(
 
 fn plan_approval_fallback_from_tool_result(
     result: &ToolResultRequest,
-) -> Option<AcpGatewayEvent> {
+) -> Option<GatewayEvent> {
     let workplan = result.structured_content.get("workplan")?;
     let raw_state = workplan
         .get("raw_state")
@@ -105,7 +105,7 @@ fn plan_approval_fallback_from_tool_result(
         .trim()
         .to_string();
 
-    Some(AcpGatewayEvent::PlanApprovalFallback {
+    Some(GatewayEvent::PlanApprovalFallback {
         plan_id,
         title,
         body,

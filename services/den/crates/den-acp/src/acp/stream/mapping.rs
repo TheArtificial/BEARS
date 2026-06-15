@@ -2,8 +2,8 @@ use crate::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpSt
 use crate::acp::types::PersistedToolRequestEffect;
 use crate::acp::stream::support::AcpStreamDiagnostics;
 use den_runtime::{
-    acp_events::{
-            map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
+    gateway_events::{
+            map_provider_stream_event_to_gateway_event_with_accumulator, GatewayEvent,
         },
     runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
@@ -11,7 +11,7 @@ use den_runtime::{
 
 pub(super) type AcpFrameResult = Result<
     (
-        Vec<AcpGatewayEvent>,
+        Vec<GatewayEvent>,
         Option<PersistedToolRequestEffect>,
         Option<(String, String, AcpResolvedToolResult)>,
     ),
@@ -127,8 +127,8 @@ pub(in crate::acp) fn runtime_stream_event_to_acp_seed_value(
 /// Bearwire direct projection. Extending both for the same discriminant duplicates streamed
 /// assistant tokens (`I'mI'm your your…`).
 fn seed_mapped_event_covered_by_direct_projection(
-    seed_mapped: &AcpGatewayEvent,
-    direct: &[AcpGatewayEvent],
+    seed_mapped: &GatewayEvent,
+    direct: &[GatewayEvent],
 ) -> bool {
     let seed_kind = std::mem::discriminant(seed_mapped);
     direct
@@ -168,7 +168,7 @@ pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_
         )
         | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     };
-    if let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
+    if let Some(mut event) = map_provider_stream_event_to_gateway_event_with_accumulator(
         &value,
         &mut diagnostics.tool_call_accumulator,
     ) {
@@ -179,7 +179,7 @@ pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_
         let mut events = if let Some(effect) = tool_request_effect.as_mut() {
             match effect.route {
                 crate::acp::ToolExecutionRoute::AdapterLocal => {
-                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
+                    if let GatewayEvent::ToolRequest { result_rx, .. } = &mut event {
                         if let Some(rx) = result_rx.take() {
                             let tool_call_id = effect.tool_call_id.clone();
                             let tool_name = effect.tool_name.clone();

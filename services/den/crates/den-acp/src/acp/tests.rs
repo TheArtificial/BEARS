@@ -64,7 +64,7 @@ use den_runtime::prompt_memory_blocks::{
         },
     };
     use den_runtime::{
-        acp_events::AcpGatewayEvent,
+        gateway_events::GatewayEvent,
         runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
                 runtime_byte_stream_to_event_stream,
@@ -447,7 +447,7 @@ use den_runtime::prompt_memory_blocks::{
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
-        let mut event = AcpGatewayEvent::ConversationResolved {
+        let mut event = GatewayEvent::ConversationResolved {
             conversation_id: resolved_conversation_id.clone(),
         };
         super::stream::runtime::persist_stream_event_side_effects(&context, &mut event)
@@ -2829,11 +2829,11 @@ use den_runtime::prompt_memory_blocks::{
     #[test]
     fn acp_text_chunker_flushes_first_reasoning_status_without_waiting_for_punctuation() {
         let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 128);
-        let events = chunker.push(AcpGatewayEvent::StatusText {
+        let events = chunker.push(GatewayEvent::StatusText {
             text: "Thinking".to_string(),
         });
         assert_eq!(events.len(), 1);
-        let AcpGatewayEvent::StatusText { text } = &events[0] else {
+        let GatewayEvent::StatusText { text } = &events[0] else {
             panic!("expected status text");
         };
         assert_eq!(text, "Thinking");
@@ -2966,7 +2966,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .with_status_heartbeat_interval(std::time::Duration::from_millis(80));
 
-        stream.push_adapter_event(AcpGatewayEvent::AssistantTextDelta {
+        stream.push_adapter_event(GatewayEvent::AssistantTextDelta {
             text: "Hello".to_string(),
         });
         let assistant = stream.next().await.unwrap().unwrap();
@@ -3102,17 +3102,17 @@ use den_runtime::prompt_memory_blocks::{
     #[test]
     fn acp_text_chunker_caps_reasoning_output_per_turn() {
         let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 10);
-        let events = chunker.push(AcpGatewayEvent::StatusText {
+        let events = chunker.push(GatewayEvent::StatusText {
             text: "abcdefghijklmnopqrstuvwxyz".to_string(),
         });
         assert_eq!(events.len(), 1);
-        let AcpGatewayEvent::StatusText { text } = &events[0] else {
+        let GatewayEvent::StatusText { text } = &events[0] else {
             panic!("expected status text");
         };
         assert!(text.starts_with("abcdefghij\n"));
         assert!(text.contains("BEARS suppressed additional thinking/status output"));
 
-        let events = chunker.push(AcpGatewayEvent::StatusText {
+        let events = chunker.push(GatewayEvent::StatusText {
             text: "more".to_string(),
         });
         assert!(events.is_empty());
@@ -4681,7 +4681,7 @@ use den_runtime::prompt_memory_blocks::{
         let mut stream = AcpRuntimeSseStream::new(
             acp_test_runtime_event_stream(upstream),
             context,
-            vec![AcpGatewayEvent::SessionInfoUpdate {
+            vec![GatewayEvent::SessionInfoUpdate {
                 title: Some("Renamed in same turn".to_string()),
                 updated_at: Some("2026-05-23T00:00:00Z".to_string()),
                 meta: None,
@@ -4992,7 +4992,7 @@ use den_runtime::prompt_memory_blocks::{
         .expect("mapping should succeed");
 
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], AcpGatewayEvent::ToolRequest { .. }));
+        assert!(matches!(events[0], GatewayEvent::ToolRequest { .. }));
         let effect = effect.expect("tool request effect expected");
         assert!(matches!(effect.route, ToolExecutionRoute::AdapterLocal));
         let (tool_call_id, tool_name, resolved) =
@@ -5019,8 +5019,8 @@ use den_runtime::prompt_memory_blocks::{
             session_id,
         )
         .expect("turn failed maps to terminal events");
-        assert!(matches!(turn_failed[0], AcpGatewayEvent::Error { .. }));
-        assert!(matches!(turn_failed[1], AcpGatewayEvent::TurnResult { .. }));
+        assert!(matches!(turn_failed[0], GatewayEvent::Error { .. }));
+        assert!(matches!(turn_failed[1], GatewayEvent::TurnResult { .. }));
 
         let turn_cancelled = runtime_terminal_events(
             den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
@@ -5032,8 +5032,8 @@ use den_runtime::prompt_memory_blocks::{
             session_id,
         )
         .expect("turn cancelled maps to terminal events");
-        assert!(matches!(turn_cancelled[0], AcpGatewayEvent::Error { .. }));
-        assert!(matches!(turn_cancelled[1], AcpGatewayEvent::TurnResult { .. }));
+        assert!(matches!(turn_cancelled[0], GatewayEvent::Error { .. }));
+        assert!(matches!(turn_cancelled[1], GatewayEvent::TurnResult { .. }));
 
         let generic_error = runtime_terminal_events(
             den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
@@ -5052,8 +5052,8 @@ use den_runtime::prompt_memory_blocks::{
             session_id,
         )
         .expect("generic runtime error maps to terminal events");
-        assert!(matches!(generic_error[0], AcpGatewayEvent::Error { .. }));
-        assert!(matches!(generic_error[1], AcpGatewayEvent::TurnResult { .. }));
+        assert!(matches!(generic_error[0], GatewayEvent::Error { .. }));
+        assert!(matches!(generic_error[1], GatewayEvent::TurnResult { .. }));
     }
 
     #[test]

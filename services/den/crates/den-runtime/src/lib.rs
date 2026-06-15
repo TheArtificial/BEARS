@@ -15,8 +15,9 @@ pub mod acp_tools;
 /// Plan-mode state machine and transitions (turn/plan coordination).
 pub mod plan_mode;
 
-/// Canonical native runtime event model (`AcpGatewayEvent`) + its ACP-SSE adapter.
-pub mod acp_events;
+/// Canonical BearWire gateway event model (`GatewayEvent`) + its SSE projection.
+/// Protocol-neutral: edge adapters frame these events onto their own wire.
+pub mod gateway_events;
 
 /// Active-turn coordination + tool-result requests (turn lifecycle).
 pub mod tool_turns;

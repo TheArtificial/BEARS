@@ -25,7 +25,7 @@ use crate::{
 };
 use den_http::errors::{CustomError, DenError};
 use den_runtime::{
-    acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
+    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
     tool_turns::ToolResultRequest,
     turn_controller::{ActiveTurnCancelRegistry, TurnController, TurnPhase},
     role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
@@ -74,10 +74,10 @@ pub(in crate::acp) fn runtime_terminal_events(
     event: RuntimeStreamEvent,
     request_id: &str,
     acp_session_id: &str,
-) -> Option<Vec<AcpGatewayEvent>> {
+) -> Option<Vec<GatewayEvent>> {
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => Some(vec![
-            AcpGatewayEvent::Error {
+            GatewayEvent::Error {
                 message,
                 detail: None,
                 error_type: Some("runtime_turn_failed".to_string()),
@@ -87,7 +87,7 @@ pub(in crate::acp) fn runtime_terminal_events(
                     "acp_session_id": acp_session_id,
                 })),
             },
-            AcpGatewayEvent::TurnResult {
+            GatewayEvent::TurnResult {
                 status: "failed".to_string(),
                 reason: "runtime_cleanup".to_string(),
                 request_id: Some(request_id.to_string()),
@@ -101,7 +101,7 @@ pub(in crate::acp) fn runtime_terminal_events(
             },
         ]),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => Some(vec![
-            AcpGatewayEvent::Error {
+            GatewayEvent::Error {
                 message: "Runtime continuation was cancelled.".to_string(),
                 detail: None,
                 error_type: Some("runtime_turn_cancelled".to_string()),
@@ -111,7 +111,7 @@ pub(in crate::acp) fn runtime_terminal_events(
                     "acp_session_id": acp_session_id,
                 })),
             },
-            AcpGatewayEvent::TurnResult {
+            GatewayEvent::TurnResult {
                 status: "cancelled".to_string(),
                 reason: "cancelled".to_string(),
                 request_id: Some(request_id.to_string()),
@@ -135,7 +135,7 @@ pub(in crate::acp) fn runtime_terminal_events(
                 
                 .unwrap_or_else(|| request_id.to_string());
             Some(vec![
-                AcpGatewayEvent::Error {
+                GatewayEvent::Error {
                     message,
                     detail,
                     error_type,
@@ -145,7 +145,7 @@ pub(in crate::acp) fn runtime_terminal_events(
                         "acp_session_id": acp_session_id,
                     }))),
                 },
-                AcpGatewayEvent::TurnResult {
+                GatewayEvent::TurnResult {
                     status: "failed".to_string(),
                     reason: "runtime_cleanup".to_string(),
                     request_id: Some(terminal_request_id),
@@ -178,9 +178,9 @@ impl AcpRuntimeSseStream {
         self.turn_controller.may_emit_terminal()
     }
 
-    pub(in crate::acp) fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
+    pub(in crate::acp) fn turn_result_event(role_result: &RoleTurnResult) -> GatewayEvent {
         let terminal = role_result.to_terminal_event();
-        AcpGatewayEvent::TurnResult {
+        GatewayEvent::TurnResult {
             status: terminal.status,
             reason: terminal.reason,
             request_id: terminal.request_id,
@@ -190,19 +190,19 @@ impl AcpRuntimeSseStream {
         }
     }
 
-    pub(in crate::acp) fn push_adapter_event(&mut self, event: AcpGatewayEvent) {
+    pub(in crate::acp) fn push_adapter_event(&mut self, event: GatewayEvent) {
         self.enqueue_adapter_event(event, true);
     }
 
-    fn enqueue_adapter_event(&mut self, event: AcpGatewayEvent, substantive: bool) {
-        if matches!(event, AcpGatewayEvent::TurnComplete { .. })
+    fn enqueue_adapter_event(&mut self, event: GatewayEvent, substantive: bool) {
+        if matches!(event, GatewayEvent::TurnComplete { .. })
             && !self.diagnostics.saw_substantive_output
         {
             // Upstream ended without assistant text or tool activity. Stream-end handling
             // emits empty_mapped_turn instead of accepting a bare terminal.
             return;
         }
-        if matches!(event, AcpGatewayEvent::TurnComplete { .. }) {
+        if matches!(event, GatewayEvent::TurnComplete { .. }) {
             self.turn_controller.on_stream_end();
             let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
                 let snapshot = self.turn_controller.status_snapshot();
@@ -224,14 +224,14 @@ impl AcpRuntimeSseStream {
             );
             self.persist_assistant_output_if_present();
         }
-        if let AcpGatewayEvent::AssistantTextDelta { text } = &event {
+        if let GatewayEvent::AssistantTextDelta { text } = &event {
             self.assistant_text_buffer.push_str(text);
         }
-        if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
+        if matches!(event, GatewayEvent::SessionInfoUpdate { .. }) {
             self.session_info_event_sent = true;
         }
         self.diagnostics.observe_mapped_event(&event, substantive);
-        self.pending.push_back(acp_event_to_adapter_sse(event));
+        self.pending.push_back(gateway_event_to_adapter_sse(event));
         self.record_adapter_update_emitted();
     }
 
@@ -248,7 +248,7 @@ impl AcpRuntimeSseStream {
     fn emit_status_heartbeat(&mut self) {
         let update = self.turn_controller.heartbeat_status_update();
         self.enqueue_adapter_event(
-            AcpGatewayEvent::StatusText {
+            GatewayEvent::StatusText {
                 text: update.text,
             },
             false,
@@ -368,14 +368,14 @@ impl AcpRuntimeSseStream {
             + Send
             + 'static,
         context: AcpStreamContext,
-        initial_events: Vec<AcpGatewayEvent>,
+        initial_events: Vec<GatewayEvent>,
         session_info_event_sent: bool,
         active_turn_guard: RoleTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();
         let mut last_adapter_update_at = Instant::now();
         for event in initial_events {
-            pending.push_back(acp_event_to_adapter_sse(event));
+            pending.push_back(gateway_event_to_adapter_sse(event));
             last_adapter_update_at = Instant::now();
         }
         let mut turn_controller = TurnController::new();
@@ -414,7 +414,7 @@ impl AcpRuntimeSseStream {
     fn push_turn_status_update(&mut self) {
         if let Some(update) = self.turn_controller.take_status_update() {
             self.enqueue_adapter_event(
-                AcpGatewayEvent::StatusText {
+                GatewayEvent::StatusText {
                     text: update.text,
                 },
                 false,
@@ -633,7 +633,7 @@ impl Stream for AcpRuntimeSseStream {
                                 error = %message,
                                 "ACP stream frame processing failed"
                             );
-                            let event = AcpGatewayEvent::Error {
+                            let event = GatewayEvent::Error {
                                 message: "BEARS failed while processing an ACP stream event."
                                     .to_string(),
                                 detail: Some(message),
@@ -687,7 +687,7 @@ impl Stream for AcpRuntimeSseStream {
                             this.push_adapter_event(plan_event);
                         }
                         if let Some(mode) = mode_from_den_tool_result(&tool_result) {
-                            let mode_event = AcpGatewayEvent::ModeUpdate {
+                            let mode_event = GatewayEvent::ModeUpdate {
                                 mode: mode.to_string(),
                             };
                             this.push_adapter_event(mode_event);
@@ -713,7 +713,7 @@ impl Stream for AcpRuntimeSseStream {
                         for event in this.text_chunker.flush_all() {
                             this.push_adapter_event(event);
                         }
-                        this.push_adapter_event(AcpGatewayEvent::StatusText {
+                        this.push_adapter_event(GatewayEvent::StatusText {
                             text: completion_text,
                         });
                         tracing::info!(
@@ -758,10 +758,10 @@ impl Stream for AcpRuntimeSseStream {
                                             } else {
                                                 match event {
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
-                                                    queued_events.push(AcpGatewayEvent::AssistantTextDelta { text });
+                                                    queued_events.push(GatewayEvent::AssistantTextDelta { text });
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
-                                                    queued_events.push(AcpGatewayEvent::StatusText { text });
+                                                    queued_events.push(GatewayEvent::StatusText { text });
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { kind, text, phase: _, detail: _ }) => {
                                                     let rendered = if kind == "status_text" {
@@ -769,7 +769,7 @@ impl Stream for AcpRuntimeSseStream {
                                                     } else {
                                                         text.unwrap_or(kind)
                                                     };
-                                                    queued_events.push(AcpGatewayEvent::StatusText { text: rendered });
+                                                    queued_events.push(GatewayEvent::StatusText { text: rendered });
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. }) => {
                                                     if let RuntimeStreamEvent::Semantic(semantic) = event {
@@ -779,12 +779,12 @@ impl Stream for AcpRuntimeSseStream {
                                                     }
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
-                                                    queued_events.push(AcpGatewayEvent::ConversationResolved {
+                                                    queued_events.push(GatewayEvent::ConversationResolved {
                                                         conversation_id: conversation.id,
                                                     });
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
-                                                    queued_events.push(AcpGatewayEvent::TurnComplete {
+                                                    queued_events.push(GatewayEvent::TurnComplete {
                                                         outcome: "ok".to_string(),
                                                     });
                                                     saw_terminal_event = true;
@@ -807,7 +807,7 @@ impl Stream for AcpRuntimeSseStream {
                                                         // terminal emission to the outer stream, which owns the waiting/continuation loop.
                                                         break;
                                                     }
-                                                    if events.iter().any(|event| matches!(event, AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. } | AcpGatewayEvent::Error { .. })) {
+                                                    if events.iter().any(|event| matches!(event, GatewayEvent::TurnComplete { .. } | GatewayEvent::TurnResult { .. } | GatewayEvent::Error { .. })) {
                                                         saw_terminal_event = true;
                                                     }
                                                     if let Ok(mut guard) = diagnostics_for_stream.lock() {
@@ -826,7 +826,7 @@ impl Stream for AcpRuntimeSseStream {
                                                 break;
                                             }
                                         }
-                                        Err(err) => return (Err::<(Vec<AcpGatewayEvent>, Option<PersistedToolRequestEffect>, Option<(String, String, AcpResolvedToolResult)>), std::io::Error>(std::io::Error::other(err.to_string())), AcpStreamDiagnostics::default()),
+                                        Err(err) => return (Err::<(Vec<GatewayEvent>, Option<PersistedToolRequestEffect>, Option<(String, String, AcpResolvedToolResult)>), std::io::Error>(std::io::Error::other(err.to_string())), AcpStreamDiagnostics::default()),
                                     }
                                 }
                                 let mut diagnostics = std::sync::Arc::try_unwrap(diagnostics)
@@ -875,8 +875,8 @@ impl Stream for AcpRuntimeSseStream {
                                     })));
                                 return self.poll_next(cx);
                             }
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::Error {
+                            this.pending.push_back(gateway_event_to_adapter_sse(
+                                GatewayEvent::Error {
                                     message:
                                         "Failed to continue runtime after ACP local tool result."
                                             .to_string(),
@@ -1034,8 +1034,8 @@ impl Stream for AcpRuntimeSseStream {
                         Err(den_runtime::tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
                             display_tool_name,
                         }) => {
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::Error {
+                            this.pending.push_back(gateway_event_to_adapter_sse(
+                                GatewayEvent::Error {
                                     message: "Cannot continue Letta after ACP tool result without original tool_call_id.".to_string(),
                                     detail: Some(format!(
                                         "Tool result for {display_tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."

@@ -7,7 +7,7 @@ fn semantic_turn_completed_uses_direct_gateway_projection_shape() {
     );
     assert!(matches!(
         projected.as_slice(),
-        [den_runtime::acp_events::AcpGatewayEvent::TurnComplete { outcome }]
+        [den_runtime::gateway_events::GatewayEvent::TurnComplete { outcome }]
             if outcome == "ok"
     ));
 }
@@ -23,7 +23,7 @@ fn semantic_run_paused_uses_direct_gateway_projection_shape() {
     );
     assert!(matches!(
         projected.as_slice(),
-        [den_runtime::acp_events::AcpGatewayEvent::StatusText { text }]
+        [den_runtime::gateway_events::GatewayEvent::StatusText { text }]
             if text == "Waiting for approval."
     ));
 }

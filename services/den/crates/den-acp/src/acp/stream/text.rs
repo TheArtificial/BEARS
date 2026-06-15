@@ -1,5 +1,5 @@
 use den_runtime::{
-    acp_events::AcpGatewayEvent,
+    gateway_events::GatewayEvent,
     agent_assist::normalize_display_status_text,
 };
 
@@ -33,9 +33,9 @@ impl AcpTextChunker {
         }
     }
 
-    pub(in crate::acp) fn push(&mut self, event: AcpGatewayEvent) -> Vec<AcpGatewayEvent> {
+    pub(in crate::acp) fn push(&mut self, event: GatewayEvent) -> Vec<GatewayEvent> {
         match event {
-            AcpGatewayEvent::AssistantTextDelta { text } => {
+            GatewayEvent::AssistantTextDelta { text } => {
                 self.assistant.push_str(&text);
                 if should_flush_text(&self.assistant, self.max_chars) {
                     self.flush_assistant().into_iter().collect()
@@ -43,7 +43,7 @@ impl AcpTextChunker {
                     Vec::new()
                 }
             }
-            AcpGatewayEvent::StatusText { text } => {
+            GatewayEvent::StatusText { text } => {
                 if self.reasoning_limit_reached {
                     return Vec::new();
                 }
@@ -64,17 +64,17 @@ impl AcpTextChunker {
         }
     }
 
-    pub(in crate::acp) fn flush_assistant(&mut self) -> Option<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_assistant(&mut self) -> Option<GatewayEvent> {
         if self.assistant.is_empty() {
             None
         } else {
-            Some(AcpGatewayEvent::AssistantTextDelta {
+            Some(GatewayEvent::AssistantTextDelta {
                 text: std::mem::take(&mut self.assistant),
             })
         }
     }
 
-    pub(in crate::acp) fn flush_reasoning(&mut self) -> Option<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_reasoning(&mut self) -> Option<GatewayEvent> {
         if self.reasoning.is_empty() || self.reasoning_limit_reached {
             self.reasoning.clear();
             return None;
@@ -85,7 +85,7 @@ impl AcpTextChunker {
         if remaining == 0 {
             self.reasoning.clear();
             self.reasoning_limit_reached = true;
-            return Some(AcpGatewayEvent::StatusText {
+            return Some(GatewayEvent::StatusText {
                 text: normalize_display_status_text(
                     "BEARS suppressed additional thinking/status output for this turn because it exceeded the safety limit",
                 ),
@@ -102,10 +102,10 @@ impl AcpTextChunker {
             ));
         }
         self.emitted_reasoning_bytes = self.emitted_reasoning_bytes.saturating_add(text.len());
-        Some(AcpGatewayEvent::StatusText { text })
+        Some(GatewayEvent::StatusText { text })
     }
 
-    pub(in crate::acp) fn flush_all(&mut self) -> Vec<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_all(&mut self) -> Vec<GatewayEvent> {
         self.flush_assistant()
             .into_iter()
             .chain(self.flush_reasoning())

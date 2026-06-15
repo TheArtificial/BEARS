@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 use crate::{
-    acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
+    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
     runtime_contracts::{
         RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
     },
@@ -9,21 +9,21 @@ use crate::{
 
 pub fn runtime_semantic_event_to_bearwire_gateway_events(
     event: RuntimeSemanticEvent,
-) -> Vec<AcpGatewayEvent> {
+) -> Vec<GatewayEvent> {
     match event {
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
-            vec![AcpGatewayEvent::AssistantTextDelta { text }]
+            vec![GatewayEvent::AssistantTextDelta { text }]
         }
-        RuntimeSemanticEvent::StatusText { text } => vec![AcpGatewayEvent::StatusText { text }],
+        RuntimeSemanticEvent::StatusText { text } => vec![GatewayEvent::StatusText { text }],
         RuntimeSemanticEvent::ConversationResolved { conversation } => {
-            vec![AcpGatewayEvent::ConversationResolved {
+            vec![GatewayEvent::ConversationResolved {
                 conversation_id: conversation.id,
             }]
         }
-        RuntimeSemanticEvent::TurnCompleted { .. } => vec![AcpGatewayEvent::TurnComplete {
+        RuntimeSemanticEvent::TurnCompleted { .. } => vec![GatewayEvent::TurnComplete {
             outcome: "ok".to_string(),
         }],
-        RuntimeSemanticEvent::RunPaused { reason, .. } => vec![AcpGatewayEvent::StatusText {
+        RuntimeSemanticEvent::RunPaused { reason, .. } => vec![GatewayEvent::StatusText {
             text: if reason == "awaiting_approval" {
                 "Waiting for approval.".to_string()
             } else {
@@ -40,7 +40,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             approval_required,
             approval_reason,
             run_id: _,
-        } => vec![AcpGatewayEvent::ToolRequest {
+        } => vec![GatewayEvent::ToolRequest {
             request_id: approval_request_id
                 .clone()
                 .unwrap_or_else(|| format!("runtime-tool-{tool_call_id}")),
@@ -62,7 +62,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             error_type,
             request_id,
             context,
-        } => vec![AcpGatewayEvent::Error {
+        } => vec![GatewayEvent::Error {
             message,
             detail,
             error_type,
@@ -73,7 +73,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             category,
             message,
             ..
-        } => vec![AcpGatewayEvent::Error {
+        } => vec![GatewayEvent::Error {
             message,
             detail: None,
             error_type: Some(match category {
@@ -91,14 +91,14 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             request_id: None,
             context: None,
         }],
-        RuntimeSemanticEvent::TurnCancelled { .. } => vec![AcpGatewayEvent::Error {
+        RuntimeSemanticEvent::TurnCancelled { .. } => vec![GatewayEvent::Error {
             message: "Runtime continuation was cancelled.".to_string(),
             detail: None,
             error_type: Some("runtime_turn_cancelled".to_string()),
             request_id: None,
             context: None,
         }],
-        RuntimeSemanticEvent::RunProgress { kind, text, .. } => vec![AcpGatewayEvent::StatusText {
+        RuntimeSemanticEvent::RunProgress { kind, text, .. } => vec![GatewayEvent::StatusText {
             text: text.unwrap_or(kind),
         }],
         RuntimeSemanticEvent::ToolCallFinished {
@@ -111,10 +111,10 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             let summary = summary
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
-            let mut events = vec![AcpGatewayEvent::StatusText { text: summary }];
+            let mut events = vec![GatewayEvent::StatusText { text: summary }];
             if status == ToolCallFinishStatus::Error {
                 if let Some(message) = error_message {
-                    events.push(AcpGatewayEvent::Error {
+                    events.push(GatewayEvent::Error {
                         message,
                         detail: Some(format!("Tool `{tool_name}` returned an error.")),
                         error_type: Some("tool_execution_error".to_string()),
@@ -132,7 +132,7 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
     match event {
         RuntimeStreamEvent::Semantic(event) => runtime_semantic_event_to_bearwire_gateway_events(event)
             .into_iter()
-            .map(acp_event_to_adapter_sse)
+            .map(gateway_event_to_adapter_sse)
             .collect(),
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }

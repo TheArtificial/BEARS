@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 
 use crate::acp::AcpStreamContext;
 use den_runtime::{
-    acp_events::{
-            acp_event_adapter_type, acp_event_has_visible_output, AcpGatewayEvent,
+    gateway_events::{
+            gateway_event_adapter_type, gateway_event_has_visible_output, GatewayEvent,
             ToolCallAccumulator,
         },
     turn_controller::TurnController,
@@ -270,34 +270,34 @@ impl AcpStreamDiagnostics {
 
     pub(in crate::acp) fn observe_mapped_event(
         &mut self,
-        event: &AcpGatewayEvent,
+        event: &GatewayEvent,
         substantive: bool,
     ) {
         self.mapped_events += 1;
-        Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
-        self.saw_visible_output |= acp_event_has_visible_output(event);
+        Self::increment(&mut self.adapter_event_types, gateway_event_adapter_type(event));
+        self.saw_visible_output |= gateway_event_has_visible_output(event);
         if substantive {
             self.saw_substantive_output |= Self::acp_event_is_substantive_output(event);
         }
-        self.saw_error |= matches!(event, AcpGatewayEvent::Error { .. });
-        self.saw_turn_complete |= matches!(event, AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. });
+        self.saw_error |= matches!(event, GatewayEvent::Error { .. });
+        self.saw_turn_complete |= matches!(event, GatewayEvent::TurnComplete { .. } | GatewayEvent::TurnResult { .. });
     }
 
-    fn acp_event_is_substantive_output(event: &AcpGatewayEvent) -> bool {
+    fn acp_event_is_substantive_output(event: &GatewayEvent) -> bool {
         match event {
-            AcpGatewayEvent::AssistantTextDelta { text } | AcpGatewayEvent::StatusText { text } => {
+            GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
                 !text.is_empty()
             }
-            AcpGatewayEvent::ToolRequest { .. } | AcpGatewayEvent::Error { .. } => true,
-            AcpGatewayEvent::TurnComplete { .. }
-            | AcpGatewayEvent::TurnResult { .. }
-            | AcpGatewayEvent::PermissionRequest { .. }
-            | AcpGatewayEvent::PlanApprovalFallback { .. }
-            | AcpGatewayEvent::PlanUpdate { .. }
-            | AcpGatewayEvent::PlanUpdateJson { .. }
-            | AcpGatewayEvent::ModeUpdate { .. }
-            | AcpGatewayEvent::ConversationResolved { .. }
-            | AcpGatewayEvent::SessionInfoUpdate { .. } => false,
+            GatewayEvent::ToolRequest { .. } | GatewayEvent::Error { .. } => true,
+            GatewayEvent::TurnComplete { .. }
+            | GatewayEvent::TurnResult { .. }
+            | GatewayEvent::PermissionRequest { .. }
+            | GatewayEvent::PlanApprovalFallback { .. }
+            | GatewayEvent::PlanUpdate { .. }
+            | GatewayEvent::PlanUpdateJson { .. }
+            | GatewayEvent::ModeUpdate { .. }
+            | GatewayEvent::ConversationResolved { .. }
+            | GatewayEvent::SessionInfoUpdate { .. } => false,
         }
     }
 
@@ -311,7 +311,7 @@ impl AcpStreamDiagnostics {
         }
     }
 
-    pub(in crate::acp) fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
+    pub(in crate::acp) fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<GatewayEvent> {
         if self.emitted_empty_turn_error
             || self.saw_substantive_output
             || self.saw_error
@@ -325,7 +325,7 @@ impl AcpStreamDiagnostics {
             "Letta stream ended without displayable assistant/status/error output. upstream_frames={}, parsed_events={}, mapped_events={}, unmapped_events={}, message_types={:?}, event_types={:?}",
             self.upstream_frames, self.parsed_events, self.mapped_events, self.unmapped_events, self.native_message_types, self.native_event_types,
         );
-        Some(AcpGatewayEvent::Error {
+        Some(GatewayEvent::Error {
             message: "Letta completed the turn without producing displayable ACP output.".to_string(),
             detail: Some(detail),
             error_type: Some("empty_mapped_turn".to_string()),

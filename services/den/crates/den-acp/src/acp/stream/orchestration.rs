@@ -14,7 +14,7 @@ const ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS: u64 = 3000;
 use crate::{
     acp::{
         acp_error_status_message, acp_stream_tokens_enabled,
-        history::pending_session_title_update_event, AcpGatewayEvent, AcpStreamContext,
+        history::pending_session_title_update_event, GatewayEvent, AcpStreamContext,
     },
     service::ApiState,
     core::{
@@ -39,7 +39,7 @@ use den_runtime::{
 use super::sse_stream::AcpRuntimeSseStream;
 
 pub(in crate::acp) struct AcpStreamSetup {
-    pub(in crate::acp) initial_events: Vec<AcpGatewayEvent>,
+    pub(in crate::acp) initial_events: Vec<GatewayEvent>,
     pub(in crate::acp) session_info_event_sent: bool,
     pub(in crate::acp) workspace_roots: Vec<String>,
     pub(in crate::acp) stream_tokens: bool,
@@ -66,7 +66,7 @@ pub(in crate::acp) async fn build_acp_stream_setup(
     let mut initial_events = Vec::new();
     let mut session_info_event_sent = false;
     if let Some(conversation) = conversation_resolution.resolved_conversation.clone() {
-        initial_events.push(AcpGatewayEvent::ConversationResolved {
+        initial_events.push(GatewayEvent::ConversationResolved {
             conversation_id: conversation.id,
         });
     }
@@ -85,7 +85,7 @@ pub(in crate::acp) async fn build_acp_stream_setup(
         session_info_event_sent = true;
         initial_events.push(title_event);
     }
-    if let Some(plan_event) = current_activity_plan.clone().map(AcpGatewayEvent::PlanUpdate) {
+    if let Some(plan_event) = current_activity_plan.clone().map(GatewayEvent::PlanUpdate) {
         initial_events.push(plan_event);
     }
     let turn_runtime_context =

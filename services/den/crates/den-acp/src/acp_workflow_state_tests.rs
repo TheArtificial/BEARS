@@ -16,7 +16,7 @@ use super::acp::prompt_context::acp_direct_tool_prompt_context;
 
 #[test]
 fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
-    let event = den_runtime::acp_events::AcpGatewayEvent::PlanApprovalFallback {
+    let event = den_runtime::gateway_events::GatewayEvent::PlanApprovalFallback {
         plan_id: uuid::Uuid::nil(),
         title: "Example plan".to_string(),
         body: "Do the thing carefully".to_string(),
@@ -24,10 +24,10 @@ fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
         state: "submitted".to_string(),
         approval_status: "awaiting_human_approval".to_string(),
     };
-    assert!(den_runtime::acp_events::acp_event_has_visible_output(
+    assert!(den_runtime::gateway_events::gateway_event_has_visible_output(
         &event
     ));
-    let frame = den_runtime::acp_events::acp_event_to_adapter_sse(event);
+    let frame = den_runtime::gateway_events::gateway_event_to_adapter_sse(event);
     let raw = std::str::from_utf8(&frame).expect("utf8 sse frame");
     let payload: serde_json::Value =
         serde_json::from_str(raw.trim().strip_prefix("data: ").expect("sse data prefix"))

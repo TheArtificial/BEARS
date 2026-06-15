@@ -56,7 +56,7 @@ pub fn display_conversation_title(
 /// that can yield a non-empty derived title candidate (after light cleaning).
 pub fn first_user_message_text_for_title(messages_body: &Value) -> Option<String> {
     for msg in messages_array(messages_body) {
-        let inner = letta_inner(msg);
+        let inner = provider_inner(msg);
         let mt = message_type(msg, inner);
         if mt != "user_message" {
             continue;
@@ -135,7 +135,7 @@ fn messages_array(body: &Value) -> &[Value] {
     &[]
 }
 
-fn letta_inner(msg: &Value) -> &Value {
+fn provider_inner(msg: &Value) -> &Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
         _ => msg,

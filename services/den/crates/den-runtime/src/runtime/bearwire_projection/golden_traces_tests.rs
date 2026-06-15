@@ -6,7 +6,7 @@
 //! protocol-neutral entry points — `openai_byte_stream_to_event_stream`,
 //! `runtime_stream_event_to_bearwire_sse`, and `RuntimeSemanticEvent` — and
 //! assert on the serialized SSE payloads, so they remain valid as the
-//! `AcpGatewayEvent` overlay moves into the ACP adapter.
+//! `GatewayEvent` overlay moves into the ACP adapter.
 
 use bytes::Bytes;
 use futures::StreamExt;

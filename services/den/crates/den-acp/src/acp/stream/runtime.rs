@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     acp::{
         acp_den_provider_to_canonical_tool_name, acp_tool_timeout_ms_for_provider,
-        default_unavailable_context_budget, pending_web_fetch_approvals, AcpGatewayEvent,
+        default_unavailable_context_budget, pending_web_fetch_approvals, GatewayEvent,
         AcpStreamContext, PendingWebFetchApproval, ToolExecutionRoute,
     },
     acp::types::PersistedToolRequestEffect,
@@ -218,11 +218,11 @@ pub(in crate::acp) fn spawn_canonical_gateway_record_persistence(
 
 pub(in crate::acp) async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
-    event: &mut AcpGatewayEvent,
+    event: &mut GatewayEvent,
 ) -> Result<Option<PersistedToolRequestEffect>, CustomError> {
     let mut tool_request_effect = None;
     match event {
-        AcpGatewayEvent::ConversationResolved { conversation_id } => {
+        GatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(
                 &context.pool,
                 context.user_id,
@@ -237,7 +237,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
                 prompt_memory_diagnostic_record(context),
             );
         }
-        AcpGatewayEvent::ToolRequest {
+        GatewayEvent::ToolRequest {
             tool_call_id,
             approval_request_id,
             tool_name,
@@ -321,7 +321,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
                     let canonical_name = acp_den_provider_to_canonical_tool_name(&effect_tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
                     let tool_request_id = request_id.clone();
-                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
+                    if let GatewayEvent::ToolRequest { result_rx, .. } = event {
                         effect_den_server_result_rx = result_rx.take();
                     }
                     if canonical_name == DEN_WEB_FETCH {
@@ -330,7 +330,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
                         route_direct_den_tool_request(context, event, canonical_name).await?;
                     }
                     if effect_den_server_result_rx.is_none() {
-                        if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
+                        if let GatewayEvent::ToolRequest { result_rx, .. } = event {
                             effect_den_server_result_rx = result_rx.take();
                         }
                     }
@@ -395,10 +395,10 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
 
 pub(in crate::acp) async fn route_web_fetch_tool_request(
     context: &AcpStreamContext,
-    event: &mut AcpGatewayEvent,
+    event: &mut GatewayEvent,
     _plan_mode_active: bool,
 ) -> Result<(), CustomError> {
-    let AcpGatewayEvent::ToolRequest {
+    let GatewayEvent::ToolRequest {
         tool_call_id,
         approval_request_id,
         tool_name,
@@ -486,7 +486,7 @@ pub(in crate::acp) async fn route_web_fetch_tool_request(
                 normalized_url: normalized.clone(),
             },
         );
-        *event = AcpGatewayEvent::PermissionRequest {
+        *event = GatewayEvent::PermissionRequest {
             request_id: request_id.clone(),
             permission_id,
             tool_call_id: tool_call_id.clone(),
@@ -531,10 +531,10 @@ pub(in crate::acp) async fn route_web_fetch_tool_request(
 
 pub(in crate::acp) async fn route_direct_den_tool_request(
     context: &AcpStreamContext,
-    event: &mut AcpGatewayEvent,
+    event: &mut GatewayEvent,
     canonical_name: &str,
 ) -> Result<(), CustomError> {
-    let AcpGatewayEvent::ToolRequest {
+    let GatewayEvent::ToolRequest {
         tool_call_id,
         approval_request_id,
         tool_name,

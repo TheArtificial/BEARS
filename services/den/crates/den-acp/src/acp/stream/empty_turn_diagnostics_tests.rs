@@ -1,4 +1,4 @@
-use crate::acp::{AcpGatewayEvent, AcpStreamContext};
+use crate::acp::{GatewayEvent, AcpStreamContext};
 use den_runtime::{
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
     role_runtime::{RoleRuntime, RoleTurnScope},
@@ -54,20 +54,20 @@ fn test_context() -> AcpStreamContext {
 async fn turn_controller_planning_status_does_not_suppress_empty_turn_error() {
     let mut diagnostics = AcpStreamDiagnostics::default();
     diagnostics.observe_mapped_event(
-        &AcpGatewayEvent::StatusText {
+        &GatewayEvent::StatusText {
             text: "Planning next step — may call Den memory tools or Zed workspace tools…"
                 .to_string(),
         },
         false,
     );
     diagnostics.observe_mapped_event(
-        &AcpGatewayEvent::ConversationResolved {
+        &GatewayEvent::ConversationResolved {
             conversation_id: "conv-empty-turn".to_string(),
         },
         true,
     );
     diagnostics.observe_mapped_event(
-        &AcpGatewayEvent::TurnComplete {
+        &GatewayEvent::TurnComplete {
             outcome: "ok".to_string(),
         },
         true,
@@ -78,7 +78,7 @@ async fn turn_controller_planning_status_does_not_suppress_empty_turn_error() {
         .empty_turn_error_event(&context)
         .expect("planning chrome alone should surface empty turn error");
     match error {
-        AcpGatewayEvent::Error {
+        GatewayEvent::Error {
             error_type: Some(error_type),
             ..
         } => assert_eq!(error_type, "empty_mapped_turn"),
@@ -106,7 +106,7 @@ async fn turn_complete_without_substantive_output_triggers_empty_turn_error() {
         RuntimeSemanticEvent::TurnCompleted { turn: None },
     ));
     diagnostics.observe_mapped_event(
-        &AcpGatewayEvent::TurnComplete {
+        &GatewayEvent::TurnComplete {
             outcome: "ok".to_string(),
         },
         true,

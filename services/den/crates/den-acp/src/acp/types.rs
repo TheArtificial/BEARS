@@ -10,7 +10,7 @@ use crate::service::ApiState;
 use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
 use den_runtime::{
-    acp_events::AcpGatewayEvent,
+    gateway_events::GatewayEvent,
     tool_turns::{ToolResultRequest, ToolTurnCoordinator},
     turn_controller::ToolExecutionRoute as ControllerToolExecutionRoute,
     memory::MemoryStoreManager,
@@ -112,7 +112,7 @@ pub(in crate::acp) struct PersistedToolRequestEffect {
 
 pub(in crate::acp) type AcpFrameResult = Result<
     (
-        Vec<AcpGatewayEvent>,
+        Vec<GatewayEvent>,
         Option<PersistedToolRequestEffect>,
         Option<(String, String, AcpResolvedToolResult)>,
     ),
