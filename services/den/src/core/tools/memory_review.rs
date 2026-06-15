@@ -6,7 +6,6 @@
 //! paths, the memory-curate enqueue, and `conversation_events` projections —
 //! wired into the dispatcher via `DenToolContext`.
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -171,7 +170,6 @@ impl<'a> DenMemoryReviewStore<'a> {
     }
 }
 
-#[async_trait]
 impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     async fn find_observation(
         &self,

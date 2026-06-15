@@ -5,7 +5,6 @@
 //! native per-Bear SQLite store, plus thin wrappers that adapt
 //! `DenToolInvocationContext` and map `DenError` back to `CustomError`.
 
-use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -36,7 +35,6 @@ impl<'a> DenRoleMemoryStore<'a> {
     }
 }
 
-#[async_trait]
 impl RoleMemoryStore for DenRoleMemoryStore<'_> {
     async fn read(&self, bear_id: Uuid, _role: BearProfile, path: &str) -> Result<Value, DenError> {
         let stores = MemoryStoreManager::new(self.config);

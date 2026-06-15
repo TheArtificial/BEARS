@@ -5,7 +5,6 @@
 //! provider. Errors from the existing `CustomError`-returning `core::*` functions
 //! are mapped to `DenError` via [`CustomError::into_den`] at this boundary.
 
-use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -40,7 +39,6 @@ const fn map_decision(decision: web_policy::WebApprovalDecision) -> WebApproval 
     }
 }
 
-#[async_trait]
 impl WebFetcher for DenWebFetcher<'_> {
     async fn decide_fetch_approval(
         &self,

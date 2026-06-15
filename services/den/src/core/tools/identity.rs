@@ -4,7 +4,6 @@
 //! `den_core::tools::identity`; this module provides the concrete [`BearDirectory`]
 //! over the `bears`/`user` DB, wired into the dispatcher via `DenToolContext`.
 
-use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -29,7 +28,6 @@ pub(crate) struct DenBearDirectory<'a> {
     pub(crate) pool: &'a PgPool,
 }
 
-#[async_trait]
 impl BearDirectory for DenBearDirectory<'_> {
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError> {
         bears_db::user_may_use_bear(self.pool, user_id, bear_id)

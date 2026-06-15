@@ -6,14 +6,15 @@
 //! groups migrate (read surface first; write surface follows).
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use async_trait::async_trait;
 use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::RoleMemoryEntryWrite;
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait RoleMemoryStore: Send + Sync {
     /// Read records at a logical path (tool-shaped JSON).
     async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str) -> Result<Value, DenError>;

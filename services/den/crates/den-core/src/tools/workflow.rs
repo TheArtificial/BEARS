@@ -9,14 +9,15 @@
 //! the relocated dispatcher route the three work-plan tools through a capability
 //! boundary. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B — dispatcher).
 
-use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{BearProfile, DenError};
 
 use crate::tools::context::DenToolInvocationContext;
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait WorkPlanOps: Send + Sync {
     async fn list_work_plans(
         &self,

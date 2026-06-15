@@ -5,7 +5,6 @@
 //! runtime-neutral file descriptor the builder emits; the `den` impl maps it onto
 //! the native SQLite write path or the legacy MemFS core-update request.
 
-use async_trait::async_trait;
 use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
@@ -32,7 +31,9 @@ pub struct WorkSurfaceScaffoldOutcome {
     pub updates: Vec<Value>,
 }
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait WorkSurfaceOps: Send + Sync {
     async fn write_scaffold(
         &self,

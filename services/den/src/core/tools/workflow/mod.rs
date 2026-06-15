@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -36,7 +35,6 @@ pub(crate) struct DenWorkPlanOps<'a> {
     pub(crate) stores: &'a MemoryStoreManager,
 }
 
-#[async_trait]
 impl WorkPlanOps for DenWorkPlanOps<'_> {
     async fn list_work_plans(
         &self,

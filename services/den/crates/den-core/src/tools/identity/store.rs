@@ -6,7 +6,6 @@
 //! `bears`/`user` DB access and returns the small DTOs below. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B — dispatcher).
 
-use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{BearProfile, DenError};
@@ -54,7 +53,9 @@ pub struct CurrentUser {
     pub created_at: String,
 }
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait BearDirectory: Send + Sync {
     /// Is `user_id` a member of `bear_id`?
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError>;

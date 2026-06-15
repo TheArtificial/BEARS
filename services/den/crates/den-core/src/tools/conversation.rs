@@ -4,7 +4,6 @@
 //! guards are pure and owned here; persistence flows through the
 //! [`ConversationTitleOps`] seam (native Bear-conversation title store).
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -12,7 +11,9 @@ use crate::DenError;
 
 use crate::tools::{arguments::SetConversationTitleArguments, context::DenToolInvocationContext, support::clean_optional};
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait ConversationTitleOps: Send + Sync {
     /// Set the title on the Bear conversation; returns synced ACP-session count.
     async fn set_title(

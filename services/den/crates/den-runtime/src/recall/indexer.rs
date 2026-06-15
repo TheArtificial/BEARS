@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 
-use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -20,13 +19,14 @@ use super::qdrant::{QdrantPoint, QdrantRecall};
 use super::registry;
 
 /// Abstraction over the embedding backend so the indexer can be tested without an API key.
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait PassageEmbedder: Send + Sync {
     fn dimensions(&self) -> u32;
     async fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, DenError>;
 }
 
-#[async_trait]
 impl PassageEmbedder for EmbeddingClient {
     fn dimensions(&self) -> u32 {
         EmbeddingClient::dimensions(self)
@@ -217,7 +217,6 @@ impl DeterministicEmbedder {
 }
 
 #[cfg(any(test, feature = "test-util"))]
-#[async_trait]
 impl PassageEmbedder for DeterministicEmbedder {
     fn dimensions(&self) -> u32 {
         self.dimensions

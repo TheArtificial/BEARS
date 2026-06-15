@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -23,7 +22,6 @@ pub(crate) struct DenEnvironmentOps<'a> {
     pub(crate) config: &'a Config,
 }
 
-#[async_trait]
 impl EnvironmentOps for DenEnvironmentOps<'_> {
     fn uses_native_runtime(&self) -> bool {
         true

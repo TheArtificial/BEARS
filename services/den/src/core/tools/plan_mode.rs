@@ -6,7 +6,6 @@
 //! `turn_state` rendering), wired into the dispatcher via `DenToolContext`. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -62,7 +61,6 @@ pub(crate) struct DenPlanModeOps<'a> {
     pub(crate) no_active_workplan: NoActiveWorkplanFn,
 }
 
-#[async_trait]
 impl PlanModeOps for DenPlanModeOps<'_> {
     async fn enter(
         &self,

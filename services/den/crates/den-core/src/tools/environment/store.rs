@@ -6,14 +6,15 @@
 //! implementation owns the DB/HTTP access; membership/user lookups come from
 //! [`crate::tools::identity::BearDirectory`].
 
-use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{BearProfile, DenError};
 
 use crate::tools::context::DenToolInvocationContext;
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait EnvironmentOps: Send + Sync {
     /// Whether the native (SQLite) agent runtime is active.
     fn uses_native_runtime(&self) -> bool;

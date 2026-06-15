@@ -35,7 +35,6 @@ pub(crate) struct DenConversationTitleOps<'a> {
     pub(crate) pool: &'a PgPool,
 }
 
-#[async_trait::async_trait]
 impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitleOps<'_> {
     async fn set_title(
         &self,

@@ -7,7 +7,6 @@
 //! underlying `create_observation` / `create_proposal` / enqueue / mark calls.
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
-use async_trait::async_trait;
 use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
@@ -99,7 +98,9 @@ pub struct ApplyCoreUpdateRequest {
     pub projection: ProposalProjection,
 }
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait MemoryReviewStore: Send + Sync {
     /// Idempotency check: an existing observation with this id, if any.
     async fn find_observation(

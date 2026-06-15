@@ -8,7 +8,6 @@
 
 pub(crate) use den_core::tools::work_surface::*;
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -32,7 +31,6 @@ pub(crate) struct DenWorkSurfaceOps<'a> {
     pub(crate) stores: &'a MemoryStoreManager,
 }
 
-#[async_trait]
 impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
     async fn write_scaffold(
         &self,

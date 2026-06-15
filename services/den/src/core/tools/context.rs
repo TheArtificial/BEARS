@@ -7,7 +7,6 @@
 //! work_surface, plan_mode, identity, environment, workflow, session). See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B — dispatcher).
 
-use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -138,7 +137,6 @@ impl<'a> DenToolContext<'a> {
     }
 }
 
-#[async_trait]
 impl WebFetcher for DenToolContext<'_> {
     async fn decide_fetch_approval(
         &self,
@@ -177,7 +175,6 @@ impl WebFetcher for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl RoleMemoryStore for DenToolContext<'_> {
     async fn read(&self, bear_id: Uuid, role: BearProfile, path: &str) -> Result<Value, DenError> {
         self.memory().read(bear_id, role, path).await
@@ -211,7 +208,6 @@ impl RoleMemoryStore for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl PromptMemoryStore for DenToolContext<'_> {
     async fn list_blocks(
         &self,
@@ -249,7 +245,6 @@ impl PromptMemoryStore for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl MemoryReviewStore for DenToolContext<'_> {
     async fn find_observation(
         &self,
@@ -296,7 +291,6 @@ impl MemoryReviewStore for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl WorkSurfaceOps for DenToolContext<'_> {
     async fn write_scaffold(
         &self,
@@ -320,7 +314,6 @@ impl WorkSurfaceOps for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl PlanModeOps for DenToolContext<'_> {
     async fn enter(
         &self,
@@ -378,7 +371,6 @@ impl PlanModeOps for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl BearDirectory for DenToolContext<'_> {
     async fn user_may_use_bear(&self, user_id: i32, bear_id: Uuid) -> Result<bool, DenError> {
         self.directory().user_may_use_bear(user_id, bear_id).await
@@ -409,7 +401,6 @@ impl BearDirectory for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl EnvironmentOps for DenToolContext<'_> {
     fn uses_native_runtime(&self) -> bool {
         self.environment().uses_native_runtime()
@@ -435,7 +426,6 @@ impl EnvironmentOps for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl ConversationTitleOps for DenToolContext<'_> {
     async fn set_title(
         &self,
@@ -449,7 +439,6 @@ impl ConversationTitleOps for DenToolContext<'_> {
     }
 }
 
-#[async_trait]
 impl WorkPlanOps for DenToolContext<'_> {
     async fn list_work_plans(
         &self,

@@ -5,7 +5,6 @@
 //! promotes to a `den-docket` crate boundary; `TaskDispatcher` (the runtime
 //! inversion trait) is added when `den-runtime` is extracted.
 
-use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -19,7 +18,10 @@ use super::model::{
 /// Orchestration API for Docket work plans. The only public entry point to the
 /// subsystem's persistence; never execute task bodies here (ADR-0034 execution
 /// invariant) — Docket schedules, gates, and records.
-#[async_trait]
+// Native async fn in trait: workspace-internal, only ever consumed via generic
+// bounds / the concrete `PgDocketService` (never `dyn`), so auto-trait (Send)
+// bounds flow through monomorphization and async-trait boxing is unnecessary.
+#[allow(async_fn_in_trait)]
 pub trait DocketService: Send + Sync {
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError>;
 
@@ -58,7 +60,6 @@ impl PgDocketService {
     }
 }
 
-#[async_trait]
 impl DocketService for PgDocketService {
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError> {
         db::create_or_update_work_plan(&self.pool, params).await

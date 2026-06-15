@@ -4,7 +4,6 @@
 //! `den-tools`; here we provide the Postgres-backed [`PromptMemoryStore`],
 //! wired into the dispatcher via `DenToolContext`.
 
-use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -34,7 +33,6 @@ impl<'a> DenPromptMemoryStore<'a> {
     }
 }
 
-#[async_trait]
 impl PromptMemoryStore for DenPromptMemoryStore<'_> {
     async fn list_blocks(
         &self,

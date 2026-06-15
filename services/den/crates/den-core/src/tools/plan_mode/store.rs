@@ -7,7 +7,6 @@
 //! rows, `turn_state` rendering, and native-vs-MemFS artifact writes. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
-use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -42,7 +41,9 @@ pub struct PlanModeExitView {
     pub submitted_plan: Value,
 }
 
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait PlanModeOps: Send + Sync {
     /// Enter plan mode for the session and switch it to the read-only `plan` mode.
     async fn enter(

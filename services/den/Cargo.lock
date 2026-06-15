@@ -652,7 +652,6 @@ name = "den-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "base64",
  "dotenvy",
  "reqwest",
@@ -670,7 +669,6 @@ dependencies = [
 name = "den-docket"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "den-core",
  "serde",
  "serde_json",

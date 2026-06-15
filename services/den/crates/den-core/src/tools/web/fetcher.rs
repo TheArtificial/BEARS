@@ -8,7 +8,6 @@
 //!
 //! See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
-use async_trait::async_trait;
 use crate::DenError;
 use uuid::Uuid;
 
@@ -93,7 +92,9 @@ pub struct WebHttpResponse {
 ///
 /// `Send + Sync` so the generic orchestration futures are `Send` (the dispatcher
 /// runs on the tokio multi-thread runtime).
-#[async_trait]
+// Native async fn in trait: workspace-internal, consumed via generic bounds /
+// concrete impls only (never `dyn`), so Send flows through monomorphization.
+#[allow(async_fn_in_trait)]
 pub trait WebFetcher: Send + Sync {
     /// Normalize `raw_url` and resolve the bear's policy decision for it.
     async fn decide_fetch_approval(
