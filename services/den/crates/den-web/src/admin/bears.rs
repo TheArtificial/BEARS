@@ -1172,31 +1172,6 @@ async fn provision_missing_profiles_action(
     .into_response())
 }
 
-async fn retry_letta_action(
-    Path(id): Path<Uuid>,
-    State(state): State<AppState>,
-    _auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let message = match provision::reconcile_bear_native(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        id,
-    )
-    .await
-    {
-        Ok(summary) => format!(
-            "Native profile binding reconcile finished. {} profile(s) synced.",
-            summary.synced_count()
-        ),
-        Err(err) => format!("Native profile binding reconcile failed: {err}"),
-    };
-    Ok(Redirect::to(&format!(
-        "/admin/bears/{id}/advanced?message={}",
-        urlencoding::encode(&message)
-    ))
-    .into_response())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

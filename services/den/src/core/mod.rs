@@ -12,7 +12,6 @@ pub use den_api::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // unchanged until the edges are extracted.
 pub use den_http::{api_utils, email, user};
 pub mod sandbox;
-pub mod migration;
 pub mod tools;
 pub mod docket;
 pub use tools::tool_descriptor_guidance;
