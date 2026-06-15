@@ -7,7 +7,7 @@ pub fn pending_tool_calls(messages: &[ChatMessage]) -> Vec<ChatToolCall> {
         if msg.role == "assistant" {
             if let Some(calls) = &msg.tool_calls {
                 if !calls.is_empty() {
-                    open = calls.clone();
+                    open.clone_from(calls);
                 }
             }
             continue;

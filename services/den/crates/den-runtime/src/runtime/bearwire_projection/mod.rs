@@ -109,7 +109,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             ..
         } => {
             let summary = summary
-                .or(error_message.clone())
+                .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![AcpGatewayEvent::StatusText { text: summary }];
             if status == ToolCallFinishStatus::Error {

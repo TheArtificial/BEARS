@@ -462,7 +462,7 @@ impl Config {
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
-                .unwrap_or("crates/den-web/src/templates".to_string()),
+                .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
             database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL"),
 
             mailgun_api_key: std::env::var("MAILGUN_API_KEY").unwrap_or_default(),

@@ -408,7 +408,6 @@ impl Stream for NativeWebChatLoopStream {
                             ))));
                         }
                         self.begin_tool_execution(pending);
-                        continue;
                     }
                     Poll::Pending => return Poll::Pending,
                 },

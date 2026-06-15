@@ -33,11 +33,9 @@ jobs:
               with:
                   workspaces: services/den
 
-            # v0 gate (DEN_CRATE_SPLIT_PLAN.md): the default lint set (rustc +
-            # clippy default groups) is denied. pedantic/nursery remain advisory
-            # (`warn` in `[workspace.lints]`) and are silenced here so they do not
-            # gate until v2.
-            - name: Clippy (-D warnings, default lints only)
-              run: >-
-                  cargo clippy --workspace --all-targets --
-                  -D warnings -A clippy::pedantic -A clippy::nursery
+            # v2 gate (DEN_CRATE_SPLIT_PLAN.md): the default lint set plus clippy
+            # pedantic/nursery (set to `deny` in `[workspace.lints.clippy]` with a
+            # curated allow-list) are enforced. `-D warnings` fails the build on any
+            # remaining non-allow-listed lint.
+            - name: Clippy (-D warnings, pedantic + nursery gating)
+              run: cargo clippy --workspace --all-targets -- -D warnings

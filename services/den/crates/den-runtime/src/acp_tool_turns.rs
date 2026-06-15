@@ -484,7 +484,7 @@ impl AcpToolTurnCoordinator {
             .filter(|s| !s.is_empty())
             .is_none()
         {
-            body.approval_request_id = turn.approval_request_id.clone();
+            body.approval_request_id.clone_from(&turn.approval_request_id);
         }
         turn.settled = true;
         let request_id = turn.request_id;

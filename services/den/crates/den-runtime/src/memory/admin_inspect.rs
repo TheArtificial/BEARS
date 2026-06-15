@@ -178,7 +178,7 @@ pub async fn get_memory_record_by_id(
     let metadata_raw: String = row
         .try_get("metadata_json")
         .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
+    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
 
     Ok(Some(MemoryRecordRow {
         memory_id: row.try_get("memory_id").map_err(|e| DenError::System(e.to_string()))?,
@@ -364,7 +364,7 @@ pub async fn get_memory_record_detail(
     let metadata_raw: String = row
         .try_get("metadata_json")
         .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
+    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
     Ok(Some(MemoryRecordDetail {
         memory_id: row.try_get("memory_id").map_err(|e| DenError::System(e.to_string()))?,
         sequence_no: row.try_get("sequence_no").map_err(|e| DenError::System(e.to_string()))?,
@@ -460,7 +460,7 @@ fn escape_like(input: &str) -> String {
 
 fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecordRow, sqlx::Error> {
     let metadata_raw: String = row.try_get("metadata_json")?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
+    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
     Ok(MemoryRecordRow {
         memory_id: row.try_get("memory_id")?,
         sequence_no: row.try_get("sequence_no")?,
