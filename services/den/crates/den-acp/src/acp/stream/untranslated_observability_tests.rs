@@ -1,4 +1,4 @@
-use crate::api::acp::stream::support::{
+use crate::acp::stream::support::{
     classify_untranslated_provider_event, AcpStreamDiagnostics,
 };
 

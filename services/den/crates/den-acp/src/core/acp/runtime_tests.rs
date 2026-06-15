@@ -15,7 +15,7 @@ use den_runtime::{
         RuntimeHistoryPage,
     },
 };
-use crate::errors::DenError;
+use den_http::errors::DenError;
 
 struct MockConversationBackend {
     created_id: String,
@@ -203,7 +203,7 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
     .await?;
     let _ = conversation;
 
-    let config = crate::config::Config::test_stub();
+    let config = den_core::config::Config::test_stub();
     let service = AcpConversationService::new(&pool, &config);
     service
         .verify_conversation_access(

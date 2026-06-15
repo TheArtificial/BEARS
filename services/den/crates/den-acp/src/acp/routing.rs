@@ -28,7 +28,7 @@ pub(crate) fn acp_den_provider_to_canonical_tool_name(
         .map(|descriptor| descriptor.name)
 }
 
-pub(in crate::api::acp) fn tool_execution_route(
+pub(in crate::acp) fn tool_execution_route(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> ToolExecutionRoute {

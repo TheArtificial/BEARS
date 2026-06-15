@@ -6,10 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{
-    api::service::ApiState,
-    errors::CustomError,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
 use den_runtime::{
     archived_conversations,
     bears::db as bears_db,
@@ -20,7 +18,7 @@ use den_runtime::{
     runtime_compaction_store::list_runtime_compaction_events,
 };
 
-use crate::api::acp::{
+use crate::acp::{
     history::map_canonical_history_page,
     normalize_acp_conversation_id,
     responses::acp_error_response,
@@ -30,7 +28,7 @@ use crate::api::acp::{
 
 use super::auth::authenticate_acp_code_token;
 
-pub(in crate::api::acp) async fn conversations(
+pub(in crate::acp) async fn conversations(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpConversationsQuery>,
@@ -90,7 +88,7 @@ pub(super) async fn conversations_inner(
     Ok(Json(AcpConversationsResponse { conversations }).into_response())
 }
 
-pub(in crate::api::acp) async fn conversation_history(
+pub(in crate::acp) async fn conversation_history(
     State(state): State<ApiState>,
     Path((slug, conversation_id)): Path<(String, String)>,
     Query(query): Query<AcpConversationHistoryQuery>,
@@ -153,7 +151,7 @@ pub(super) async fn conversation_history_inner(
     let compaction = if canonical_visible_count > 0 {
         None
     } else {
-        Some(crate::api::acp::AcpCompactionStatusResponse {
+        Some(crate::acp::AcpCompactionStatusResponse {
             status: "unavailable".to_string(),
             policy_version: "canonical_only".to_string(),
             source_group_start: None,

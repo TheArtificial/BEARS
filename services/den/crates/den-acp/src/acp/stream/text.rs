@@ -8,7 +8,7 @@ use super::text_utils::{
 };
 
 #[derive(Default)]
-pub(in crate::api::acp) struct AcpTextChunker {
+pub(in crate::acp) struct AcpTextChunker {
     assistant: String,
     reasoning: String,
     max_chars: usize,
@@ -18,11 +18,11 @@ pub(in crate::api::acp) struct AcpTextChunker {
 }
 
 impl AcpTextChunker {
-    pub(in crate::api::acp) fn new(max_chars: usize) -> Self {
+    pub(in crate::acp) fn new(max_chars: usize) -> Self {
         Self::new_with_reasoning_limit(max_chars, acp_max_thought_bytes_per_turn())
     }
 
-    pub(in crate::api::acp) fn new_with_reasoning_limit(max_chars: usize, max_reasoning_bytes: usize) -> Self {
+    pub(in crate::acp) fn new_with_reasoning_limit(max_chars: usize, max_reasoning_bytes: usize) -> Self {
         Self {
             assistant: String::new(),
             reasoning: String::new(),
@@ -33,7 +33,7 @@ impl AcpTextChunker {
         }
     }
 
-    pub(in crate::api::acp) fn push(&mut self, event: AcpGatewayEvent) -> Vec<AcpGatewayEvent> {
+    pub(in crate::acp) fn push(&mut self, event: AcpGatewayEvent) -> Vec<AcpGatewayEvent> {
         match event {
             AcpGatewayEvent::AssistantTextDelta { text } => {
                 self.assistant.push_str(&text);
@@ -64,7 +64,7 @@ impl AcpTextChunker {
         }
     }
 
-    pub(in crate::api::acp) fn flush_assistant(&mut self) -> Option<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_assistant(&mut self) -> Option<AcpGatewayEvent> {
         if self.assistant.is_empty() {
             None
         } else {
@@ -74,7 +74,7 @@ impl AcpTextChunker {
         }
     }
 
-    pub(in crate::api::acp) fn flush_reasoning(&mut self) -> Option<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_reasoning(&mut self) -> Option<AcpGatewayEvent> {
         if self.reasoning.is_empty() || self.reasoning_limit_reached {
             self.reasoning.clear();
             return None;
@@ -105,7 +105,7 @@ impl AcpTextChunker {
         Some(AcpGatewayEvent::StatusText { text })
     }
 
-    pub(in crate::api::acp) fn flush_all(&mut self) -> Vec<AcpGatewayEvent> {
+    pub(in crate::acp) fn flush_all(&mut self) -> Vec<AcpGatewayEvent> {
         self.flush_assistant()
             .into_iter()
             .chain(self.flush_reasoning())

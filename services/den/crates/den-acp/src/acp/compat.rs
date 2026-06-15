@@ -5,9 +5,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{
-    api::acp::AdapterContract,
-};
+use crate::acp::AdapterContract;
 use den_runtime::acp_tool_turns::AcpToolResultRequest;
 
 pub(super) const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";

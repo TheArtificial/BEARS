@@ -1,6 +1,4 @@
-use crate::{
-    api::acp::{AcpGatewayEvent, AcpStreamContext},
-};
+use crate::acp::{AcpGatewayEvent, AcpStreamContext};
 use den_runtime::{
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
     role_runtime::{RoleRuntime, RoleTurnScope},
@@ -42,12 +40,12 @@ fn test_context() -> AcpStreamContext {
         activity: None,
         request_id,
         pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-        config: Arc::new(crate::config::Config::test_stub()),
+        config: Arc::new(den_core::config::Config::test_stub()),
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
         memory_stores: den_runtime::memory::MemoryStoreManager::new(
-            &crate::config::Config::test_stub(),
+            &den_core::config::Config::test_stub(),
         ),
     }
 }

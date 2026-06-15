@@ -1,9 +1,7 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{
-    api::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry,
-};
+use crate::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     acp_plan_mode,
@@ -11,7 +9,7 @@ use den_runtime::{
     turn_state,
 };
 
-pub(in crate::api::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
+pub(in crate::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
     result
         .structured_content
         .get("mode_update")
@@ -19,7 +17,7 @@ pub(in crate::api::acp) fn mode_from_den_tool_result(result: &AcpToolResultReque
         .filter(|mode| matches!(*mode, "ask" | "plan" | "write"))
 }
 
-pub(in crate::api::acp) fn plan_update_from_den_tool_result(
+pub(in crate::acp) fn plan_update_from_den_tool_result(
     result: &AcpToolResultRequest,
 ) -> Option<AcpGatewayEvent> {
     if let Some(plan) = result.structured_content.get("plan") {
@@ -37,7 +35,7 @@ pub(in crate::api::acp) fn plan_update_from_den_tool_result(
     plan_approval_fallback_from_tool_result(result)
 }
 
-pub(in crate::api::acp) fn plan_approval_fallback_payload(
+pub(in crate::acp) fn plan_approval_fallback_payload(
     row: &acp_plan_mode::AcpPlanModeSessionRow,
 ) -> Value {
     serde_json::json!({

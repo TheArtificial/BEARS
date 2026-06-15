@@ -7,18 +7,16 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            compat::{
-                acp_compatibility_error_response, adapter_contract_from_value,
-                check_adapter_contract,
-            },
-            responses::acp_error_response,
+    acp::{
+        compat::{
+            acp_compatibility_error_response, adapter_contract_from_value,
+            check_adapter_contract,
         },
-        service::ApiState,
+        responses::acp_error_response,
     },
-    errors::CustomError,
+    service::ApiState,
 };
+use den_http::errors::CustomError;
 use den_runtime::{
     acp_plan_mode,
     acp_sessions,
@@ -27,14 +25,14 @@ use den_runtime::{
     runtime::compaction::{prepare_turn_compaction, CompactionMode, TurnCompactionTrigger},
 };
 
-use crate::api::acp::{
+use crate::acp::{
     acp_archive_target_for_session, cancel_runtime_runs_by_id_or_skip,
     resolve_acp_turn_context, run_pair_reflection_summary, AcpCloseSessionResponse,
 };
 
 use super::auth::authenticate_acp_code_token;
 
-pub(in crate::api::acp) async fn compact_session(
+pub(in crate::acp) async fn compact_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -127,7 +125,7 @@ pub(super) async fn compact_session_inner(
     .into_response())
 }
 
-pub(in crate::api::acp) async fn close_session(
+pub(in crate::acp) async fn close_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -146,7 +144,7 @@ pub(in crate::api::acp) async fn close_session(
     }
 }
 
-pub(in crate::api::acp) async fn cancel_session(
+pub(in crate::acp) async fn cancel_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,

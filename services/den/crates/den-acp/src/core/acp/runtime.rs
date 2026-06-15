@@ -1,9 +1,7 @@
 use sqlx::PgPool;
 
-use crate::{
-    config::Config,
-    errors::CustomError,
-};
+use den_core::config::Config;
+use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
     bears::{model::BearProfile, Bear},

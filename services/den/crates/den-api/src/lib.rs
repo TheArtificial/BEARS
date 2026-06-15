@@ -1,83 +1,16 @@
-//! Standalone API service (`src/api/`)
+//! JSON/REST + OAuth HTTP edge of the den binary.
 //!
-//! This module provides an independent API service for apps built from this starter that can run
-//! separately from or alongside the web service. It implements OAuth 2.0
-//! authorization server functionality and external API access for third parties.
+//! Owns the public API service (`create_api_app` / `service`), the v1
+//! user/profile/oauth routes (`v1`), and the OpenAPI docs (`docs`). It composes
+//! the ACP surface by mounting `den_acp::acp` + `den_acp::internal` routers and
+//! sharing `den_acp::service::ApiState`.
 //!
-//! # Architecture
-//!
-//! **HTTP surface in this starter:**
-//! - **`src/api/`** (this module): standalone OAuth 2.0 authorization server, OpenAPI docs, and JSON API (`/v1.0/`, etc.).
-//! - **`src/web/`**: server-rendered UI (Axum routes under `public`, `user`, `admin`, `home`, …)—add product-specific routes here, not a separate `web/api` tree.
-//!
-//! The API service is designed with the same architectural patterns as the web
-//! service but maintains complete independence. This allows for:
-//! - Separate deployment and scaling (port 3001 vs web service port 3000)
-//! - Independent authentication and session management
-//! - Dedicated API-focused middleware and error handling
-//! - Future distribution across multiple crates
-//!
-//! # Endpoints Provided
-//!
-//! - **OAuth 2.0** (`/oauth/`): Complete authorization server (RFC 6749, RFC 7636)
-//! - **API Documentation** (`/api-docs/`): OpenAPI documentation for external API
-//! - **v1.0 API** (`/v1.0/`): External API endpoints for third-party access
-//!
-//! # OAuth 2.0 Provider
-//!
-//! The API service implements a complete OAuth 2.0 authorization server following
-//! RFC 6749, including:
-//! - Authorization endpoint for user consent
-//! - Token endpoint for access token exchange
-//! - User info endpoint for profile data
-//! - PKCE support for enhanced security (RFC 7636)
-//!
-//! # Security
-//!
-//! - Integrates with existing axum-login authentication system
-//! - Uses PostgreSQL session store shared with web service
-//! - Implements proper CORS for cross-origin OAuth flows
-//! - Follows "safe code" principles with comprehensive error handling
-//!
-//! # Deployment
-//!
-//! Can be run independently or alongside the web service:
-//! - `SERVER_MODE=api` - Run only API service (port 3001)
-//! - `SERVER_MODE=web` - Run only web service (port 3000)
-//! - `SERVER_MODE=both` - Run both services simultaneously
-
-// Self-alias so the migrated edge keeps resolving its historical `crate::api::*`
-// paths (this crate *is* the old `den::api` module tree). Lets the v1.5 extraction
-// land without rewriting ~200 `api::`-prefixed paths; a v2 cleanup can drop these.
-extern crate self as api;
+//! It sits above den-acp, den-http (identity/error foundation), den-oauth,
+//! den-runtime (tool/runtime execution), den-docket, and den-core.
 
 pub mod docs;
 pub mod service;
 pub mod v1;
 
-// The ACP edge (`acp` + the residual `core::acp*` protocol modules), the shared
-// `ApiState`, and the `/internal/den-tools/invoke` endpoint were carved into
-// `den-acp` (v1.5+ sub-split). Re-exported so `den_api::core::*` (used by the binary
-// `core::mod` + den-web) resolves unchanged; `create_api_app` (below) mounts the
-// `den_acp::acp` + `den_acp::internal` routers.
-pub use den_acp::core;
-
-// OAuth + bearer-auth + consent templates moved down to `den-oauth` (v1.5+) so the
-// ACP surface can depend on them without a `den-acp ↔ den-api` cycle. Re-exported
-// here so the migrated `crate::api::{oauth,auth,templates}` paths resolve unchanged.
-pub use den_oauth::{auth, oauth, templates};
-
-// Re-export main API service creation function
+// Public entry point: the binary calls this to build the API/ACP app.
 pub use service::create_api_app;
-
-// Foundation re-export shims (v1.5 den-api extraction): keep the migrated call
-// sites resolving `crate::errors`, `crate::config`, `crate::auth_backend`, and
-// `crate::build_info` unchanged. These types live in den-http / den-core now.
-pub use den_core::config;
-pub use den_http::{auth_backend, build_info, errors};
-
-// The builtin-Den-tool invoker registry moved to its natural home in den-runtime
-// (which defines `RuntimeToolInvoker`), so the ACP edge can reach it without a
-// `den-acp -> den-api` cycle. Re-exported here for the remaining den-api/den-web
-// call sites and the binary's startup injection.
-pub use den_runtime::native_runtime::{set_tool_invoker, tool_invoker};

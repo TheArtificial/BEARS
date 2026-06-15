@@ -20,21 +20,19 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 use tracing::info_span;
 
-use crate::{
-    auth_backend::Backend,
-    config::Config,
-};
+use den_core::config::Config;
+use den_http::auth_backend::Backend;
 use den_runtime::{
     bifrost::BifrostClient,
     memory::MemoryStoreManager,
 };
 
-use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
+use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
 
 use std::sync::Arc;
 
 // `ApiState` lives in `den-acp` now (v1.5+ sub-split, Option B). Re-exported so the
-// retained `crate::api::service::ApiState` paths in `v1`/`docs` resolve unchanged.
+// retained `crate::service::ApiState` paths in `v1`/`docs` resolve unchanged.
 pub use den_acp::service::ApiState;
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -110,14 +108,14 @@ pub async fn create_api_app(
     let mut main_router = Router::new()
         // Health check endpoint (no authentication required)
         .route("/health", get(|| async { "OK" }))
-        .route("/version", get(crate::build_info::json_handler))
+        .route("/version", get(den_http::build_info::json_handler))
         .route("/healthcheck", get(|| async { "API OK" }))
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
-        .nest("/v1.0", crate::api::v1::router())
+        .nest("/v1.0", crate::v1::router())
         .nest("/internal", den_acp::internal::router())
         // API documentation (no authentication required)
-        .merge(crate::api::docs::router());
+        .merge(crate::docs::router());
 
     if config.acp_gateway_enabled {
         main_router = main_router.nest("/acp", den_acp::acp::router());
@@ -164,7 +162,7 @@ fn create_session_layer(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         let mut session_layer = SessionManagerLayer::new(session_store)
-            .with_secure(crate::config::session_cookie_secure_from_env(true))
+            .with_secure(den_core::config::session_cookie_secure_from_env(true))
             .with_same_site(SameSite::Lax)
             .with_expiry(Expiry::OnInactivity(Duration::days(1)));
         if let Some(domain) = session_cookie_domain {
@@ -176,7 +174,7 @@ fn create_session_layer(
     {
         let _ = config;
         SessionManagerLayer::new(session_store)
-            .with_secure(crate::config::session_cookie_secure_from_env(true))
+            .with_secure(den_core::config::session_cookie_secure_from_env(true))
             .with_same_site(SameSite::Lax)
             .with_expiry(Expiry::OnInactivity(Duration::days(1)))
     }
@@ -319,7 +317,7 @@ fn create_tracing_layer() -> TraceLayer<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use den_core::config::Config;
 
     #[test]
     fn test_cors_layer_creation() {

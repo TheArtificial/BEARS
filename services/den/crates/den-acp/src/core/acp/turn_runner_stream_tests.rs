@@ -10,7 +10,7 @@ use den_runtime::{
 #[tokio::test]
 async fn continuation_byte_stream_adapter_emits_semantic_event_and_terminal_completion() {
     let frame = b"data: {\"message_type\":\"assistant_message\",\"content\":\"hello\"}\n\n";
-    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::DenError>(
+    let source = futures::stream::iter(vec![Ok::<Bytes, den_http::errors::DenError>(
         Bytes::from_static(frame),
     )]);
     let mut stream = runtime_byte_stream_to_event_stream(
@@ -47,7 +47,7 @@ async fn requires_approval_pause_does_not_synthesize_turn_completion() {
         "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call-1\",\"arguments\":\"{}\"}}\n\n",
         "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
     );
-    let source = futures::stream::iter(vec![Ok::<Bytes, crate::errors::DenError>(
+    let source = futures::stream::iter(vec![Ok::<Bytes, den_http::errors::DenError>(
         Bytes::from_static(frames.as_bytes()),
     )]);
     let mut stream = runtime_byte_stream_to_event_stream(

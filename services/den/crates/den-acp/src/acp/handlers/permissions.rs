@@ -7,20 +7,18 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            compat::acp_compatibility_error_response, responses::acp_error_response,
-            AcpPermissionDecisionRequest, AcpPermissionDecisionResponse,
-        },
-        auth,
-        service::ApiState,
+    acp::{
+        compat::acp_compatibility_error_response, responses::acp_error_response,
+        AcpPermissionDecisionRequest, AcpPermissionDecisionResponse,
     },
-    errors::CustomError,
+    service::ApiState,
     core::{
         acp_tokens,
         web_policy,
     },
 };
+use den_http::errors::CustomError;
+use den_oauth::auth;
 use den_runtime::{
     acp_plan_mode,
     acp_sessions,
@@ -28,14 +26,14 @@ use den_runtime::{
     acp_tools::acp_tool_policy_json_for_provider,
 };
 
-use crate::api::acp::{
+use crate::acp::{
     check_adapter_contract, invoke_acp_den_tool, pending_web_fetch_approvals,
     plan_approval_fallback_payload, workflow_state_json, workflow_state_json_from_sources,
 };
 
 use super::auth::authenticate_acp_code_token_with_auth;
 
-pub(in crate::api::acp) async fn permission_result(
+pub(in crate::acp) async fn permission_result(
     State(state): State<ApiState>,
     Path((slug, session_id, permission_id)): Path<(String, String, String)>,
     headers: HeaderMap,

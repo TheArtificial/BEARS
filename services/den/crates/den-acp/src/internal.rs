@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    api::service::ApiState,
-    errors::CustomError,
+    service::ApiState,
     core::tools::{aliases::is_builtin_den_tool, session::DenToolInvocationContext},
 };
+use den_http::errors::CustomError;
 
 pub fn router() -> Router<ApiState> {
     Router::new().route("/den-tools/invoke", post(invoke_den_tool))
@@ -60,7 +60,7 @@ async fn invoke_den_tool(
         "den tool invocation started"
     );
 
-    let Some(invoker) = crate::tool_invoker() else {
+    let Some(invoker) = den_runtime::native_runtime::tool_invoker() else {
         return json_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "unavailable",

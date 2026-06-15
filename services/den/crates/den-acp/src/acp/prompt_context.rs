@@ -1,14 +1,15 @@
 use uuid::Uuid;
 
 use crate::{
-    api::{acp::{
+    acp::{
         acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context,
         history::{
             runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
         },
-    }, service::ApiState},
-    errors::CustomError,
+    },
+    service::ApiState,
 };
+use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
     acp_plan_mode,
@@ -232,7 +233,7 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
 }
 
 pub(super) async fn acp_plan_mode_prompt_context(
-    state: &crate::api::service::ApiState,
+    state: &crate::service::ApiState,
     bear_id: Uuid,
     user_id: i32,
     session_id: &str,

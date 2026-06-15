@@ -6,10 +6,8 @@
 
 use uuid::Uuid;
 
-use crate::{
-    api::service::ApiState,
-    errors::DenError,
-};
+use crate::service::ApiState;
+use den_http::errors::DenError;
 use den_runtime::{
     acp_tool_turns::AcpToolTurnCoordinator,
     runtime_contracts::{RuntimeEventStream, RuntimeStreamContinuation},

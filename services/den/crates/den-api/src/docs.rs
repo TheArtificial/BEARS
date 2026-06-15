@@ -1,15 +1,15 @@
 use axum::{response::Json, routing::get, Router};
 use utoipa::OpenApi;
 
-use crate::api::service::ApiState;
+use crate::service::ApiState;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        crate::api::v1::profile::get_profile
+        crate::v1::profile::get_profile
     ),
     components(
-        schemas(crate::api::v1::profile::ProfileResponse)
+        schemas(crate::v1::profile::ProfileResponse)
     ),
     tags(
         (name = "Profile", description = "User profile management endpoints")

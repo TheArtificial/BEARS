@@ -1,4 +1,4 @@
-use crate::api::acp::workflow_guidance::render_turn_state_summary;
+use crate::acp::workflow_guidance::render_turn_state_summary;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
     acp_tools::AcpResolvedSessionPolicy,

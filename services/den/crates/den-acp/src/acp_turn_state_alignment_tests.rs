@@ -1,8 +1,6 @@
 use serde_json::json;
 
-use crate::{
-    api::acp::acp_session_row_to_http_with_modes,
-};
+use crate::acp::acp_session_row_to_http_with_modes;
 use den_runtime::acp_sessions::AcpSessionRow;
 
 #[tokio::test]

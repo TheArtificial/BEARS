@@ -36,7 +36,7 @@ oauth_access_tokens
 Currently, OAuth clients must be registered directly in the database. Here's an example:
 
 ```rust
-use crate::api::oauth::{db, utils, OAuthScope};
+use den_oauth::oauth::{db, utils, OAuthScope};
 
 // Generate client credentials
 let client_id = utils::generate_client_id();
@@ -69,8 +69,8 @@ println!("Client Secret: {}", client_secret);
 Add the OAuth router to your Axum application:
 
 ```rust
-use crate::api::oauth::router::create_oauth_router;
-use crate::api::oauth::endpoints::OAuthState;
+use den_oauth::oauth::router::create_oauth_router;
+use den_oauth::oauth::endpoints::OAuthState;
 
 let oauth_state = OAuthState {
     pool: pool.clone(),

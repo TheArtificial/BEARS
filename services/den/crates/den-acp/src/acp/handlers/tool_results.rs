@@ -7,21 +7,19 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            compat::{
-                acp_compatibility_error_response, adapter_contract_from_value,
-                check_adapter_contract, compatibility_tool_result_body,
-            },
-            responses::{acp_error_response, api_auth_error_response},
-            tool_results::acp_tool_result_response_from_delivery,
+    acp::{
+        compat::{
+            acp_compatibility_error_response, adapter_contract_from_value,
+            check_adapter_contract, compatibility_tool_result_body,
         },
-        auth,
-        service::ApiState,
+        responses::{acp_error_response, api_auth_error_response},
+        tool_results::acp_tool_result_response_from_delivery,
     },
-    errors::CustomError,
+    service::ApiState,
     core::acp_tokens,
 };
+use den_http::errors::CustomError;
+use den_oauth::auth;
 use den_runtime::{
     acp_tool_turns::{AcpToolResultDelivery, AcpToolResultRequest},
     acp_tools::{acp_diag_phase, AcpToolStatus},
@@ -29,7 +27,7 @@ use den_runtime::{
 
 use super::auth::authenticate_acp_code_token_with_auth;
 
-pub(in crate::api::acp) async fn tool_result(
+pub(in crate::acp) async fn tool_result(
     State(state): State<ApiState>,
     Path((slug, session_id, tool_call_id)): Path<(String, String, String)>,
     headers: HeaderMap,

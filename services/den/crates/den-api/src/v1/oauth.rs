@@ -9,13 +9,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::{
-    api::{
-        oauth::{db, jwt::create_jwt_manager},
-        service::ApiState,
-    },
-    errors::CustomError,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
+use den_oauth::oauth::{db, jwt::create_jwt_manager};
 
 #[derive(Serialize, ToSchema)]
 pub struct AccessTokenResponse {

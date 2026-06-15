@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use serde_json::json;
 
-use crate::api::acp::acp_debug_event_sample_chars;
+use crate::acp::acp_debug_event_sample_chars;
 
 fn sha256_short(value: &str) -> String {
     use sha2::{Digest, Sha256};

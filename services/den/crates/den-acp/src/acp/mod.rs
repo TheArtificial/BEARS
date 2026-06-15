@@ -38,24 +38,22 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            compat::{
-                acp_compatibility_error_response, check_adapter_contract,
-            },
-            stream::{
-                mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-                plan::{
-                    mode_from_den_tool_result, plan_approval_fallback_payload,
-                    plan_update_from_den_tool_result,
-                },
-                prompt_flow::run_prompt_flow,
-                runtime::{invoke_acp_den_tool, persist_stream_event_side_effects},
-            },
-            tool_results::default_unavailable_context_budget,
+    acp::{
+        compat::{
+            acp_compatibility_error_response, check_adapter_contract,
         },
-        service::ApiState,
+        stream::{
+            mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence,
+            plan::{
+                mode_from_den_tool_result, plan_approval_fallback_payload,
+                plan_update_from_den_tool_result,
+            },
+            prompt_flow::run_prompt_flow,
+            runtime::{invoke_acp_den_tool, persist_stream_event_side_effects},
+        },
+        tool_results::default_unavailable_context_budget,
     },
+    service::ApiState,
     core::{
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,

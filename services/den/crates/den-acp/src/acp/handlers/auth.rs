@@ -7,17 +7,14 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::responses::acp_error_response,
-        auth,
-        oauth::OAuthScope,
-        service::ApiState,
-    },
-    errors::CustomError,
+    acp::responses::acp_error_response,
+    service::ApiState,
     core::acp_tokens,
 };
+use den_http::errors::CustomError;
+use den_oauth::{auth, oauth::OAuthScope};
 
-pub(in crate::api::acp) async fn auth_check(
+pub(in crate::acp) async fn auth_check(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     headers: HeaderMap,
@@ -36,7 +33,7 @@ pub(in crate::api::acp) async fn auth_check(
     }
 }
 
-pub(in crate::api::acp) async fn authenticate_acp_code_token(
+pub(in crate::acp) async fn authenticate_acp_code_token(
     state: &ApiState,
     headers: &HeaderMap,
     slug: &str,
@@ -48,7 +45,7 @@ pub(in crate::api::acp) async fn authenticate_acp_code_token(
         .user_id)
 }
 
-pub(in crate::api::acp) async fn authenticate_acp_code_token_with_auth(
+pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
     state: &ApiState,
     token: &str,
     slug: &str,

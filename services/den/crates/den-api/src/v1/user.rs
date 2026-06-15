@@ -4,11 +4,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::{
-    api::service::ApiState,
-    errors::CustomError,
-    core::user,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
+use den_http::user;
 
 #[derive(Serialize, ToSchema)]
 pub struct UserResponse {
@@ -208,7 +206,7 @@ async fn login(
         use password_auth::verify_password;
         if verify_password(request.password, &user_auth.passhash).is_ok() {
             // Generate access token
-            use crate::api::oauth::{jwt::create_jwt_manager, utils, OAuthScope};
+            use den_oauth::oauth::{jwt::create_jwt_manager, utils, OAuthScope};
 
             let jwt_manager = create_jwt_manager();
             let scopes = vec![OAuthScope::ProfileRead, OAuthScope::ProfileEmail];

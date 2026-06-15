@@ -1,7 +1,5 @@
-use crate::{
-    api::service::ApiState,
-    errors::CustomError,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},

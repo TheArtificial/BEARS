@@ -1,9 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    errors::CustomError,
-};
+use den_http::errors::CustomError;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     acp_sessions,

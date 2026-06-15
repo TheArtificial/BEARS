@@ -2,22 +2,18 @@ use axum::http::StatusCode;
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            acp_error_status_message, authenticate_acp_code_token_with_auth,
-            history::acp_auto_title_instruction,
-            paths::require_absolute_cwd,
-            prompt_context::{
-                acp_direct_tool_prompt_context_with_activity, acp_plan_mode_prompt_context,
-            },
-            requested_mode_from_prompt, resolve_acp_turn_context,
-            stream::orchestration::{build_acp_sse_response, build_acp_stream_setup},
-            AcpPromptRequest,
+    acp::{
+        acp_error_status_message, authenticate_acp_code_token_with_auth,
+        history::acp_auto_title_instruction,
+        paths::require_absolute_cwd,
+        prompt_context::{
+            acp_direct_tool_prompt_context_with_activity, acp_plan_mode_prompt_context,
         },
-        auth::{self, ApiError},
-        service::ApiState,
+        requested_mode_from_prompt, resolve_acp_turn_context,
+        stream::orchestration::{build_acp_sse_response, build_acp_stream_setup},
+        AcpPromptRequest,
     },
-    errors::CustomError,
+    service::ApiState,
     core::{
         acp_runtime::{
             canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
@@ -28,6 +24,8 @@ use crate::{
         work_plans::{self, WorkPlanLookup},
     },
 };
+use den_http::errors::CustomError;
+use den_oauth::auth::{self, ApiError};
 use den_runtime::{
     acp_plan_mode,
     acp_sessions::{self, UpsertAcpSession},
@@ -39,7 +37,7 @@ use den_runtime::{
     bears::{db as bears_db, BearProfile},
 };
 
-pub(in crate::api::acp) async fn run_prompt_flow(
+pub(in crate::acp) async fn run_prompt_flow(
     state: ApiState,
     slug: String,
     session_id: String,

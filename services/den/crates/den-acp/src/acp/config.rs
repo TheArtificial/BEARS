@@ -4,7 +4,7 @@ use tokio::sync::{oneshot, Mutex as TokioMutex};
 use uuid::Uuid;
 
 use crate::{
-    api::service::ApiState,
+    service::ApiState,
     core::web_policy,
 };
 use den_runtime::{
@@ -60,26 +60,26 @@ pub(crate) fn acp_debug_event_sample_chars() -> usize {
         .unwrap_or(360)
 }
 
-pub(in crate::api::acp) type PendingWebFetchMap = Arc<TokioMutex<HashMap<String, PendingWebFetchApproval>>>;
-pub(in crate::api::acp) static PENDING_WEB_FETCH_APPROVALS: std::sync::OnceLock<PendingWebFetchMap> =
+pub(in crate::acp) type PendingWebFetchMap = Arc<TokioMutex<HashMap<String, PendingWebFetchApproval>>>;
+pub(in crate::acp) static PENDING_WEB_FETCH_APPROVALS: std::sync::OnceLock<PendingWebFetchMap> =
     std::sync::OnceLock::new();
 
-pub(in crate::api::acp) fn pending_web_fetch_approvals() -> PendingWebFetchMap {
+pub(in crate::acp) fn pending_web_fetch_approvals() -> PendingWebFetchMap {
     PENDING_WEB_FETCH_APPROVALS
         .get_or_init(|| Arc::new(TokioMutex::new(HashMap::new())))
         .clone()
 }
 
-pub(in crate::api::acp) struct PendingWebFetchApproval {
-    pub(in crate::api::acp) user_id: i32,
-    pub(in crate::api::acp) bear_id: Uuid,
-    pub(in crate::api::acp) result_tx: oneshot::Sender<AcpToolResultRequest>,
-    pub(in crate::api::acp) context: AcpStreamContext,
-    pub(in crate::api::acp) provider_name: String,
-    pub(in crate::api::acp) tool_call_id: String,
-    pub(in crate::api::acp) approval_request_id: Option<String>,
-    pub(in crate::api::acp) args: serde_json::Value,
-    pub(in crate::api::acp) normalized_url: web_policy::NormalizedWebUrl,
+pub(in crate::acp) struct PendingWebFetchApproval {
+    pub(in crate::acp) user_id: i32,
+    pub(in crate::acp) bear_id: Uuid,
+    pub(in crate::acp) result_tx: oneshot::Sender<AcpToolResultRequest>,
+    pub(in crate::acp) context: AcpStreamContext,
+    pub(in crate::acp) provider_name: String,
+    pub(in crate::acp) tool_call_id: String,
+    pub(in crate::acp) approval_request_id: Option<String>,
+    pub(in crate::acp) args: serde_json::Value,
+    pub(in crate::acp) normalized_url: web_policy::NormalizedWebUrl,
 }
 
 #[allow(dead_code)]

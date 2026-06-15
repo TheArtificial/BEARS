@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 
-use crate::errors::CustomError;
+use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
     acp_sessions,

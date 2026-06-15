@@ -3,15 +3,12 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            acp_den_provider_to_canonical_tool_name, acp_tool_timeout_ms_for_provider,
-            default_unavailable_context_budget, pending_web_fetch_approvals, AcpGatewayEvent,
-            AcpStreamContext, PendingWebFetchApproval, ToolExecutionRoute,
-        },
-        acp::types::PersistedToolRequestEffect,
+    acp::{
+        acp_den_provider_to_canonical_tool_name, acp_tool_timeout_ms_for_provider,
+        default_unavailable_context_budget, pending_web_fetch_approvals, AcpGatewayEvent,
+        AcpStreamContext, PendingWebFetchApproval, ToolExecutionRoute,
     },
-    errors::CustomError,
+    acp::types::PersistedToolRequestEffect,
     core::{
         tools::{
             arguments::DenToolChannelContext,
@@ -21,6 +18,7 @@ use crate::{
         web_policy,
     },
 };
+use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
     acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
@@ -34,7 +32,7 @@ use den_runtime::{
 /// Execute a builtin Den tool via the process-wide injected invoker.
 ///
 /// The api edge does not own the den-side tool composition; the binary installs a
-/// `RuntimeToolInvoker` at startup (see [`crate::set_tool_invoker`]). Maps the
+/// `RuntimeToolInvoker` at startup (see [`den_runtime::native_runtime::set_tool_invoker`]). Maps the
 /// den-core error into the web-boundary `CustomError` the ACP stream propagates.
 async fn run_builtin_den_tool(
     context: &AcpStreamContext,
@@ -42,7 +40,7 @@ async fn run_builtin_den_tool(
     args: serde_json::Value,
     tool_context: DenToolInvocationContext,
 ) -> Result<serde_json::Value, CustomError> {
-    let Some(invoker) = crate::tool_invoker() else {
+    let Some(invoker) = den_runtime::native_runtime::tool_invoker() else {
         return Err(CustomError::System(
             "builtin Den tool runtime is not initialized".to_string(),
         ));
@@ -66,7 +64,7 @@ fn should_skip_canonical_persistence(context: &AcpStreamContext) -> bool {
         || database_url == "postgres://localhost/den_test"
 }
 
-pub(in crate::api::acp) fn canonical_persistence_context_from_acp(
+pub(in crate::acp) fn canonical_persistence_context_from_acp(
     context: &AcpStreamContext,
 ) -> den_runtime::conversation_events::ConversationPersistenceContext {
     canonical_persistence_context(
@@ -81,7 +79,7 @@ pub(in crate::api::acp) fn canonical_persistence_context_from_acp(
     )
 }
 
-pub(in crate::api::acp) fn acp_session_provenance(
+pub(in crate::acp) fn acp_session_provenance(
     context: &AcpStreamContext,
 ) -> den_runtime::conversation_events::ConversationEventProvenance {
     den_runtime::conversation_events::ConversationEventProvenance::acp_session(
@@ -102,7 +100,7 @@ fn prompt_memory_diagnostic_record(
     )
 }
 
-pub(in crate::api::acp) fn spawn_persist_acp_assistant_output(
+pub(in crate::acp) fn spawn_persist_acp_assistant_output(
     context: &AcpStreamContext,
     content_text: String,
     provider_message_id: Option<String>,
@@ -118,7 +116,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_assistant_output(
     );
 }
 
-pub(in crate::api::acp) fn spawn_persist_acp_turn_outcome(
+pub(in crate::acp) fn spawn_persist_acp_turn_outcome(
     context: &AcpStreamContext,
     role_result: &den_runtime::role_runtime::RoleTurnResult,
 ) {
@@ -130,7 +128,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_turn_outcome(
     );
 }
 
-pub(in crate::api::acp) fn spawn_persist_acp_tool_result(
+pub(in crate::acp) fn spawn_persist_acp_tool_result(
     context: &AcpStreamContext,
     tool_name: Option<String>,
     tool_call_id: String,
@@ -156,7 +154,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_tool_result(
     );
 }
 
-pub(in crate::api::acp) fn spawn_persist_acp_conversation_resolved(
+pub(in crate::acp) fn spawn_persist_acp_conversation_resolved(
     context: &AcpStreamContext,
     conversation_id: String,
 ) {
@@ -167,7 +165,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_conversation_resolved(
     );
 }
 
-pub(in crate::api::acp) fn spawn_persist_acp_tool_request(
+pub(in crate::acp) fn spawn_persist_acp_tool_request(
     context: &AcpStreamContext,
     tool_name: String,
     tool_call_id: String,
@@ -197,7 +195,7 @@ pub(in crate::api::acp) fn spawn_persist_acp_tool_request(
 /// (`normalize_persisted_gateway_record` + spawn). Production persistence goes
 /// through [`persist_stream_event_side_effects`] with specific record constructors.
 #[cfg(test)]
-pub(in crate::api::acp) fn spawn_canonical_gateway_record_persistence(
+pub(in crate::acp) fn spawn_canonical_gateway_record_persistence(
     context: &AcpStreamContext,
     message_type: &'static str,
     role: Option<&'static str>,
@@ -218,7 +216,7 @@ pub(in crate::api::acp) fn spawn_canonical_gateway_record_persistence(
     spawn_persist_canonical_conversation_record(persistence, record);
 }
 
-pub(in crate::api::acp) async fn persist_stream_event_side_effects(
+pub(in crate::acp) async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
 ) -> Result<Option<PersistedToolRequestEffect>, CustomError> {
@@ -395,7 +393,7 @@ pub(in crate::api::acp) async fn persist_stream_event_side_effects(
     Ok(tool_request_effect)
 }
 
-pub(in crate::api::acp) async fn route_web_fetch_tool_request(
+pub(in crate::acp) async fn route_web_fetch_tool_request(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
     _plan_mode_active: bool,
@@ -531,7 +529,7 @@ pub(in crate::api::acp) async fn route_web_fetch_tool_request(
     Ok(())
 }
 
-pub(in crate::api::acp) async fn route_direct_den_tool_request(
+pub(in crate::acp) async fn route_direct_den_tool_request(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
     canonical_name: &str,
@@ -582,7 +580,7 @@ struct WebFetchToolArgs {
     url: String,
 }
 
-pub(in crate::api::acp) fn settle_den_tool_error(
+pub(in crate::acp) fn settle_den_tool_error(
     result_tx: oneshot::Sender<AcpToolResultRequest>,
     context: &AcpStreamContext,
     tool_call_id: &str,
@@ -613,7 +611,7 @@ pub(in crate::api::acp) fn settle_den_tool_error(
     let _ = result_tx.send(result);
 }
 
-pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
+pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
     context: &AcpStreamContext,
     tool_name: &str,
     tool_call_id: &str,
@@ -720,7 +718,7 @@ pub(in crate::api::acp) async fn invoke_acp_runtime_local_tool(
     }
 }
 
-pub(in crate::api::acp) async fn invoke_acp_den_tool(
+pub(in crate::acp) async fn invoke_acp_den_tool(
     context: &AcpStreamContext,
     canonical_name: &str,
     provider_name: &str,

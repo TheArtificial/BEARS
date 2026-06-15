@@ -5,10 +5,9 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{
-    api::{acp::AcpErrorResponse, auth::ApiError},
-    errors::CustomError,
-};
+use crate::acp::AcpErrorResponse;
+use den_http::errors::CustomError;
+use den_oauth::auth::ApiError;
 
 pub(super) fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
     match err {

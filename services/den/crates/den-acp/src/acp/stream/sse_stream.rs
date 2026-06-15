@@ -10,22 +10,20 @@ use bytes::Bytes;
 use futures::{Future, Stream};
 
 use crate::{
-    api::{
-        acp::{
-            acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
-            continue_acp_turn_with_runtime, looks_like_runtime_waiting_for_approval_error,
-            map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-            mode_from_den_tool_result, plan_update_from_den_tool_result,
-            AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
-            AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-            RoleRuntimeBinding, default_acp_tool_continue_stream_context,
-        },
-        acp::types::PersistedToolRequestEffect,
-        service::ApiState,
+    acp::{
+        acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
+        continue_acp_turn_with_runtime, looks_like_runtime_waiting_for_approval_error,
+        map_runtime_stream_event_to_acp_adapter_events_with_persistence,
+        mode_from_den_tool_result, plan_update_from_den_tool_result,
+        AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
+        AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
+        RoleRuntimeBinding, default_acp_tool_continue_stream_context,
     },
-    errors::{CustomError, DenError},
+    acp::types::PersistedToolRequestEffect,
+    service::ApiState,
     core::tools::descriptor::den_tool_completion_status_text,
 };
+use den_http::errors::{CustomError, DenError};
 use den_runtime::{
     acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
     acp_tool_turns::AcpToolResultRequest,
@@ -42,37 +40,37 @@ use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
 /// Maximum silence before emitting a phase-aware status heartbeat to the adapter.
 const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
 
-pub(in crate::api::acp) struct AcpRuntimeSseStream {
-    pub(in crate::api::acp) inner: Pin<
+pub(in crate::acp) struct AcpRuntimeSseStream {
+    pub(in crate::acp) inner: Pin<
         Box<
             dyn Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
                 + Send,
         >,
     >,
-    pub(in crate::api::acp) pending: VecDeque<Bytes>,
-    pub(in crate::api::acp) context: AcpStreamContext,
-    pub(in crate::api::acp) assistant_text_buffer: String,
-    pub(in crate::api::acp) waiting_adapter_tool_result:
+    pub(in crate::acp) pending: VecDeque<Bytes>,
+    pub(in crate::acp) context: AcpStreamContext,
+    pub(in crate::acp) assistant_text_buffer: String,
+    pub(in crate::acp) waiting_adapter_tool_result:
         Option<(String, String, AcpResolvedToolResult)>,
-    pub(in crate::api::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
-    pub(in crate::api::acp) diagnostics: AcpStreamDiagnostics,
-    pub(in crate::api::acp) logged_summary: bool,
-    pub(in crate::api::acp) persist_future: Option<AcpPendingFuture>,
-    pub(in crate::api::acp) session_info_event_sent: bool,
-    pub(in crate::api::acp) text_chunker: AcpTextChunker,
-    pub(in crate::api::acp) active_turn_guard: Option<RoleTurnGuard>,
-    pub(in crate::api::acp) parked_adapter_result_rx:
+    pub(in crate::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
+    pub(in crate::acp) diagnostics: AcpStreamDiagnostics,
+    pub(in crate::acp) logged_summary: bool,
+    pub(in crate::acp) persist_future: Option<AcpPendingFuture>,
+    pub(in crate::acp) session_info_event_sent: bool,
+    pub(in crate::acp) text_chunker: AcpTextChunker,
+    pub(in crate::acp) active_turn_guard: Option<RoleTurnGuard>,
+    pub(in crate::acp) parked_adapter_result_rx:
         Option<(String, String, AcpResolvedToolResult)>,
-    pub(in crate::api::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
-    pub(in crate::api::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
-    pub(in crate::api::acp) turn_controller: AcpTurnController,
+    pub(in crate::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    pub(in crate::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
+    pub(in crate::acp) turn_controller: AcpTurnController,
     /// Last time any SSE frame was queued for the adapter (assistant text, tools, status, etc.).
-    pub(in crate::api::acp) last_adapter_update_at: Instant,
-    pub(in crate::api::acp) status_heartbeat_interval: Duration,
+    pub(in crate::acp) last_adapter_update_at: Instant,
+    pub(in crate::acp) status_heartbeat_interval: Duration,
     status_heartbeat_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
-pub(in crate::api::acp) fn runtime_terminal_events(
+pub(in crate::acp) fn runtime_terminal_events(
     event: RuntimeStreamEvent,
     request_id: &str,
     acp_session_id: &str,
@@ -166,7 +164,7 @@ pub(in crate::api::acp) fn runtime_terminal_events(
 }
 
 impl AcpRuntimeSseStream {
-    pub(in crate::api::acp) fn outstanding_tool_obligations(&self) -> Vec<String> {
+    pub(in crate::acp) fn outstanding_tool_obligations(&self) -> Vec<String> {
         self.context
             .tool_turns
             .pending_for_session(&self.context.acp_session_id)
@@ -176,11 +174,11 @@ impl AcpRuntimeSseStream {
             .collect()
     }
 
-    pub(in crate::api::acp) fn controller_allows_terminal(&self) -> bool {
+    pub(in crate::acp) fn controller_allows_terminal(&self) -> bool {
         self.turn_controller.may_emit_terminal()
     }
 
-    pub(in crate::api::acp) fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
+    pub(in crate::acp) fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
         let terminal = role_result.to_terminal_event();
         AcpGatewayEvent::TurnResult {
             status: terminal.status,
@@ -192,7 +190,7 @@ impl AcpRuntimeSseStream {
         }
     }
 
-    pub(in crate::api::acp) fn push_adapter_event(&mut self, event: AcpGatewayEvent) {
+    pub(in crate::acp) fn push_adapter_event(&mut self, event: AcpGatewayEvent) {
         self.enqueue_adapter_event(event, true);
     }
 
@@ -298,7 +296,7 @@ impl AcpRuntimeSseStream {
         Poll::Pending
     }
 
-    pub(in crate::api::acp) fn persist_assistant_output_if_present(&mut self) {
+    pub(in crate::acp) fn persist_assistant_output_if_present(&mut self) {
         if self.assistant_text_buffer.is_empty() {
             return;
         }
@@ -310,11 +308,11 @@ impl AcpRuntimeSseStream {
         );
     }
 
-    pub(in crate::api::acp) fn persist_terminal_outcome(&mut self, role_result: &RoleTurnResult) {
+    pub(in crate::acp) fn persist_terminal_outcome(&mut self, role_result: &RoleTurnResult) {
         super::runtime::spawn_persist_acp_turn_outcome(&self.context, role_result);
     }
 
-    pub(in crate::api::acp) fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
+    pub(in crate::acp) fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
         let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
             let snapshot = self.turn_controller.status_snapshot();
             tracing::warn!(
@@ -341,7 +339,7 @@ impl AcpRuntimeSseStream {
         self.push_adapter_event(event);
     }
 
-    pub(in crate::api::acp) fn push_terminal_result_when_ready(
+    pub(in crate::acp) fn push_terminal_result_when_ready(
         &mut self,
         role_result: RoleTurnResult,
     ) {
@@ -365,7 +363,7 @@ impl AcpRuntimeSseStream {
         );
     }
 
-    pub(in crate::api::acp) fn new(
+    pub(in crate::acp) fn new(
         inner: impl Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
             + Send
             + 'static,
@@ -408,7 +406,7 @@ impl AcpRuntimeSseStream {
     }
 
     #[cfg(test)]
-    pub(in crate::api::acp) fn with_status_heartbeat_interval(mut self, interval: Duration) -> Self {
+    pub(in crate::acp) fn with_status_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.status_heartbeat_interval = interval;
         self
     }
@@ -425,7 +423,7 @@ impl AcpRuntimeSseStream {
     }
 
     #[cfg(test)]
-    pub(in crate::api::acp) fn with_cancel_rx(
+    pub(in crate::acp) fn with_cancel_rx(
         mut self,
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
@@ -433,7 +431,7 @@ impl AcpRuntimeSseStream {
         self
     }
 
-    pub(in crate::api::acp) fn with_cancel_registration(
+    pub(in crate::acp) fn with_cancel_registration(
         mut self,
         handle: AcpActiveTurnCancelHandle,
         cancel_rx: tokio::sync::watch::Receiver<bool>,
@@ -443,7 +441,7 @@ impl AcpRuntimeSseStream {
         self
     }
 
-    pub(in crate::api::acp) fn cleanup_active_tool_turns(&mut self) {
+    pub(in crate::acp) fn cleanup_active_tool_turns(&mut self) {
         if self.turn_controller.phase() != AcpTurnPhase::Terminal {
             return;
         }
@@ -460,7 +458,7 @@ impl AcpRuntimeSseStream {
         }
     }
 
-    pub(in crate::api::acp) fn log_summary_once(&mut self) {
+    pub(in crate::acp) fn log_summary_once(&mut self) {
         if !self.logged_summary {
             self.cleanup_active_tool_turns();
             self.diagnostics.log_summary(&self.context);

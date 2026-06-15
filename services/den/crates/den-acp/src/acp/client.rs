@@ -2,8 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 
 use crate::{
-    api::acp::AcpPromptRequest,
-    errors::CustomError,
+    acp::AcpPromptRequest,
     core::{
         tools::{
         descriptor::builtin_den_tool_descriptors_for_pair_acp_surface,
@@ -11,6 +10,7 @@ use crate::{
     },
     },
 };
+use den_http::errors::CustomError;
 
 pub(crate) fn tools_enabled_for_client(client: &str) -> bool {
     let normalized = normalize_acp_client(Some(client));

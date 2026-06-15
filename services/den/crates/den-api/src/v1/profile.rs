@@ -8,14 +8,10 @@ use axum::{
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::{
-    api::{
-        oauth::{error::OAuthError, jwt::create_jwt_manager},
-        service::ApiState,
-    },
-    errors::CustomError,
-    core::user,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
+use den_http::user;
+use den_oauth::oauth::{error::OAuthError, jwt::create_jwt_manager};
 
 #[derive(Serialize, ToSchema)]
 pub struct ProfileResponse {

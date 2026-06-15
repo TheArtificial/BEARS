@@ -3,14 +3,13 @@ name = "den-api"
 version = "0.1.0"
 edition = "2021"
 
-# den-api: the JSON/REST + ACP HTTP edge of the den binary. It owns the public
-# API service (`service::create_api_app`, `ApiState`), the v1 user/profile/oauth
-# routes, the OAuth2 authorization server, and the native ACP protocol surface
-# (`acp`, plus the residual session/token/runtime modules under `core::acp`).
-# It sits above den-http (identity/error foundation), den-runtime (tool/runtime
-# execution), den-docket (work plans), and den-core. The den-acp sub-split
-# (carving `acp` + `core::acp` into their own crate) is a v2 follow-up; for now
-# this crate carries both via a self-alias so `crate::api::*` paths resolve.
+# den-api: the JSON/REST + OAuth HTTP edge of the den binary. It owns the public
+# API service (`service::create_api_app`), the v1 user/profile/oauth routes, the
+# OAuth2 authorization server, and the OpenAPI docs. It composes the ACP surface
+# by mounting `den_acp::acp` + `den_acp::internal` and sharing
+# `den_acp::service::ApiState`. It sits above den-acp, den-http (identity/error
+# foundation), den-oauth, den-runtime (tool/runtime execution), den-docket (work
+# plans), and den-core.
 
 [lints]
 workspace = true

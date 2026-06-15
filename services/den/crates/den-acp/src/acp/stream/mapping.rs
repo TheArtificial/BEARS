@@ -1,8 +1,6 @@
-use crate::{
-    api::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext},
-    api::acp::types::PersistedToolRequestEffect,
-    api::acp::stream::support::AcpStreamDiagnostics,
-};
+use crate::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext};
+use crate::acp::types::PersistedToolRequestEffect;
+use crate::acp::stream::support::AcpStreamDiagnostics;
 use den_runtime::{
     acp_events::{
             map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
@@ -20,7 +18,7 @@ pub(super) type AcpFrameResult = Result<
     std::io::Error,
 >;
 
-pub(in crate::api::acp) fn runtime_stream_event_to_acp_seed_value(
+pub(in crate::acp) fn runtime_stream_event_to_acp_seed_value(
     runtime_event: RuntimeStreamEvent,
 ) -> Result<serde_json::Value, std::io::Error> {
     match runtime_event {
@@ -138,7 +136,7 @@ fn seed_mapped_event_covered_by_direct_projection(
         .any(|direct_event| std::mem::discriminant(direct_event) == seed_kind)
 }
 
-pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
     runtime_event: RuntimeStreamEvent,
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
@@ -180,7 +178,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
         let mut adapter_result_rx = None;
         let mut events = if let Some(effect) = tool_request_effect.as_mut() {
             match effect.route {
-                crate::api::acp::ToolExecutionRoute::AdapterLocal => {
+                crate::acp::ToolExecutionRoute::AdapterLocal => {
                     if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
                         if let Some(rx) = result_rx.take() {
                             let tool_call_id = effect.tool_call_id.clone();
@@ -193,7 +191,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
                         }
                     }
                 }
-                crate::api::acp::ToolExecutionRoute::DenServer => {
+                crate::acp::ToolExecutionRoute::DenServer => {
                     if let Some(rx) = effect.den_server_result_rx.take() {
                         let tool_call_id = effect.tool_call_id.clone();
                         let tool_name = effect.tool_name.clone();
@@ -204,7 +202,7 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
                         ));
                     }
                 }
-                crate::api::acp::ToolExecutionRoute::Unsupported => {}
+                crate::acp::ToolExecutionRoute::Unsupported => {}
             }
             vec![event]
         } else {
@@ -235,6 +233,6 @@ pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_
 }
 
 #[cfg(test)]
-pub(in crate::api::acp) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
+pub(in crate::acp) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
     super::logging::summarize_letta_event_for_log(value)
 }

@@ -3,10 +3,10 @@
 // `pub use den_runtime::*` shims here were dropped in the final flip). What remains
 // in `core` are the den-binary-local subsystems.
 //
-// The ACP edge (`acp` + its runtime/tokens/turn_runner) moved to `den-api` (v1.5
+// The ACP edge (`acp` + its runtime/tokens/turn_runner) lives in `den-acp` (v1.5
 // split); re-exported here so `crate::core::acp*` call sites (seeds, web) are
 // unchanged until those callers migrate off the binary-local path.
-pub use den_api::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
+pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // `api_utils`, `email`, and `user` moved to the shared edge foundation crate
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.

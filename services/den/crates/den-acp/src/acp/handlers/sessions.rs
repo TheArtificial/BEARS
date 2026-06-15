@@ -8,24 +8,22 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    api::{
-        acp::{
-            check_adapter_contract,
-            paths::{is_absolute_local_path, optional_absolute_cwd_filter},
-            plan_approval_fallback_payload,
-            responses::acp_error_response,
-            tool_results::default_unavailable_context_budget,
-            ACP_SESSIONS_PAGE_SIZE,
-        },
-        auth,
-        service::ApiState,
+    acp::{
+        check_adapter_contract,
+        paths::{is_absolute_local_path, optional_absolute_cwd_filter},
+        plan_approval_fallback_payload,
+        responses::acp_error_response,
+        tool_results::default_unavailable_context_budget,
+        ACP_SESSIONS_PAGE_SIZE,
     },
-    errors::CustomError,
+    service::ApiState,
     core::{
         acp_tokens,
         docket::{DocketService, PgDocketService, WorkPlanLookup},
     },
 };
+use den_http::errors::CustomError;
+use den_oauth::auth;
 use den_runtime::{
     acp_plan_mode,
     acp_sessions,
@@ -35,7 +33,7 @@ use den_runtime::{
     role_runtime::{RoleRuntime, RoleTurnScope},
 };
 
-use crate::api::acp::{
+use crate::acp::{
     acp_session_row_to_http_with_modes, decode_acp_sessions_cursor, encode_acp_sessions_cursor,
     format_acp_session_timestamp, resolve_acp_turn_context, tools_enabled_for_client,
     AcpAdapterEnvironmentRequest, AcpPromptMemoryQuery, AcpPromptMemoryResponse,
@@ -70,7 +68,7 @@ fn runtime_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<Stri
 }
 
 
-pub(in crate::api::acp) async fn get_acp_session_prompt_memory(
+pub(in crate::acp) async fn get_acp_session_prompt_memory(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     Query(query): Query<AcpPromptMemoryQuery>,
@@ -148,7 +146,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
     .into_response())
 }
 
-pub(in crate::api::acp) async fn list_acp_sessions(
+pub(in crate::acp) async fn list_acp_sessions(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpSessionsListQuery>,
@@ -230,7 +228,7 @@ pub(super) async fn list_acp_sessions_inner(
     .into_response())
 }
 
-pub(in crate::api::acp) async fn get_acp_session(
+pub(in crate::acp) async fn get_acp_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -242,7 +240,7 @@ pub(in crate::api::acp) async fn get_acp_session(
     }
 }
 
-pub(in crate::api::acp) async fn get_acp_session_runtime(
+pub(in crate::acp) async fn get_acp_session_runtime(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -380,7 +378,7 @@ pub(super) async fn get_acp_session_runtime_inner(
     .into_response())
 }
 
-pub(in crate::api::acp) async fn set_session_mode(
+pub(in crate::acp) async fn set_session_mode(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -393,7 +391,7 @@ pub(in crate::api::acp) async fn set_session_mode(
     }
 }
 
-pub(in crate::api::acp) async fn post_adapter_environment(
+pub(in crate::acp) async fn post_adapter_environment(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -498,7 +496,7 @@ pub(super) async fn set_session_mode_inner(
     body: AcpSetModeRequest,
 ) -> Result<Response, CustomError> {
     if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
-        return Ok(crate::api::acp::compat::acp_compatibility_error_response(
+        return Ok(crate::acp::compat::acp_compatibility_error_response(
             err,
             Uuid::new_v4(),
         ));

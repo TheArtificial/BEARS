@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
-use crate::api::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
+use crate::acp::{AcpAdapterEnvironmentRequest, AcpPromptRequest, AcpStreamContext, acp_pair_den_tool_descriptors, looks_like_runtime_waiting_for_approval_error, requested_mode_from_prompt};
 use den_core::tools::constants::{
     DEN_PLAN_MODE_CANCEL_PROVIDER, DEN_PLAN_MODE_ENTER_PROVIDER,
     DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
@@ -22,7 +22,7 @@ use den_runtime::prompt_memory_blocks::{
     fn acp_test_runtime_event_stream(
         bytes: impl Stream<Item = Result<Bytes, CustomError>> + Send + 'static,
     ) -> std::pin::Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>> {
-        let bytes = futures::StreamExt::map(bytes, |item| item.map_err(crate::errors::DenError::from));
+        let bytes = futures::StreamExt::map(bytes, |item| item.map_err(den_http::errors::DenError::from));
         let events = runtime_byte_stream_to_event_stream(
             Box::pin(bytes),
             RuntimeEventParser {
@@ -33,10 +33,10 @@ use den_runtime::prompt_memory_blocks::{
             item.map_err(CustomError::from)
         }))
     }
+        use den_core::config::Config;
+        use den_http::errors::CustomError;
         use crate::{
-        config::Config,
-        errors::CustomError,
-        api::{acp::{
+        acp::{
             history::{acp_auto_title_instruction, map_canonical_history_page},
             prompt_context::{
                 acp_direct_tool_prompt_context_with_activity,
@@ -51,7 +51,8 @@ use den_runtime::prompt_memory_blocks::{
                 text::AcpTextChunker,
             },
             tool_results::acp_tool_result_response_from_delivery,
-        }, service::ApiState},
+        },
+        service::ApiState,
         core::{
             acp_runtime::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
@@ -443,7 +444,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let mut event = AcpGatewayEvent::ConversationResolved {
@@ -572,7 +573,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -688,7 +689,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -887,7 +888,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(tool_turns.clone()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
@@ -994,7 +995,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1101,7 +1102,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1209,7 +1210,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -2335,7 +2336,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn concurrent_letta_run_conflict_is_not_stale_approval() {
-        let err = crate::errors::DenError::System(
+        let err = den_http::errors::DenError::System(
             "Letta send message HTTP 409 Conflict: another run is still processing this conversation"
                 .to_string(),
         );
@@ -2742,8 +2743,8 @@ use den_runtime::prompt_memory_blocks::{
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();
-        let config = std::sync::Arc::new(crate::config::Config::test_stub());
-        let state = crate::api::service::ApiState {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = crate::service::ApiState {
             sqlx_pool: pool,
             config: config.clone(),
             bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
@@ -2874,12 +2875,12 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(
-                &crate::config::Config::test_stub(),
+                &den_core::config::Config::test_stub(),
             ),
         };
         let inner: std::pin::Pin<
@@ -2945,12 +2946,12 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(
-                &crate::config::Config::test_stub(),
+                &den_core::config::Config::test_stub(),
             ),
         };
         let inner: std::pin::Pin<
@@ -3068,12 +3069,12 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(
-                &crate::config::Config::test_stub(),
+                &den_core::config::Config::test_stub(),
             ),
         };
         let inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>> =
@@ -3240,11 +3241,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3549,11 +3550,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3605,11 +3606,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime,
             turn_scope: turn_scope.clone(),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3735,11 +3736,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3920,11 +3921,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4077,11 +4078,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4224,11 +4225,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
@@ -4312,11 +4313,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
@@ -4444,11 +4445,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4553,7 +4554,7 @@ use den_runtime::prompt_memory_blocks::{
             axum::serve(listener, app).await.unwrap();
         });
 
-        let config = crate::config::Config::load();
+        let config = den_core::config::Config::load();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4590,7 +4591,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
@@ -4637,7 +4638,7 @@ use den_runtime::prompt_memory_blocks::{
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
-        let config = crate::config::Config::load();
+        let config = den_core::config::Config::load();
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
@@ -4674,7 +4675,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
@@ -4824,11 +4825,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4925,8 +4926,8 @@ use den_runtime::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn runtime_tool_request_mapping_exposes_continuation_receiver_for_local_tools() {
-        use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
-        use crate::api::acp::stream::support::AcpStreamDiagnostics;
+        use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
+        use crate::acp::stream::support::AcpStreamDiagnostics;
         use den_runtime::runtime_provider::RuntimeStreamEvent;
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
@@ -4960,11 +4961,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let runtime_event = RuntimeStreamEvent::Semantic(
             den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
@@ -5235,11 +5236,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
@@ -5365,11 +5366,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5495,11 +5496,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -5617,11 +5618,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5847,11 +5848,11 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let provenance = super::stream::runtime::acp_session_provenance(&context);
@@ -5882,7 +5883,7 @@ use den_runtime::prompt_memory_blocks::{
             activity: None,
             request_id: Uuid::new_v4(),
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(den_core::config::Config::test_stub()),
             role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(
                 Uuid::new_v4(),
@@ -5890,7 +5891,7 @@ use den_runtime::prompt_memory_blocks::{
                 Some("conv-helper".to_string()),
             ),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&crate::config::Config::test_stub()),
+            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         });
         let record = den_runtime::conversation_events::CanonicalConversationRecord::conversation_resolved(
             "conv-validated",

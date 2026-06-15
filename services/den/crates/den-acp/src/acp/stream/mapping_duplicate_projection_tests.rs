@@ -1,6 +1,6 @@
-use crate::api::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
-use crate::api::acp::stream::support::AcpStreamDiagnostics;
-use crate::api::acp::AcpStreamContext;
+use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
+use crate::acp::stream::support::AcpStreamDiagnostics;
+use crate::acp::AcpStreamContext;
 use den_runtime::acp_tool_turns::AcpToolTurnCoordinator;
 use den_runtime::acp_events::AcpGatewayEvent;
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
@@ -39,12 +39,12 @@ fn test_mapping_context() -> AcpStreamContext {
         activity: None,
         request_id,
         pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-        config: Arc::new(crate::config::Config::test_stub()),
+        config: Arc::new(den_core::config::Config::test_stub()),
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
         memory_stores: den_runtime::memory::MemoryStoreManager::new(
-            &crate::config::Config::test_stub(),
+            &den_core::config::Config::test_stub(),
         ),
     }
 }

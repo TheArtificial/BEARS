@@ -6,10 +6,9 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::{
-    api::{auth::ApiError, service::ApiState},
-    errors::CustomError,
-};
+use crate::service::ApiState;
+use den_http::errors::CustomError;
+use den_oauth::auth::ApiError;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
@@ -62,33 +61,33 @@ pub(crate) struct AcpResolvedTurnContext {
 }
 
 #[derive(Clone)]
-pub(in crate::api::acp) struct AcpStreamContext {
-    pub(in crate::api::acp) pool: PgPool,
-    pub(in crate::api::acp) tool_turns: AcpToolTurnCoordinator,
-    pub(in crate::api::acp) user_id: i32,
-    pub(in crate::api::acp) user_profile: Option<crate::core::user::User>,
-    pub(in crate::api::acp) bear_id: Uuid,
-    pub(in crate::api::acp) bear_slug: String,
-    pub(in crate::api::acp) acp_session_id: String,
-    pub(in crate::api::acp) client: String,
-    pub(in crate::api::acp) conversation_id: String,
-    pub(in crate::api::acp) conversation_selection: String,
-    pub(in crate::api::acp) resolved_conversation_id: Option<String>,
-    pub(in crate::api::acp) upstream_target: String,
-    pub(in crate::api::acp) workspace_roots: Vec<String>,
-    pub(in crate::api::acp) session_policy: Option<serde_json::Value>,
-    pub(in crate::api::acp) activity: Option<serde_json::Value>,
-    pub(in crate::api::acp) request_id: Uuid,
-    pub(in crate::api::acp) pair_agent_id: String,
-    pub(in crate::api::acp) config: Arc<crate::config::Config>,
-    pub(in crate::api::acp) role_runtime: RoleRuntime,
-    pub(in crate::api::acp) turn_scope: RoleTurnScope,
-    pub(in crate::api::acp) prompt_memory_diagnostic: serde_json::Value,
-    pub(in crate::api::acp) memory_stores: MemoryStoreManager,
+pub(in crate::acp) struct AcpStreamContext {
+    pub(in crate::acp) pool: PgPool,
+    pub(in crate::acp) tool_turns: AcpToolTurnCoordinator,
+    pub(in crate::acp) user_id: i32,
+    pub(in crate::acp) user_profile: Option<crate::core::user::User>,
+    pub(in crate::acp) bear_id: Uuid,
+    pub(in crate::acp) bear_slug: String,
+    pub(in crate::acp) acp_session_id: String,
+    pub(in crate::acp) client: String,
+    pub(in crate::acp) conversation_id: String,
+    pub(in crate::acp) conversation_selection: String,
+    pub(in crate::acp) resolved_conversation_id: Option<String>,
+    pub(in crate::acp) upstream_target: String,
+    pub(in crate::acp) workspace_roots: Vec<String>,
+    pub(in crate::acp) session_policy: Option<serde_json::Value>,
+    pub(in crate::acp) activity: Option<serde_json::Value>,
+    pub(in crate::acp) request_id: Uuid,
+    pub(in crate::acp) pair_agent_id: String,
+    pub(in crate::acp) config: Arc<den_core::config::Config>,
+    pub(in crate::acp) role_runtime: RoleRuntime,
+    pub(in crate::acp) turn_scope: RoleTurnScope,
+    pub(in crate::acp) prompt_memory_diagnostic: serde_json::Value,
+    pub(in crate::acp) memory_stores: MemoryStoreManager,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::api::acp) enum ToolExecutionRoute {
+pub(in crate::acp) enum ToolExecutionRoute {
     DenServer,
     AdapterLocal,
     Unsupported,
@@ -104,14 +103,14 @@ impl From<ToolExecutionRoute> for ControllerToolExecutionRoute {
     }
 }
 
-pub(in crate::api::acp) struct PersistedToolRequestEffect {
-    pub(in crate::api::acp) tool_call_id: String,
-    pub(in crate::api::acp) tool_name: String,
-    pub(in crate::api::acp) route: ToolExecutionRoute,
-    pub(in crate::api::acp) den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+pub(in crate::acp) struct PersistedToolRequestEffect {
+    pub(in crate::acp) tool_call_id: String,
+    pub(in crate::acp) tool_name: String,
+    pub(in crate::acp) route: ToolExecutionRoute,
+    pub(in crate::acp) den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
 }
 
-pub(in crate::api::acp) type AcpFrameResult = Result<
+pub(in crate::acp) type AcpFrameResult = Result<
     (
         Vec<AcpGatewayEvent>,
         Option<PersistedToolRequestEffect>,
@@ -120,7 +119,7 @@ pub(in crate::api::acp) type AcpFrameResult = Result<
     std::io::Error,
 >;
 
-pub(in crate::api::acp) type AcpContinueToolPrepared = Result<
+pub(in crate::acp) type AcpContinueToolPrepared = Result<
     (
         den_runtime::runtime_provider::RuntimeStreamContinuation,
         den_runtime::runtime_provider::RuntimeEventStream,
@@ -129,18 +128,18 @@ pub(in crate::api::acp) type AcpContinueToolPrepared = Result<
     CustomError,
 >;
 
-pub(in crate::api::acp) enum AcpResolvedToolResult {
+pub(in crate::acp) enum AcpResolvedToolResult {
     Receiver(oneshot::Receiver<AcpToolResultRequest>),
 }
 
-pub(in crate::api::acp) enum AcpPendingFuture {
+pub(in crate::acp) enum AcpPendingFuture {
     Frame(Pin<Box<dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send>>),
     Tool(Pin<Box<dyn Future<Output = Option<Box<AcpToolResultRequest>>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = AcpContinueToolPrepared> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
 
-pub(in crate::api::acp) type AcpPromptInnerResult = Result<Result<Response, CustomError>, ApiError>;
+pub(in crate::acp) type AcpPromptInnerResult = Result<Result<Response, CustomError>, ApiError>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdapterContract {

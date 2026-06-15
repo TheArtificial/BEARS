@@ -523,6 +523,7 @@ dependencies = [
  "axum-login",
  "base64",
  "bytes",
+ "den-acp",
  "den-api",
  "den-core",
  "den-docket",

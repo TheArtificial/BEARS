@@ -1,4 +1,4 @@
-use crate::api::acp::stream::mapping::runtime_stream_event_to_acp_seed_value;
+use crate::acp::stream::mapping::runtime_stream_event_to_acp_seed_value;
 use den_runtime::runtime_provider::{
     RuntimeConversationRef, RuntimeSemanticEvent, RuntimeStreamEvent,
 };

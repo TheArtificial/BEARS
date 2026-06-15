@@ -1,11 +1,11 @@
-use crate::errors::DenError;
+use den_http::errors::DenError;
 
 pub(crate) fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
     den_runtime::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
 }
 
 pub(crate) async fn cancel_runtime_runs_by_id_or_skip(
-    _state: &crate::api::service::ApiState,
+    _state: &crate::service::ApiState,
     pair_agent_id: &str,
     run_ids: &[String],
     reason: &str,

@@ -12,20 +12,18 @@ use uuid::Uuid;
 const ACP_EAGER_PREFIX_DRIVE_TIMEOUT_MS: u64 = 3000;
 
 use crate::{
-    api::{
-        acp::{
-            acp_error_status_message, acp_stream_tokens_enabled,
-            history::pending_session_title_update_event, AcpGatewayEvent, AcpStreamContext,
-        },
-        auth::ApiError,
-        service::ApiState,
+    acp::{
+        acp_error_status_message, acp_stream_tokens_enabled,
+        history::pending_session_title_update_event, AcpGatewayEvent, AcpStreamContext,
     },
-    errors::CustomError,
+    service::ApiState,
     core::{
         acp_runtime::{is_acp_history_target, AcpConversationResolution},
         user,
     },
 };
+use den_http::errors::CustomError;
+use den_oauth::auth::ApiError;
 use den_runtime::{
     acp_sessions,
     acp_tools::AcpResolvedSessionPolicy,
@@ -40,16 +38,16 @@ use den_runtime::{
 
 use super::sse_stream::AcpRuntimeSseStream;
 
-pub(in crate::api::acp) struct AcpStreamSetup {
-    pub(in crate::api::acp) initial_events: Vec<AcpGatewayEvent>,
-    pub(in crate::api::acp) session_info_event_sent: bool,
-    pub(in crate::api::acp) workspace_roots: Vec<String>,
-    pub(in crate::api::acp) stream_tokens: bool,
-    pub(in crate::api::acp) turn_runtime_context: String,
-    pub(in crate::api::acp) prompt_memory_diagnostic: serde_json::Value,
+pub(in crate::acp) struct AcpStreamSetup {
+    pub(in crate::acp) initial_events: Vec<AcpGatewayEvent>,
+    pub(in crate::acp) session_info_event_sent: bool,
+    pub(in crate::acp) workspace_roots: Vec<String>,
+    pub(in crate::acp) stream_tokens: bool,
+    pub(in crate::acp) turn_runtime_context: String,
+    pub(in crate::acp) prompt_memory_diagnostic: serde_json::Value,
 }
 
-pub(in crate::api::acp) async fn build_acp_stream_setup(
+pub(in crate::acp) async fn build_acp_stream_setup(
     state: &ApiState,
     user_id: i32,
     bear: &Bear,
@@ -129,7 +127,7 @@ pub(in crate::api::acp) async fn build_acp_stream_setup(
     })
 }
 
-pub(in crate::api::acp) async fn build_acp_sse_response(
+pub(in crate::acp) async fn build_acp_sse_response(
     state: ApiState,
     user_id: i32,
     request_id: Uuid,
@@ -279,7 +277,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan.as_ref().map(|plan| serde_json::json!(plan));
     let event_upstream = futures::StreamExt::map(event_upstream, |item| {
-        item.map_err(crate::errors::CustomError::from)
+        item.map_err(den_http::errors::CustomError::from)
     });
     let stream = AcpRuntimeSseStream::new(
         event_upstream,

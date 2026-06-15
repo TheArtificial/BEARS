@@ -1,6 +1,6 @@
 //! Library surface for integration tests and embedding. The binary entrypoint is [`run`].
 //!
-//! Clippy: broad suppressions live on the largest legacy modules (for example [`crate::api::oauth`]);
+//! Clippy: broad suppressions live on the largest legacy modules (for example `den_oauth::oauth`);
 //! prefer fixing warnings locally and shrinking those module allows over time.
 // The API + ACP edge moved to the `den-api` crate (v1.5 split). Re-exported as
 // `crate::api` so the remaining binary call sites (run/web/seeds) resolve unchanged.
@@ -73,7 +73,7 @@ pub async fn run() -> Result<(), StartupError> {
     // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
     // composition lives here in the binary (`core::tools`), so we install it at the
     // composition root before any request can execute a tool.
-    crate::api::set_tool_invoker(Arc::new(
+    den_runtime::native_runtime::set_tool_invoker(Arc::new(
         crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
     ));
 

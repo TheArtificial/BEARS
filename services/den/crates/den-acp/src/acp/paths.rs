@@ -1,6 +1,6 @@
 use std::path::Path as FsPath;
 
-use crate::errors::CustomError;
+use den_http::errors::CustomError;
 
 pub(super) fn is_absolute_local_path(path: &str) -> bool {
     let path = path.trim();
