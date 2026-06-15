@@ -102,11 +102,12 @@ async fn build_recall_section(
     if !embedder.is_enabled() {
         return None;
     }
-    let projection = match crate::recall::recall_for_turn(
+    let projection = match crate::recall::recall_for_turn_scoped(
         &qdrant,
         &embedder,
         &ctx.config.embedding_standard,
         ctx.bear_id,
+        ctx.profile.as_str(),
         query_text,
         5,
     )

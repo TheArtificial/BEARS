@@ -171,6 +171,22 @@ pub async fn recall_for_turn<E: PassageEmbedder + ?Sized>(
     search_passages(qdrant, embedder, filter, embedding_standard, query_text, limit).await
 }
 
+/// Role-scoped turn recall: like [`recall_for_turn`] but limited to memory **visible to `role`**
+/// (shared + own role-local), so the assembler's `## Recalled memory` section honors the same
+/// role-local boundary as the `memory_search` tool (AGENTS.md: `work` must not read raw `pair/`).
+pub async fn recall_for_turn_scoped<E: PassageEmbedder + ?Sized>(
+    qdrant: &QdrantRecall,
+    embedder: &E,
+    embedding_standard: &str,
+    bear_id: Uuid,
+    role: &str,
+    query_text: &str,
+    limit: usize,
+) -> Result<RecallProjection, DenError> {
+    let filter = role_scope_filter(bear_id, embedding_standard, role);
+    search_passages(qdrant, embedder, filter, embedding_standard, query_text, limit).await
+}
+
 /// Convenience **bear-wide** semantic search for the admin UI (the human admin sees all of a
 /// Bear's memory): builds the live Qdrant + Bifrost embedding clients from config. Returns a
 /// `disabled`-tagged projection (never an error) when recall isn't fully configured.
@@ -229,31 +245,98 @@ pub async fn search_bear_memory_for_role(
     .await
 }
 
-/// Shape a recall projection into the `memory_search` tool's JSON (`strategy: "vector"`),
-/// mirroring the keyword path's provenance (`memory_id`, `path`, `snippet`) plus a similarity
-/// `score`. Snippets are truncated to the shared per-passage cap.
-pub fn recall_projection_to_search_json(projection: &RecallProjection, query: &str) -> Value {
-    let hits: Vec<Value> = projection
-        .passages
-        .iter()
-        .map(|p| {
-            json!({
-                "memory_id": p.memory_id,
-                "path": p.logical_path,
-                "kind": p.kind,
-                "score": p.score,
-                "snippet": truncate_chars(&p.text, SNIPPET_CHARS),
-            })
-        })
-        .collect();
+/// Hybrid `memory_search` (ADR-0038 Phase 3): the **union** of the derived vector leg and the
+/// keyword (`LIKE`) leg over canonical SQLite, both role-scoped to the same visibility. Vector
+/// hits rank first (semantic relevance is higher-signal and carries a `score`); keyword-only
+/// matches fill the remaining slots, surfacing exact-substring hits the vector leg missed.
+///
+/// The vector leg is best-effort: an unconfigured index or any transport error degrades to the
+/// keyword leg alone (logged), never failing the tool. The keyword leg reads the canonical store,
+/// so its errors propagate.
+pub async fn hybrid_memory_search(
+    config: &Config,
+    bear_id: Uuid,
+    role: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Value, DenError> {
+    let vector = match search_bear_memory_for_role(config, bear_id, role, query, limit).await {
+        Ok(projection) => projection,
+        Err(error) => {
+            tracing::warn!(%error, "recall vector leg failed; returning keyword results only");
+            disabled_projection("vector_error")
+        }
+    };
+
+    let stores = crate::memory::MemoryStoreManager::new(config);
+    let store = stores.store_for_bear(bear_id).await?;
+    let limit_i64 = i64::try_from(limit).unwrap_or(10);
+    let keyword = crate::memory::tools::sqlite_memory_search(&store, role, query, limit_i64).await?;
+
+    Ok(merge_search_results(&vector, &keyword, query, limit))
+}
+
+/// Merge a vector projection with the keyword leg's JSON into the unified `memory_search` result.
+/// De-dupes by `memory_id` (a record surfaced by the higher-signal vector leg is not repeated as
+/// a keyword hit), preserves vector ranking, caps to `limit`, and tags each hit's `source` plus a
+/// top-level `strategy` (`hybrid` | `vector` | `keyword`).
+fn merge_search_results(
+    vector: &RecallProjection,
+    keyword: &Value,
+    query: &str,
+    limit: usize,
+) -> Value {
+    let mut hits: Vec<Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for passage in &vector.passages {
+        seen.insert(passage.memory_id.clone());
+        hits.push(json!({
+            "memory_id": passage.memory_id,
+            "path": passage.logical_path,
+            "kind": passage.kind,
+            "score": passage.score,
+            "snippet": truncate_chars(&passage.text, SNIPPET_CHARS),
+            "source": "vector",
+        }));
+    }
+    let vector_count = hits.len();
+
+    let mut keyword_count = 0usize;
+    if let Some(arr) = keyword.get("hits").and_then(Value::as_array) {
+        for hit in arr {
+            let Some(memory_id) = hit.get("memory_id").and_then(Value::as_str) else {
+                continue;
+            };
+            if !seen.insert(memory_id.to_string()) {
+                continue;
+            }
+            keyword_count += 1;
+            hits.push(json!({
+                "memory_id": memory_id,
+                "path": hit.get("path").cloned().unwrap_or(Value::Null),
+                "kind": hit.get("kind").cloned().unwrap_or(Value::Null),
+                "score": Value::Null,
+                "snippet": hit.get("snippet").cloned().unwrap_or(Value::Null),
+                "source": "keyword",
+            }));
+        }
+    }
+    hits.truncate(limit);
+
+    let strategy = match (vector_count > 0, keyword_count > 0) {
+        (true, true) => "hybrid",
+        (true, false) => "vector",
+        (false, _) => "keyword",
+    };
     json!({
         "ok": true,
         "configured": true,
-        "storage": "vector",
-        "strategy": "vector",
+        "storage": "hybrid",
+        "strategy": strategy,
         "query": query,
         "hits": hits,
-        "diagnostic": projection.diagnostic,
+        "diagnostic": vector.diagnostic,
     })
 }
 
@@ -372,21 +455,65 @@ mod tests {
     }
 
     #[test]
-    fn search_json_carries_provenance() {
-        let projection = RecallProjection {
+    fn merge_unions_vector_then_keyword_and_dedupes() {
+        let vector = RecallProjection {
             passages: vec![passage("m1", "core/a.md", 0.91)],
             diagnostic: json!({ "status": "ok" }),
         };
-        let value = recall_projection_to_search_json(&projection, "fox");
-        assert_eq!(value["storage"], "vector");
-        assert_eq!(value["strategy"], "vector");
-        assert_eq!(value["query"], "fox");
+        // Keyword leg re-surfaces m1 (must be deduped) and adds a unique m2.
+        let keyword = json!({
+            "hits": [
+                { "memory_id": "m1", "path": "core/a.md", "kind": "note", "snippet": "dup" },
+                { "memory_id": "m2", "path": "work/b.md", "kind": "note", "snippet": "exact match" },
+            ]
+        });
+        let value = merge_search_results(&vector, &keyword, "fox", 10);
+
+        assert_eq!(value["storage"], "hybrid");
+        assert_eq!(value["strategy"], "hybrid");
         let hits = value["hits"].as_array().expect("hits array");
-        assert_eq!(hits.len(), 1);
+        assert_eq!(hits.len(), 2, "m1 deduped, m2 appended: {hits:?}");
+        // Vector hit ranks first and carries its score + source.
         assert_eq!(hits[0]["memory_id"], "m1");
-        assert_eq!(hits[0]["path"], "core/a.md");
-        assert_eq!(hits[0]["kind"], "note");
+        assert_eq!(hits[0]["source"], "vector");
         assert!((hits[0]["score"].as_f64().unwrap() - 0.91).abs() < 1e-6);
         assert!(hits[0]["snippet"].as_str().unwrap().contains("quick brown fox"));
+        // Keyword-only hit follows, unranked.
+        assert_eq!(hits[1]["memory_id"], "m2");
+        assert_eq!(hits[1]["source"], "keyword");
+        assert!(hits[1]["score"].is_null());
+    }
+
+    #[test]
+    fn merge_strategy_reflects_contributing_legs() {
+        let only_vector = merge_search_results(
+            &RecallProjection { passages: vec![passage("m1", "core/a.md", 0.9)], diagnostic: Value::Null },
+            &json!({ "hits": [] }),
+            "q",
+            10,
+        );
+        assert_eq!(only_vector["strategy"], "vector");
+
+        let only_keyword = merge_search_results(
+            &RecallProjection { passages: vec![], diagnostic: Value::Null },
+            &json!({ "hits": [{ "memory_id": "m9", "path": "p", "kind": "note", "snippet": "s" }] }),
+            "q",
+            10,
+        );
+        assert_eq!(only_keyword["strategy"], "keyword");
+    }
+
+    #[test]
+    fn merge_caps_to_limit_prioritizing_vector() {
+        let vector = RecallProjection {
+            passages: vec![passage("m1", "core/a.md", 0.9), passage("m2", "core/b.md", 0.8)],
+            diagnostic: Value::Null,
+        };
+        let keyword = json!({ "hits": [{ "memory_id": "m3", "path": "p", "kind": "note", "snippet": "s" }] });
+        let value = merge_search_results(&vector, &keyword, "q", 2);
+        let hits = value["hits"].as_array().expect("hits");
+        assert_eq!(hits.len(), 2, "capped to limit");
+        assert_eq!(hits[0]["memory_id"], "m1");
+        assert_eq!(hits[1]["memory_id"], "m2", "vector hits retained over keyword when capping");
     }
 }

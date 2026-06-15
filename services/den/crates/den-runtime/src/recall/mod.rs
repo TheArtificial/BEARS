@@ -22,7 +22,7 @@ pub use indexer::{IndexOutcome, PassageEmbedder, RecallIndexer};
 pub use policy::IndexRequest;
 pub use qdrant::{collection_name, QdrantPoint, QdrantRecall, RecallHit};
 pub use query::{
-    recall_for_turn, recall_projection_to_search_json, render_recall_block,
+    hybrid_memory_search, recall_for_turn, recall_for_turn_scoped, render_recall_block,
     search_bear_memory_for_role, semantic_search_for_bear, RecallProjection, RecalledPassage,
 };
 pub use reconcile::{reconcile_bear, ReconcileOutcome};
