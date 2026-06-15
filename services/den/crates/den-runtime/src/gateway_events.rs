@@ -365,10 +365,10 @@ fn native_letta_tool_request_event_with_args(
 ) -> Option<GatewayEvent> {
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
-    let acp_tool = ClientToolName::from_provider_alias(tool_name);
+    let client_tool = ClientToolName::from_provider_alias(tool_name);
     let den_server_tool =
         builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
-    let unsupported_tool_detail = if acp_tool.is_none() && !den_server_tool {
+    let unsupported_tool_detail = if client_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
             .map(str::to_string)
@@ -407,7 +407,7 @@ fn native_letta_tool_request_event_with_args(
             _ => return None,
         }
     };
-    if let Some(tool) = acp_tool {
+    if let Some(tool) = client_tool {
         let descriptor = tool.descriptor();
         if let Some(missing) = tool.missing_required_string_arg(&args) {
             if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
@@ -439,7 +439,7 @@ fn native_letta_tool_request_event_with_args(
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
     let adapter_approval_required =
-        acp_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
+        client_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
     let letta_approval_request_id = has_letta_approval_request.then(|| {
         // Prefer an explicit `approval_request_id` (carried by the runtime-parser seed
         // value) before the raw Letta `id` field. Reading only `id` regenerated a fresh
@@ -469,13 +469,13 @@ fn native_letta_tool_request_event_with_args(
         tool_call_id,
         approval_request_id: letta_approval_request_id,
         tool_name: tool_name.to_string(),
-        title: acp_tool
+        title: client_tool
             .map(|tool| tool.descriptor().title.to_string())
             .unwrap_or_else(|| tool_name.to_string()),
         kind: if unsupported_tool_detail.is_some() {
             "unsupported".to_string()
         } else {
-            acp_tool
+            client_tool
                 .map(|tool| tool.descriptor().kind.to_string())
                 .unwrap_or_else(|| "server_tool".to_string())
         },

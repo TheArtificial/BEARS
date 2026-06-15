@@ -1,6 +1,6 @@
 # ADR-0043 Classification Audit — `acp_*` symbols in `den-runtime` / `den-core`
 
-**Status:** Draft (implementation checklist)
+**Status:** Implemented (see §Implementation outcome)
 **Date:** 2026-06-15
 **Source decision:** [ADR-0043 — ACP is an edge adapter; the Den runtime is protocol-agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)
 
@@ -145,3 +145,37 @@ The ACP-flavored event model + its SSE adapter + Letta-named mappers. The core a
 ## Safety net (precondition, currently missing)
 
 ADR-0043 and `DEN_NATIVE_RUNTIME_PLAN.md` (Phase 5) reference **`bearwire_projection/golden_traces_tests.rs`** as the harness that asserts `OpenAI SSE → semantic events → BearWire projection → adapter SSE`. **That file does not exist yet.** Present coverage to lean on: `den-acp/src/acp/tests.rs` (98 tests), `den-runtime/.../bearwire_projection/test.rs` (8), and `den/src/core/runtime_bearwire_bridge_tests.rs` (full-pipeline). Before step 1, add the golden-trace file so the rename has a behavior-locking net, as the ADR assumes.
+
+## Implementation outcome
+
+All staged steps landed behind the golden-trace net. Mapping of plan → result:
+
+| Step | Outcome | Commit(s) |
+|---|---|---|
+| 0. Golden-trace net | `bearwire_projection/golden_traces_tests.rs` added (15 tests) | `fb1f4d6a` |
+| 1. Pure core renames | `turn_controller`, `tool_turns`, `turn_runner` (dropped `Acp*`) | `bc8d1571`, `1f838205`, `5c6ad2ef` |
+| 2. `den-core` `AcpToolDisplayDescriptor` → `ToolDisplayDescriptor` | done | `087ffd4b` |
+| 4. `acp_plan_mode` → `plan_mode` | capability stays core | `38ab2d02` |
+| 5a. `acp_events` → `gateway_events` / `AcpGatewayEvent` → `GatewayEvent` | de-Letta-named; canonical model kept in core | `e753ecb2` |
+| 5b-A. `acp_tools` → `client_tools` | neutral in-place rename (kept core: it is core tool vocabulary, not just advertisement) | `38cbfa97` |
+| 5b-B. Descriptor split | ACP wire methods (`adapter_method`/`client_method`) + descriptor advertisement moved to `den-acp::acp::client_tool_advertisement` (`AcpWire` table); core descriptor + `ToolPolicy::to_json` no longer carry wire methods | `79abe689`, `211a6095` |
+| 6. `ApiState` → `DenState` | moved to `den-runtime`; state inversion fixed | `70c5344a` |
+| 6-follow-on. Composition root | `create_api_app` takes injected peer routers; `den-api` no longer depends on `den-acp` | `39ad7a73` |
+| 7. Shim sweep + residual doc | this section | — |
+
+### Step 7: shim sweep
+
+**No transitional shims remained to remove.** Each rename was done in place (via `git mv` + reference rewrites), so no back-compat `pub use … as acp_*` aliases were introduced in `den-runtime`/`den-core`. The only `as acp_*` re-exports in the tree are inside the **`den-acp` edge** (`den-acp/src/core/mod.rs`: `pub use acp::{runtime,tokens,turn_runner} as acp_*`), which are appropriate there (that crate *is* the ACP edge) and are consumed by the binary's `core/mod.rs`.
+
+### Residual `acp_*` / `ACP` surface in core — intentional, descoped
+
+These remain by design; renaming them is high-risk (DB/identity/log contracts) for negligible architectural gain, and ADR-0043 only requires the *core concepts* to be protocol-agnostic, not stored identifiers:
+
+1. **DB-bound names** — `acp_sessions` module ↔ Postgres `acp_sessions` table, and `acp_session_id` column across multiple tables (and the matching `den-core` `client`/store helper keys). Renaming the Rust symbols would desync them from live schema or force a migration. The session **type** (`SessionId`) is already neutral.
+2. **Stable tool identities** — `client_tools` descriptors keep `canonical_name: "acp.<domain>.<tool>"` (e.g. `acp.fs.edit_file`). These canonical names appear in persisted records, the policy JSON `canonical_tool` field, and logs; they are stable identifiers, not live vocabulary.
+3. **Diagnostic / log string values** — `scope_basis: "acp:tools"`, target labels like `"acp_client"`, gateway-event `"component": "den.acp"`, and human-readable diagnostic text ("Unsupported ACP/Den tool…", "local ACP tool"). These are observability contracts (dashboards/alerts), not type names.
+4. **`den-core` enum variant** `ToolScopeKind::AcpClientWorkspace` and `config.acp_gateway_enabled` (+ `ACP_GATEWAY_ENABLED` env) — the scope variant genuinely describes an ACP client workspace, and the flag is the ACP-edge feature gate (env name kept for deploy compat).
+
+As a low-cost polish, the local `acp_tool` binding in `gateway_events.rs` was neutralized to `client_tool`.
+
+**Result:** the core agent-loop concepts (turns, tool turns, plan mode, gateway events, client-tool vocabulary, shared state) carry no ACP-typed names, and the ACP wire methods + advertisement live solely in `den-acp`. Remaining `acp`/`ACP` mentions in core are DB identifiers, stable tool identities, observability strings, and one edge feature flag.
