@@ -219,8 +219,21 @@ pub async fn run() -> Result<(), StartupError> {
         })?;
 
         let config_api = config.clone();
-        let api_app = api::create_api_app(sqlx_pool.clone(), session_store.clone(), config_api)
-            .await
+        // Composition root: wire the peer HTTP edges together. den-api owns the
+        // JSON/REST + OAuth app; the ACP edge (den-acp) is injected here as peer
+        // routers so neither edge depends on the other (ADR-0043).
+        let mut peer_routers: Vec<(&'static str, axum::Router<den_acp::DenState>)> =
+            vec![("/internal", den_acp::internal::router())];
+        if config.acp_gateway_enabled {
+            peer_routers.push(("/acp", den_acp::acp::router()));
+        }
+        let api_app = api::create_api_app(
+            sqlx_pool.clone(),
+            session_store.clone(),
+            config_api,
+            peer_routers,
+        )
+        .await
             .map_err(|e| {
                 tracing::error!("Failed to create API application: {}", e);
                 std::io::Error::other(e.to_string())

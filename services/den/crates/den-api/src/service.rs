@@ -79,16 +79,25 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// - Configures secure session cookies with appropriate SameSite policy
 /// - Includes CORS headers for OAuth flows
 /// - Integrates with existing permission system
+/// Assemble the JSON/REST + OAuth HTTP app.
+///
+/// Peer edge surfaces (e.g. the ACP edge in `den-acp`) are *injected* by the
+/// binary composition root as `(mount_path, router)` pairs rather than mounted
+/// here, so this crate has no compile-time dependency on any sibling edge
+/// (ADR-0043: edges are peers; the binary wires them together). Injected routers
+/// are nested before state/middleware so they share `DenState` and the API CORS
+/// and tracing layers.
 pub async fn create_api_app(
     sqlx_pool: PgPool,
     session_store: PostgresStore,
     config: Arc<Config>,
+    peer_routers: Vec<(&'static str, Router<DenState>)>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     // Extract URLs before moving config
     let web_server_url = config.web_server_url.clone();
     let api_server_url = config.api_server_url.clone();
 
-    // Create API application state (owned by den-acp; built via its constructor).
+    // Create shared application state (DenState lives in den-runtime, below every edge).
     let api_state = DenState::new(
         sqlx_pool.clone(),
         config.clone(),
@@ -114,12 +123,12 @@ pub async fn create_api_app(
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
         .nest("/v1.0", crate::v1::router())
-        .nest("/internal", den_acp::internal::router())
         // API documentation (no authentication required)
         .merge(crate::docs::router());
 
-    if config.acp_gateway_enabled {
-        main_router = main_router.nest("/acp", den_acp::acp::router());
+    // Mount peer edge routers injected by the composition root (e.g. den-acp).
+    for (mount_path, router) in peer_routers {
+        main_router = main_router.nest(mount_path, router);
     }
 
     let router = main_router
