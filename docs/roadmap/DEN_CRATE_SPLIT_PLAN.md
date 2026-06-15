@@ -172,8 +172,8 @@ Each step keeps the workspace green and is behavior-free; idiom tightening for m
 2. ✅ **`den-llm`** (stable leaf).
 3. ✅ **`den-memory`** + **`den-docket`** leaves. *(The planned standalone `den-tools` was built then dissolved — surface folded into `den-core` as `den_core::tools`, executors stayed in the binary; see v1.4.)*
 4. ✅ **`den-runtime`** (defines `RuntimeToolInvoker`; implements the inversion traits). **Done 2026-06 — see *v1.4* below.**
-5. ⏳ **`den-acp`**, then **`den-api`**, **`den-web`** (edges). *(next)*
-6. ⏳ The original `den` crate collapses to the thin binary: startup, DI, router composition.
+5. ✅ **`den-http`** (foundation) + **`den-oauth`** + **`den-web`** + **`den-acp`** + **`den-api`** (edges). **Done 2026-06 — see *v1.5 / v1.5+ COMPLETE* logs below.** (Order as-built: foundation → web/api → oauth → acp; den-api mounts den-acp.)
+6. ✅ The original `den` crate collapsed to a thin-ish binary: `main`/startup/DI/router composition (+ the `core/tools` executors, kept in-binary by design per the v1.4 `RuntimeToolInvoker` decision).
 
 #### v1.4 — `den-runtime` extraction plan (scoped 2026-06)
 
