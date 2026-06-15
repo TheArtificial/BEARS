@@ -457,6 +457,24 @@ fn escape_like(input: &str) -> String {
         .replace('_', "\\_")
 }
 
+fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecordRow, sqlx::Error> {
+    let metadata_raw: String = row.try_get("metadata_json")?;
+    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
+    Ok(MemoryRecordRow {
+        memory_id: row.try_get("memory_id")?,
+        sequence_no: row.try_get("sequence_no")?,
+        scope_type: MemoryScopeType::parse(&row.try_get::<String, _>("scope_type")?)
+            .unwrap_or(MemoryScopeType::ProfileLocal),
+        scope_profile: row.try_get("scope_profile").ok(),
+        kind: row.try_get("kind")?,
+        content_text: row.try_get("content_text")?,
+        logical_path: row.try_get("logical_path").ok(),
+        work_surface_ref: row.try_get("work_surface_ref").ok(),
+        metadata_json,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,22 +593,4 @@ mod tests {
             .expect("entity exists");
         assert_eq!(linked.display_name.as_deref(), Some("Ryan"));
     }
-}
-
-fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecordRow, sqlx::Error> {
-    let metadata_raw: String = row.try_get("metadata_json")?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or(serde_json::json!({}));
-    Ok(MemoryRecordRow {
-        memory_id: row.try_get("memory_id")?,
-        sequence_no: row.try_get("sequence_no")?,
-        scope_type: MemoryScopeType::parse(&row.try_get::<String, _>("scope_type")?)
-            .unwrap_or(MemoryScopeType::ProfileLocal),
-        scope_profile: row.try_get("scope_profile").ok(),
-        kind: row.try_get("kind")?,
-        content_text: row.try_get("content_text")?,
-        logical_path: row.try_get("logical_path").ok(),
-        work_surface_ref: row.try_get("work_surface_ref").ok(),
-        metadata_json,
-        created_at: row.try_get("created_at")?,
-    })
 }
