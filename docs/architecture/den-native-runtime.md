@@ -4,12 +4,13 @@
 
 This document is the canonical description of the **post-Letta** Bear Den runtime. It is the architecture source of truth that the migration plan in [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) drives toward.
 
-It rests on three decisions:
+It rests on these decisions:
 
 - [ADR-0031 — SQLite-first canonical store for Bear memory](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)
 - [ADR-0033 — Model tasks layer](../decisions/adr-0033-model-tasks-layer.md)
 - [ADR-0034 — Jobs and tasks work-management (Docket)](../decisions/adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0037 — Work sandbox, egress gateway, and upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — Phase 7 execution isolation and multi-identity GitHub policy
+- [ADR-0043 — ACP is an edge adapter; the Den runtime is protocol-agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md) — the runtime below owns turns/sessions/events under neutral names; ACP is one edge
 
 ## Why this exists (the direction change)
 
@@ -24,6 +25,7 @@ The target removes that split entirely. There is **no Letta server, no Letta Cod
 - **A turn is a Tokio task owned by Den**, not an HTTP call to another service. Cancellation is a `CancellationToken`, not external run-ids.
 - **Den owns conversation identity, message/context state, approvals, and compaction.** No conversation "materialization", no run-ids, no approval-deny recovery, no synthetic `TurnCompleted`.
 - **Bifrost is the inference substrate** (OpenAI-compatible), called directly by Den.
+- **The loop is protocol-agnostic; ACP is an edge adapter** ([ADR-0043](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)). The turn controller, tool-turn coordinator, session machinery, and semantic event stream are core organs of this loop — they carry neutral names and live in the runtime, not behind any wire protocol. ACP (like REST and the web UI) is a sibling adapter that projects the canonical BearWire semantic events ([ADR-0029](../decisions/adr-0029-den-structured-runtime-events.md)/[ADR-0030](../decisions/adr-0030-bearwire-resource-oriented-event-model.md)) to/from its wire format. The current `acp_*` naming inside `den-runtime` is historical drift that ADR-0043 corrects, not evidence those organs belong to ACP.
 - **Bear memory and cognition is canonical in per-Bear SQLite** (ADR-0031). The git MemFS sidecar is removed; git is retained only for human-authored artifacts.
 - **Tasks/jobs are not Bear memory.** They are Docket-canonical in Den Postgres (ADR-0034). The bear/Den boundary is drawn at memory, not tasks.
 

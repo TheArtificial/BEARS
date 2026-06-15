@@ -1,6 +1,8 @@
 # ACP Runtime Contract
 
 > **Direction changed (2026-06).** This contract remains the stable seam, but its only implementation is now the Den-native loop — Letta is removed rather than retained behind a provider switch. Treat Letta-backed adapter phases and runtime-provider selection as historical. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+>
+> **Boundary target ([ADR-0043](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)).** This is the *ACP edge* contract. The turn/session/tool-turn/event machinery it leans on is protocol-agnostic **core** (ADR-0035) and is to be renamed off its `acp_*` prefixes into `den-runtime`/`den-core`; ACP keeps only the wire concerns (framing, SSE mapping, plan entries, permission prompts, session bindings, and the BearWire→ACP projection).
 
 ## Purpose
 
