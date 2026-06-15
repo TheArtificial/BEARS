@@ -22,7 +22,7 @@ pub mod acp_events;
 pub mod tool_turns;
 
 /// Active-turn cancellation registry + turn controller (turn lifecycle).
-pub mod acp_turn_controller;
+pub mod turn_controller;
 
 /// The native agent runtime: provider/contracts, role runtime + registry, compaction,
 /// conversations, turn state, pair-turn, and the BearWire projection.

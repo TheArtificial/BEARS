@@ -12,7 +12,7 @@ use den_oauth::auth::ApiError;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     tool_turns::{ToolResultRequest, ToolTurnCoordinator},
-    acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
+    turn_controller::ToolExecutionRoute as ControllerToolExecutionRoute,
     memory::MemoryStoreManager,
     role_runtime::{RoleRuntime, RoleTurnScope},
 };

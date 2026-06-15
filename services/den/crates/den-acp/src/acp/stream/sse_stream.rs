@@ -15,7 +15,7 @@ use crate::{
         continue_acp_turn_with_runtime, looks_like_runtime_waiting_for_approval_error,
         map_runtime_stream_event_to_acp_adapter_events_with_persistence,
         mode_from_den_tool_result, plan_update_from_den_tool_result,
-        AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
+        ActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
         AcpStaleRuntimeCleanupParams, AcpStreamContext, TurnContinueRequest,
         RoleRuntimeBinding, default_tool_continue_stream_context,
     },
@@ -27,7 +27,7 @@ use den_http::errors::{CustomError, DenError};
 use den_runtime::{
     acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
     tool_turns::ToolResultRequest,
-    acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
+    turn_controller::{ActiveTurnCancelRegistry, TurnController, TurnPhase},
     role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
     runtime_contracts::RuntimeConversationRef,
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
@@ -62,8 +62,8 @@ pub(in crate::acp) struct AcpRuntimeSseStream {
     pub(in crate::acp) parked_adapter_result_rx:
         Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
-    pub(in crate::acp) cancel_handle: Option<AcpActiveTurnCancelHandle>,
-    pub(in crate::acp) turn_controller: AcpTurnController,
+    pub(in crate::acp) cancel_handle: Option<ActiveTurnCancelHandle>,
+    pub(in crate::acp) turn_controller: TurnController,
     /// Last time any SSE frame was queued for the adapter (assistant text, tools, status, etc.).
     pub(in crate::acp) last_adapter_update_at: Instant,
     pub(in crate::acp) status_heartbeat_interval: Duration,
@@ -241,7 +241,7 @@ impl AcpRuntimeSseStream {
     }
 
     fn should_emit_status_heartbeat(&self) -> bool {
-        self.turn_controller.phase() != AcpTurnPhase::Terminal
+        self.turn_controller.phase() != TurnPhase::Terminal
             && self.last_adapter_update_at.elapsed() >= self.status_heartbeat_interval
     }
 
@@ -256,7 +256,7 @@ impl AcpRuntimeSseStream {
     }
 
     fn ensure_status_heartbeat_scheduled(&mut self) {
-        if self.turn_controller.phase() == AcpTurnPhase::Terminal {
+        if self.turn_controller.phase() == TurnPhase::Terminal {
             self.status_heartbeat_sleep = None;
             return;
         }
@@ -275,7 +275,7 @@ impl AcpRuntimeSseStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<Bytes, std::io::Error>>> {
-        if self.turn_controller.phase() == AcpTurnPhase::Terminal {
+        if self.turn_controller.phase() == TurnPhase::Terminal {
             return Poll::Pending;
         }
         if self.should_emit_status_heartbeat() {
@@ -378,7 +378,7 @@ impl AcpRuntimeSseStream {
             pending.push_back(acp_event_to_adapter_sse(event));
             last_adapter_update_at = Instant::now();
         }
-        let mut turn_controller = AcpTurnController::new();
+        let mut turn_controller = TurnController::new();
         turn_controller.set_client_label(context.client.clone());
         turn_controller.on_stream_started();
         
@@ -433,7 +433,7 @@ impl AcpRuntimeSseStream {
 
     pub(in crate::acp) fn with_cancel_registration(
         mut self,
-        handle: AcpActiveTurnCancelHandle,
+        handle: ActiveTurnCancelHandle,
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
         self.cancel_handle = Some(handle);
@@ -442,7 +442,7 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::acp) fn cleanup_active_tool_turns(&mut self) {
-        if self.turn_controller.phase() != AcpTurnPhase::Terminal {
+        if self.turn_controller.phase() != TurnPhase::Terminal {
             return;
         }
         for pending in self
@@ -502,7 +502,7 @@ impl Stream for AcpRuntimeSseStream {
             .cancel_rx
             .as_ref()
             .is_some_and(|cancel_rx| *cancel_rx.borrow())
-            && this.turn_controller.phase() != AcpTurnPhase::Terminal
+            && this.turn_controller.phase() != TurnPhase::Terminal
         {
             this.turn_controller.on_cancel();
             let cancelled_tool_call_ids = this.outstanding_tool_obligations();
@@ -530,7 +530,7 @@ impl Stream for AcpRuntimeSseStream {
             }
         }
 
-        if this.turn_controller.phase() != AcpTurnPhase::Terminal && this.persist_future.is_none() {
+        if this.turn_controller.phase() != TurnPhase::Terminal && this.persist_future.is_none() {
             if let Some((tool_call_id, tool_name, result_rx)) =
                 this.waiting_adapter_tool_result.take()
             {
@@ -854,7 +854,7 @@ impl Stream for AcpRuntimeSseStream {
                                     config: this.context.config.clone(),
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                                     tool_turns: this.context.tool_turns.clone(),
-                                    acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                                    acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                                     memory_stores: this.context.memory_stores.clone(),
                                 };
                                 this.persist_future =
@@ -923,7 +923,7 @@ impl Stream for AcpRuntimeSseStream {
             }
         }
 
-        if this.turn_controller.phase() == AcpTurnPhase::Terminal {
+        if this.turn_controller.phase() == TurnPhase::Terminal {
             this.log_summary_once();
             this.cancel_handle.take();
             if let Some(guard) = this.active_turn_guard.take() {
@@ -1055,7 +1055,7 @@ impl Stream for AcpRuntimeSseStream {
                         config: config.clone(),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     let binding = RoleRuntimeBinding {
@@ -1096,7 +1096,7 @@ impl Stream for AcpRuntimeSseStream {
                         })));
                     this.diagnostics.reset_for_resumed_continuation();
                     self.poll_next(cx)
-                } else if this.turn_controller.phase() == AcpTurnPhase::WaitingForObligations
+                } else if this.turn_controller.phase() == TurnPhase::WaitingForObligations
                     && this.turn_controller.status_snapshot().open_obligations == 0
                     && this.outstanding_tool_obligations().is_empty()
                     && !this.diagnostics.saw_tool_return_ack
@@ -1114,7 +1114,7 @@ impl Stream for AcpRuntimeSseStream {
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
@@ -1149,7 +1149,7 @@ impl Stream for AcpRuntimeSseStream {
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
@@ -1196,7 +1196,7 @@ impl Stream for AcpRuntimeSseStream {
                     for event in this.text_chunker.flush_all() {
                         this.push_adapter_event(event);
                     }
-                    if this.turn_controller.phase() != AcpTurnPhase::Terminal {
+                    if this.turn_controller.phase() != TurnPhase::Terminal {
                         this.turn_controller.on_stream_end();
                         let compacted_retry = den_runtime::native_runtime::take_session_overflow_compaction_recovered(
                             &this.context.conversation_id,
@@ -1231,7 +1231,7 @@ impl Stream for AcpRuntimeSseStream {
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
                     }
-                    if this.turn_controller.phase() != AcpTurnPhase::Terminal
+                    if this.turn_controller.phase() != TurnPhase::Terminal
                         && (!this.outstanding_tool_obligations().is_empty()
                             || this.waiting_adapter_tool_result.is_some()
                             || this.queued_tool_result_continuation.is_some())

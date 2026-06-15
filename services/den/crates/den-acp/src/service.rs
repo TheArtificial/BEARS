@@ -31,7 +31,7 @@ pub struct ApiState {
     pub(crate) tool_turns: den_runtime::tool_turns::ToolTurnCoordinator,
     /// Process-local active ACP stream cancellation signals.
     pub(crate) acp_turn_cancellations:
-        den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry,
+        den_runtime::turn_controller::ActiveTurnCancelRegistry,
     /// Per-Bear SQLite memory stores (native runtime cognition).
     pub memory_stores: MemoryStoreManager,
 }
@@ -52,7 +52,7 @@ impl ApiState {
             bifrost,
             tool_turns: den_runtime::tool_turns::ToolTurnCoordinator::new(),
             acp_turn_cancellations:
-                den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+                den_runtime::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores,
         }
     }

@@ -7,7 +7,7 @@ use den_runtime::{
             acp_event_adapter_type, acp_event_has_visible_output, AcpGatewayEvent,
             ToolCallAccumulator,
         },
-    acp_turn_controller::AcpTurnController,
+    turn_controller::TurnController,
 };
 
 
@@ -343,7 +343,7 @@ impl AcpStreamDiagnostics {
         self.emitted_runtime_cleanup = true;
     }
 
-    pub(in crate::acp) fn diagnostic_json_with_turn_controller(&self, context: &AcpStreamContext, turn_controller: Option<&AcpTurnController>) -> serde_json::Value {
+    pub(in crate::acp) fn diagnostic_json_with_turn_controller(&self, context: &AcpStreamContext, turn_controller: Option<&TurnController>) -> serde_json::Value {
         json!({
             "request_id": context.request_id,
             "acp_session_id": context.acp_session_id,

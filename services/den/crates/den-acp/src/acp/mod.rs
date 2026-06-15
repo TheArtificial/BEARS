@@ -65,7 +65,7 @@ use crate::{
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     acp_tools::{acp_provider_tool_names_for_client_context, resolve_session_policy_for_mode},
-    acp_turn_controller::AcpActiveTurnCancelHandle,
+    turn_controller::ActiveTurnCancelHandle,
     runtime_provider::RoleRuntimeBinding,
 };
 use self::{

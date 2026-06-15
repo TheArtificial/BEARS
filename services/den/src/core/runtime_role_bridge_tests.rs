@@ -2,7 +2,7 @@
 mod tests {
         use den_runtime::{
         tool_turns::ToolTurnCoordinator,
-        acp_turn_controller::AcpActiveTurnCancelRegistry,
+        turn_controller::ActiveTurnCancelRegistry,
         role_runtime::{
             AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntimeRole, TurnResultReason,
             TurnResultStatus,
@@ -13,7 +13,7 @@ mod tests {
     #[test]
     fn acp_turn_lifecycle_runtime_builds_pair_scope() {
         let tool_turns = ToolTurnCoordinator::new();
-        let cancellations = AcpActiveTurnCancelRegistry::new();
+        let cancellations = ActiveTurnCancelRegistry::new();
         let runtime = AcpTurnLifecycleRuntime::new(tool_turns, cancellations);
         let request_id = Uuid::new_v4();
         let bear_id = Uuid::new_v4();

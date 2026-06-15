@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::tool_turns::ToolTurnCoordinator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpTurnPhase {
+pub enum TurnPhase {
     Created,
     Streaming,
     WaitingForObligations,
@@ -20,14 +20,14 @@ pub enum AcpTurnPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpToolExecutionRoute {
+pub enum ToolExecutionRoute {
     DenServer,
     AdapterLocal,
     Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpObligationStatus {
+pub enum ObligationStatus {
     Pending,
     Running,
     Settled,
@@ -37,14 +37,14 @@ pub enum AcpObligationStatus {
     LateIgnored,
 }
 
-impl AcpObligationStatus {
+impl ObligationStatus {
     pub fn is_open(self) -> bool {
         matches!(self, Self::Pending | Self::Running)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpTerminalStatus {
+pub enum TerminalStatus {
     Ok,
     Failed,
     Cancelled,
@@ -53,7 +53,7 @@ pub enum AcpTerminalStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpTerminalReason {
+pub enum TerminalReason {
     EndTurn,
     StreamComplete,
     StreamError,
@@ -64,47 +64,47 @@ pub enum AcpTerminalReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpTerminalOutcome {
-    pub status: AcpTerminalStatus,
-    pub reason: AcpTerminalReason,
+pub struct TerminalOutcome {
+    pub status: TerminalStatus,
+    pub reason: TerminalReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpToolObligation {
+pub struct ToolObligation {
     pub tool_call_id: String,
     pub tool_name: String,
-    pub route: AcpToolExecutionRoute,
-    pub status: AcpObligationStatus,
+    pub route: ToolExecutionRoute,
+    pub status: ObligationStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AcpToolResultDisposition {
+pub enum ToolResultDisposition {
     Accepted,
     LateIgnored,
     UnknownToolCall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpTurnStatusSnapshot {
-    pub phase: AcpTurnPhase,
+pub struct TurnStatusSnapshot {
+    pub phase: TurnPhase,
     pub open_obligations: usize,
     pub pending_adapter_tools: usize,
     pub pending_den_tools: usize,
     pub pending_permissions: usize,
-    pub terminal_status: Option<AcpTerminalStatus>,
-    pub terminal_reason: Option<AcpTerminalReason>,
+    pub terminal_status: Option<TerminalStatus>,
+    pub terminal_reason: Option<TerminalReason>,
     pub orphaned_requires_approval: bool,
     pub late_results_ignored: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpTurnStatusUpdate {
+pub struct TurnStatusUpdate {
     pub key: String,
     pub text: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpActiveTurnCancelRegistration {
+pub struct ActiveTurnCancelRegistration {
     pub acp_session_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
@@ -113,20 +113,20 @@ pub struct AcpActiveTurnCancelRegistration {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpActiveTurnCancelHandle {
-    registry: AcpActiveTurnCancelRegistry,
+pub struct ActiveTurnCancelHandle {
+    registry: ActiveTurnCancelRegistry,
     acp_session_id: String,
     request_id: Uuid,
 }
 
-impl AcpActiveTurnCancelHandle {
+impl ActiveTurnCancelHandle {
     pub fn record_run_id(&self, run_id: &str) -> bool {
         self.registry
             .record_run_id(&self.acp_session_id, self.request_id, run_id)
     }
 }
 
-impl Drop for AcpActiveTurnCancelHandle {
+impl Drop for ActiveTurnCancelHandle {
     fn drop(&mut self) {
         self.registry
             .unregister_if_matches(&self.acp_session_id, self.request_id);
@@ -134,11 +134,11 @@ impl Drop for AcpActiveTurnCancelHandle {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct AcpActiveTurnCancelRegistry {
-    inner: Arc<Mutex<HashMap<String, AcpActiveTurnCancelRegistration>>>,
+pub struct ActiveTurnCancelRegistry {
+    inner: Arc<Mutex<HashMap<String, ActiveTurnCancelRegistration>>>,
 }
 
-impl AcpActiveTurnCancelRegistry {
+impl ActiveTurnCancelRegistry {
     pub fn new() -> Self {
         Self::default()
     }
@@ -148,13 +148,13 @@ impl AcpActiveTurnCancelRegistry {
         acp_session_id: impl Into<String>,
         request_id: Uuid,
         conversation_id: Option<String>,
-    ) -> (AcpActiveTurnCancelHandle, watch::Receiver<bool>) {
+    ) -> (ActiveTurnCancelHandle, watch::Receiver<bool>) {
         let acp_session_id = acp_session_id.into();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         if let Ok(mut inner) = self.inner.lock() {
             inner.insert(
                 acp_session_id.clone(),
-                AcpActiveTurnCancelRegistration {
+                ActiveTurnCancelRegistration {
                     acp_session_id: acp_session_id.clone(),
                     request_id,
                     conversation_id,
@@ -164,7 +164,7 @@ impl AcpActiveTurnCancelRegistry {
             );
         }
         (
-            AcpActiveTurnCancelHandle {
+            ActiveTurnCancelHandle {
                 registry: self.clone(),
                 acp_session_id,
                 request_id,
@@ -173,7 +173,7 @@ impl AcpActiveTurnCancelRegistry {
         )
     }
 
-    pub fn cancel_session(&self, acp_session_id: &str) -> Option<AcpActiveTurnCancelRegistration> {
+    pub fn cancel_session(&self, acp_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
         let registration = self.inner.lock().ok()?.get(acp_session_id).cloned()?;
         let _ = registration.cancel_tx.send(true);
         Some(registration)
@@ -203,7 +203,7 @@ impl AcpActiveTurnCancelRegistry {
     pub fn active_for_session(
         &self,
         acp_session_id: &str,
-    ) -> Option<AcpActiveTurnCancelRegistration> {
+    ) -> Option<ActiveTurnCancelRegistration> {
         self.inner.lock().ok()?.get(acp_session_id).cloned()
     }
 
@@ -278,11 +278,11 @@ impl AcpActiveTurnCancelRegistry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpTurnController {
-    phase: AcpTurnPhase,
-    obligations: BTreeMap<String, AcpToolObligation>,
-    ready_terminal: Option<AcpTerminalOutcome>,
-    emitted_terminal: Option<AcpTerminalOutcome>,
+pub struct TurnController {
+    phase: TurnPhase,
+    obligations: BTreeMap<String, ToolObligation>,
+    ready_terminal: Option<TerminalOutcome>,
+    emitted_terminal: Option<TerminalOutcome>,
     orphaned_requires_approval: bool,
     late_results_ignored: usize,
     last_status_key: Option<String>,
@@ -291,16 +291,16 @@ pub struct AcpTurnController {
     heartbeat_tick: u32,
 }
 
-impl Default for AcpTurnController {
+impl Default for TurnController {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AcpTurnController {
+impl TurnController {
     pub fn new() -> Self {
         Self {
-            phase: AcpTurnPhase::Created,
+            phase: TurnPhase::Created,
             obligations: BTreeMap::new(),
             ready_terminal: None,
             emitted_terminal: None,
@@ -320,7 +320,7 @@ impl AcpTurnController {
         }
     }
 
-    pub fn phase(&self) -> AcpTurnPhase {
+    pub fn phase(&self) -> TurnPhase {
         self.phase
     }
 
@@ -332,7 +332,7 @@ impl AcpTurnController {
         self.late_results_ignored
     }
 
-    pub fn obligation(&self, tool_call_id: &str) -> Option<&AcpToolObligation> {
+    pub fn obligation(&self, tool_call_id: &str) -> Option<&ToolObligation> {
         self.obligations.get(tool_call_id)
     }
 
@@ -343,7 +343,7 @@ impl AcpTurnController {
             .count()
     }
 
-    pub fn status_snapshot(&self) -> AcpTurnStatusSnapshot {
+    pub fn status_snapshot(&self) -> TurnStatusSnapshot {
         let mut pending_adapter_tools = 0;
         let mut pending_den_tools = 0;
         for obligation in self.obligations.values() {
@@ -351,16 +351,16 @@ impl AcpTurnController {
                 continue;
             }
             match obligation.route {
-                AcpToolExecutionRoute::AdapterLocal => pending_adapter_tools += 1,
-                AcpToolExecutionRoute::DenServer => pending_den_tools += 1,
-                AcpToolExecutionRoute::Unsupported => {}
+                ToolExecutionRoute::AdapterLocal => pending_adapter_tools += 1,
+                ToolExecutionRoute::DenServer => pending_den_tools += 1,
+                ToolExecutionRoute::Unsupported => {}
             }
         }
         let terminal = self
             .emitted_terminal
             .as_ref()
             .or(self.ready_terminal.as_ref());
-        AcpTurnStatusSnapshot {
+        TurnStatusSnapshot {
             phase: self.phase,
             open_obligations: self.open_obligation_count(),
             pending_adapter_tools,
@@ -373,7 +373,7 @@ impl AcpTurnController {
         }
     }
 
-    pub fn take_status_update(&mut self) -> Option<AcpTurnStatusUpdate> {
+    pub fn take_status_update(&mut self) -> Option<TurnStatusUpdate> {
         let update = self.current_status_update()?;
         if self.last_status_key.as_deref() == Some(update.key.as_str()) {
             return None;
@@ -384,11 +384,11 @@ impl AcpTurnController {
 
     /// Phase-aware status for SSE heartbeats during quiet periods (LLM handshake, idle stream, tool waits).
     /// Unlike [`Self::take_status_update`], heartbeats may repeat with rotated copy while the phase is unchanged.
-    pub fn heartbeat_status_update(&mut self) -> AcpTurnStatusUpdate {
+    pub fn heartbeat_status_update(&mut self) -> TurnStatusUpdate {
         self.heartbeat_tick = self.heartbeat_tick.wrapping_add(1);
         let tick = self.heartbeat_tick;
-        if self.orphaned_requires_approval && self.phase != AcpTurnPhase::Terminal {
-            return AcpTurnStatusUpdate {
+        if self.orphaned_requires_approval && self.phase != TurnPhase::Terminal {
+            return TurnStatusUpdate {
                 key: format!("heartbeat:recovering:{tick}"),
                 text: if tick.is_multiple_of(2) {
                     "Recovering stale model approval…".to_string()
@@ -398,28 +398,28 @@ impl AcpTurnController {
             };
         }
         match self.phase {
-            AcpTurnPhase::Created => AcpTurnStatusUpdate {
+            TurnPhase::Created => TurnStatusUpdate {
                 key: format!("heartbeat:starting:{tick}"),
                 text: "Starting turn…".to_string(),
             },
-            AcpTurnPhase::Streaming => {
+            TurnPhase::Streaming => {
                 let variants = [
                     "Connecting to model…",
                     "Waiting for response…",
                     "Still thinking…",
                 ];
-                AcpTurnStatusUpdate {
+                TurnStatusUpdate {
                     key: format!("heartbeat:streaming:{tick}"),
                     text: variants[(tick as usize) % variants.len()].to_string(),
                 }
             }
-            AcpTurnPhase::WaitingForObligations => {
+            TurnPhase::WaitingForObligations => {
                 let base = self
                     .waiting_for_obligations_status()
                     .text
                     .trim_end_matches('…')
                     .to_string();
-                AcpTurnStatusUpdate {
+                TurnStatusUpdate {
                     key: format!("heartbeat:waiting:{tick}"),
                     text: if tick.is_multiple_of(3) {
                         format!("{base} (still waiting)…")
@@ -428,7 +428,7 @@ impl AcpTurnController {
                     },
                 }
             }
-            AcpTurnPhase::ContinuingAfterTool => {
+            TurnPhase::ContinuingAfterTool => {
                 let tool_name = self
                     .last_settled_tool_name
                     .as_deref()
@@ -439,49 +439,49 @@ impl AcpTurnController {
                     "Waiting for model…".to_string(),
                     format!("Resuming after {label}…"),
                 ];
-                AcpTurnStatusUpdate {
+                TurnStatusUpdate {
                     key: format!("heartbeat:continuing:{tick}"),
                     text: variants[(tick as usize) % variants.len()].clone(),
                 }
             }
-            AcpTurnPhase::Cancelling => AcpTurnStatusUpdate {
+            TurnPhase::Cancelling => TurnStatusUpdate {
                 key: format!("heartbeat:cancelling:{tick}"),
                 text: "Cancelling turn…".to_string(),
             },
-            AcpTurnPhase::Terminal => AcpTurnStatusUpdate {
+            TurnPhase::Terminal => TurnStatusUpdate {
                 key: format!("heartbeat:terminal:{tick}"),
                 text: "Finishing turn…".to_string(),
             },
         }
     }
 
-    fn current_status_update(&self) -> Option<AcpTurnStatusUpdate> {
-        if self.orphaned_requires_approval && self.phase != AcpTurnPhase::Terminal {
-            return Some(AcpTurnStatusUpdate {
+    fn current_status_update(&self) -> Option<TurnStatusUpdate> {
+        if self.orphaned_requires_approval && self.phase != TurnPhase::Terminal {
+            return Some(TurnStatusUpdate {
                 key: "recovering_stale_approval".to_string(),
                 text: "Recovering stale model approval…".to_string(),
             });
         }
         match self.phase {
-            AcpTurnPhase::Created => None,
-            AcpTurnPhase::Streaming => Some(self.planning_status()),
-            AcpTurnPhase::WaitingForObligations => Some(self.waiting_for_obligations_status()),
-            AcpTurnPhase::ContinuingAfterTool => Some(self.continuing_after_tool_status()),
-            AcpTurnPhase::Cancelling => Some(AcpTurnStatusUpdate {
+            TurnPhase::Created => None,
+            TurnPhase::Streaming => Some(self.planning_status()),
+            TurnPhase::WaitingForObligations => Some(self.waiting_for_obligations_status()),
+            TurnPhase::ContinuingAfterTool => Some(self.continuing_after_tool_status()),
+            TurnPhase::Cancelling => Some(TurnStatusUpdate {
                 key: "cancelling".to_string(),
                 text: "Cancelling turn…".to_string(),
             }),
-            AcpTurnPhase::Terminal => None,
+            TurnPhase::Terminal => None,
         }
     }
 
-    fn planning_status(&self) -> AcpTurnStatusUpdate {
+    fn planning_status(&self) -> TurnStatusUpdate {
         let client = self
             .client_label
             .as_deref()
             .map(client_display_name)
             .unwrap_or("your editor");
-        AcpTurnStatusUpdate {
+        TurnStatusUpdate {
             key: "planning".to_string(),
             text: format!(
                 "Planning next step — may call Den memory tools or {client} workspace tools…"
@@ -489,7 +489,7 @@ impl AcpTurnController {
         }
     }
 
-    fn waiting_for_obligations_status(&self) -> AcpTurnStatusUpdate {
+    fn waiting_for_obligations_status(&self) -> TurnStatusUpdate {
         let open: Vec<_> = self
             .obligations
             .values()
@@ -508,41 +508,41 @@ impl AcpTurnController {
         if let Some(first) = open.first() {
             let label = humanize_tool_name(&first.tool_name);
             return match first.route {
-                AcpToolExecutionRoute::AdapterLocal => AcpTurnStatusUpdate {
+                ToolExecutionRoute::AdapterLocal => TurnStatusUpdate {
                     key: format!("waiting_local:{}", first.tool_name),
                     text: format!("Waiting for {label} in {client}{extra}…"),
                 },
-                AcpToolExecutionRoute::DenServer => AcpTurnStatusUpdate {
+                ToolExecutionRoute::DenServer => TurnStatusUpdate {
                     key: format!("running_den:{}", first.tool_name),
                     text: format!("Running {label} on Den{extra}…"),
                 },
-                AcpToolExecutionRoute::Unsupported => AcpTurnStatusUpdate {
+                ToolExecutionRoute::Unsupported => TurnStatusUpdate {
                     key: format!("unsupported_tool:{}", first.tool_name),
                     text: format!("Tool not available: {label}{extra}…"),
                 },
             };
         }
-        AcpTurnStatusUpdate {
+        TurnStatusUpdate {
             key: "waiting_for_obligations".to_string(),
             text: "Waiting for turn obligations…".to_string(),
         }
     }
 
-    fn continuing_after_tool_status(&self) -> AcpTurnStatusUpdate {
+    fn continuing_after_tool_status(&self) -> TurnStatusUpdate {
         let tool_name = self
             .last_settled_tool_name
             .as_deref()
             .unwrap_or("tool");
         let label = humanize_tool_name(tool_name);
-        AcpTurnStatusUpdate {
+        TurnStatusUpdate {
             key: format!("continuing_after:{tool_name}"),
             text: format!("Continuing after {label}…"),
         }
     }
 
     pub fn on_stream_started(&mut self) {
-        if self.phase == AcpTurnPhase::Created {
-            self.phase = AcpTurnPhase::Streaming;
+        if self.phase == TurnPhase::Created {
+            self.phase = TurnPhase::Streaming;
         }
     }
 
@@ -550,31 +550,31 @@ impl AcpTurnController {
         &mut self,
         tool_call_id: impl Into<String>,
         tool_name: impl Into<String>,
-        route: AcpToolExecutionRoute,
+        route: ToolExecutionRoute,
     ) {
         let tool_call_id = tool_call_id.into();
         let tool_name = tool_name.into();
         let status = match route {
-            AcpToolExecutionRoute::DenServer => AcpObligationStatus::Running,
-            AcpToolExecutionRoute::AdapterLocal => AcpObligationStatus::Pending,
-            AcpToolExecutionRoute::Unsupported => AcpObligationStatus::Failed,
+            ToolExecutionRoute::DenServer => ObligationStatus::Running,
+            ToolExecutionRoute::AdapterLocal => ObligationStatus::Pending,
+            ToolExecutionRoute::Unsupported => ObligationStatus::Failed,
         };
         self.obligations.insert(
             tool_call_id.clone(),
-            AcpToolObligation {
+            ToolObligation {
                 tool_call_id,
                 tool_name,
                 route,
                 status,
             },
         );
-        if self.open_obligation_count() > 0 && self.phase != AcpTurnPhase::Terminal {
-            self.phase = AcpTurnPhase::WaitingForObligations;
+        if self.open_obligation_count() > 0 && self.phase != TurnPhase::Terminal {
+            self.phase = TurnPhase::WaitingForObligations;
         }
-        if matches!(route, AcpToolExecutionRoute::Unsupported) {
-            self.ready_terminal.get_or_insert(AcpTerminalOutcome {
-                status: AcpTerminalStatus::Failed,
-                reason: AcpTerminalReason::UnsupportedTool,
+        if matches!(route, ToolExecutionRoute::Unsupported) {
+            self.ready_terminal.get_or_insert(TerminalOutcome {
+                status: TerminalStatus::Failed,
+                reason: TerminalReason::UnsupportedTool,
             });
         }
     }
@@ -583,7 +583,7 @@ impl AcpTurnController {
         &mut self,
         tool_call_id: &str,
         ok: bool,
-    ) -> AcpToolResultDisposition {
+    ) -> ToolResultDisposition {
         self.settle_tool(tool_call_id, ok)
     }
 
@@ -591,60 +591,60 @@ impl AcpTurnController {
         &mut self,
         tool_call_id: &str,
         ok: bool,
-    ) -> AcpToolResultDisposition {
+    ) -> ToolResultDisposition {
         self.settle_tool(tool_call_id, ok)
     }
 
-    pub fn on_tool_timeout(&mut self, tool_call_id: &str) -> AcpToolResultDisposition {
+    pub fn on_tool_timeout(&mut self, tool_call_id: &str) -> ToolResultDisposition {
         if self.emitted_terminal.is_some() {
             self.late_results_ignored += 1;
-            return AcpToolResultDisposition::LateIgnored;
+            return ToolResultDisposition::LateIgnored;
         }
         let Some(obligation) = self.obligations.get_mut(tool_call_id) else {
-            return AcpToolResultDisposition::UnknownToolCall;
+            return ToolResultDisposition::UnknownToolCall;
         };
         if !obligation.status.is_open() {
             self.late_results_ignored += 1;
-            obligation.status = AcpObligationStatus::LateIgnored;
-            return AcpToolResultDisposition::LateIgnored;
+            obligation.status = ObligationStatus::LateIgnored;
+            return ToolResultDisposition::LateIgnored;
         }
-        obligation.status = AcpObligationStatus::TimedOut;
-        self.ready_terminal = Some(AcpTerminalOutcome {
-            status: AcpTerminalStatus::Failed,
-            reason: AcpTerminalReason::ToolTimeout,
+        obligation.status = ObligationStatus::TimedOut;
+        self.ready_terminal = Some(TerminalOutcome {
+            status: TerminalStatus::Failed,
+            reason: TerminalReason::ToolTimeout,
         });
         self.advance_after_obligation_change();
-        AcpToolResultDisposition::Accepted
+        ToolResultDisposition::Accepted
     }
 
     pub fn on_requires_approval_stop(&mut self) {
         if self.open_obligation_count() > 0 {
-            self.phase = AcpTurnPhase::WaitingForObligations;
+            self.phase = TurnPhase::WaitingForObligations;
             return;
         }
         self.orphaned_requires_approval = true;
-        self.phase = AcpTurnPhase::WaitingForObligations;
-        self.ready_terminal = Some(AcpTerminalOutcome {
-            status: AcpTerminalStatus::Recovered,
-            reason: AcpTerminalReason::OrphanedRequiresApproval,
+        self.phase = TurnPhase::WaitingForObligations;
+        self.ready_terminal = Some(TerminalOutcome {
+            status: TerminalStatus::Recovered,
+            reason: TerminalReason::OrphanedRequiresApproval,
         });
     }
 
     pub fn on_stream_end(&mut self) {
         if self.open_obligation_count() > 0 {
-            self.phase = AcpTurnPhase::WaitingForObligations;
+            self.phase = TurnPhase::WaitingForObligations;
             return;
         }
-        self.ready_terminal.get_or_insert(AcpTerminalOutcome {
-            status: AcpTerminalStatus::Ok,
-            reason: AcpTerminalReason::EndTurn,
+        self.ready_terminal.get_or_insert(TerminalOutcome {
+            status: TerminalStatus::Ok,
+            reason: TerminalReason::EndTurn,
         });
     }
 
     pub fn on_stream_error(&mut self) {
-        self.ready_terminal = Some(AcpTerminalOutcome {
-            status: AcpTerminalStatus::Failed,
-            reason: AcpTerminalReason::StreamError,
+        self.ready_terminal = Some(TerminalOutcome {
+            status: TerminalStatus::Failed,
+            reason: TerminalReason::StreamError,
         });
     }
 
@@ -652,15 +652,15 @@ impl AcpTurnController {
         if self.emitted_terminal.is_some() {
             return;
         }
-        self.phase = AcpTurnPhase::Cancelling;
+        self.phase = TurnPhase::Cancelling;
         for obligation in self.obligations.values_mut() {
             if obligation.status.is_open() {
-                obligation.status = AcpObligationStatus::Cancelled;
+                obligation.status = ObligationStatus::Cancelled;
             }
         }
-        self.ready_terminal = Some(AcpTerminalOutcome {
-            status: AcpTerminalStatus::Cancelled,
-            reason: AcpTerminalReason::Cancelled,
+        self.ready_terminal = Some(TerminalOutcome {
+            status: TerminalStatus::Cancelled,
+            reason: TerminalReason::Cancelled,
         });
     }
 
@@ -670,44 +670,44 @@ impl AcpTurnController {
             && self.open_obligation_count() == 0
     }
 
-    pub fn take_terminal_event(&mut self) -> Option<AcpTerminalOutcome> {
+    pub fn take_terminal_event(&mut self) -> Option<TerminalOutcome> {
         if !self.may_emit_terminal() {
             return None;
         }
         let outcome = self.ready_terminal.take()?;
         self.emitted_terminal = Some(outcome.clone());
-        self.phase = AcpTurnPhase::Terminal;
+        self.phase = TurnPhase::Terminal;
         Some(outcome)
     }
 
-    fn settle_tool(&mut self, tool_call_id: &str, ok: bool) -> AcpToolResultDisposition {
+    fn settle_tool(&mut self, tool_call_id: &str, ok: bool) -> ToolResultDisposition {
         if self.emitted_terminal.is_some() {
             self.late_results_ignored += 1;
-            return AcpToolResultDisposition::LateIgnored;
+            return ToolResultDisposition::LateIgnored;
         }
         let Some(obligation) = self.obligations.get_mut(tool_call_id) else {
-            return AcpToolResultDisposition::UnknownToolCall;
+            return ToolResultDisposition::UnknownToolCall;
         };
         if !obligation.status.is_open() {
             self.late_results_ignored += 1;
-            obligation.status = AcpObligationStatus::LateIgnored;
-            return AcpToolResultDisposition::LateIgnored;
+            obligation.status = ObligationStatus::LateIgnored;
+            return ToolResultDisposition::LateIgnored;
         }
         obligation.status = if ok {
-            AcpObligationStatus::Settled
+            ObligationStatus::Settled
         } else {
-            AcpObligationStatus::Failed
+            ObligationStatus::Failed
         };
         if ok {
             self.last_settled_tool_name = Some(obligation.tool_name.clone());
         }
         self.advance_after_obligation_change();
-        AcpToolResultDisposition::Accepted
+        ToolResultDisposition::Accepted
     }
 
     fn advance_after_obligation_change(&mut self) {
-        if self.phase != AcpTurnPhase::Terminal && self.open_obligation_count() == 0 {
-            self.phase = AcpTurnPhase::ContinuingAfterTool;
+        if self.phase != TurnPhase::Terminal && self.open_obligation_count() == 0 {
+            self.phase = TurnPhase::ContinuingAfterTool;
         }
     }
 }
@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn active_turn_cancel_registry_signals_and_unregisters_session_turn() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let (handle, cancel_rx) =
             registry.register("acp-session-1", request_id, Some("conv-1".to_string()));
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn active_turn_cancel_registry_records_run_ids_for_matching_turn() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let wrong_request_id = Uuid::new_v4();
         let (_handle, _rx) = registry.register("acp-session-1", request_id, None);
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn active_turn_cancel_registry_does_not_unregister_newer_turn_from_old_handle() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let old_request_id = Uuid::new_v4();
         let new_request_id = Uuid::new_v4();
         let (old_handle, _old_rx) = registry.register("acp-session-1", old_request_id, None);
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn active_turn_runtime_snapshot_reports_idle_without_active_turn() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let tool_turns = ToolTurnCoordinator::new();
         let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
 
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn active_turn_runtime_snapshot_reports_running_without_pending_tools() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (_handle, _rx) =
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn active_turn_runtime_snapshot_reports_requires_action_with_pending_tool() {
-        let registry = AcpActiveTurnCancelRegistry::new();
+        let registry = ActiveTurnCancelRegistry::new();
         let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (_handle, _rx) = registry.register("acp-session", request_id, None);
@@ -881,25 +881,25 @@ mod tests {
 
     #[test]
     fn acp_turn_text_only_completes_once() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_stream_end();
 
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Ok);
-        assert_eq!(terminal.reason, AcpTerminalReason::EndTurn);
+        assert_eq!(terminal.status, TerminalStatus::Ok);
+        assert_eq!(terminal.reason, TerminalReason::EndTurn);
         assert_eq!(turn.take_terminal_event(), None);
-        assert_eq!(turn.phase(), AcpTurnPhase::Terminal);
+        assert_eq!(turn.phase(), TurnPhase::Terminal);
     }
 
     #[test]
     fn acp_turn_waits_for_adapter_local_tool_before_terminal() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
             "call_1",
             "fs_read_text_file",
-            AcpToolExecutionRoute::AdapterLocal,
+            ToolExecutionRoute::AdapterLocal,
         );
         turn.on_requires_approval_stop();
         turn.on_stream_end();
@@ -910,7 +910,7 @@ mod tests {
 
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         assert_eq!(turn.open_obligation_count(), 0);
         assert!(!turn.may_emit_terminal());
@@ -918,102 +918,102 @@ mod tests {
         turn.on_stream_started();
         turn.on_stream_end();
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Ok);
+        assert_eq!(terminal.status, TerminalStatus::Ok);
         assert_eq!(turn.take_terminal_event(), None);
     }
 
     #[test]
     fn acp_turn_den_server_tool_does_not_create_adapter_obligation() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_1", "session_info", AcpToolExecutionRoute::DenServer);
+        turn.on_tool_request("call_1", "session_info", ToolExecutionRoute::DenServer);
 
         let obligation = turn.obligation("call_1").expect("tracked Den obligation");
-        assert_eq!(obligation.route, AcpToolExecutionRoute::DenServer);
-        assert_eq!(obligation.status, AcpObligationStatus::Running);
+        assert_eq!(obligation.route, ToolExecutionRoute::DenServer);
+        assert_eq!(obligation.status, ObligationStatus::Running);
         assert_eq!(turn.open_obligation_count(), 1);
 
         assert_eq!(
             turn.on_den_tool_settled("call_1", true),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         assert_eq!(turn.open_obligation_count(), 0);
         turn.on_stream_end();
         assert_eq!(
             turn.take_terminal_event().expect("terminal ready").status,
-            AcpTerminalStatus::Ok
+            TerminalStatus::Ok
         );
     }
 
     #[test]
     fn acp_turn_unsupported_tool_settles_without_hanging() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_1", "unknown_tool", AcpToolExecutionRoute::Unsupported);
+        turn.on_tool_request("call_1", "unknown_tool", ToolExecutionRoute::Unsupported);
 
         assert_eq!(turn.open_obligation_count(), 0);
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Failed);
-        assert_eq!(terminal.reason, AcpTerminalReason::UnsupportedTool);
+        assert_eq!(terminal.status, TerminalStatus::Failed);
+        assert_eq!(terminal.reason, TerminalReason::UnsupportedTool);
     }
 
     #[test]
     fn acp_turn_timeout_settles_pending_adapter_tool() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
             "call_1",
             "fs_read_text_file",
-            AcpToolExecutionRoute::AdapterLocal,
+            ToolExecutionRoute::AdapterLocal,
         );
 
         assert_eq!(
             turn.on_tool_timeout("call_1"),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         assert_eq!(turn.open_obligation_count(), 0);
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Failed);
-        assert_eq!(terminal.reason, AcpTerminalReason::ToolTimeout);
+        assert_eq!(terminal.status, TerminalStatus::Failed);
+        assert_eq!(terminal.reason, TerminalReason::ToolTimeout);
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
-            AcpToolResultDisposition::LateIgnored
+            ToolResultDisposition::LateIgnored
         );
     }
 
     #[test]
     fn acp_turn_cancel_settles_pending_adapter_tool() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
             "call_1",
             "fs_read_text_file",
-            AcpToolExecutionRoute::AdapterLocal,
+            ToolExecutionRoute::AdapterLocal,
         );
         turn.on_cancel();
 
         assert_eq!(turn.open_obligation_count(), 0);
         let obligation = turn.obligation("call_1").expect("obligation");
-        assert_eq!(obligation.status, AcpObligationStatus::Cancelled);
+        assert_eq!(obligation.status, ObligationStatus::Cancelled);
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Cancelled);
-        assert_eq!(terminal.reason, AcpTerminalReason::Cancelled);
+        assert_eq!(terminal.status, TerminalStatus::Cancelled);
+        assert_eq!(terminal.reason, TerminalReason::Cancelled);
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
-            AcpToolResultDisposition::LateIgnored
+            ToolResultDisposition::LateIgnored
         );
     }
 
     #[test]
     fn acp_turn_late_result_after_terminal_is_ignored() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_stream_end();
         assert!(turn.take_terminal_event().is_some());
 
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
-            AcpToolResultDisposition::LateIgnored
+            ToolResultDisposition::LateIgnored
         );
         assert_eq!(turn.late_results_ignored(), 1);
         assert_eq!(turn.take_terminal_event(), None);
@@ -1021,7 +1021,7 @@ mod tests {
 
     #[test]
     fn acp_turn_orphaned_requires_approval_triggers_recovery_path() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_requires_approval_stop();
 
@@ -1031,24 +1031,24 @@ mod tests {
             "recovering_stale_approval"
         );
         let terminal = turn.take_terminal_event().expect("terminal ready");
-        assert_eq!(terminal.status, AcpTerminalStatus::Recovered);
-        assert_eq!(terminal.reason, AcpTerminalReason::OrphanedRequiresApproval);
+        assert_eq!(terminal.status, TerminalStatus::Recovered);
+        assert_eq!(terminal.reason, TerminalReason::OrphanedRequiresApproval);
         assert_eq!(turn.take_terminal_event(), None);
     }
 
     #[test]
     fn acp_turn_status_snapshot_reports_phase_and_obligations() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
             "call_local",
             "fs_read_text_file",
-            AcpToolExecutionRoute::AdapterLocal,
+            ToolExecutionRoute::AdapterLocal,
         );
-        turn.on_tool_request("call_den", "session_info", AcpToolExecutionRoute::DenServer);
+        turn.on_tool_request("call_den", "session_info", ToolExecutionRoute::DenServer);
 
         let snapshot = turn.status_snapshot();
-        assert_eq!(snapshot.phase, AcpTurnPhase::WaitingForObligations);
+        assert_eq!(snapshot.phase, TurnPhase::WaitingForObligations);
         assert_eq!(snapshot.open_obligations, 2);
         assert_eq!(snapshot.pending_adapter_tools, 1);
         assert_eq!(snapshot.pending_den_tools, 1);
@@ -1058,27 +1058,27 @@ mod tests {
 
         assert_eq!(
             turn.on_adapter_tool_result("call_local", true),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         assert_eq!(
             turn.on_den_tool_settled("call_den", true),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         turn.on_stream_end();
         assert!(turn.take_terminal_event().is_some());
 
         let snapshot = turn.status_snapshot();
-        assert_eq!(snapshot.phase, AcpTurnPhase::Terminal);
+        assert_eq!(snapshot.phase, TurnPhase::Terminal);
         assert_eq!(snapshot.open_obligations, 0);
         assert_eq!(snapshot.pending_adapter_tools, 0);
         assert_eq!(snapshot.pending_den_tools, 0);
-        assert_eq!(snapshot.terminal_status, Some(AcpTerminalStatus::Ok));
-        assert_eq!(snapshot.terminal_reason, Some(AcpTerminalReason::EndTurn));
+        assert_eq!(snapshot.terminal_status, Some(TerminalStatus::Ok));
+        assert_eq!(snapshot.terminal_reason, Some(TerminalReason::EndTurn));
     }
 
     #[test]
     fn acp_turn_heartbeat_status_rotates_while_streaming() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         turn.on_stream_started();
         let first = turn.heartbeat_status_update();
         let second = turn.heartbeat_status_update();
@@ -1088,7 +1088,7 @@ mod tests {
 
     #[test]
     fn acp_turn_status_updates_are_deduplicated() {
-        let mut turn = AcpTurnController::new();
+        let mut turn = TurnController::new();
         assert_eq!(turn.take_status_update(), None);
 
         turn.on_stream_started();
@@ -1101,7 +1101,7 @@ mod tests {
         turn.on_tool_request(
             "call_1",
             "fs_read_text_file",
-            AcpToolExecutionRoute::AdapterLocal,
+            ToolExecutionRoute::AdapterLocal,
         );
         let waiting = turn.take_status_update().expect("waiting");
         assert_eq!(waiting.key, "waiting_local:fs_read_text_file");
@@ -1111,7 +1111,7 @@ mod tests {
 
         assert_eq!(
             turn.on_adapter_tool_result("call_1", true),
-            AcpToolResultDisposition::Accepted
+            ToolResultDisposition::Accepted
         );
         let continuing = turn.take_status_update().expect("continuing");
         assert_eq!(continuing.key, "continuing_after:fs_read_text_file");

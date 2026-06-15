@@ -86,8 +86,8 @@ use den_runtime::prompt_memory_blocks::{
                 upsert_prompt_memory_block, PromptMemoryBlockPatch,
                 PromptMemoryBlockQuery, PromptMemoryBlockWrite,
             },
-        acp_turn_controller::{
-                AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
+        turn_controller::{
+                TerminalReason, TerminalStatus, TurnController, TurnPhase,
             },
         agent_assist::PendingApprovalDenialMode,
         role_runtime::{RoleRuntime, RoleTurnScope},
@@ -100,7 +100,7 @@ use den_runtime::prompt_memory_blocks::{
             config: config.clone(),
             bifrost: Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
             tool_turns: ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            acp_turn_cancellations: den_runtime::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
@@ -907,7 +907,7 @@ use den_runtime::prompt_memory_blocks::{
         stream.turn_controller.on_tool_request(
             tool_call_id.clone(),
             "functions.fs.read_text_file".to_string(),
-            den_runtime::acp_turn_controller::AcpToolExecutionRoute::DenServer,
+            den_runtime::turn_controller::ToolExecutionRoute::DenServer,
         );
         stream.turn_controller.on_stream_end();
 
@@ -2749,7 +2749,7 @@ use den_runtime::prompt_memory_blocks::{
             config: config.clone(),
             bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
             tool_turns: den_runtime::tool_turns::ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+            acp_turn_cancellations: den_runtime::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
@@ -3701,7 +3701,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = ToolTurnCoordinator::new();
-        let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
+        let cancel_registry = den_runtime::turn_controller::ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
@@ -3886,7 +3886,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = ToolTurnCoordinator::new();
-        let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
+        let cancel_registry = den_runtime::turn_controller::ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
@@ -4261,8 +4261,8 @@ use den_runtime::prompt_memory_blocks::{
     }
 
     #[test]
-    fn acp_turn_controller_emits_terminal_turn_result_for_stream_error() {
-        let mut controller = AcpTurnController::new();
+    fn turn_controller_emits_terminal_turn_result_for_stream_error() {
+        let mut controller = TurnController::new();
         controller.on_stream_started();
         controller.on_stream_error();
 
@@ -4270,9 +4270,9 @@ use den_runtime::prompt_memory_blocks::{
         let outcome = controller
             .take_terminal_event()
             .expect("stream error should authorize a terminal event");
-        assert_eq!(outcome.status, AcpTerminalStatus::Failed);
-        assert_eq!(outcome.reason, AcpTerminalReason::StreamError);
-        assert_eq!(controller.phase(), AcpTurnPhase::Terminal);
+        assert_eq!(outcome.status, TerminalStatus::Failed);
+        assert_eq!(outcome.reason, TerminalReason::StreamError);
+        assert_eq!(controller.phase(), TurnPhase::Terminal);
     }
 
     #[tokio::test]

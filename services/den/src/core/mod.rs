@@ -19,7 +19,7 @@ pub use tools::web_policy;
 pub mod work_plans;
 
 // Cross-layer bridge tests: they exercise den_runtime modules together with
-// den-only modules (native_runtime / acp_turn_controller), so they live here in the
+// den-only modules (native_runtime / turn_controller), so they live here in the
 // `den` crate rather than in den-runtime. Relocated during the v1.4 runtime lift.
 #[cfg(test)]
 mod runtime_role_bridge_tests;

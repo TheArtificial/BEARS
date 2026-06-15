@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     tool_turns::ToolTurnCoordinator,
-    acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
+    turn_controller::{ActiveTurnCancelHandle, ActiveTurnCancelRegistry},
 };
 use den_core::DenError;
 
@@ -167,7 +167,7 @@ impl RoleTurnResult {
 #[derive(Debug, Clone)]
 pub struct RoleRuntime {
     tool_turns: ToolTurnCoordinator,
-    turn_cancellations: Option<AcpActiveTurnCancelRegistry>,
+    turn_cancellations: Option<ActiveTurnCancelRegistry>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,14 +187,14 @@ pub struct AcpTurnLifecycleLease {
     pub role_runtime: RoleRuntime,
     pub turn_scope: RoleTurnScope,
     pub active_turn_guard: RoleTurnGuard,
-    pub cancel_handle: AcpActiveTurnCancelHandle,
+    pub cancel_handle: ActiveTurnCancelHandle,
     pub cancel_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl AcpTurnLifecycleRuntime {
     pub fn new(
         tool_turns: ToolTurnCoordinator,
-        turn_cancellations: AcpActiveTurnCancelRegistry,
+        turn_cancellations: ActiveTurnCancelRegistry,
     ) -> Self {
         Self {
             role_runtime: RoleRuntime::with_turn_cancellations(tool_turns, turn_cancellations),
@@ -247,7 +247,7 @@ impl RoleRuntime {
 
     pub fn with_turn_cancellations(
         tool_turns: ToolTurnCoordinator,
-        turn_cancellations: AcpActiveTurnCancelRegistry,
+        turn_cancellations: ActiveTurnCancelRegistry,
     ) -> Self {
         Self {
             tool_turns,
@@ -255,7 +255,7 @@ impl RoleRuntime {
         }
     }
 
-    pub fn turn_cancellations(&self) -> Option<&AcpActiveTurnCancelRegistry> {
+    pub fn turn_cancellations(&self) -> Option<&ActiveTurnCancelRegistry> {
         self.turn_cancellations.as_ref()
     }
 
