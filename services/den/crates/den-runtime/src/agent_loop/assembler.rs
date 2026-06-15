@@ -17,8 +17,9 @@ use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
     context::{
-        load_transcript_messages, prune_messages_for_native_chat,
-        prune_messages_for_native_pair, repair_tool_call_message_chain,
+        load_transcript_messages, load_transcript_messages_after_seq,
+        prune_messages_for_native_chat, prune_messages_for_native_pair,
+        repair_tool_call_message_chain,
     },
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
@@ -27,6 +28,10 @@ use super::{
     runtime_context::{
         assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
     },
+};
+use crate::runtime::compaction::{
+    prepare_turn_compaction, render_compaction_prompt_context, CompactionMode,
+    TurnCompactionTrigger,
 };
 
 #[derive(Debug, Clone)]
@@ -206,6 +211,16 @@ pub async fn assemble_native_turn_for_bear(
         }
     }
 
+    let compaction_state = prepare_turn_compaction(
+        ctx.pool,
+        ctx.config,
+        ctx.bear_id,
+        ctx.conversation_id,
+        ctx.profile,
+        TurnCompactionTrigger::TurnStart,
+    )
+    .await?;
+
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
         system_text.push_str("\n\n");
@@ -240,6 +255,7 @@ pub async fn assemble_native_turn_for_bear(
             session_id,
             &roots,
             &client_context,
+            compaction_state.as_ref(),
         )
         .await?;
         if !supplement.trim().is_empty() {
@@ -254,6 +270,14 @@ pub async fn assemble_native_turn_for_bear(
         ));
     }
 
+    if let Some(state) = compaction_state.as_ref() {
+        let compaction_text = render_compaction_prompt_context(state);
+        if !compaction_text.trim().is_empty() {
+            system_text.push_str("\n\n");
+            system_text.push_str(&compaction_text);
+        }
+    }
+
     let mut messages = vec![ChatMessage {
         role: "system".to_string(),
         content: Some(system_text),
@@ -261,7 +285,19 @@ pub async fn assemble_native_turn_for_bear(
         name: None,
         tool_calls: None,
     }];
-    messages.extend(load_transcript_messages(ctx.pool, ctx.bear_id, ctx.conversation_id).await?);
+    let compaction_active = CompactionMode::parse(&ctx.config.compaction_mode) == CompactionMode::Active;
+    let transcript_cutoff = compaction_state.as_ref().and_then(|state| state.compacted_seq_cutoff);
+    messages.extend(if compaction_active && transcript_cutoff.is_some() {
+        load_transcript_messages_after_seq(
+            ctx.pool,
+            ctx.bear_id,
+            ctx.conversation_id,
+            transcript_cutoff,
+        )
+        .await?
+    } else {
+        load_transcript_messages(ctx.pool, ctx.bear_id, ctx.conversation_id).await?
+    });
     if let Some(human) = ctx.human_message.map(str::trim).filter(|s| !s.is_empty()) {
         messages.push(ChatMessage {
             role: "user".to_string(),
@@ -273,7 +309,12 @@ pub async fn assemble_native_turn_for_bear(
     }
     messages.extend(ctx.tool_messages.iter().cloned());
     let messages = repair_tool_call_message_chain(messages);
-    let messages = if ctx.native_runtime && ctx.profile == BearProfile::Pair {
+    let messages = if ctx.native_runtime
+        && compaction_active
+        && transcript_cutoff.is_some()
+    {
+        messages
+    } else if ctx.native_runtime && ctx.profile == BearProfile::Pair {
         prune_messages_for_native_pair(messages)
     } else if ctx.native_runtime && ctx.profile == BearProfile::Chat {
         prune_messages_for_native_chat(messages)

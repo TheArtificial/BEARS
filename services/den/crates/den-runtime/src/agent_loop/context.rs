@@ -407,9 +407,6 @@ pub async fn load_transcript_grouping_rows(
 }
 
 /// Loads persisted transcript rows and derives semantic compaction groups.
-///
-/// Intended for Phase B prompt-assembler integration; not yet called from the live path.
-#[expect(dead_code, reason = "Phase B assembler integration")]
 pub async fn load_transcript_semantic_groups(
     pool: &PgPool,
     bear_id: Uuid,
@@ -424,7 +421,20 @@ pub async fn load_transcript_messages(
     bear_id: Uuid,
     conversation_id: &str,
 ) -> Result<Vec<ChatMessage>, DenError> {
-    let grouping_rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    load_transcript_messages_after_seq(pool, bear_id, conversation_id, None).await
+}
+
+pub async fn load_transcript_messages_after_seq(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    after_sequence: Option<i64>,
+) -> Result<Vec<ChatMessage>, DenError> {
+    let mut grouping_rows =
+        load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    if let Some(cutoff) = after_sequence {
+        grouping_rows.retain(|row| row.sequence_no.unwrap_or(0) > cutoff);
+    }
     let rows = transcript_rows_from_grouping_rows(&grouping_rows);
     backfill_incomplete_tool_results(pool, bear_id, conversation_id, &rows);
     Ok(reconstruct_transcript_messages(rows))
