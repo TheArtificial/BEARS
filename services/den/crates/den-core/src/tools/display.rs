@@ -1,6 +1,6 @@
 //! Display metadata for model-facing tools.
 //!
-//! `AcpToolDisplayDescriptor` is the static presentation shape (labels, progress
+//! `ToolDisplayDescriptor` is the static presentation shape (labels, progress
 //! verbs, target/sensitive argument keys, approval summary) consumed by ACP-facing
 //! descriptors and the built-in Den tool descriptor table. It lives here, in the
 //! descriptor authority crate, so both `den-tools` descriptors and the `den`-side
@@ -9,7 +9,7 @@
 use serde_json::json;
 
 #[derive(Debug, Clone, Copy)]
-pub struct AcpToolDisplayDescriptor {
+pub struct ToolDisplayDescriptor {
     pub label: &'static str,
     pub category: &'static str,
     pub progress_verb: &'static str,
@@ -19,7 +19,7 @@ pub struct AcpToolDisplayDescriptor {
     pub approval_summary: &'static str,
 }
 
-impl AcpToolDisplayDescriptor {
+impl ToolDisplayDescriptor {
     pub fn to_json(self) -> serde_json::Value {
         json!({
             "label": self.label,

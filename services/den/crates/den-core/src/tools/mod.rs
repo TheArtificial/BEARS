@@ -8,7 +8,7 @@
 //! - [`aliases`]: legacy provider aliases and built-in membership.
 //! - [`arguments`]: argument shapes deserialized from tool calls.
 //! - [`tool_descriptor_guidance`]: shared scope/side-effect/orientation language.
-//! - [`display`]: the [`AcpToolDisplayDescriptor`] display shape.
+//! - [`display`]: the [`ToolDisplayDescriptor`] display shape.
 //! - [`descriptor`]: the built-in Den tool descriptor table and profile gating.
 //!
 //! The concrete executors (which need pool/config/stores and call `bears`/`memory`/
@@ -37,4 +37,4 @@ pub mod tool_descriptor_guidance;
 pub mod validation;
 pub mod web;
 
-pub use display::AcpToolDisplayDescriptor;
+pub use display::ToolDisplayDescriptor;

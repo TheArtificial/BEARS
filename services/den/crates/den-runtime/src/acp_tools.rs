@@ -447,10 +447,10 @@ pub struct AcpToolDescriptor {
     pub permission_class: &'static str,
 }
 
-// `AcpToolDisplayDescriptor` now lives in `den-tools` (the descriptor authority);
-// re-exported here so existing `crate::core::acp_tools::AcpToolDisplayDescriptor`
+// `ToolDisplayDescriptor` now lives in `den-tools` (the descriptor authority);
+// re-exported here so existing `crate::core::acp_tools::ToolDisplayDescriptor`
 // paths keep resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase A).
-pub use den_core::tools::AcpToolDisplayDescriptor;
+pub use den_core::tools::ToolDisplayDescriptor;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpToolPolicy {
@@ -1411,9 +1411,9 @@ pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
     acp_tool_policy(tool).to_json(tool.descriptor())
 }
 
-pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
+pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
     match tool {
-        AcpToolName::ReadTextFile => AcpToolDisplayDescriptor {
+        AcpToolName::ReadTextFile => ToolDisplayDescriptor {
             label: "Read file",
             category: "filesystem",
             progress_verb: "Reading",
@@ -1422,7 +1422,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading this workspace file.",
         },
-        AcpToolName::ListDirectory => AcpToolDisplayDescriptor {
+        AcpToolName::ListDirectory => ToolDisplayDescriptor {
             label: "List directory",
             category: "filesystem",
             progress_verb: "Listing",
@@ -1431,7 +1431,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow listing this workspace directory.",
         },
-        AcpToolName::FindPaths => AcpToolDisplayDescriptor {
+        AcpToolName::FindPaths => ToolDisplayDescriptor {
             label: "Find paths",
             category: "filesystem",
             progress_verb: "Finding paths for",
@@ -1440,7 +1440,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow finding matching workspace paths.",
         },
-        AcpToolName::SearchFiles => AcpToolDisplayDescriptor {
+        AcpToolName::SearchFiles => ToolDisplayDescriptor {
             label: "Search files",
             category: "filesystem",
             progress_verb: "Searching",
@@ -1449,7 +1449,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow searching workspace file contents or paths.",
         },
-        AcpToolName::Stat => AcpToolDisplayDescriptor {
+        AcpToolName::Stat => ToolDisplayDescriptor {
             label: "Inspect path",
             category: "filesystem",
             progress_verb: "Inspecting",
@@ -1458,7 +1458,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading metadata for this workspace path.",
         },
-        AcpToolName::EditFile => AcpToolDisplayDescriptor {
+        AcpToolName::EditFile => ToolDisplayDescriptor {
             label: "Edit file",
             category: "filesystem",
             progress_verb: "Editing",
@@ -1467,7 +1467,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &["old_text", "new_text"],
             approval_summary: "Allow changing this workspace file.",
         },
-        AcpToolName::CreateTextFile => AcpToolDisplayDescriptor {
+        AcpToolName::CreateTextFile => ToolDisplayDescriptor {
             label: "Create file",
             category: "filesystem",
             progress_verb: "Creating",
@@ -1476,7 +1476,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &["content"],
             approval_summary: "Allow creating this workspace file.",
         },
-        AcpToolName::CreateDirectory => AcpToolDisplayDescriptor {
+        AcpToolName::CreateDirectory => ToolDisplayDescriptor {
             label: "Create directory",
             category: "filesystem",
             progress_verb: "Creating",
@@ -1485,7 +1485,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating this workspace directory.",
         },
-        AcpToolName::MovePath => AcpToolDisplayDescriptor {
+        AcpToolName::MovePath => ToolDisplayDescriptor {
             label: "Move path",
             category: "filesystem",
             progress_verb: "Moving",
@@ -1494,7 +1494,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow moving or renaming this workspace path.",
         },
-        AcpToolName::CopyPath => AcpToolDisplayDescriptor {
+        AcpToolName::CopyPath => ToolDisplayDescriptor {
             label: "Copy path",
             category: "filesystem",
             progress_verb: "Copying",
@@ -1503,7 +1503,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow copying this workspace path.",
         },
-        AcpToolName::ApplyPatch => AcpToolDisplayDescriptor {
+        AcpToolName::ApplyPatch => ToolDisplayDescriptor {
             label: "Apply patch",
             category: "filesystem",
             progress_verb: "Applying patch",
@@ -1512,7 +1512,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &["patch"],
             approval_summary: "Allow applying a patch to workspace files.",
         },
-        AcpToolName::DeletePath => AcpToolDisplayDescriptor {
+        AcpToolName::DeletePath => ToolDisplayDescriptor {
             label: "Delete path",
             category: "filesystem",
             progress_verb: "Deleting",
@@ -1521,7 +1521,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow deleting this workspace path.",
         },
-        AcpToolName::GitStatus => AcpToolDisplayDescriptor {
+        AcpToolName::GitStatus => ToolDisplayDescriptor {
             label: "Check git status",
             category: "git",
             progress_verb: "Checking git status in",
@@ -1530,7 +1530,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git status for this workspace repository.",
         },
-        AcpToolName::GitDiff => AcpToolDisplayDescriptor {
+        AcpToolName::GitDiff => ToolDisplayDescriptor {
             label: "Inspect git diff",
             category: "git",
             progress_verb: "Inspecting git diff in",
@@ -1539,7 +1539,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git diff for this workspace repository.",
         },
-        AcpToolName::GitLog => AcpToolDisplayDescriptor {
+        AcpToolName::GitLog => ToolDisplayDescriptor {
             label: "Read git log",
             category: "git",
             progress_verb: "Reading git log in",
@@ -1548,7 +1548,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git history for this workspace repository.",
         },
-        AcpToolName::GitShow => AcpToolDisplayDescriptor {
+        AcpToolName::GitShow => ToolDisplayDescriptor {
             label: "Show git revision",
             category: "git",
             progress_verb: "Showing git revision",
@@ -1557,7 +1557,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading this git revision or file.",
         },
-        AcpToolName::GitAdd => AcpToolDisplayDescriptor {
+        AcpToolName::GitAdd => ToolDisplayDescriptor {
             label: "Stage git paths",
             category: "git",
             progress_verb: "Staging git paths in",
@@ -1566,7 +1566,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow staging explicit git paths.",
         },
-        AcpToolName::GitRestore => AcpToolDisplayDescriptor {
+        AcpToolName::GitRestore => ToolDisplayDescriptor {
             label: "Restore git paths",
             category: "git",
             progress_verb: "Restoring git paths in",
@@ -1575,7 +1575,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow restoring git paths; this may discard changes.",
         },
-        AcpToolName::GitCommit => AcpToolDisplayDescriptor {
+        AcpToolName::GitCommit => ToolDisplayDescriptor {
             label: "Create git commit",
             category: "git",
             progress_verb: "Committing",
@@ -1584,7 +1584,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating a git commit from staged changes.",
         },
-        AcpToolName::GitStash => AcpToolDisplayDescriptor {
+        AcpToolName::GitStash => ToolDisplayDescriptor {
             label: "Stash git changes",
             category: "git",
             progress_verb: "Stashing git changes in",
@@ -1593,7 +1593,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating a git stash.",
         },
-        AcpToolName::ProcessRun => AcpToolDisplayDescriptor {
+        AcpToolName::ProcessRun => ToolDisplayDescriptor {
             label: "Run process",
             category: "terminal",
             progress_verb: "Running",
@@ -1602,7 +1602,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &["env"],
             approval_summary: "Allow running this process in the workspace.",
         },
-        AcpToolName::TerminalRunCommand => AcpToolDisplayDescriptor {
+        AcpToolName::TerminalRunCommand => ToolDisplayDescriptor {
             label: "Run terminal command",
             category: "terminal",
             progress_verb: "Running terminal command",
@@ -1611,7 +1611,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &["env"],
             approval_summary: "Allow running this terminal command in the workspace.",
         },
-        AcpToolName::ChromeOpen => AcpToolDisplayDescriptor {
+        AcpToolName::ChromeOpen => ToolDisplayDescriptor {
             label: "Open browser",
             category: "browser",
             progress_verb: "Opening",
@@ -1620,7 +1620,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow opening this URL in the browser session.",
         },
-        AcpToolName::ChromeSnapshot => AcpToolDisplayDescriptor {
+        AcpToolName::ChromeSnapshot => ToolDisplayDescriptor {
             label: "Inspect browser page",
             category: "browser",
             progress_verb: "Inspecting browser page",
@@ -1629,7 +1629,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading the current browser page snapshot.",
         },
-        AcpToolName::ChromeConsoleMessages => AcpToolDisplayDescriptor {
+        AcpToolName::ChromeConsoleMessages => ToolDisplayDescriptor {
             label: "Read browser console",
             category: "browser",
             progress_verb: "Reading browser console",
@@ -1638,7 +1638,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading browser console messages.",
         },
-        AcpToolName::ChromeNetworkRequests => AcpToolDisplayDescriptor {
+        AcpToolName::ChromeNetworkRequests => ToolDisplayDescriptor {
             label: "Inspect network requests",
             category: "browser",
             progress_verb: "Inspecting network requests",
@@ -1647,7 +1647,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading browser network request metadata.",
         },
-        AcpToolName::ChromeScreenshot => AcpToolDisplayDescriptor {
+        AcpToolName::ChromeScreenshot => ToolDisplayDescriptor {
             label: "Capture screenshot",
             category: "browser",
             progress_verb: "Capturing screenshot",
@@ -1656,7 +1656,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow capturing a browser screenshot.",
         },
-        AcpToolName::McpCallTool => AcpToolDisplayDescriptor {
+        AcpToolName::McpCallTool => ToolDisplayDescriptor {
             label: "Run MCP tool",
             category: "mcp",
             progress_verb: "Running MCP tool",

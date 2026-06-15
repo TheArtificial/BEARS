@@ -14,7 +14,7 @@ const WORK_PROFILES: &[&str] = &["work"];
 use crate::BearProfile;
 
 use crate::tools::{
-    display::AcpToolDisplayDescriptor,
+    display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
         render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
         ToolScopeKind, ToolSideEffectKind,
@@ -435,9 +435,9 @@ pub fn den_tool_completion_status_text(provider_name: &str) -> Option<String> {
     Some(format!("{}.", display.complete_verb))
 }
 
-pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDisplayDescriptor {
+pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayDescriptor {
     match name {
-        DEN_CONVERSATION_SET_TITLE => AcpToolDisplayDescriptor {
+        DEN_CONVERSATION_SET_TITLE => ToolDisplayDescriptor {
             label,
             category: "conversation",
             progress_verb: "Setting conversation title",
@@ -446,7 +446,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Update the visible conversation title.",
         },
-        DEN_WEB_FETCH => AcpToolDisplayDescriptor {
+        DEN_WEB_FETCH => ToolDisplayDescriptor {
             label,
             category: "web",
             progress_verb: "Fetching",
@@ -455,7 +455,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Fetch this URL with Den web safeguards.",
         },
-        DEN_WEB_SEARCH => AcpToolDisplayDescriptor {
+        DEN_WEB_SEARCH => ToolDisplayDescriptor {
             label,
             category: "web",
             progress_verb: "Searching web for",
@@ -464,7 +464,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Search the web through the configured Den provider.",
         },
-        DEN_BEAR_ENVIRONMENT => AcpToolDisplayDescriptor {
+        DEN_BEAR_ENVIRONMENT => ToolDisplayDescriptor {
             label,
             category: "orientation",
             progress_verb: "Inspecting bear environment",
@@ -473,7 +473,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read a structured snapshot of the current Bear runtime environment.",
         },
-        DEN_SITUATION_GET => AcpToolDisplayDescriptor {
+        DEN_SITUATION_GET => ToolDisplayDescriptor {
             label,
             category: "orientation",
             progress_verb: "Checking session info",
@@ -483,7 +483,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             approval_summary:
                 "Read trusted session, Bear, human, policy, and workspace orientation.",
         },
-        DEN_MEMORY_WRITE_ENTRY => AcpToolDisplayDescriptor {
+        DEN_MEMORY_WRITE_ENTRY => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Writing memory entry",
@@ -492,7 +492,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["body", "content"],
             approval_summary: "Write a role-local memory entry with provenance.",
         },
-        DEN_MEMORY_STATUS => AcpToolDisplayDescriptor {
+        DEN_MEMORY_STATUS => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Checking memory status",
@@ -501,7 +501,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read memory health and counts.",
         },
-        DEN_MEMORY_TREE => AcpToolDisplayDescriptor {
+        DEN_MEMORY_TREE => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Browsing memory",
@@ -510,7 +510,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Browse allowed memory paths.",
         },
-        DEN_MEMORY_READ => AcpToolDisplayDescriptor {
+        DEN_MEMORY_READ => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Reading memory",
@@ -519,7 +519,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read this allowed memory file.",
         },
-        DEN_MEMORY_SEARCH => AcpToolDisplayDescriptor {
+        DEN_MEMORY_SEARCH => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Searching memory for",
@@ -528,7 +528,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Search allowed Bear memory.",
         },
-        DEN_MEMORY_ORIENT_WORK_SURFACE => AcpToolDisplayDescriptor {
+        DEN_MEMORY_ORIENT_WORK_SURFACE => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Orienting work surface",
@@ -537,7 +537,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read work-surface memory anchors and orientation.",
         },
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => AcpToolDisplayDescriptor {
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Creating work-surface scaffold",
@@ -546,7 +546,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["overview", "glossary", "current_understanding"],
             approval_summary: "Create canonical memory scaffold for this work surface.",
         },
-        DEN_MEMORY_REQUEST_REVIEW => AcpToolDisplayDescriptor {
+        DEN_MEMORY_REQUEST_REVIEW => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Requesting memory review",
@@ -555,7 +555,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "rationale", "proposed_content", "proposed_patch"],
             approval_summary: "Ask curate to review role-local memory.",
         },
-        DEN_MEMORY_LIST_PROPOSALS => AcpToolDisplayDescriptor {
+        DEN_MEMORY_LIST_PROPOSALS => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Listing memory proposals",
@@ -564,7 +564,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "List memory review proposals.",
         },
-        DEN_MEMORY_READ_PROPOSAL => AcpToolDisplayDescriptor {
+        DEN_MEMORY_READ_PROPOSAL => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Reading memory proposal",
@@ -573,7 +573,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read this memory review proposal.",
         },
-        DEN_MEMORY_RESOLVE_PROPOSAL => AcpToolDisplayDescriptor {
+        DEN_MEMORY_RESOLVE_PROPOSAL => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Resolving memory proposal",
@@ -582,7 +582,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["review_notes", "decision_summary"],
             approval_summary: "Record a curate decision for this memory proposal.",
         },
-        DEN_MEMORY_APPLY_CORE_UPDATE => AcpToolDisplayDescriptor {
+        DEN_MEMORY_APPLY_CORE_UPDATE => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Applying core memory update",
@@ -591,7 +591,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["body", "old_text", "new_text", "review_notes"],
             approval_summary: "Apply a reviewed update to core memory.",
         },
-        DEN_SKILL_PROPOSE => AcpToolDisplayDescriptor {
+        DEN_SKILL_PROPOSE => ToolDisplayDescriptor {
             label,
             category: "skills",
             progress_verb: "Proposing skill",
@@ -600,7 +600,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["proposed_content"],
             approval_summary: "Create a skill proposal for curate review.",
         },
-        DEN_SKILL_APPROVE_PROPOSAL => AcpToolDisplayDescriptor {
+        DEN_SKILL_APPROVE_PROPOSAL => ToolDisplayDescriptor {
             label,
             category: "skills",
             progress_verb: "Approving skill proposal",
@@ -609,7 +609,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["review_notes"],
             approval_summary: "Approve this skill proposal.",
         },
-        DEN_SKILL_REJECT_PROPOSAL => AcpToolDisplayDescriptor {
+        DEN_SKILL_REJECT_PROPOSAL => ToolDisplayDescriptor {
             label,
             category: "skills",
             progress_verb: "Rejecting skill proposal",
@@ -618,7 +618,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["rejection_reason", "review_notes"],
             approval_summary: "Reject this skill proposal.",
         },
-        DEN_WORK_PLAN_LIST => AcpToolDisplayDescriptor {
+        DEN_WORK_PLAN_LIST => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Listing plans",
@@ -627,7 +627,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read visible planning state.",
         },
-        DEN_WORK_PLAN_GET_STATUS => AcpToolDisplayDescriptor {
+        DEN_WORK_PLAN_GET_STATUS => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Checking plan status",
@@ -636,7 +636,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read visible plan status.",
         },
-        DEN_WORK_PLAN_UPDATE => AcpToolDisplayDescriptor {
+        DEN_WORK_PLAN_UPDATE => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Updating visible plan",
@@ -645,7 +645,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "items", "workspace_context"],
             approval_summary: "Update active visible work state.",
         },
-        DEN_WORK_PLAN_REQUEST_HANDOFF => AcpToolDisplayDescriptor {
+        DEN_WORK_PLAN_REQUEST_HANDOFF => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Requesting work handoff",
@@ -654,7 +654,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "requested_outcome", "constraints"],
             approval_summary: "Request conversion of plan items into task intent.",
         },
-        DEN_PLAN_MODE_ENTER => AcpToolDisplayDescriptor {
+        DEN_PLAN_MODE_ENTER => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Entering planning mode",
@@ -663,7 +663,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["reason"],
             approval_summary: "Enter ACP planning mode.",
         },
-        DEN_PLAN_MODE_STATUS => AcpToolDisplayDescriptor {
+        DEN_PLAN_MODE_STATUS => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Checking planning mode",
@@ -672,7 +672,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Read current planning gate state.",
         },
-        DEN_PLAN_MODE_RECORD_APPROVAL => AcpToolDisplayDescriptor {
+        DEN_PLAN_MODE_RECORD_APPROVAL => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Recording plan approval",
@@ -681,7 +681,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["approval_text"],
             approval_summary: "Record explicit human approval for the submitted plan.",
         },
-        DEN_PLAN_MODE_EXIT => AcpToolDisplayDescriptor {
+        DEN_PLAN_MODE_EXIT => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Submitting implementation plan",
@@ -690,7 +690,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["body"],
             approval_summary: "Submit an implementation workplan for approval.",
         },
-        DEN_PLAN_MODE_CANCEL => AcpToolDisplayDescriptor {
+        DEN_PLAN_MODE_CANCEL => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Cancelling planning mode",
@@ -699,7 +699,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &[],
             approval_summary: "Cancel the current planning gate.",
         },
-        DEN_TASK_WRITE_INTENT => AcpToolDisplayDescriptor {
+        DEN_TASK_WRITE_INTENT => ToolDisplayDescriptor {
             label,
             category: "tasks",
             progress_verb: "Writing task intent",
@@ -708,7 +708,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "requested_outcome", "constraints"],
             approval_summary: "Write a task intent for curate review.",
         },
-        DEN_TASK_APPROVE_INTENT => AcpToolDisplayDescriptor {
+        DEN_TASK_APPROVE_INTENT => ToolDisplayDescriptor {
             label,
             category: "tasks",
             progress_verb: "Approving task intent",
@@ -717,7 +717,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["approved_scope", "review_notes"],
             approval_summary: "Approve this task intent.",
         },
-        DEN_TASK_REJECT_INTENT => AcpToolDisplayDescriptor {
+        DEN_TASK_REJECT_INTENT => ToolDisplayDescriptor {
             label,
             category: "tasks",
             progress_verb: "Rejecting task intent",
@@ -726,7 +726,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["rejection_reason", "review_notes"],
             approval_summary: "Reject this task intent.",
         },
-        DEN_CORE_WRITE_RESULT_SUMMARY => AcpToolDisplayDescriptor {
+        DEN_CORE_WRITE_RESULT_SUMMARY => ToolDisplayDescriptor {
             label,
             category: "memory",
             progress_verb: "Writing core result summary",
@@ -735,7 +735,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "durable_learnings"],
             approval_summary: "Write a reviewed result summary to core memory.",
         },
-        DEN_OBSERVATION_WRITE => AcpToolDisplayDescriptor {
+        DEN_OBSERVATION_WRITE => ToolDisplayDescriptor {
             label,
             category: "observations",
             progress_verb: "Writing observation",
@@ -744,7 +744,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "payload_ref", "source"],
             approval_summary: "Write a watch observation.",
         },
-        DEN_RUN_WRITE_RESULT => AcpToolDisplayDescriptor {
+        DEN_RUN_WRITE_RESULT => ToolDisplayDescriptor {
             label,
             category: "runs",
             progress_verb: "Writing run result",
@@ -753,7 +753,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             sensitive_arg_keys: &["summary", "result", "follow_up"],
             approval_summary: "Write a work run result.",
         },
-        _ => AcpToolDisplayDescriptor {
+        _ => ToolDisplayDescriptor {
             label,
             category: "den",
             progress_verb: "Using",
