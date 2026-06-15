@@ -155,7 +155,7 @@ impl SettledToolResult {
             "structured_content_bytes": self.structured_content_bytes,
             "age_ms": self.settled_at.elapsed().as_millis(),
             "component": "den.acp",
-            "phase": crate::acp_tools::acp_diag_phase::RECENTLY_SETTLED_RESULT,
+            "phase": crate::client_tools::diag_phase::RECENTLY_SETTLED_RESULT,
         })
     }
 }

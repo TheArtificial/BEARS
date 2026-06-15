@@ -8,16 +8,16 @@ use den_runtime::{
 
 pub(crate) fn plan_mode_workplan_payload(row: &plan_mode::PlanModeSessionRow) -> Value {
     turn_state::turn_state_from_sources(
-        &den_runtime::acp_tools::AcpResolvedSessionPolicy {
+        &den_runtime::client_tools::ResolvedSessionPolicy {
             mode_label: if row.state == "approved" {
                 "Write"
             } else {
                 "Plan"
             },
             tool_enablement: if row.state == "approved" {
-                den_runtime::acp_tools::AcpToolEnablementState::AllTools
+                den_runtime::client_tools::ToolEnablementState::AllTools
             } else {
-                den_runtime::acp_tools::AcpToolEnablementState::ReadOnly
+                den_runtime::client_tools::ToolEnablementState::ReadOnly
             },
             plan_mode_state: Some(row.state.clone()),
         },

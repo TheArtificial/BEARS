@@ -6,14 +6,14 @@ use den_core::tools::tool_descriptor_guidance::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpToolClass {
+pub enum ToolClass {
     ReadOnly,
     WorkspaceMutation,
     Execution,
     Browser,
 }
 
-impl AcpToolClass {
+impl ToolClass {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReadOnly => "read_only",
@@ -25,12 +25,12 @@ impl AcpToolClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpToolEnablementState {
+pub enum ToolEnablementState {
     ReadOnly,
     AllTools,
 }
 
-impl AcpToolEnablementState {
+impl ToolEnablementState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReadOnly => "read_only",
@@ -44,28 +44,28 @@ impl AcpToolEnablementState {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpResolvedSessionPolicy {
+pub struct ResolvedSessionPolicy {
     pub mode_label: &'static str,
-    pub tool_enablement: AcpToolEnablementState,
+    pub tool_enablement: ToolEnablementState,
     pub plan_mode_state: Option<String>,
 }
 
-impl AcpResolvedSessionPolicy {
-    pub fn allows_tool(&self, tool: AcpToolName) -> bool {
+impl ResolvedSessionPolicy {
+    pub fn allows_tool(&self, tool: ClientToolName) -> bool {
         self.tool_enablement.enables_non_read_tools()
-            || matches!(tool_class(tool), AcpToolClass::ReadOnly)
+            || matches!(tool_class(tool), ToolClass::ReadOnly)
     }
 
     pub fn allowed_tool_classes(&self) -> Vec<&'static str> {
         if self.tool_enablement.enables_non_read_tools() {
             vec![
-                AcpToolClass::ReadOnly.as_str(),
-                AcpToolClass::WorkspaceMutation.as_str(),
-                AcpToolClass::Execution.as_str(),
-                AcpToolClass::Browser.as_str(),
+                ToolClass::ReadOnly.as_str(),
+                ToolClass::WorkspaceMutation.as_str(),
+                ToolClass::Execution.as_str(),
+                ToolClass::Browser.as_str(),
             ]
         } else {
-            vec![AcpToolClass::ReadOnly.as_str()]
+            vec![ToolClass::ReadOnly.as_str()]
         }
     }
 
@@ -74,9 +74,9 @@ impl AcpResolvedSessionPolicy {
             Vec::new()
         } else {
             vec![
-                AcpToolClass::WorkspaceMutation.as_str(),
-                AcpToolClass::Execution.as_str(),
-                AcpToolClass::Browser.as_str(),
+                ToolClass::WorkspaceMutation.as_str(),
+                ToolClass::Execution.as_str(),
+                ToolClass::Browser.as_str(),
             ]
         }
     }
@@ -97,14 +97,14 @@ impl AcpResolvedSessionPolicy {
     }
 }
 
-pub fn resolve_session_policy(plan_mode_state: Option<&str>) -> AcpResolvedSessionPolicy {
+pub fn resolve_session_policy(plan_mode_state: Option<&str>) -> ResolvedSessionPolicy {
     resolve_session_policy_for_mode("ask", plan_mode_state)
 }
 
 pub fn resolve_session_policy_for_mode(
     current_mode: &str,
     plan_mode_state: Option<&str>,
-) -> AcpResolvedSessionPolicy {
+) -> ResolvedSessionPolicy {
     let normalized_current_mode = current_mode.trim().to_ascii_lowercase();
     let resolved_mode = match plan_mode_state {
         Some("approved") => "write",
@@ -113,25 +113,25 @@ pub fn resolve_session_policy_for_mode(
         _ => normalized_current_mode.as_str(),
     };
     match resolved_mode {
-        "plan" => AcpResolvedSessionPolicy {
+        "plan" => ResolvedSessionPolicy {
             mode_label: "Plan",
-            tool_enablement: AcpToolEnablementState::ReadOnly,
+            tool_enablement: ToolEnablementState::ReadOnly,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
-        "write" => AcpResolvedSessionPolicy {
+        "write" => ResolvedSessionPolicy {
             mode_label: "Write",
-            tool_enablement: AcpToolEnablementState::AllTools,
+            tool_enablement: ToolEnablementState::AllTools,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
-        _ => AcpResolvedSessionPolicy {
+        _ => ResolvedSessionPolicy {
             mode_label: "Ask",
-            tool_enablement: AcpToolEnablementState::ReadOnly,
+            tool_enablement: ToolEnablementState::ReadOnly,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
     }
 }
 
-pub mod acp_diag_phase {
+pub mod diag_phase {
     pub const DESCRIPTOR_ADVERTISED: &str = "descriptor_advertised";
     pub const LETTA_TOOL_CALL_MAPPED: &str = "letta_tool_call_mapped";
     pub const TOOL_REQUEST_REGISTERED: &str = "tool_request_registered";
@@ -153,7 +153,7 @@ pub mod acp_diag_phase {
 // `adapter_supports_tool`. Do not bump the Den↔adapter contract for additive
 // local tools unless the tool requires an incompatible message-shape change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpToolName {
+pub enum ClientToolName {
     ReadTextFile,
     ListDirectory,
     FindPaths,
@@ -184,44 +184,44 @@ pub enum AcpToolName {
     McpCallTool,
 }
 
-impl AcpToolName {
-    pub fn descriptor(self) -> &'static AcpToolDescriptor {
+impl ClientToolName {
+    pub fn descriptor(self) -> &'static ClientToolDescriptor {
         match self {
-            Self::ReadTextFile => &ACP_READ_TEXT_FILE_TOOL,
-            Self::ListDirectory => &ACP_LIST_DIRECTORY_TOOL,
-            Self::FindPaths => &ACP_FIND_PATHS_TOOL,
-            Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
-            Self::Stat => &ACP_STAT_TOOL,
-            Self::EditFile => &ACP_EDIT_FILE_TOOL,
-            Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
-            Self::CreateDirectory => &ACP_CREATE_DIRECTORY_TOOL,
-            Self::MovePath => &ACP_MOVE_PATH_TOOL,
-            Self::CopyPath => &ACP_COPY_PATH_TOOL,
-            Self::ApplyPatch => &ACP_APPLY_PATCH_TOOL,
-            Self::DeletePath => &ACP_DELETE_PATH_TOOL,
-            Self::GitStatus => &ACP_GIT_STATUS_TOOL,
-            Self::GitDiff => &ACP_GIT_DIFF_TOOL,
-            Self::GitLog => &ACP_GIT_LOG_TOOL,
-            Self::GitShow => &ACP_GIT_SHOW_TOOL,
-            Self::GitAdd => &ACP_GIT_ADD_TOOL,
-            Self::GitRestore => &ACP_GIT_RESTORE_TOOL,
-            Self::GitCommit => &ACP_GIT_COMMIT_TOOL,
-            Self::GitStash => &ACP_GIT_STASH_TOOL,
-            Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
-            Self::TerminalRunCommand => &ACP_TERMINAL_RUN_COMMAND_TOOL,
-            Self::ChromeOpen => &ACP_CHROME_OPEN_TOOL,
-            Self::ChromeSnapshot => &ACP_CHROME_SNAPSHOT_TOOL,
-            Self::ChromeConsoleMessages => &ACP_CHROME_CONSOLE_MESSAGES_TOOL,
-            Self::ChromeNetworkRequests => &ACP_CHROME_NETWORK_REQUESTS_TOOL,
-            Self::ChromeScreenshot => &ACP_CHROME_SCREENSHOT_TOOL,
-            Self::McpCallTool => &ACP_MCP_CALL_TOOL,
+            Self::ReadTextFile => &READ_TEXT_FILE_TOOL,
+            Self::ListDirectory => &LIST_DIRECTORY_TOOL,
+            Self::FindPaths => &FIND_PATHS_TOOL,
+            Self::SearchFiles => &SEARCH_FILES_TOOL,
+            Self::Stat => &STAT_TOOL,
+            Self::EditFile => &EDIT_FILE_TOOL,
+            Self::CreateTextFile => &CREATE_TEXT_FILE_TOOL,
+            Self::CreateDirectory => &CREATE_DIRECTORY_TOOL,
+            Self::MovePath => &MOVE_PATH_TOOL,
+            Self::CopyPath => &COPY_PATH_TOOL,
+            Self::ApplyPatch => &APPLY_PATCH_TOOL,
+            Self::DeletePath => &DELETE_PATH_TOOL,
+            Self::GitStatus => &GIT_STATUS_TOOL,
+            Self::GitDiff => &GIT_DIFF_TOOL,
+            Self::GitLog => &GIT_LOG_TOOL,
+            Self::GitShow => &GIT_SHOW_TOOL,
+            Self::GitAdd => &GIT_ADD_TOOL,
+            Self::GitRestore => &GIT_RESTORE_TOOL,
+            Self::GitCommit => &GIT_COMMIT_TOOL,
+            Self::GitStash => &GIT_STASH_TOOL,
+            Self::ProcessRun => &PROCESS_RUN_TOOL,
+            Self::TerminalRunCommand => &TERMINAL_RUN_COMMAND_TOOL,
+            Self::ChromeOpen => &CHROME_OPEN_TOOL,
+            Self::ChromeSnapshot => &CHROME_SNAPSHOT_TOOL,
+            Self::ChromeConsoleMessages => &CHROME_CONSOLE_MESSAGES_TOOL,
+            Self::ChromeNetworkRequests => &CHROME_NETWORK_REQUESTS_TOOL,
+            Self::ChromeScreenshot => &CHROME_SCREENSHOT_TOOL,
+            Self::McpCallTool => &MCP_CALL_TOOL,
         }
     }
 
     pub fn all() -> &'static [Self] {
         // Keep this list in sync with `descriptor`, `from_provider_alias`, policy,
         // descriptors, and the adapter's direct tool advertisement. Old adapters
-        // remain compatible because `acp_provider_tool_names_for_client_context`
+        // remain compatible because `provider_tool_names_for_client_context`
         // filters this list by adapter support.
         &[
             Self::ReadTextFile,
@@ -398,7 +398,7 @@ impl AcpToolName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpToolStatus {
+pub enum ToolStatus {
     Ok,
     Error,
     Cancelled,
@@ -407,7 +407,7 @@ pub enum AcpToolStatus {
     Unsupported,
 }
 
-impl AcpToolStatus {
+impl ToolStatus {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "ok" => Some(Self::Ok),
@@ -433,7 +433,7 @@ impl AcpToolStatus {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct AcpToolDescriptor {
+pub struct ClientToolDescriptor {
     pub provider_name: &'static str,
     pub provider_aliases: &'static [&'static str],
     pub canonical_name: &'static str,
@@ -448,12 +448,12 @@ pub struct AcpToolDescriptor {
 }
 
 // `ToolDisplayDescriptor` now lives in `den-tools` (the descriptor authority);
-// re-exported here so existing `crate::core::acp_tools::ToolDisplayDescriptor`
+// re-exported here so existing `crate::core::client_tools::ToolDisplayDescriptor`
 // paths keep resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase A).
 pub use den_core::tools::ToolDisplayDescriptor;
 
 #[derive(Debug, Clone, Copy)]
-pub struct AcpToolPolicy {
+pub struct ToolPolicy {
     pub scope_basis: &'static str,
     pub role_basis: &'static str,
     pub allowed_roots_basis: &'static str,
@@ -474,8 +474,8 @@ pub struct AcpToolPolicy {
     pub permission_timeout_ms: u64,
 }
 
-impl AcpToolPolicy {
-    pub fn to_json(self, descriptor: &AcpToolDescriptor) -> serde_json::Value {
+impl ToolPolicy {
+    pub fn to_json(self, descriptor: &ClientToolDescriptor) -> serde_json::Value {
         let mut policy = json!({
             "scope_basis": self.scope_basis,
             "role_basis": self.role_basis,
@@ -526,7 +526,7 @@ impl AcpToolPolicy {
     }
 }
 
-pub const ACP_MCP_CALL_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const MCP_CALL_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "mcp__dynamic_tool",
     provider_aliases: &[],
     canonical_name: "acp.mcp.call_tool",
@@ -540,7 +540,7 @@ pub const ACP_MCP_CALL_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "external_tool",
 };
 
-pub const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const READ_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_read_text_file",
     provider_aliases: &[],
     canonical_name: "acp.fs.read_text_file",
@@ -554,7 +554,7 @@ pub const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "read_files",
 };
 
-pub const ACP_LIST_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const LIST_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_list_directory",
     provider_aliases: &[],
     canonical_name: "acp.fs.list_directory",
@@ -568,7 +568,7 @@ pub const ACP_LIST_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "read_files",
 };
 
-pub const ACP_FIND_PATHS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const FIND_PATHS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_find_paths",
     provider_aliases: &[],
     canonical_name: "acp.fs.find_paths",
@@ -582,7 +582,7 @@ pub const ACP_FIND_PATHS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "read_files",
 };
 
-pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const SEARCH_FILES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_search_files",
     provider_aliases: &[],
     canonical_name: "acp.fs.search_files",
@@ -596,7 +596,7 @@ pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "read_files",
 };
 
-pub const ACP_STAT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const STAT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_stat",
     provider_aliases: &[],
     canonical_name: "acp.fs.stat",
@@ -610,7 +610,7 @@ pub const ACP_STAT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "read_files",
 };
 
-pub const ACP_EDIT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const EDIT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_edit_file",
     provider_aliases: &[
         "fs_replace_text",
@@ -630,7 +630,7 @@ pub const ACP_EDIT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_CREATE_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CREATE_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_create_text_file",
     provider_aliases: &[],
     canonical_name: "acp.fs.create_text_file",
@@ -644,7 +644,7 @@ pub const ACP_CREATE_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_CREATE_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CREATE_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_create_directory",
     provider_aliases: &[],
     canonical_name: "acp.fs.create_directory",
@@ -658,7 +658,7 @@ pub const ACP_CREATE_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_MOVE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const MOVE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_move_path",
     provider_aliases: &[],
     canonical_name: "acp.fs.move_path",
@@ -672,7 +672,7 @@ pub const ACP_MOVE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_COPY_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const COPY_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_copy_path",
     provider_aliases: &[],
     canonical_name: "acp.fs.copy_path",
@@ -686,7 +686,7 @@ pub const ACP_COPY_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_APPLY_PATCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const APPLY_PATCH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_apply_patch",
     provider_aliases: &[],
     canonical_name: "acp.fs.apply_patch",
@@ -700,7 +700,7 @@ pub const ACP_APPLY_PATCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "edit_files",
 };
 
-pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const DELETE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_delete_path",
     provider_aliases: &[],
     canonical_name: "acp.fs.delete_path",
@@ -714,7 +714,7 @@ pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "delete_files",
 };
 
-pub const ACP_GIT_STATUS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_STATUS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_status",
     provider_aliases: &[],
     canonical_name: "acp.git.status",
@@ -728,7 +728,7 @@ pub const ACP_GIT_STATUS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_read",
 };
 
-pub const ACP_GIT_DIFF_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_DIFF_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_diff",
     provider_aliases: &[],
     canonical_name: "acp.git.diff",
@@ -742,7 +742,7 @@ pub const ACP_GIT_DIFF_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_read",
 };
 
-pub const ACP_GIT_LOG_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_LOG_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_log",
     provider_aliases: &[],
     canonical_name: "acp.git.log",
@@ -756,7 +756,7 @@ pub const ACP_GIT_LOG_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_read",
 };
 
-pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_SHOW_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_show",
     provider_aliases: &[],
     canonical_name: "acp.git.show",
@@ -770,7 +770,7 @@ pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_read",
 };
 
-pub const ACP_GIT_ADD_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_ADD_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_add",
     provider_aliases: &[],
     canonical_name: "acp.git.add",
@@ -784,7 +784,7 @@ pub const ACP_GIT_ADD_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_write",
 };
 
-pub const ACP_GIT_RESTORE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_RESTORE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_restore",
     provider_aliases: &[],
     canonical_name: "acp.git.restore",
@@ -798,7 +798,7 @@ pub const ACP_GIT_RESTORE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_write",
 };
 
-pub const ACP_GIT_COMMIT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_COMMIT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_commit",
     provider_aliases: &[],
     canonical_name: "acp.git.commit",
@@ -812,7 +812,7 @@ pub const ACP_GIT_COMMIT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_write",
 };
 
-pub const ACP_GIT_STASH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const GIT_STASH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_stash",
     provider_aliases: &[],
     canonical_name: "acp.git.stash",
@@ -826,7 +826,7 @@ pub const ACP_GIT_STASH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "git_write",
 };
 
-pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const PROCESS_RUN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "process_run",
     provider_aliases: &[],
     canonical_name: "acp.process.run",
@@ -840,7 +840,7 @@ pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "command_run",
 };
 
-pub const ACP_TERMINAL_RUN_COMMAND_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const TERMINAL_RUN_COMMAND_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "terminal_run_command",
     provider_aliases: &[],
     canonical_name: "acp.terminal.run_command",
@@ -854,7 +854,7 @@ pub const ACP_TERMINAL_RUN_COMMAND_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     permission_class: "command_run",
 };
 
-pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CHROME_OPEN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_open",
     provider_aliases: &[],
     canonical_name: "acp.chrome.open",
@@ -867,7 +867,7 @@ pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "browser_access",
     permission_class: "browser",
 };
-pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CHROME_SNAPSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_snapshot",
     provider_aliases: &[],
     canonical_name: "acp.chrome.snapshot",
@@ -880,7 +880,7 @@ pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "browser_access",
     permission_class: "browser",
 };
-pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CHROME_CONSOLE_MESSAGES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_console_messages",
     provider_aliases: &[],
     canonical_name: "acp.chrome.console_messages",
@@ -893,7 +893,7 @@ pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescripto
     risk: "browser_access",
     permission_class: "browser",
 };
-pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CHROME_NETWORK_REQUESTS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_network_requests",
     provider_aliases: &[],
     canonical_name: "acp.chrome.network_requests",
@@ -906,7 +906,7 @@ pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescripto
     risk: "browser_access",
     permission_class: "browser",
 };
-pub const ACP_CHROME_SCREENSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+pub const CHROME_SCREENSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_screenshot",
     provider_aliases: &[],
     canonical_name: "acp.chrome.screenshot",
@@ -927,7 +927,7 @@ pub fn provider_tool_name_is_safe(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -948,7 +948,7 @@ const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_LIST_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -969,7 +969,7 @@ const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_FIND_PATHS_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_FIND_PATHS_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -990,7 +990,7 @@ const ACP_FIND_PATHS_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_SEARCH_FILES_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1011,7 +1011,7 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_STAT_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_STAT_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1032,7 +1032,7 @@ const ACP_STAT_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_EDIT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_EDIT_FILE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1053,7 +1053,7 @@ const ACP_EDIT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_CREATE_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1074,7 +1074,7 @@ const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CREATE_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_CREATE_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1095,7 +1095,7 @@ const ACP_CREATE_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_MOVE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_MOVE_PATH_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1116,7 +1116,7 @@ const ACP_MOVE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_COPY_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_COPY_PATH_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1137,7 +1137,7 @@ const ACP_COPY_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_APPLY_PATCH_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_APPLY_PATCH_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1158,7 +1158,7 @@ const ACP_APPLY_PATCH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_DELETE_PATH_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1179,7 +1179,7 @@ const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_STATUS_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1200,7 +1200,7 @@ const ACP_GIT_STATUS_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_DIFF_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1221,7 +1221,7 @@ const ACP_GIT_DIFF_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_LOG_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1242,7 +1242,7 @@ const ACP_GIT_LOG_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_SHOW_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1263,7 +1263,7 @@ const ACP_GIT_SHOW_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_WRITE_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1284,7 +1284,7 @@ const ACP_GIT_WRITE_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_PROCESS_RUN_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1305,7 +1305,7 @@ const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CHROME_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_CHROME_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "chrome_cdp_endpoint",
@@ -1326,81 +1326,81 @@ const ACP_CHROME_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
+pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
     match tool {
-        AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
-        AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
-        AcpToolName::FindPaths => ACP_FIND_PATHS_POLICY,
-        AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
-        AcpToolName::Stat => ACP_STAT_POLICY,
-        AcpToolName::EditFile => ACP_EDIT_FILE_POLICY,
-        AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
-        AcpToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
-        AcpToolName::MovePath => ACP_MOVE_PATH_POLICY,
-        AcpToolName::CopyPath => ACP_COPY_PATH_POLICY,
-        AcpToolName::ApplyPatch => ACP_APPLY_PATCH_POLICY,
-        AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
-        AcpToolName::GitStatus => ACP_GIT_STATUS_POLICY,
-        AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
-        AcpToolName::GitLog => ACP_GIT_LOG_POLICY,
-        AcpToolName::GitShow => ACP_GIT_SHOW_POLICY,
-        AcpToolName::GitAdd => ACP_GIT_WRITE_POLICY,
-        AcpToolName::GitRestore => ACP_GIT_WRITE_POLICY,
-        AcpToolName::GitCommit => ACP_GIT_WRITE_POLICY,
-        AcpToolName::GitStash => ACP_GIT_WRITE_POLICY,
-        AcpToolName::ProcessRun | AcpToolName::TerminalRunCommand => ACP_PROCESS_RUN_POLICY,
-        AcpToolName::ChromeOpen
-        | AcpToolName::ChromeSnapshot
-        | AcpToolName::ChromeConsoleMessages
-        | AcpToolName::ChromeNetworkRequests
-        | AcpToolName::ChromeScreenshot => ACP_CHROME_POLICY,
-        AcpToolName::McpCallTool => ACP_PROCESS_RUN_POLICY,
+        ClientToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
+        ClientToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
+        ClientToolName::FindPaths => ACP_FIND_PATHS_POLICY,
+        ClientToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
+        ClientToolName::Stat => ACP_STAT_POLICY,
+        ClientToolName::EditFile => ACP_EDIT_FILE_POLICY,
+        ClientToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
+        ClientToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
+        ClientToolName::MovePath => ACP_MOVE_PATH_POLICY,
+        ClientToolName::CopyPath => ACP_COPY_PATH_POLICY,
+        ClientToolName::ApplyPatch => ACP_APPLY_PATCH_POLICY,
+        ClientToolName::DeletePath => ACP_DELETE_PATH_POLICY,
+        ClientToolName::GitStatus => ACP_GIT_STATUS_POLICY,
+        ClientToolName::GitDiff => ACP_GIT_DIFF_POLICY,
+        ClientToolName::GitLog => ACP_GIT_LOG_POLICY,
+        ClientToolName::GitShow => ACP_GIT_SHOW_POLICY,
+        ClientToolName::GitAdd => ACP_GIT_WRITE_POLICY,
+        ClientToolName::GitRestore => ACP_GIT_WRITE_POLICY,
+        ClientToolName::GitCommit => ACP_GIT_WRITE_POLICY,
+        ClientToolName::GitStash => ACP_GIT_WRITE_POLICY,
+        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ACP_PROCESS_RUN_POLICY,
+        ClientToolName::ChromeOpen
+        | ClientToolName::ChromeSnapshot
+        | ClientToolName::ChromeConsoleMessages
+        | ClientToolName::ChromeNetworkRequests
+        | ClientToolName::ChromeScreenshot => ACP_CHROME_POLICY,
+        ClientToolName::McpCallTool => ACP_PROCESS_RUN_POLICY,
     }
 }
 
-pub fn tool_class(tool: AcpToolName) -> AcpToolClass {
+pub fn tool_class(tool: ClientToolName) -> ToolClass {
     match tool {
-        AcpToolName::ReadTextFile
-        | AcpToolName::ListDirectory
-        | AcpToolName::FindPaths
-        | AcpToolName::SearchFiles
-        | AcpToolName::Stat
-        | AcpToolName::GitStatus
-        | AcpToolName::GitDiff
-        | AcpToolName::GitLog
-        | AcpToolName::GitShow => AcpToolClass::ReadOnly,
-        AcpToolName::EditFile
-        | AcpToolName::CreateTextFile
-        | AcpToolName::CreateDirectory
-        | AcpToolName::MovePath
-        | AcpToolName::CopyPath
-        | AcpToolName::ApplyPatch
-        | AcpToolName::DeletePath
-        | AcpToolName::GitAdd
-        | AcpToolName::GitRestore
-        | AcpToolName::GitCommit
-        | AcpToolName::GitStash => AcpToolClass::WorkspaceMutation,
-        AcpToolName::ProcessRun | AcpToolName::TerminalRunCommand => AcpToolClass::Execution,
-        AcpToolName::ChromeOpen
-        | AcpToolName::ChromeSnapshot
-        | AcpToolName::ChromeConsoleMessages
-        | AcpToolName::ChromeNetworkRequests
-        | AcpToolName::ChromeScreenshot => AcpToolClass::Browser,
-        AcpToolName::McpCallTool => AcpToolClass::Execution,
+        ClientToolName::ReadTextFile
+        | ClientToolName::ListDirectory
+        | ClientToolName::FindPaths
+        | ClientToolName::SearchFiles
+        | ClientToolName::Stat
+        | ClientToolName::GitStatus
+        | ClientToolName::GitDiff
+        | ClientToolName::GitLog
+        | ClientToolName::GitShow => ToolClass::ReadOnly,
+        ClientToolName::EditFile
+        | ClientToolName::CreateTextFile
+        | ClientToolName::CreateDirectory
+        | ClientToolName::MovePath
+        | ClientToolName::CopyPath
+        | ClientToolName::ApplyPatch
+        | ClientToolName::DeletePath
+        | ClientToolName::GitAdd
+        | ClientToolName::GitRestore
+        | ClientToolName::GitCommit
+        | ClientToolName::GitStash => ToolClass::WorkspaceMutation,
+        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ToolClass::Execution,
+        ClientToolName::ChromeOpen
+        | ClientToolName::ChromeSnapshot
+        | ClientToolName::ChromeConsoleMessages
+        | ClientToolName::ChromeNetworkRequests
+        | ClientToolName::ChromeScreenshot => ToolClass::Browser,
+        ClientToolName::McpCallTool => ToolClass::Execution,
     }
 }
 
-pub fn acp_provider_tool_allowed_in_policy(
+pub fn provider_tool_allowed_in_policy(
     tool_name: &str,
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
 ) -> bool {
-    AcpToolName::from_provider_alias(tool_name)
+    ClientToolName::from_provider_alias(tool_name)
         .map(|tool| policy.allows_tool(tool))
         .unwrap_or(false)
 }
 
-pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
-    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+pub fn client_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
+    let Some(tool) = ClientToolName::from_provider_alias(tool_name) else {
         return json!({
             "scope_basis": "acp:tools",
             "risk": "read_only",
@@ -1408,12 +1408,12 @@ pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
             "sensitive_path_policy": "client_permission_required",
         });
     };
-    acp_tool_policy(tool).to_json(tool.descriptor())
+    client_tool_policy(tool).to_json(tool.descriptor())
 }
 
-pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
+pub fn client_tool_display(tool: ClientToolName) -> ToolDisplayDescriptor {
     match tool {
-        AcpToolName::ReadTextFile => ToolDisplayDescriptor {
+        ClientToolName::ReadTextFile => ToolDisplayDescriptor {
             label: "Read file",
             category: "filesystem",
             progress_verb: "Reading",
@@ -1422,7 +1422,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading this workspace file.",
         },
-        AcpToolName::ListDirectory => ToolDisplayDescriptor {
+        ClientToolName::ListDirectory => ToolDisplayDescriptor {
             label: "List directory",
             category: "filesystem",
             progress_verb: "Listing",
@@ -1431,7 +1431,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow listing this workspace directory.",
         },
-        AcpToolName::FindPaths => ToolDisplayDescriptor {
+        ClientToolName::FindPaths => ToolDisplayDescriptor {
             label: "Find paths",
             category: "filesystem",
             progress_verb: "Finding paths for",
@@ -1440,7 +1440,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow finding matching workspace paths.",
         },
-        AcpToolName::SearchFiles => ToolDisplayDescriptor {
+        ClientToolName::SearchFiles => ToolDisplayDescriptor {
             label: "Search files",
             category: "filesystem",
             progress_verb: "Searching",
@@ -1449,7 +1449,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow searching workspace file contents or paths.",
         },
-        AcpToolName::Stat => ToolDisplayDescriptor {
+        ClientToolName::Stat => ToolDisplayDescriptor {
             label: "Inspect path",
             category: "filesystem",
             progress_verb: "Inspecting",
@@ -1458,7 +1458,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading metadata for this workspace path.",
         },
-        AcpToolName::EditFile => ToolDisplayDescriptor {
+        ClientToolName::EditFile => ToolDisplayDescriptor {
             label: "Edit file",
             category: "filesystem",
             progress_verb: "Editing",
@@ -1467,7 +1467,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &["old_text", "new_text"],
             approval_summary: "Allow changing this workspace file.",
         },
-        AcpToolName::CreateTextFile => ToolDisplayDescriptor {
+        ClientToolName::CreateTextFile => ToolDisplayDescriptor {
             label: "Create file",
             category: "filesystem",
             progress_verb: "Creating",
@@ -1476,7 +1476,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &["content"],
             approval_summary: "Allow creating this workspace file.",
         },
-        AcpToolName::CreateDirectory => ToolDisplayDescriptor {
+        ClientToolName::CreateDirectory => ToolDisplayDescriptor {
             label: "Create directory",
             category: "filesystem",
             progress_verb: "Creating",
@@ -1485,7 +1485,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating this workspace directory.",
         },
-        AcpToolName::MovePath => ToolDisplayDescriptor {
+        ClientToolName::MovePath => ToolDisplayDescriptor {
             label: "Move path",
             category: "filesystem",
             progress_verb: "Moving",
@@ -1494,7 +1494,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow moving or renaming this workspace path.",
         },
-        AcpToolName::CopyPath => ToolDisplayDescriptor {
+        ClientToolName::CopyPath => ToolDisplayDescriptor {
             label: "Copy path",
             category: "filesystem",
             progress_verb: "Copying",
@@ -1503,7 +1503,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow copying this workspace path.",
         },
-        AcpToolName::ApplyPatch => ToolDisplayDescriptor {
+        ClientToolName::ApplyPatch => ToolDisplayDescriptor {
             label: "Apply patch",
             category: "filesystem",
             progress_verb: "Applying patch",
@@ -1512,7 +1512,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &["patch"],
             approval_summary: "Allow applying a patch to workspace files.",
         },
-        AcpToolName::DeletePath => ToolDisplayDescriptor {
+        ClientToolName::DeletePath => ToolDisplayDescriptor {
             label: "Delete path",
             category: "filesystem",
             progress_verb: "Deleting",
@@ -1521,7 +1521,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow deleting this workspace path.",
         },
-        AcpToolName::GitStatus => ToolDisplayDescriptor {
+        ClientToolName::GitStatus => ToolDisplayDescriptor {
             label: "Check git status",
             category: "git",
             progress_verb: "Checking git status in",
@@ -1530,7 +1530,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git status for this workspace repository.",
         },
-        AcpToolName::GitDiff => ToolDisplayDescriptor {
+        ClientToolName::GitDiff => ToolDisplayDescriptor {
             label: "Inspect git diff",
             category: "git",
             progress_verb: "Inspecting git diff in",
@@ -1539,7 +1539,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git diff for this workspace repository.",
         },
-        AcpToolName::GitLog => ToolDisplayDescriptor {
+        ClientToolName::GitLog => ToolDisplayDescriptor {
             label: "Read git log",
             category: "git",
             progress_verb: "Reading git log in",
@@ -1548,7 +1548,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading git history for this workspace repository.",
         },
-        AcpToolName::GitShow => ToolDisplayDescriptor {
+        ClientToolName::GitShow => ToolDisplayDescriptor {
             label: "Show git revision",
             category: "git",
             progress_verb: "Showing git revision",
@@ -1557,7 +1557,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading this git revision or file.",
         },
-        AcpToolName::GitAdd => ToolDisplayDescriptor {
+        ClientToolName::GitAdd => ToolDisplayDescriptor {
             label: "Stage git paths",
             category: "git",
             progress_verb: "Staging git paths in",
@@ -1566,7 +1566,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow staging explicit git paths.",
         },
-        AcpToolName::GitRestore => ToolDisplayDescriptor {
+        ClientToolName::GitRestore => ToolDisplayDescriptor {
             label: "Restore git paths",
             category: "git",
             progress_verb: "Restoring git paths in",
@@ -1575,7 +1575,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow restoring git paths; this may discard changes.",
         },
-        AcpToolName::GitCommit => ToolDisplayDescriptor {
+        ClientToolName::GitCommit => ToolDisplayDescriptor {
             label: "Create git commit",
             category: "git",
             progress_verb: "Committing",
@@ -1584,7 +1584,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating a git commit from staged changes.",
         },
-        AcpToolName::GitStash => ToolDisplayDescriptor {
+        ClientToolName::GitStash => ToolDisplayDescriptor {
             label: "Stash git changes",
             category: "git",
             progress_verb: "Stashing git changes in",
@@ -1593,7 +1593,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating a git stash.",
         },
-        AcpToolName::ProcessRun => ToolDisplayDescriptor {
+        ClientToolName::ProcessRun => ToolDisplayDescriptor {
             label: "Run process",
             category: "terminal",
             progress_verb: "Running",
@@ -1602,7 +1602,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &["env"],
             approval_summary: "Allow running this process in the workspace.",
         },
-        AcpToolName::TerminalRunCommand => ToolDisplayDescriptor {
+        ClientToolName::TerminalRunCommand => ToolDisplayDescriptor {
             label: "Run terminal command",
             category: "terminal",
             progress_verb: "Running terminal command",
@@ -1611,7 +1611,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &["env"],
             approval_summary: "Allow running this terminal command in the workspace.",
         },
-        AcpToolName::ChromeOpen => ToolDisplayDescriptor {
+        ClientToolName::ChromeOpen => ToolDisplayDescriptor {
             label: "Open browser",
             category: "browser",
             progress_verb: "Opening",
@@ -1620,7 +1620,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow opening this URL in the browser session.",
         },
-        AcpToolName::ChromeSnapshot => ToolDisplayDescriptor {
+        ClientToolName::ChromeSnapshot => ToolDisplayDescriptor {
             label: "Inspect browser page",
             category: "browser",
             progress_verb: "Inspecting browser page",
@@ -1629,7 +1629,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading the current browser page snapshot.",
         },
-        AcpToolName::ChromeConsoleMessages => ToolDisplayDescriptor {
+        ClientToolName::ChromeConsoleMessages => ToolDisplayDescriptor {
             label: "Read browser console",
             category: "browser",
             progress_verb: "Reading browser console",
@@ -1638,7 +1638,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading browser console messages.",
         },
-        AcpToolName::ChromeNetworkRequests => ToolDisplayDescriptor {
+        ClientToolName::ChromeNetworkRequests => ToolDisplayDescriptor {
             label: "Inspect network requests",
             category: "browser",
             progress_verb: "Inspecting network requests",
@@ -1647,7 +1647,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow reading browser network request metadata.",
         },
-        AcpToolName::ChromeScreenshot => ToolDisplayDescriptor {
+        ClientToolName::ChromeScreenshot => ToolDisplayDescriptor {
             label: "Capture screenshot",
             category: "browser",
             progress_verb: "Capturing screenshot",
@@ -1656,7 +1656,7 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow capturing a browser screenshot.",
         },
-        AcpToolName::McpCallTool => ToolDisplayDescriptor {
+        ClientToolName::McpCallTool => ToolDisplayDescriptor {
             label: "Run MCP tool",
             category: "mcp",
             progress_verb: "Running MCP tool",
@@ -1668,14 +1668,14 @@ pub fn acp_tool_display(tool: AcpToolName) -> ToolDisplayDescriptor {
     }
 }
 
-pub fn acp_tool_display_for_provider(
+pub fn client_tool_display_for_provider(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> serde_json::Value {
-    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+    let Some(tool) = ClientToolName::from_provider_alias(tool_name) else {
         return fallback_tool_display(tool_name, args);
     };
-    let display = acp_tool_display(tool);
+    let display = client_tool_display(tool);
     let target = summarize_target(display.target_arg_keys, args);
     json!({
         "label": display.label,
@@ -1785,31 +1785,31 @@ fn preview(value: &str, max_chars: usize) -> String {
 }
 
 pub fn supported_provider_tool_names() -> Vec<&'static str> {
-    AcpToolName::all()
+    ClientToolName::all()
         .iter()
         .map(|tool| tool.descriptor().provider_name)
         .collect()
 }
 
-pub fn acp_client_tool_descriptors() -> serde_json::Value {
-    json!(AcpToolName::all()
+pub fn client_tool_descriptors() -> serde_json::Value {
+    json!(ClientToolName::all()
         .iter()
-        .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
+        .map(|tool| client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>())
 }
 
-pub fn acp_client_tool_descriptors_for_client_context(
+pub fn client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
-    policy: Option<&AcpResolvedSessionPolicy>,
+    policy: Option<&ResolvedSessionPolicy>,
 ) -> serde_json::Value {
     // Compatibility rule: adapter-executed tools are advertised only when the
     // current adapter explicitly reports support. Adding a new local tool should
     // not force old adapters to update; they simply won't see the descriptor.
-    let names = acp_provider_tool_names_for_client_context(client_context, policy);
+    let names = provider_tool_names_for_client_context(client_context, policy);
     let mut descriptors = names
         .iter()
-        .filter_map(|name| AcpToolName::from_provider_alias(name))
-        .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
+        .filter_map(|name| ClientToolName::from_provider_alias(name))
+        .map(|tool| client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>();
     let mcp_tool_names = client_context
         .pointer("/mcp/client_tools")
@@ -1833,24 +1833,24 @@ pub fn acp_client_tool_descriptors_for_client_context(
         descriptors.extend(mcp_tools.iter().cloned());
     }
     tracing::info!(
-        phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+        phase = diag_phase::DESCRIPTOR_ADVERTISED,
         static_tools = ?names,
         dynamic_mcp_tool_count = mcp_tool_names.len(),
         dynamic_mcp_tools = ?mcp_tool_names,
         final_descriptor_count = descriptors.len(),
         "ACP client tool descriptor assembly"
     );
-    if names == vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
-        && !adapter_supports_tool(client_context, ACP_READ_TEXT_FILE_TOOL.provider_name)
+    if names == vec![READ_TEXT_FILE_TOOL.provider_name]
+        && !adapter_supports_tool(client_context, READ_TEXT_FILE_TOOL.provider_name)
     {
         tracing::info!(
-            phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+            phase = diag_phase::DESCRIPTOR_ADVERTISED,
             tools = ?names,
             "ACP adapter did not advertise direct tools; falling back to read-text descriptor only"
         );
     } else {
         tracing::info!(
-            phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+            phase = diag_phase::DESCRIPTOR_ADVERTISED,
             tools = ?names,
             "ACP client tool descriptors advertised"
         );
@@ -1858,19 +1858,19 @@ pub fn acp_client_tool_descriptors_for_client_context(
     json!(descriptors)
 }
 
-pub fn acp_provider_tool_names_for_client_context(
+pub fn provider_tool_names_for_client_context(
     client_context: &serde_json::Value,
-    policy: Option<&AcpResolvedSessionPolicy>,
+    policy: Option<&ResolvedSessionPolicy>,
 ) -> Vec<&'static str> {
-    let names = AcpToolName::all()
+    let names = ClientToolName::all()
         .iter()
-        .filter(|tool| **tool != AcpToolName::McpCallTool)
+        .filter(|tool| **tool != ClientToolName::McpCallTool)
         .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
         .filter(|tool| policy.is_none_or(|p| p.allows_tool(**tool)))
         .map(|tool| tool.descriptor().provider_name)
         .collect::<Vec<_>>();
     if names.is_empty() {
-        vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
+        vec![READ_TEXT_FILE_TOOL.provider_name]
     } else {
         names
     }
@@ -1891,12 +1891,12 @@ fn adapter_supports_tool(client_context: &serde_json::Value, provider_name: &str
         .unwrap_or(false)
 }
 
-pub fn acp_read_text_file_client_tool_descriptor() -> serde_json::Value {
-    acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)
+pub fn read_text_file_client_tool_descriptor() -> serde_json::Value {
+    client_tool_descriptor(&READ_TEXT_FILE_TOOL)
 }
 
 fn chrome_descriptor(
-    tool: &AcpToolDescriptor,
+    tool: &ClientToolDescriptor,
     properties: serde_json::Value,
     required: Vec<&str>,
 ) -> serde_json::Value {
@@ -1914,7 +1914,7 @@ fn chrome_descriptor(
     })
 }
 
-fn acp_client_tool_domain(tool: &AcpToolDescriptor) -> &'static str {
+fn acp_client_tool_domain(tool: &ClientToolDescriptor) -> &'static str {
     match tool.permission_class {
         "read_files" | "git_read" => "execution",
         "edit_files" | "delete_files" | "git_write" | "run_process" | "browser" => "execution",
@@ -1922,7 +1922,7 @@ fn acp_client_tool_domain(tool: &AcpToolDescriptor) -> &'static str {
     }
 }
 
-fn acp_tool_guidance(tool: &AcpToolDescriptor) -> ToolDescriptorGuidance {
+fn acp_tool_guidance(tool: &ClientToolDescriptor) -> ToolDescriptorGuidance {
     match tool.permission_class {
         "read_files" => ToolDescriptorGuidance {
             scope: ToolScopeKind::AcpClientWorkspace,
@@ -1967,7 +1967,7 @@ fn acp_tool_guidance(tool: &AcpToolDescriptor) -> ToolDescriptorGuidance {
     }
 }
 
-fn append_scope_note(descriptor: &mut serde_json::Value, tool: &AcpToolDescriptor) {
+fn append_scope_note(descriptor: &mut serde_json::Value, tool: &ClientToolDescriptor) {
     if let Some(description) = descriptor
         .as_object_mut()
         .and_then(|object| object.get_mut("description"))
@@ -1982,7 +1982,7 @@ fn append_scope_note(descriptor: &mut serde_json::Value, tool: &AcpToolDescripto
     }
 }
 
-pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value {
+pub fn client_tool_descriptor(tool: &ClientToolDescriptor) -> serde_json::Value {
     debug_assert!(provider_tool_name_is_safe(tool.provider_name));
     let mut descriptor = match tool.provider_name {
         "fs_read_text_file" => json!({
@@ -2414,8 +2414,8 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         );
         object.insert(
             "x-bears-display".to_string(),
-            acp_tool_display(
-                AcpToolName::from_provider_alias(tool.provider_name)
+            client_tool_display(
+                ClientToolName::from_provider_alias(tool.provider_name)
                     .expect("descriptor provider name resolves"),
             )
             .to_json(),
@@ -2430,7 +2430,7 @@ mod tests {
 
     #[test]
     fn provider_names_are_safe() {
-        for tool in AcpToolName::all() {
+        for tool in ClientToolName::all() {
             assert!(provider_tool_name_is_safe(tool.descriptor().provider_name));
         }
         assert!(!provider_tool_name_is_safe("fs.read_text_file"));
@@ -2439,13 +2439,13 @@ mod tests {
 
     #[test]
     fn descriptors_use_provider_name_only() {
-        let descriptors = acp_client_tool_descriptors();
+        let descriptors = client_tool_descriptors();
         let descriptors = descriptors.as_array().expect("descriptor array");
-        assert_eq!(descriptors.len(), AcpToolName::all().len());
+        assert_eq!(descriptors.len(), ClientToolName::all().len());
         for descriptor in descriptors {
             let name = descriptor["name"].as_str().expect("descriptor name");
             assert!(provider_tool_name_is_safe(name));
-            let tool = AcpToolName::from_provider_alias(name).expect("known provider name");
+            let tool = ClientToolName::from_provider_alias(name).expect("known provider name");
             assert_eq!(name, tool.descriptor().provider_name);
             assert_ne!(name, tool.descriptor().canonical_name);
             assert_ne!(name, tool.descriptor().client_method);
@@ -2457,8 +2457,8 @@ mod tests {
 
     #[test]
     fn acp_local_tool_descriptors_include_scope_and_orientation_guidance() {
-        for tool in AcpToolName::all() {
-            let descriptor = acp_client_tool_descriptor(tool.descriptor());
+        for tool in ClientToolName::all() {
+            let descriptor = client_tool_descriptor(tool.descriptor());
             let description = descriptor["description"].as_str().unwrap_or("");
             assert!(
                 description.contains("Scope:"),
@@ -2477,7 +2477,7 @@ mod tests {
 
     #[test]
     fn descriptors_filter_by_adapter_direct_tools() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(
+        let descriptors = client_tool_descriptors_for_client_context(
             &json!({
                 "direct_tools": {
                     "fs_read_text_file": true,
@@ -2511,7 +2511,7 @@ mod tests {
 
     #[test]
     fn descriptors_filter_by_structured_adapter_capabilities() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(
+        let descriptors = client_tool_descriptors_for_client_context(
             &json!({
                 "adapter": {
                     "name": "bear-armature",
@@ -2561,7 +2561,7 @@ mod tests {
 
     #[test]
     fn missing_direct_tools_defaults_to_read_text_only() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({}), None);
+        let descriptors = client_tool_descriptors_for_client_context(&json!({}), None);
         let names = descriptors
             .as_array()
             .expect("descriptor array")
@@ -2581,10 +2581,10 @@ mod tests {
             policy.denied_tool_classes(),
             vec!["workspace_mutation", "execution", "browser"]
         );
-        assert!(policy.allows_tool(AcpToolName::ReadTextFile));
-        assert!(!policy.allows_tool(AcpToolName::EditFile));
-        assert!(!policy.allows_tool(AcpToolName::ProcessRun));
-        assert!(!policy.allows_tool(AcpToolName::ChromeOpen));
+        assert!(policy.allows_tool(ClientToolName::ReadTextFile));
+        assert!(!policy.allows_tool(ClientToolName::EditFile));
+        assert!(!policy.allows_tool(ClientToolName::ProcessRun));
+        assert!(!policy.allows_tool(ClientToolName::ChromeOpen));
     }
 
     #[test]
@@ -2593,10 +2593,10 @@ mod tests {
         assert_eq!(policy.mode_label, "Plan");
         assert_eq!(policy.tool_enablement.as_str(), "read_only");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("active"));
-        assert!(policy.allows_tool(AcpToolName::GitStatus));
-        assert!(!policy.allows_tool(AcpToolName::EditFile));
-        assert!(!policy.allows_tool(AcpToolName::ProcessRun));
-        assert!(!policy.allows_tool(AcpToolName::ChromeOpen));
+        assert!(policy.allows_tool(ClientToolName::GitStatus));
+        assert!(!policy.allows_tool(ClientToolName::EditFile));
+        assert!(!policy.allows_tool(ClientToolName::ProcessRun));
+        assert!(!policy.allows_tool(ClientToolName::ChromeOpen));
     }
 
     #[test]
@@ -2610,15 +2610,15 @@ mod tests {
             vec!["read_only", "workspace_mutation", "execution", "browser"]
         );
         assert!(policy.denied_tool_classes().is_empty());
-        assert!(policy.allows_tool(AcpToolName::EditFile));
-        assert!(policy.allows_tool(AcpToolName::ProcessRun));
-        assert!(policy.allows_tool(AcpToolName::ChromeOpen));
+        assert!(policy.allows_tool(ClientToolName::EditFile));
+        assert!(policy.allows_tool(ClientToolName::ProcessRun));
+        assert!(policy.allows_tool(ClientToolName::ChromeOpen));
     }
 
     #[test]
     fn descriptor_filtering_keeps_only_read_tools_available_in_ask_mode() {
         let policy = resolve_session_policy(None);
-        let descriptors = acp_client_tool_descriptors_for_client_context(
+        let descriptors = client_tool_descriptors_for_client_context(
             &json!({
                 "adapter": {
                     "direct_tools": {
@@ -2643,7 +2643,7 @@ mod tests {
     #[test]
     fn provider_name_filtering_respects_write_tool_enablement() {
         let policy = resolve_session_policy_for_mode("ask", Some("approved"));
-        let names = acp_provider_tool_names_for_client_context(
+        let names = provider_tool_names_for_client_context(
             &json!({
                 "adapter": {
                     "direct_tools": {
@@ -2669,13 +2669,13 @@ mod tests {
 
     #[test]
     fn read_text_file_descriptor_wrapper_still_works() {
-        let descriptor = acp_read_text_file_client_tool_descriptor();
-        assert_eq!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.provider_name);
+        let descriptor = read_text_file_client_tool_descriptor();
+        assert_eq!(descriptor["name"], READ_TEXT_FILE_TOOL.provider_name);
     }
 
     #[test]
     fn tool_policy_includes_authoritative_limits_and_scope() {
-        let list_policy = acp_tool_policy_json_for_provider("fs_list_directory");
+        let list_policy = client_tool_policy_json_for_provider("fs_list_directory");
         assert_eq!(list_policy["scope_basis"], "acp:tools");
         assert_eq!(list_policy["role_basis"], "pair_agent");
         assert_eq!(
@@ -2685,38 +2685,38 @@ mod tests {
         assert_eq!(list_policy["max_entries"], 1000);
         assert_eq!(list_policy["include_hidden_default"], false);
 
-        let find_policy = acp_tool_policy_json_for_provider("fs_find_paths");
+        let find_policy = client_tool_policy_json_for_provider("fs_find_paths");
         assert_eq!(find_policy["max_results"], 500);
         assert_eq!(find_policy["include_hidden_default"], false);
 
-        let search_policy = acp_tool_policy_json_for_provider("fs_search_files");
+        let search_policy = client_tool_policy_json_for_provider("fs_search_files");
         assert_eq!(search_policy["max_results"], 200);
         assert_eq!(search_policy["max_bytes"], 1_048_576);
         assert_eq!(search_policy["approval_required"], true);
 
-        let stat_policy = acp_tool_policy_json_for_provider("fs_stat");
+        let stat_policy = client_tool_policy_json_for_provider("fs_stat");
         assert_eq!(stat_policy["risk"], "read_only");
         assert_eq!(stat_policy["approval_required"], true);
 
-        let git_status_policy = acp_tool_policy_json_for_provider("git_status");
+        let git_status_policy = client_tool_policy_json_for_provider("git_status");
         assert_eq!(git_status_policy["risk"], "read_only");
         assert_eq!(git_status_policy["max_results"], 500);
         assert_eq!(git_status_policy["max_bytes"], 262_144);
 
-        let git_diff_policy = acp_tool_policy_json_for_provider("git_diff");
+        let git_diff_policy = client_tool_policy_json_for_provider("git_diff");
         assert_eq!(git_diff_policy["risk"], "read_only");
         assert_eq!(git_diff_policy["max_bytes"], 262_144);
 
-        let git_log_policy = acp_tool_policy_json_for_provider("git_log");
+        let git_log_policy = client_tool_policy_json_for_provider("git_log");
         assert_eq!(git_log_policy["risk"], "read_only");
         assert_eq!(git_log_policy["max_results"], 100);
         assert_eq!(git_log_policy["max_bytes"], 262_144);
 
-        let git_show_policy = acp_tool_policy_json_for_provider("git_show");
+        let git_show_policy = client_tool_policy_json_for_provider("git_show");
         assert_eq!(git_show_policy["risk"], "read_only");
         assert_eq!(git_show_policy["max_bytes"], 262_144);
 
-        let replace_policy = acp_tool_policy_json_for_provider("fs_edit_file");
+        let replace_policy = client_tool_policy_json_for_provider("fs_edit_file");
         assert_eq!(replace_policy["risk"], "writes_workspace");
         assert_eq!(
             replace_policy["sensitive_path_policy"],
@@ -2732,21 +2732,21 @@ mod tests {
         assert!(replace_policy.get("max_results").is_none());
         assert_eq!(replace_policy["approval_required"], true);
 
-        let create_policy = acp_tool_policy_json_for_provider("fs_create_text_file");
+        let create_policy = client_tool_policy_json_for_provider("fs_create_text_file");
         assert_eq!(create_policy["risk"], "writes_workspace");
         assert_eq!(create_policy["create_files"], true);
         assert_eq!(create_policy["max_bytes"], 1_048_576);
 
-        let create_directory_policy = acp_tool_policy_json_for_provider("fs_create_directory");
+        let create_directory_policy = client_tool_policy_json_for_provider("fs_create_directory");
         assert_eq!(create_directory_policy["risk"], "writes_workspace");
         assert_eq!(create_directory_policy["create_files"], true);
         assert_eq!(create_directory_policy["deny_hidden_paths"], true);
 
-        let move_policy = acp_tool_policy_json_for_provider("fs_move_path");
+        let move_policy = client_tool_policy_json_for_provider("fs_move_path");
         assert_eq!(move_policy["risk"], "writes_workspace");
         assert_eq!(move_policy["deny_hidden_paths"], true);
 
-        let delete_policy = acp_tool_policy_json_for_provider("fs_delete_path");
+        let delete_policy = client_tool_policy_json_for_provider("fs_delete_path");
         assert_eq!(delete_policy["risk"], "deletes_workspace");
         assert_eq!(
             delete_policy["sensitive_path_policy"],
@@ -2758,9 +2758,9 @@ mod tests {
 
     #[test]
     fn all_advertised_tools_require_approval_and_adapter_path_containment() {
-        for tool in AcpToolName::all() {
+        for tool in ClientToolName::all() {
             let descriptor = tool.descriptor();
-            let policy = acp_tool_policy(*tool).to_json(descriptor);
+            let policy = client_tool_policy(*tool).to_json(descriptor);
             assert_eq!(
                 policy["approval_required"], true,
                 "{}",
@@ -2807,7 +2807,7 @@ mod tests {
             "fs_copy_path",
             "fs_apply_patch",
         ] {
-            let policy = acp_tool_policy_json_for_provider(name);
+            let policy = client_tool_policy_json_for_provider(name);
             assert_eq!(
                 policy["sensitive_path_policy"], "deny_sensitive_paths",
                 "{name}"
@@ -2825,20 +2825,20 @@ mod tests {
 
     #[test]
     fn milestone_1_descriptor_schemas_are_present() {
-        let find = acp_client_tool_descriptor(&ACP_FIND_PATHS_TOOL);
+        let find = client_tool_descriptor(&FIND_PATHS_TOOL);
         assert_eq!(find["parameters"]["required"], json!(["glob"]));
         assert!(find["parameters"]["properties"].get("root").is_some());
         assert!(find["parameters"]["properties"]
             .get("include_hidden")
             .is_some());
 
-        let stat = acp_client_tool_descriptor(&ACP_STAT_TOOL);
+        let stat = client_tool_descriptor(&STAT_TOOL);
         assert_eq!(stat["parameters"]["required"], json!(["path"]));
         assert!(stat["parameters"]["properties"]
             .get("include_symlink_target")
             .is_some());
 
-        let create_directory = acp_client_tool_descriptor(&ACP_CREATE_DIRECTORY_TOOL);
+        let create_directory = client_tool_descriptor(&CREATE_DIRECTORY_TOOL);
         assert_eq!(create_directory["parameters"]["required"], json!(["path"]));
         assert!(create_directory["parameters"]["properties"]
             .get("parents")
@@ -2847,7 +2847,7 @@ mod tests {
             .get("allow_existing")
             .is_some());
 
-        let move_path = acp_client_tool_descriptor(&ACP_MOVE_PATH_TOOL);
+        let move_path = client_tool_descriptor(&MOVE_PATH_TOOL);
         assert_eq!(
             move_path["parameters"]["required"],
             json!(["source_path", "destination_path"])
@@ -2859,25 +2859,25 @@ mod tests {
             .get("expected_kind")
             .is_some());
 
-        let git_status = acp_client_tool_descriptor(&ACP_GIT_STATUS_TOOL);
+        let git_status = client_tool_descriptor(&GIT_STATUS_TOOL);
         assert_eq!(git_status["parameters"]["required"], json!([]));
         assert!(git_status["parameters"]["properties"]
             .get("repo_path")
             .is_some());
 
-        let git_diff = acp_client_tool_descriptor(&ACP_GIT_DIFF_TOOL);
+        let git_diff = client_tool_descriptor(&GIT_DIFF_TOOL);
         assert_eq!(git_diff["parameters"]["required"], json!([]));
         assert!(git_diff["parameters"]["properties"].get("paths").is_some());
         assert!(git_diff["parameters"]["properties"].get("staged").is_some());
 
-        let git_log = acp_client_tool_descriptor(&ACP_GIT_LOG_TOOL);
+        let git_log = client_tool_descriptor(&GIT_LOG_TOOL);
         assert_eq!(git_log["parameters"]["required"], json!([]));
         assert!(git_log["parameters"]["properties"]
             .get("max_count")
             .is_some());
         assert!(git_log["parameters"]["properties"].get("paths").is_some());
 
-        let git_show = acp_client_tool_descriptor(&ACP_GIT_SHOW_TOOL);
+        let git_show = client_tool_descriptor(&GIT_SHOW_TOOL);
         assert_eq!(git_show["parameters"]["required"], json!(["revision"]));
         assert!(git_show["parameters"]["properties"].get("path").is_some());
         assert!(git_show["parameters"]["properties"]
@@ -2887,7 +2887,7 @@ mod tests {
 
     #[test]
     fn descriptor_schemas_keep_search_query_optional_for_path_discovery() {
-        let descriptor = acp_client_tool_descriptor(&ACP_SEARCH_FILES_TOOL);
+        let descriptor = client_tool_descriptor(&SEARCH_FILES_TOOL);
         let required = descriptor["parameters"]["required"].as_array().unwrap();
         assert_eq!(required, &vec![json!("path")]);
         assert!(descriptor["parameters"]["properties"]

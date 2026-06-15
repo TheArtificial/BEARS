@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     tool_turns::ToolResultRequest,
-    acp_tools::{
-        acp_diag_phase, acp_tool_display_for_provider, acp_tool_policy_json_for_provider,
-        supported_provider_tool_names, AcpToolName,
+    client_tools::{
+        diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
+        supported_provider_tool_names, ClientToolName,
     },
 };
 use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
@@ -365,7 +365,7 @@ fn native_letta_tool_request_event_with_args(
 ) -> Option<GatewayEvent> {
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
-    let acp_tool = AcpToolName::from_provider_alias(tool_name);
+    let acp_tool = ClientToolName::from_provider_alias(tool_name);
     let den_server_tool =
         builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
     let unsupported_tool_detail = if acp_tool.is_none() && !den_server_tool {
@@ -886,7 +886,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             result_rx: _,
         } => {
             let display = den_tool_display_json_for_provider(&tool_name, &args)
-                .unwrap_or_else(|| acp_tool_display_for_provider(&tool_name, &args));
+                .unwrap_or_else(|| client_tool_display_for_provider(&tool_name, &args));
             serde_json::json!({
                 "type": "tool_request",
                 "request_id": request_id,
@@ -903,10 +903,10 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                     "reason": approval_reason,
                 },
                 "policy": den_tool_policy_json_for_provider(&tool_name)
-                    .unwrap_or_else(|| acp_tool_policy_json_for_provider(&tool_name)),
+                    .unwrap_or_else(|| client_tool_policy_json_for_provider(&tool_name)),
                 "diagnostic": {
                     "component": "den.acp",
-                    "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
+                    "phase": diag_phase::LETTA_TOOL_CALL_MAPPED,
                     "transport_version": 4,
                 },
             })

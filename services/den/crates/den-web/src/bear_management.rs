@@ -40,7 +40,7 @@ use crate::{
 };
 use den_runtime::{
     acp_sessions,
-    acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
+    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
     bears::{
             db as bears_db,
             db::{
@@ -162,24 +162,24 @@ struct CodeTokenForm {
 }
 
 fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
-    AcpToolName::all()
+    ClientToolName::all()
         .iter()
         .filter(|tool| {
             matches!(
                 tool,
-                AcpToolName::TerminalRunCommand
-                    | AcpToolName::ProcessRun
-                    | AcpToolName::ReadTextFile
-                    | AcpToolName::ListDirectory
-                    | AcpToolName::SearchFiles
-                    | AcpToolName::EditFile
-                    | AcpToolName::CreateTextFile
-                    | AcpToolName::DeletePath
+                ClientToolName::TerminalRunCommand
+                    | ClientToolName::ProcessRun
+                    | ClientToolName::ReadTextFile
+                    | ClientToolName::ListDirectory
+                    | ClientToolName::SearchFiles
+                    | ClientToolName::EditFile
+                    | ClientToolName::CreateTextFile
+                    | ClientToolName::DeletePath
             )
         })
         .map(|tool| {
             let descriptor = tool.descriptor();
-            let policy = acp_tool_policy_json_for_provider(descriptor.provider_name);
+            let policy = client_tool_policy_json_for_provider(descriptor.provider_name);
             let mut policy_summary = Vec::new();
             if policy
                 .get("approval_required")

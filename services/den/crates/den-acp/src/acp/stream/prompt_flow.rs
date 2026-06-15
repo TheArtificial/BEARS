@@ -33,7 +33,7 @@ use den_runtime::{
             persist_canonical_conversation_record, CanonicalConversationRecord,
             ConversationEventProvenance, ConversationPersistenceContext,
         },
-    acp_tools::acp_client_tool_descriptors_for_client_context,
+    client_tools::client_tool_descriptors_for_client_context,
     bears::{db as bears_db, BearProfile},
 };
 
@@ -392,7 +392,7 @@ pub(in crate::acp) async fn run_prompt_flow(
     })?;
     let merged_client_tool_descriptors = tools_enabled.then(|| {
         super::super::merge_acp_pair_tool_descriptors(
-            acp_client_tool_descriptors_for_client_context(
+            client_tool_descriptors_for_client_context(
                 &body.client_context,
                 Some(&resolved_policy),
             ),

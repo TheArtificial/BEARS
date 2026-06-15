@@ -26,7 +26,7 @@ use den_runtime::{
             SubmitPlanModeParams,
         },
     acp_sessions,
-    acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
+    client_tools::{ResolvedSessionPolicy, ToolEnablementState},
     bears::BearProfile,
     memory::{tools as sqlite_memory, MemoryStoreManager},
     turn_state,
@@ -37,11 +37,11 @@ type NoActiveWorkplanFn = fn() -> Value;
 
 fn workflow_state_json(
     mode_label: &'static str,
-    tool_enablement: AcpToolEnablementState,
+    tool_enablement: ToolEnablementState,
     plan_mode_state: String,
 ) -> Value {
     turn_state::turn_state_json(
-        &AcpResolvedSessionPolicy {
+        &ResolvedSessionPolicy {
             mode_label,
             tool_enablement,
             plan_mode_state: Some(plan_mode_state),
@@ -94,7 +94,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
                 "Plan",
-                AcpToolEnablementState::ReadOnly,
+                ToolEnablementState::ReadOnly,
                 row.state.clone(),
             ),
             plan_mode: serde_json::to_value(&row)?,
@@ -167,7 +167,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
                 "Write",
-                AcpToolEnablementState::AllTools,
+                ToolEnablementState::AllTools,
                 row.state.clone(),
             ),
             plan_mode: serde_json::to_value(&row)?,
@@ -252,7 +252,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
                 "Plan",
-                AcpToolEnablementState::ReadOnly,
+                ToolEnablementState::ReadOnly,
                 row.state.clone(),
             ),
             submitted_plan: json!({
@@ -292,7 +292,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             workplan: (self.workplan_payload)(&row),
             workflow_state: workflow_state_json(
                 "Ask",
-                AcpToolEnablementState::ReadOnly,
+                ToolEnablementState::ReadOnly,
                 row.state.clone(),
             ),
             plan_mode: serde_json::to_value(&row)?,

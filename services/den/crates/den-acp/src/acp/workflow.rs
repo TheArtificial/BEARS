@@ -1,23 +1,23 @@
 use crate::acp::workflow_guidance::render_turn_state_summary;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
-    acp_tools::AcpResolvedSessionPolicy,
+    client_tools::ResolvedSessionPolicy,
     turn_state,
 };
 
-pub(crate) fn workflow_state_json(policy: &AcpResolvedSessionPolicy) -> serde_json::Value {
+pub(crate) fn workflow_state_json(policy: &ResolvedSessionPolicy) -> serde_json::Value {
     workflow_state_json_from_sources(policy, None, None)
 }
 
 pub(crate) fn workflow_state_json_with_activity(
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> serde_json::Value {
     workflow_state_json_from_sources(policy, None, activity_plan)
 }
 
 pub(crate) fn workflow_state_json_from_sources(
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     workplan_row: Option<&den_runtime::plan_mode::PlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> serde_json::Value {
@@ -29,7 +29,7 @@ pub(super) fn render_turn_state_summary_with_activity(
     roots: &[String],
     local_tool_names: &[&str],
     den_tool_names: &[&str],
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> String {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();

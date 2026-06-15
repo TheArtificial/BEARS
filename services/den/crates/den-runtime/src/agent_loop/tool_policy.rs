@@ -1,5 +1,5 @@
 use crate::{
-    acp_tools::{acp_tool_policy, acp_tool_policy_json_for_provider, AcpToolName},
+    client_tools::{client_tool_policy, client_tool_policy_json_for_provider, ClientToolName},
     agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
     runtime_contracts::RuntimeSemanticEvent,
 };
@@ -20,12 +20,12 @@ pub fn provider_tool_requires_approval(provider_name: &str) -> bool {
     if let Some(descriptor) = builtin_den_tool_descriptor_for_provider_name(provider_name) {
         return descriptor.approval_policy != "never";
     }
-    acp_tool_policy_json_for_provider(provider_name)
+    client_tool_policy_json_for_provider(provider_name)
         .get("approval_required")
         .and_then(|value| value.as_bool())
         .unwrap_or_else(|| {
-            AcpToolName::from_provider_alias(provider_name)
-                .map(|tool| acp_tool_policy(tool).approval_required)
+            ClientToolName::from_provider_alias(provider_name)
+                .map(|tool| client_tool_policy(tool).approval_required)
                 .unwrap_or(false)
         })
 }

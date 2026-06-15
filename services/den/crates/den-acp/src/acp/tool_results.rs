@@ -7,7 +7,7 @@ use crate::acp::{
 };
 use den_runtime::{
     tool_turns::{ToolResultDelivery, ToolTurnCoordinator},
-    acp_tools::AcpToolStatus,
+    client_tools::ToolStatus,
 };
 
 pub(super) fn default_unavailable_context_budget() -> serde_json::Value {
@@ -22,7 +22,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
     delivery: ToolResultDelivery,
     session_id: &str,
     tool_call_id_param: String,
-    parsed_status: AcpToolStatus,
+    parsed_status: ToolStatus,
     tool_turns: &ToolTurnCoordinator,
 ) -> AcpToolResultResponse {
     match delivery {

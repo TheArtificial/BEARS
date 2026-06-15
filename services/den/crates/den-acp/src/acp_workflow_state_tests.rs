@@ -7,7 +7,7 @@ use crate::core::{
 };
 use den_runtime::{
     plan_mode::PlanModeSessionRow,
-    acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
+    client_tools::{ResolvedSessionPolicy, ToolEnablementState},
     turn_state::{approval_status_label, workflow_state_label},
 };
 
@@ -46,9 +46,9 @@ fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
 
 #[test]
 fn workflow_state_label_prefers_plan_mode_state() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Plan",
-        tool_enablement: AcpToolEnablementState::ReadOnly,
+        tool_enablement: ToolEnablementState::ReadOnly,
         plan_mode_state: Some("submitted".to_string()),
     };
     assert_eq!(workflow_state_label(&policy), "submitted_waiting_approval");
@@ -60,9 +60,9 @@ fn workflow_state_label_prefers_plan_mode_state() {
 
 #[test]
 fn acp_prompt_includes_authoritative_workflow_state_summary() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let prompt = acp_direct_tool_prompt_context(
@@ -84,9 +84,9 @@ fn acp_prompt_includes_authoritative_workflow_state_summary() {
 
 #[test]
 fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let prompt = acp_direct_tool_prompt_context(
@@ -172,9 +172,9 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
 
 #[test]
 fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let prompt = acp_direct_tool_prompt_context(
@@ -191,9 +191,9 @@ fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
 
 #[test]
 fn acp_prompt_teaches_workplace_first_memory_retrieval() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let prompt = acp_direct_tool_prompt_context(
@@ -266,9 +266,9 @@ fn plan_mode_decision_payload_should_surface_turn_state_shape() {
 
 #[test]
 fn workflow_state_json_surfaces_authoritative_session_state() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let workflow_state = workflow_state_json(&policy);
@@ -294,9 +294,9 @@ fn workflow_state_json_surfaces_authoritative_session_state() {
 
 #[test]
 fn workflow_state_json_preserves_approved_state_for_session_reconciliation() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let workflow_state = workflow_state_json(&policy);
@@ -310,9 +310,9 @@ fn workflow_state_json_preserves_approved_state_for_session_reconciliation() {
 
 #[test]
 fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_fields() {
-    let policy = AcpResolvedSessionPolicy {
+    let policy = ResolvedSessionPolicy {
         mode_label: "Write",
-        tool_enablement: AcpToolEnablementState::AllTools,
+        tool_enablement: ToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
     let row = PlanModeSessionRow {

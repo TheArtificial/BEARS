@@ -1,13 +1,13 @@
 use serde_json::{json, Value};
 
-use crate::{plan_mode, acp_tools::AcpResolvedSessionPolicy};
+use crate::{plan_mode, client_tools::ResolvedSessionPolicy};
 use den_docket::WorkPlanProjection;
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
 pub const TURN_STATE_AUTHORITY: &str = "current_turn_capabilities";
 
-pub fn workflow_state_label(policy: &AcpResolvedSessionPolicy) -> &'static str {
+pub fn workflow_state_label(policy: &ResolvedSessionPolicy) -> &'static str {
     match policy.plan_mode_state.as_deref() {
         Some("submitted") => "submitted_waiting_approval",
         Some("approved") => "approved",
@@ -30,14 +30,14 @@ pub fn approval_status_label(plan_mode_state: Option<&str>, mode_label: &str) ->
 }
 
 pub fn turn_state_json(
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> Value {
     turn_state_from_sources(policy, None, activity_plan)
 }
 
 pub fn turn_state_from_sources(
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     workplan_row: Option<&plan_mode::PlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> Value {
@@ -61,7 +61,7 @@ pub fn turn_state_from_sources(
 }
 
 fn workplan_domain_json(
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     workplan_row: Option<&plan_mode::PlanModeSessionRow>,
 ) -> Value {
     let state = workflow_state_label(policy);
@@ -195,7 +195,7 @@ fn memory_domain_json() -> Value {
     })
 }
 
-fn execution_domain_json(policy: &AcpResolvedSessionPolicy) -> Value {
+fn execution_domain_json(policy: &ResolvedSessionPolicy) -> Value {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
     json!({
         "domain": "execution",

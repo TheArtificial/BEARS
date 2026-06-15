@@ -22,7 +22,7 @@ use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_runtime::{
     tool_turns::{ToolResultDelivery, ToolResultRequest},
-    acp_tools::{acp_diag_phase, AcpToolStatus},
+    client_tools::{diag_phase, ToolStatus},
 };
 
 use super::auth::authenticate_acp_code_token_with_auth;
@@ -78,7 +78,7 @@ pub(super) async fn tool_result_inner(
         ));
     }
     let user_id = auth.user_id;
-    let parsed_status = AcpToolStatus::parse(&body.status).ok_or_else(|| {
+    let parsed_status = ToolStatus::parse(&body.status).ok_or_else(|| {
         CustomError::ValidationError(format!("invalid ACP tool result status: {}", body.status))
     })?;
     let delivery =
@@ -106,7 +106,7 @@ pub(super) async fn tool_result_inner(
                 content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
                 structured_content_bytes = body.structured_content.to_string().len(),
                 diagnostic = ?body.diagnostic,
-                phase = acp_diag_phase::DEN_RESULT_DELIVERED,
+                phase = diag_phase::DEN_RESULT_DELIVERED,
                 "ACP tool result received"
             );
             Ok(Json(acp_tool_result_response_from_delivery(

@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use crate::{
     acp::{
-        acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context,
+        acp_pair_den_tool_descriptors, provider_tool_names_for_client_context,
         history::{
             runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
         },
@@ -13,7 +13,7 @@ use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
     plan_mode,
-    acp_tools::AcpResolvedSessionPolicy,
+    client_tools::ResolvedSessionPolicy,
     prompt_memory_block_store::{
             select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
             PromptMemoryRuntimeSelection,
@@ -131,7 +131,7 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
     cwd: &str,
     client_context: &serde_json::Value,
     tools_enabled: bool,
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
     auto_title_guidance: Option<&str>,
 ) -> Result<(String, serde_json::Value), CustomError> {
@@ -155,7 +155,7 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
+    let tool_names = provider_tool_names_for_client_context(client_context, Some(policy));
     let prompt_memory_selection = match select_prompt_memory_blocks_for_runtime(
         &state.sqlx_pool,
         PromptMemoryBlockQuery {
@@ -283,7 +283,7 @@ pub(crate) fn acp_direct_tool_prompt_context(
     cwd: &str,
     client_context: &serde_json::Value,
     _tools_enabled: bool,
-    policy: &AcpResolvedSessionPolicy,
+    policy: &ResolvedSessionPolicy,
 ) -> String {
     let roots = client_context
         .get("workspace_roots")
@@ -298,7 +298,7 @@ pub(crate) fn acp_direct_tool_prompt_context(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
+    let tool_names = provider_tool_names_for_client_context(client_context, Some(policy));
     let den_tool_descriptors = acp_pair_den_tool_descriptors();
     let den_tool_names = den_tool_descriptors
         .as_array()

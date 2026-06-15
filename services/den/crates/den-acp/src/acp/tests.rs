@@ -76,7 +76,7 @@ use den_runtime::prompt_memory_blocks::{
                 ToolResultDelivery, ToolResultRequest, ToolTurnCoordinator,
                 ToolTurnRegistration,
             },
-        acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
+        client_tools::{ResolvedSessionPolicy, ToolStatus},
         bears::BearProfile,
         prompt_memory_block_store::{
                 archive_conflicting_prompt_memory_blocks,
@@ -105,10 +105,10 @@ use den_runtime::prompt_memory_blocks::{
         }
     }
 
-    fn prompt_memory_test_policy() -> AcpResolvedSessionPolicy {
-        AcpResolvedSessionPolicy {
+    fn prompt_memory_test_policy() -> ResolvedSessionPolicy {
+        ResolvedSessionPolicy {
             mode_label: "Write",
-            tool_enablement: den_runtime::acp_tools::AcpToolEnablementState::AllTools,
+            tool_enablement: den_runtime::client_tools::ToolEnablementState::AllTools,
             plan_mode_state: None,
         }
     }
@@ -2739,7 +2739,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[tokio::test]
     async fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
-        let policy = den_runtime::acp_tools::resolve_session_policy_for_mode("ask", None);
+        let policy = den_runtime::client_tools::resolve_session_policy_for_mode("ask", None);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();
@@ -3128,7 +3128,7 @@ use den_runtime::prompt_memory_blocks::{
             },
             "acp-session",
             "call-1".to_string(),
-            AcpToolStatus::Ok,
+            ToolStatus::Ok,
             &registry,
         )
         .to_value();
@@ -3195,7 +3195,7 @@ use den_runtime::prompt_memory_blocks::{
             late,
             "acp-session",
             "call-timeout".to_string(),
-            AcpToolStatus::Ok,
+            ToolStatus::Ok,
             &registry,
         )
         .to_value();
@@ -5113,7 +5113,7 @@ use den_runtime::prompt_memory_blocks::{
             replay,
             "acp-idempotent-session",
             "call_idempotent".to_string(),
-            AcpToolStatus::Ok,
+            ToolStatus::Ok,
             &registry,
         );
         let value = response.to_value();
@@ -5187,7 +5187,7 @@ use den_runtime::prompt_memory_blocks::{
             replay,
             "acp-conflict-session",
             "call_conflict".to_string(),
-            AcpToolStatus::Ok,
+            ToolStatus::Ok,
             &registry,
         );
         let value = response.to_value();

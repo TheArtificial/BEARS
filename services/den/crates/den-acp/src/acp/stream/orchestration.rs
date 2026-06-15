@@ -26,7 +26,7 @@ use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
 use den_runtime::{
     acp_sessions,
-    acp_tools::AcpResolvedSessionPolicy,
+    client_tools::ResolvedSessionPolicy,
     bears::Bear,
     conversation_events::{
             persist_canonical_conversation_record, CanonicalConversationRecord,
@@ -138,7 +138,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
     pair_runtime_binding: &RoleRuntimeBinding,
     conversation_resolution: &AcpConversationResolution,
     synthetic_session: &den_runtime::acp_sessions::AcpSessionRow,
-    resolved_policy: &AcpResolvedSessionPolicy,
+    resolved_policy: &ResolvedSessionPolicy,
     current_activity_plan: &Option<den_docket::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,
     setup: AcpStreamSetup,

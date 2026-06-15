@@ -1,9 +1,9 @@
-use den_runtime::acp_tools::{acp_diag_phase, AcpToolStatus};
+use den_runtime::client_tools::{diag_phase, ToolStatus};
 
-pub(super) fn delivered_tool_result_diagnostic(parsed_status: AcpToolStatus) -> serde_json::Value {
+pub(super) fn delivered_tool_result_diagnostic(parsed_status: ToolStatus) -> serde_json::Value {
     serde_json::json!({
         "component": "den.acp",
-        "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
+        "phase": diag_phase::DEN_RESULT_DELIVERED,
         "status": parsed_status.as_str(),
     })
 }

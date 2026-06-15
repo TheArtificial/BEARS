@@ -23,7 +23,7 @@ use den_runtime::{
     plan_mode,
     acp_sessions,
     tool_turns::{ToolResultRequest, ToolTurnRegistration},
-    acp_tools::acp_tool_policy_json_for_provider,
+    client_tools::client_tool_policy_json_for_provider,
 };
 
 use crate::acp::{
@@ -95,7 +95,7 @@ pub(super) async fn permission_result_inner(
                 plan_mode_id,
             )
             .await?;
-            let policy = den_runtime::acp_tools::resolve_session_policy_for_mode("plan", Some("submitted"));
+            let policy = den_runtime::client_tools::resolve_session_policy_for_mode("plan", Some("submitted"));
             return Ok(Json(serde_json::json!({
                 "accepted": true,
                 "reason": "plan_mode_approval_request_timed_out",
@@ -152,7 +152,7 @@ pub(super) async fn permission_result_inner(
             .await?;
             "plan"
         };
-        let policy = den_runtime::acp_tools::resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str()));
+        let policy = den_runtime::client_tools::resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str()));
         return Ok(Json(serde_json::json!({
             "accepted": true,
             "reason": format!("plan_mode_{}", row.state),
@@ -222,7 +222,7 @@ pub(super) async fn permission_result_inner(
                 tool_call_id: pending.tool_call_id.clone(),
                 tool_name: local_tool_name,
                 approval_request_id: pending.approval_request_id.clone(),
-                timeout_ms: acp_tool_policy_json_for_provider(&pending.provider_name)
+                timeout_ms: client_tool_policy_json_for_provider(&pending.provider_name)
                     .get("tool_timeout_ms")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(30_000),

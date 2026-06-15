@@ -723,8 +723,8 @@ fn client_display_name(client: &str) -> &'static str {
 }
 
 fn humanize_tool_name(tool_name: &str) -> String {
-    if let Some(tool) = crate::acp_tools::AcpToolName::from_provider_alias(tool_name) {
-        return crate::acp_tools::acp_tool_display(tool).label.to_string();
+    if let Some(tool) = crate::client_tools::ClientToolName::from_provider_alias(tool_name) {
+        return crate::client_tools::client_tool_display(tool).label.to_string();
     }
     if let Some(rest) = tool_name.strip_prefix("mcp__") {
         let parts: Vec<&str> = rest.split("__").collect();

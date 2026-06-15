@@ -9,7 +9,7 @@ use crate::{
 };
 use den_runtime::{
     tool_turns::ToolResultRequest,
-    acp_tools::acp_tool_policy_json_for_provider,
+    client_tools::client_tool_policy_json_for_provider,
 };
 
 use super::AcpStreamContext;
@@ -45,7 +45,7 @@ pub(crate) fn acp_tool_timeout_ms_for_provider(tool_name: &str) -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(1, 300_000))
         .unwrap_or_else(|| {
-            acp_tool_policy_json_for_provider(tool_name)
+            client_tool_policy_json_for_provider(tool_name)
                 .get("tool_timeout_ms")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(30_000)

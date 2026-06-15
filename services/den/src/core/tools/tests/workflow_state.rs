@@ -38,7 +38,7 @@ use crate::core::{
 };
 use den_runtime::{
     plan_mode::PlanModeSessionRow,
-    acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
+    client_tools::{client_tool_descriptor, READ_TEXT_FILE_TOOL},
 };
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 
@@ -59,7 +59,7 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 
 #[test]
 fn acp_client_descriptors_expose_execution_domain_metadata() {
-    let descriptor = acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL);
+    let descriptor = client_tool_descriptor(&READ_TEXT_FILE_TOOL);
     assert_eq!(descriptor["x-bears-domain"], "execution");
     assert_eq!(descriptor["x-bears-content-class"], "read_files");
 }
