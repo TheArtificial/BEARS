@@ -81,6 +81,7 @@ mod tests {
             policy_version: "policy-v1".into(),
             protected_recent_group_count: 2,
             max_groups_before_compaction: 5,
+            max_transcript_chars: 20_000,
         };
         let decision = RuntimeCompactionDecision {
             trigger: RuntimeCompactionTriggerKind::TokenPressure,
@@ -109,6 +110,7 @@ mod tests {
             policy_version: "policy-v1".into(),
             protected_recent_group_count: 2,
             max_groups_before_compaction: 5,
+            max_transcript_chars: 20_000,
         };
 
         let event = build_compaction_skipped_event(

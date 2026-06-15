@@ -97,6 +97,7 @@ pub(crate) fn default_runtime_compaction_policy() -> RuntimeCompactionPolicy {
         policy_version: "acp-history-v1".to_string(),
         protected_recent_group_count: 3,
         max_groups_before_compaction: 6,
+        max_transcript_chars: 20_000,
     }
 }
 

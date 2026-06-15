@@ -173,7 +173,8 @@ pub struct Config {
     /// Embedding vector dimensions for the active standard (`EMBEDDING_DIMENSIONS`, default 1536).
     pub embedding_dimensions: u32,
 
-    /// Explicit web UI fixture profile for browser smoke testing.
+    /// Compaction rollout mode (`COMPACTION_MODE`: `observe` default, `active`, `off`).
+    pub compaction_mode: String,
     ///
     /// This is a runtime selector, not a generic development mode switch. The named profile is
     /// only honored when the binary is compiled with the `web-ui-fixtures` Cargo feature.
@@ -460,6 +461,9 @@ impl Config {
                 1536
             });
 
+        let compaction_mode = std::env::var("COMPACTION_MODE")
+            .unwrap_or_else(|_| "observe".to_string());
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
@@ -513,6 +517,7 @@ impl Config {
             embedding_standard,
             embedding_model,
             embedding_dimensions,
+            compaction_mode,
             ui_fixture_profile,
         }
     }
@@ -587,6 +592,7 @@ impl Config {
             embedding_standard: "bears-embed-v1".into(),
             embedding_model: "text-embedding-3-small".into(),
             embedding_dimensions: 1536,
+            compaction_mode: "observe".into(),
             ui_fixture_profile: None,
         }
     }

@@ -7,10 +7,22 @@ use crate::runtime_conversations::{
     RuntimeSemanticGroupKind,
 };
 
+pub mod artifact_store;
 pub mod grouping;
+pub mod policy;
+pub mod render;
+pub mod service;
+pub mod summarize;
 
 pub use grouping::{
     semantic_groups_from_conversation_messages, TranscriptGroupingRow,
+};
+pub use policy::{compaction_policy_for_profile, CompactionMode};
+pub use render::render_compacted_context_block;
+pub use summarize::summarize_compacted_groups;
+pub use service::{
+    prepare_turn_compaction, render_compaction_prompt_context, TurnCompactionState,
+    TurnCompactionTrigger,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +38,8 @@ pub struct RuntimeCompactionPolicy {
     pub policy_version: String,
     pub protected_recent_group_count: usize,
     pub max_groups_before_compaction: usize,
+    /// Soft transcript char budget for token-pressure evaluation (Den uses chars, not tokens).
+    pub max_transcript_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -245,5 +259,7 @@ pub fn build_runtime_context_envelope(
     }
 }
 
+#[cfg(test)]
+mod eval_tests;
 #[cfg(test)]
 mod test;

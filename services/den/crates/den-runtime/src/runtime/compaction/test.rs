@@ -79,6 +79,7 @@ fn compaction_policy_skips_protected_groups_and_recent_tail() {
         policy_version: "v1".into(),
         protected_recent_group_count: 2,
         max_groups_before_compaction: 3,
+        max_transcript_chars: 20_000,
     };
 
     let decision = choose_compaction_decision(
@@ -123,6 +124,7 @@ fn compaction_decision_returns_none_when_only_protected_or_recent_groups_remain(
         policy_version: "v1".into(),
         protected_recent_group_count: 1,
         max_groups_before_compaction: 2,
+        max_transcript_chars: 20_000,
     };
 
     assert!(choose_compaction_decision(
@@ -149,6 +151,7 @@ fn artifact_ref_carries_policy_version_and_source_range() {
         policy_version: "policy-7".into(),
         protected_recent_group_count: 2,
         max_groups_before_compaction: 5,
+        max_transcript_chars: 20_000,
     };
 
     let artifact = artifact_ref_from_decision("artifact-1", &decision, &policy);
