@@ -27,6 +27,9 @@ use crate::{
     },
     recall::{reconcile_bear, QdrantRecall},
 };
+use std::str::FromStr;
+
+use crate::runtime_compaction::{run_compaction_job, TurnCompactionState, TurnCompactionTrigger};
 use den_core::{config::Config, DenError};
 use den_llm::EmbeddingClient;
 
@@ -913,6 +916,223 @@ pub async fn run_recall_index_worker_loop(
                     bear_id = %bear_id,
                     error = %error,
                     "recall_index worker run failed; continuing"
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// context_compact lane: async post-turn compaction WRITE jobs.
+// Mirrors recall_index queue semantics (FOR UPDATE SKIP LOCKED, coalesced enqueue).
+// ---------------------------------------------------------------------------
+
+const CONTEXT_COMPACT_RETURNING: &str = r"
+    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+              conversation_id, conversation_key, conversation_date,
+              input_summary, output_summary, error,
+              started_at, completed_at, created_at
+";
+
+async fn claim_next_context_compact_run(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let row = sqlx::query(
+        r"
+        WITH next_run AS (
+            SELECT id
+            FROM bear_reflection_runs
+            WHERE bear_id = $1 AND lane = 'context_compact' AND status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE bear_reflection_runs runs
+        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        FROM next_run
+        WHERE runs.id = next_run.id
+        RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
+                  runs.role_agent_id, runs.conversation_id, runs.conversation_key,
+                  runs.conversation_date, runs.input_summary, runs.output_summary,
+                  runs.error, runs.started_at, runs.completed_at, runs.created_at
+        ",
+    )
+    .bind(bear_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_from_sql))
+}
+
+async fn mark_context_compact_completed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    output_summary: serde_json::Value,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
+         error = NULL, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(output_summary)
+        .fetch_one(pool)
+        .await?;
+    Ok(row_from_sql(row))
+}
+
+async fn mark_context_compact_failed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    error: &str,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(error)
+        .fetch_one(pool)
+        .await?;
+    Ok(row_from_sql(row))
+}
+
+async fn list_bears_with_queued_context_compact_runs(
+    pool: &PgPool,
+) -> Result<Vec<Uuid>, DenError> {
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        r"
+        SELECT DISTINCT bear_id
+        FROM bear_reflection_runs
+        WHERE lane = 'context_compact' AND status = 'queued'
+        ORDER BY bear_id
+        ",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+fn parse_context_compact_input(run: &ReflectionRunRow) -> Result<(String, BearProfile), String> {
+    let conversation_id = run
+        .input_summary
+        .get("conversation_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| run.conversation_id.clone())
+        .ok_or_else(|| "context_compact missing conversation_id".to_string())?;
+    let profile_raw = run
+        .input_summary
+        .get("profile")
+        .and_then(|value| value.as_str())
+        .unwrap_or("pair");
+    let profile =
+        BearProfile::from_str(profile_raw).map_err(|error| format!("invalid profile: {error}"))?;
+    Ok((conversation_id, profile))
+}
+
+fn context_compact_output_summary(state: &TurnCompactionState) -> serde_json::Value {
+    serde_json::json!({
+        "event": state.event,
+        "decision": state.decision,
+        "compacted_seq_cutoff": state.compacted_seq_cutoff,
+    })
+}
+
+/// Claim and run the next queued `context_compact` job for a Bear.
+pub async fn run_next_context_compact_once(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let Some(run) = claim_next_context_compact_run(pool, bear_id).await? else {
+        return Ok(None);
+    };
+
+    let (conversation_id, profile) = match parse_context_compact_input(&run) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            let failed = mark_context_compact_failed(pool, bear_id, run.id, &error).await?;
+            return Ok(Some(failed));
+        }
+    };
+
+    match run_compaction_job(
+        pool,
+        config,
+        bear_id,
+        &conversation_id,
+        profile,
+        TurnCompactionTrigger::PostTurn,
+    )
+    .await
+    {
+        Ok(Some(state)) => {
+            let completed = mark_context_compact_completed(
+                pool,
+                bear_id,
+                run.id,
+                context_compact_output_summary(&state),
+            )
+            .await?;
+            Ok(Some(completed))
+        }
+        Ok(None) => {
+            let completed = mark_context_compact_completed(
+                pool,
+                bear_id,
+                run.id,
+                serde_json::json!({ "skipped": "compaction disabled" }),
+            )
+            .await?;
+            Ok(Some(completed))
+        }
+        Err(error) => {
+            let failed =
+                mark_context_compact_failed(pool, bear_id, run.id, &error.to_string()).await?;
+            Ok(Some(failed))
+        }
+    }
+}
+
+/// Poll loop for the `context_compact` lane. Enabled whenever workers run (no Qdrant gate).
+pub async fn run_context_compact_worker_loop(
+    pool: PgPool,
+    config: Arc<Config>,
+    worker_token: tokio_util::sync::CancellationToken,
+    poll_interval: std::time::Duration,
+) -> Result<(), DenError> {
+    loop {
+        tokio::select! {
+            () = worker_token.cancelled() => { break; }
+            () = tokio::time::sleep(poll_interval) => {}
+        }
+
+        let bear_ids = list_bears_with_queued_context_compact_runs(&pool).await?;
+        for bear_id in bear_ids {
+            if worker_token.is_cancelled() {
+                break;
+            }
+            match run_next_context_compact_once(&pool, config.as_ref(), bear_id).await {
+                Ok(Some(run)) => tracing::info!(
+                    bear_id = %bear_id,
+                    reflection_run_id = %run.id,
+                    status = %run.status,
+                    output = %run.output_summary,
+                    "context_compact worker processed queued run"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    bear_id = %bear_id,
+                    error = %error,
+                    "context_compact worker run failed; continuing"
                 ),
             }
         }

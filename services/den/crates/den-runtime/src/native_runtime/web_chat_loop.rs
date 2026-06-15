@@ -23,6 +23,7 @@ use crate::{
             AgentLoopSessionStore, NativeToolDispatchMode,
             SessionTrackingStream,
         },
+        runtime_compaction::enqueue_compaction_after_turn,
         runtime_contracts::ToolCallFinishStatus,
         bears::BearProfile,
         llm::{ChatMessage, ChatToolCall, LlmClient},
@@ -147,6 +148,20 @@ impl NativeWebChatLoopStream {
             &session.messages,
             self.turn_start_message_len,
         );
+        let pool = self.runtime.pool.clone();
+        let config = self.runtime.config.clone();
+        let bear_id = self.runtime.bear_id;
+        let conversation_id = self.runtime.conversation_id.clone();
+        tokio::spawn(async move {
+            enqueue_compaction_after_turn(
+                &pool,
+                &config,
+                bear_id,
+                &conversation_id,
+                BearProfile::Chat,
+            )
+            .await;
+        });
     }
 
     fn persist_interrupted_turn(&mut self, reason: &str) {
@@ -208,6 +223,8 @@ impl NativeWebChatLoopStream {
             runtime.conversation_id.clone(),
             runtime.session_id.clone(),
             Some(runtime.request_id.clone()),
+            runtime.config.clone(),
+            BearProfile::Chat,
             NativeToolDispatchMode::ServerSideInProcess,
         ))
     }

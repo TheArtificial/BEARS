@@ -9,6 +9,7 @@ use crate::runtime_conversations::{
 
 pub mod artifact_store;
 pub mod grouping;
+pub mod lifecycle;
 pub mod policy;
 pub mod render;
 pub mod service;
@@ -17,13 +18,14 @@ pub mod summarize;
 pub use grouping::{
     semantic_groups_from_conversation_messages, TranscriptGroupingRow,
 };
-pub use policy::{compaction_policy_for_profile, CompactionMode};
+pub use lifecycle::{
+    enqueue_compaction_after_turn, load_compaction_context, on_turn_assemble_compaction,
+    prepare_turn_compaction, render_compaction_prompt_context, run_compaction_job,
+    TurnCompactionState, TurnCompactionTrigger,
+};
+pub use policy::{compaction_policy_for_profile, CompactionMode, CompactionTiming};
 pub use render::render_compacted_context_block;
 pub use summarize::summarize_compacted_groups;
-pub use service::{
-    prepare_turn_compaction, render_compaction_prompt_context, TurnCompactionState,
-    TurnCompactionTrigger,
-};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeCompactionStrategy {

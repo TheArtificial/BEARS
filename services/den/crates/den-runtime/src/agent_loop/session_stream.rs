@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
@@ -12,10 +13,11 @@ use crate::{
             tool_policy::{maybe_pause_for_tool_approval, provider_tool_requires_approval},
         },
         llm::ChatToolCall,
+        runtime_compaction::enqueue_compaction_after_turn,
         runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
     },
 };
-use den_core::DenError;
+use den_core::{config::Config, profile::BearProfile, DenError};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step};
@@ -50,6 +52,8 @@ pub struct SessionTrackingStream {
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     dispatch_mode: NativeToolDispatchMode,
+    config: Arc<Config>,
+    profile: BearProfile,
 }
 
 impl SessionTrackingStream {
@@ -63,6 +67,8 @@ impl SessionTrackingStream {
         conversation_id: String,
         acp_session_id: String,
         request_id: Option<String>,
+        config: Arc<Config>,
+        profile: BearProfile,
         dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
         Self {
@@ -83,6 +89,8 @@ impl SessionTrackingStream {
             pending_tool_event: None,
             pending_pause_after_tool: None,
             dispatch_mode,
+            config,
+            profile,
         }
     }
 
@@ -336,6 +344,15 @@ impl Stream for SessionTrackingStream {
                 if !self.assistant_text.trim().is_empty() {
                     self.persist_assistant_tool_step();
                 }
+                let pool = self.pool.clone();
+                let config = self.config.clone();
+                let bear_id = self.bear_id;
+                let conversation_id = self.conversation_id.clone();
+                let profile = self.profile;
+                tokio::spawn(async move {
+                    enqueue_compaction_after_turn(&pool, &config, bear_id, &conversation_id, profile)
+                        .await;
+                });
                 self.finished = true;
                 Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                     RuntimeSemanticEvent::TurnCompleted { turn: None },

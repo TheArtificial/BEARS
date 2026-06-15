@@ -43,7 +43,11 @@ pub async fn start_acp_turn_event_stream_with_retries(
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    den_runtime::native_runtime::continue_native_acp_turn_event_stream(request).await
+    den_runtime::native_runtime::continue_native_acp_turn_event_stream(
+        request,
+        den_core::BearProfile::Pair,
+    )
+    .await
 }
 
 pub async fn acp_cleanup_stale_runtime_state(

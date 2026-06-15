@@ -176,6 +176,8 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
 fn wrap_session_stream(
     stream: RuntimeEventStream,
     session: &AgentLoopSession,
+    config: Arc<Config>,
+    profile: BearProfile,
     pool: PgPool,
     bear_id: Uuid,
     user_id: Option<i32>,
@@ -193,6 +195,8 @@ fn wrap_session_stream(
         conversation_id.to_string(),
         acp_session_id.to_string(),
         request_id,
+        config,
+        profile,
         NativeToolDispatchMode::DeferToClient,
     ))
 }
@@ -440,6 +444,8 @@ pub async fn start_native_profile_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
+        Arc::new(request.config.clone()),
+        role,
         request.sqlx_pool.clone(),
         request.bear_id,
         Some(request.user_id),
@@ -463,13 +469,14 @@ pub async fn start_native_profile_turn_event_stream(
 
 pub async fn continue_native_profile_turn_event_stream(
     request: AcpTurnContinueRequest<'_>,
-    _role: BearProfile,
+    role: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    continue_native_acp_turn_event_stream(request).await
+    continue_native_acp_turn_event_stream(request, role).await
 }
 
 pub async fn continue_native_acp_turn_event_stream(
     request: AcpTurnContinueRequest<'_>,
+    profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     let acp_session_id = request.acp_session_id;
     let conversation_id = request.conversation.id.clone();
@@ -540,6 +547,8 @@ pub async fn continue_native_acp_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
+        Arc::new(request.config.clone()),
+        profile,
         request.sqlx_pool.clone(),
         session.bear_id,
         None,

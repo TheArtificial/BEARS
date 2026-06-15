@@ -30,8 +30,7 @@ use super::{
     },
 };
 use crate::runtime::compaction::{
-    prepare_turn_compaction, render_compaction_prompt_context, CompactionMode,
-    TurnCompactionTrigger,
+    on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
 
 #[derive(Debug, Clone)]
@@ -211,13 +210,12 @@ pub async fn assemble_native_turn_for_bear(
         }
     }
 
-    let compaction_state = prepare_turn_compaction(
+    let compaction_state = on_turn_assemble_compaction(
         ctx.pool,
         ctx.config,
         ctx.bear_id,
         ctx.conversation_id,
         ctx.profile,
-        TurnCompactionTrigger::TurnStart,
     )
     .await?;
 

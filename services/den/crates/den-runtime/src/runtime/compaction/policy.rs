@@ -23,6 +23,24 @@ impl CompactionMode {
     }
 }
 
+/// When compaction writes run relative to turn assembly (`COMPACTION_TIMING` env).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionTiming {
+    /// Evaluate and persist during turn assembly (legacy).
+    Sync,
+    /// Read artifacts at assembly; enqueue WRITE after turn completes (default).
+    Async,
+}
+
+impl CompactionTiming {
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "sync" | "inline" | "turn_start" => Self::Sync,
+            _ => Self::Async,
+        }
+    }
+}
+
 /// Per-profile compaction policy defaults.
 pub fn compaction_policy_for_profile(profile: BearProfile) -> RuntimeCompactionPolicy {
     match profile {

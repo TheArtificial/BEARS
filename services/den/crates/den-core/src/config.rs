@@ -175,6 +175,8 @@ pub struct Config {
 
     /// Compaction rollout mode (`COMPACTION_MODE`: `observe` default, `active`, `off`).
     pub compaction_mode: String,
+    /// When compaction writes run (`COMPACTION_TIMING`: `async` default, `sync`).
+    pub compaction_timing: String,
     ///
     /// This is a runtime selector, not a generic development mode switch. The named profile is
     /// only honored when the binary is compiled with the `web-ui-fixtures` Cargo feature.
@@ -464,6 +466,9 @@ impl Config {
         let compaction_mode = std::env::var("COMPACTION_MODE")
             .unwrap_or_else(|_| "observe".to_string());
 
+        let compaction_timing = std::env::var("COMPACTION_TIMING")
+            .unwrap_or_else(|_| "async".to_string());
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
@@ -518,6 +523,7 @@ impl Config {
             embedding_model,
             embedding_dimensions,
             compaction_mode,
+            compaction_timing,
             ui_fixture_profile,
         }
     }
@@ -593,6 +599,7 @@ impl Config {
             embedding_model: "text-embedding-3-small".into(),
             embedding_dimensions: 1536,
             compaction_mode: "observe".into(),
+            compaction_timing: "async".into(),
             ui_fixture_profile: None,
         }
     }
