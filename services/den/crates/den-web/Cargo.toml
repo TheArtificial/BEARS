@@ -6,10 +6,11 @@ edition = "2021"
 # den-web: the server-rendered web UI + `/v1/*` JSON/SSE edge of the den binary.
 # It owns the MiniJinja template environment + embedded assets, the session-cookie
 # UI routes (home/onboarding/admin/bear management/user settings), and the in-app
-# chat surface. It sits above den-http (identity/errors/web policy), den-api (OAuth
-# client types + the injected builtin-tool invoker), den-runtime, den-docket, and
-# den-core. Builtin Den tool execution is injected via `den_api::tool_invoker`, so
-# the den-side tool composition stays in the binary.
+# chat surface. It sits above den-http (identity/errors/web policy/ACP tokens),
+# den-oauth, den-runtime, den-docket, and den-core. Builtin Den tool execution is
+# injected via `den_runtime::native_runtime::tool_invoker`, so the den-side tool
+# composition stays in the binary. (den-web deliberately does NOT depend on
+# den-api/den-acp, so it compiles in parallel with those edges.)
 
 [lints]
 workspace = true
@@ -20,7 +21,6 @@ production = [
     "den-http/production",
     "den-runtime/production",
     "den-oauth/production",
-    "den-api/production",
 ]
 web-ui-fixtures = []
 
@@ -29,7 +29,6 @@ den-core = { path = "../den-core" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
 den-docket = { path = "../den-docket" }
-den-api = { path = "../den-api" }
 den-oauth = { path = "../den-oauth" }
 ammonia = "4.1.1"
 axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }

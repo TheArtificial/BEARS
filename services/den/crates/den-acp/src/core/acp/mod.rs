@@ -4,7 +4,7 @@
 
 pub mod runtime;
 pub use den_runtime::acp_sessions as sessions;
-pub mod tokens;
+pub use den_http::acp_tokens as tokens;
 pub mod turn_runner;
 
 #[cfg(test)]

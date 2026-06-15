@@ -15,8 +15,6 @@ extern crate self as web;
 // `crate::build_info` unchanged. These live in den-core / den-http now.
 pub use den_core::config;
 pub use den_http::{auth_backend, build_info, errors};
-// The admin OAuth-client UI references the OAuth server types from den-api.
-pub use den_api as api;
 
 pub mod core;
 pub mod observability;

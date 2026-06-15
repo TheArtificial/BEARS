@@ -2,13 +2,13 @@
 //! as `crate::core::*`.
 //!
 //! The canonical homes are the foundation/runtime crates: identity (`user`,
-//! `email`) and web policy live in den-http, ACP tokens in den-api, work plans /
-//! docket in den-docket, and the tool descriptors/constants in den-core. Only S3
-//! media storage (`s3`) is web-local. Builtin Den tool *execution* is injected via
-//! `den_api::tool_invoker`, so no tool composition lives here.
+//! `email`), web policy, and ACP tokens live in den-http, work plans / docket in
+//! den-docket, and the tool descriptors/constants in den-core. Only S3 media
+//! storage (`s3`) is web-local. Builtin Den tool *execution* is injected via
+//! `den_runtime::native_runtime::tool_invoker`, so no tool composition lives here.
 pub mod s3;
 
-pub use den_api::core::acp_tokens;
+pub use den_http::acp_tokens;
 pub use den_docket as docket;
 pub use den_docket as work_plans;
 pub use den_http::{email, user, web_policy};

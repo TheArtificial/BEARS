@@ -636,7 +636,7 @@ async fn maybe_handle_direct_set_conversation_title(
         },
     };
     let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let invoker = den_api::tool_invoker().ok_or_else(|| {
+    let invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
         CustomError::System("builtin Den tool runtime is not initialized".to_string())
     })?;
     let value = invoker
@@ -837,7 +837,7 @@ async fn chat_send_native_inner(
         config: state.config.as_ref(),
         stores: &stores,
     };
-    let tool_invoker = den_api::tool_invoker().ok_or_else(|| {
+    let tool_invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
         CustomError::System("builtin Den tool runtime is not initialized".to_string())
     })?;
     let runtime_stream = den_runtime::native_runtime::start_native_web_chat_turn_event_stream(
