@@ -12,7 +12,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     acp_tools::AcpResolvedSessionPolicy,
     prompt_memory_block_store::{
             select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
@@ -239,7 +239,7 @@ pub(super) async fn acp_plan_mode_prompt_context(
     session_id: &str,
 ) -> Result<String, CustomError> {
     let plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear_id, session_id).await?;
+        plan_mode::active_for_session(&state.sqlx_pool, user_id, bear_id, session_id).await?;
     let Some(plan_mode) = plan_mode else {
         return Ok(String::new());
     };

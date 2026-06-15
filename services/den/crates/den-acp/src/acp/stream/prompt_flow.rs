@@ -27,7 +27,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth::{self, ApiError};
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     acp_sessions::{self, UpsertAcpSession},
     conversation_events::{
             persist_canonical_conversation_record, CanonicalConversationRecord,
@@ -210,15 +210,15 @@ pub(in crate::acp) async fn run_prompt_flow(
     if is_new_session_binding {
         match requested_initial_mode {
             Some("plan") => {
-                acp_plan_mode::enter_plan_mode(
+                plan_mode::enter_plan_mode(
                     &state.sqlx_pool,
-                    acp_plan_mode::EnterPlanModeParams {
+                    plan_mode::EnterPlanModeParams {
                         user_id,
                         bear_id: bear.id,
                         bear_slug: bear.slug.clone(),
                         acp_session_id: session_id.to_string(),
                         reason: "Client selected ACP Plan mode before first prompt".to_string(),
-                        requested_by: acp_plan_mode::AcpPlanModeRequestedBy::User,
+                        requested_by: plan_mode::PlanModeRequestedBy::User,
                         previous_permission_mode: Some("ask".to_string()),
                     },
                 )
@@ -287,7 +287,7 @@ pub(in crate::acp) async fn run_prompt_flow(
         "ACP gateway routing prompt to pair role via Letta API"
     );
     let active_plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+        plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
             .await
             .map_err(|err| {
                 let (status, code, message) = acp_error_status_message(&err.into());

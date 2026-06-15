@@ -3,7 +3,7 @@
 //! [`PlanModeOps`] abstracts the runtime side of plan mode: persisting plan-mode
 //! session state, switching the ACP session permission mode, and writing the plan
 //! artifact. The `den-tools` executors own argument parsing/validation and the
-//! static envelope text; the `den` implementation owns the `acp_plan_mode` DB
+//! static envelope text; the `den` implementation owns the `plan_mode` DB
 //! rows, `turn_state` rendering, and native-vs-MemFS artifact writes. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 

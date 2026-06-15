@@ -68,7 +68,7 @@ pub(super) fn decode_acp_sessions_cursor(
 
 pub(crate) fn resolve_acp_turn_context(
     row: &acp_sessions::AcpSessionRow,
-    plan_mode_row: Option<&den_runtime::acp_plan_mode::AcpPlanModeSessionRow>,
+    plan_mode_row: Option<&den_runtime::plan_mode::PlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> AcpResolvedTurnContext {
     let policy = super::resolve_session_policy_for_mode(

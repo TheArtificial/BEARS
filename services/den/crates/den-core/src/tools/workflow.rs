@@ -2,7 +2,7 @@
 //!
 //! Unlike the other Phase B groups, the work-plan executors are saturated with
 //! `den`-only domain types (`work_plans::*`, `den_docket::DocketService`,
-//! `acp_plan_mode`) plus the activity-payload `fn` builders, none of which live
+//! `plan_mode`) plus the activity-payload `fn` builders, none of which live
 //! in a shared crate yet (that is v0 de-stringify / docket-split work). Until
 //! those types migrate, [`WorkPlanOps`] is a coarse seam: argument parsing and
 //! response shaping stay in the `den` implementation, and the trait simply lets

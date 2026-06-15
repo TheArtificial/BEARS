@@ -2,7 +2,7 @@
 
 use den::startup::run_sqlx_migrations;
 use den_runtime::{
-    acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
+    plan_mode::{self, PlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
     bears::{db as bears_db, db::BearParams, BearProfile},
 };
 use sqlx::postgres::PgPoolOptions;
@@ -104,7 +104,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     )
     .await;
 
-    let entered = acp_plan_mode::enter_plan_mode(
+    let entered = plan_mode::enter_plan_mode(
         &pool,
         EnterPlanModeParams {
             user_id,
@@ -112,7 +112,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
             bear_slug: "plan-mode-test".to_string(),
             acp_session_id: "acp-plan-mode-session".to_string(),
             reason: "Need to inspect before editing".to_string(),
-            requested_by: AcpPlanModeRequestedBy::Pair,
+            requested_by: PlanModeRequestedBy::Pair,
             previous_permission_mode: Some("default".to_string()),
         },
     )
@@ -120,7 +120,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     .expect("enter plan mode");
     assert_eq!(entered.state, "active");
 
-    let submitted = acp_plan_mode::submit_plan_artifact(
+    let submitted = plan_mode::submit_plan_artifact(
         &pool,
         SubmitPlanModeParams {
             user_id,
@@ -141,7 +141,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         Some("pair/plans/mem_test.md")
     );
 
-    let approved = acp_plan_mode::approve_plan_mode(
+    let approved = plan_mode::approve_plan_mode(
         &pool,
         user_id,
         bear_id,
@@ -154,7 +154,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     assert!(approved.closed_at.is_some());
 
     let active =
-        acp_plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
+        plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
             .await
             .expect("query active plan mode");
     assert!(active.is_none());

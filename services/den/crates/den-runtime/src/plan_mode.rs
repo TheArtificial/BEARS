@@ -9,7 +9,7 @@ use den_core::DenError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AcpPlanModeState {
+pub enum PlanModeState {
     Active,
     Submitted,
     Approved,
@@ -17,7 +17,7 @@ pub enum AcpPlanModeState {
     Cancelled,
 }
 
-impl AcpPlanModeState {
+impl PlanModeState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
@@ -44,7 +44,7 @@ impl AcpPlanModeState {
     }
 }
 
-impl fmt::Display for AcpPlanModeState {
+impl fmt::Display for PlanModeState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -52,13 +52,13 @@ impl fmt::Display for AcpPlanModeState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AcpPlanModeRequestedBy {
+pub enum PlanModeRequestedBy {
     Pair,
     User,
     System,
 }
 
-impl AcpPlanModeRequestedBy {
+impl PlanModeRequestedBy {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pair => "pair",
@@ -68,14 +68,14 @@ impl AcpPlanModeRequestedBy {
     }
 }
 
-impl fmt::Display for AcpPlanModeRequestedBy {
+impl fmt::Display for PlanModeRequestedBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcpPlanModeSessionRow {
+pub struct PlanModeSessionRow {
     pub id: Uuid,
     pub user_id: i32,
     pub bear_id: Uuid,
@@ -97,9 +97,9 @@ pub struct AcpPlanModeSessionRow {
     pub updated_at: OffsetDateTime,
 }
 
-impl AcpPlanModeSessionRow {
-    pub fn parsed_state(&self) -> Result<AcpPlanModeState, DenError> {
-        AcpPlanModeState::parse(&self.state).ok_or_else(|| {
+impl PlanModeSessionRow {
+    pub fn parsed_state(&self) -> Result<PlanModeState, DenError> {
+        PlanModeState::parse(&self.state).ok_or_else(|| {
             DenError::System(format!("unknown ACP plan mode state `{}`", self.state))
         })
     }
@@ -112,7 +112,7 @@ pub struct EnterPlanModeParams {
     pub bear_slug: String,
     pub acp_session_id: String,
     pub reason: String,
-    pub requested_by: AcpPlanModeRequestedBy,
+    pub requested_by: PlanModeRequestedBy,
     pub previous_permission_mode: Option<String>,
 }
 
@@ -135,8 +135,8 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-fn row_from_sql(row: &PgRow) -> AcpPlanModeSessionRow {
-    AcpPlanModeSessionRow {
+fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
+    PlanModeSessionRow {
         id: row.get("id"),
         user_id: row.get("user_id"),
         bear_id: row.get("bear_id"),
@@ -171,7 +171,7 @@ pub async fn list_for_bear(
     bear_id: Uuid,
     include_closed: bool,
     limit: i64,
-) -> Result<Vec<AcpPlanModeSessionRow>, DenError> {
+) -> Result<Vec<PlanModeSessionRow>, DenError> {
     let limit = limit.clamp(1, 100);
     let query = format!(
         r"
@@ -197,7 +197,7 @@ pub async fn active_for_session(
     user_id: i32,
     bear_id: Uuid,
     acp_session_id: &str,
-) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
+) -> Result<Option<PlanModeSessionRow>, DenError> {
     let query = format!(
         r"
         SELECT {SELECT_COLUMNS}
@@ -224,7 +224,7 @@ pub async fn get_by_id_for_bear(
     user_id: i32,
     bear_id: Uuid,
     plan_mode_id: Uuid,
-) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
+) -> Result<Option<PlanModeSessionRow>, DenError> {
     let query = format!(
         r"
         SELECT {SELECT_COLUMNS}
@@ -247,7 +247,7 @@ pub async fn get_for_session(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
-) -> Result<Option<AcpPlanModeSessionRow>, DenError> {
+) -> Result<Option<PlanModeSessionRow>, DenError> {
     let query = if plan_mode_id.is_some() {
         format!(
             r"
@@ -281,7 +281,7 @@ pub async fn get_for_session(
 pub async fn enter_plan_mode(
     pool: &PgPool,
     params: EnterPlanModeParams,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     if params.acp_session_id.trim().is_empty() {
         return Err(DenError::ValidationError(
             "acp_session_id is required".to_string(),
@@ -335,7 +335,7 @@ pub async fn enter_plan_mode(
 pub async fn submit_plan_artifact(
     pool: &PgPool,
     params: SubmitPlanModeParams,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     let title = params.title.trim();
     let body = params.body.trim();
     let artifact_path = params.artifact_path.trim();
@@ -423,7 +423,7 @@ pub async fn approve_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Uuid,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
         .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
@@ -437,7 +437,7 @@ pub async fn approve_plan_mode(
             acp_session_id
         },
         plan_mode_id,
-        AcpPlanModeState::Approved,
+        PlanModeState::Approved,
         "approved",
     )
     .await
@@ -449,7 +449,7 @@ pub async fn reject_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Uuid,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
         .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
@@ -463,7 +463,7 @@ pub async fn reject_plan_mode(
             acp_session_id
         },
         plan_mode_id,
-        AcpPlanModeState::Rejected,
+        PlanModeState::Rejected,
         "rejected",
     )
     .await
@@ -475,7 +475,7 @@ pub async fn cancel_plan_mode(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     let current = if let Some(plan_mode_id) = plan_mode_id {
         get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
     } else {
@@ -488,7 +488,7 @@ pub async fn cancel_plan_mode(
         bear_id,
         &current.acp_session_id,
         current.id,
-        AcpPlanModeState::Cancelled,
+        PlanModeState::Cancelled,
         "cancelled",
     )
     .await
@@ -500,12 +500,12 @@ async fn close_with_state(
     bear_id: Uuid,
     acp_session_id: &str,
     plan_mode_id: Uuid,
-    state: AcpPlanModeState,
+    state: PlanModeState,
     event_type: &str,
-) -> Result<AcpPlanModeSessionRow, DenError> {
+) -> Result<PlanModeSessionRow, DenError> {
     if matches!(
         state,
-        AcpPlanModeState::Active | AcpPlanModeState::Submitted
+        PlanModeState::Active | PlanModeState::Submitted
     ) {
         return Err(DenError::System(
             "close_with_state requires a closed state".to_string(),
@@ -552,7 +552,7 @@ async fn close_with_state(
 
 async fn append_event(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    row: &AcpPlanModeSessionRow,
+    row: &PlanModeSessionRow,
     event_type: &str,
     event_payload: Value,
 ) -> Result<(), DenError> {
@@ -586,15 +586,15 @@ mod tests {
     #[test]
     fn state_parse_round_trip() {
         for state in [
-            AcpPlanModeState::Active,
-            AcpPlanModeState::Submitted,
-            AcpPlanModeState::Approved,
-            AcpPlanModeState::Rejected,
-            AcpPlanModeState::Cancelled,
+            PlanModeState::Active,
+            PlanModeState::Submitted,
+            PlanModeState::Approved,
+            PlanModeState::Rejected,
+            PlanModeState::Cancelled,
         ] {
-            assert_eq!(AcpPlanModeState::parse(state.as_str()), Some(state));
+            assert_eq!(PlanModeState::parse(state.as_str()), Some(state));
         }
-        assert_eq!(AcpPlanModeState::parse("bogus"), None);
+        assert_eq!(PlanModeState::parse("bogus"), None);
     }
 
     #[test]

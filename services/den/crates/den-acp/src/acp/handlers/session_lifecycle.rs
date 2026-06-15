@@ -18,7 +18,7 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     acp_sessions,
     bears::{db as bears_db, BearProfile},
     archived_conversations,
@@ -296,7 +296,7 @@ pub(super) async fn close_session_inner(
         archived = true;
     }
 
-    let active_plan_mode = acp_plan_mode::active_for_session(
+    let active_plan_mode = plan_mode::active_for_session(
         &state.sqlx_pool,
         user_id,
         session.bear_id,

@@ -20,7 +20,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     acp_sessions,
     tool_turns::{ToolResultRequest, ToolTurnRegistration},
     acp_tools::acp_tool_policy_json_for_provider,
@@ -88,7 +88,7 @@ pub(super) async fn permission_result_inner(
                 "plan",
             )
             .await?;
-            let row = acp_plan_mode::get_by_id_for_bear(
+            let row = plan_mode::get_by_id_for_bear(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,
@@ -113,7 +113,7 @@ pub(super) async fn permission_result_inner(
             decision.as_str(),
             "approve" | "approved" | "allow" | "allow_once"
         ) {
-            acp_plan_mode::approve_plan_mode(
+            plan_mode::approve_plan_mode(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,
@@ -122,7 +122,7 @@ pub(super) async fn permission_result_inner(
             )
             .await?
         } else {
-            acp_plan_mode::reject_plan_mode(
+            plan_mode::reject_plan_mode(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,

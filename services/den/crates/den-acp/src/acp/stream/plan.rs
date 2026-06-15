@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
-    acp_plan_mode,
+    plan_mode,
     tool_turns::ToolResultRequest,
     turn_state,
 };
@@ -36,7 +36,7 @@ pub(in crate::acp) fn plan_update_from_den_tool_result(
 }
 
 pub(in crate::acp) fn plan_approval_fallback_payload(
-    row: &acp_plan_mode::AcpPlanModeSessionRow,
+    row: &plan_mode::PlanModeSessionRow,
 ) -> Value {
     serde_json::json!({
         "kind": "submitted_plan_approval",

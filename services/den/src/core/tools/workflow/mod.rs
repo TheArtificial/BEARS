@@ -23,7 +23,7 @@ use crate::{
     },
 };
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     bears::BearProfile,
     memory::{tools as sqlite_memory, MemoryStoreManager},
 };
@@ -134,7 +134,7 @@ pub(crate) async fn list_work_plans(
     role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
-    plan_mode_workplan_payload: fn(&acp_plan_mode::AcpPlanModeSessionRow) -> Value,
+    plan_mode_workplan_payload: fn(&plan_mode::PlanModeSessionRow) -> Value,
 ) -> Result<Value, CustomError> {
     let args: WorkPlanListArguments = serde_json::from_value(arguments)?;
     let include_plan_mode = args.include_plan_mode.unwrap_or(true);
@@ -155,7 +155,7 @@ pub(crate) async fn list_work_plans(
         )
         .await?;
     let plan_mode_gates = if include_plan_mode {
-        acp_plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
+        plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
     } else {
         Vec::new()
     };

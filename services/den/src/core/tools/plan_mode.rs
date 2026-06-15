@@ -21,8 +21,8 @@ use crate::{
     },
 };
 use den_runtime::{
-    acp_plan_mode::{
-            self, AcpPlanModeRequestedBy, AcpPlanModeSessionRow, EnterPlanModeParams,
+    plan_mode::{
+            self, PlanModeRequestedBy, PlanModeSessionRow, EnterPlanModeParams,
             SubmitPlanModeParams,
         },
     acp_sessions,
@@ -32,7 +32,7 @@ use den_runtime::{
     turn_state,
 };
 
-type WorkplanPayloadFn = fn(&AcpPlanModeSessionRow) -> Value;
+type WorkplanPayloadFn = fn(&PlanModeSessionRow) -> Value;
 type NoActiveWorkplanFn = fn() -> Value;
 
 fn workflow_state_json(
@@ -69,7 +69,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         reason: String,
         previous_permission_mode: Option<String>,
     ) -> Result<PlanModeView, DenError> {
-        let row = acp_plan_mode::enter_plan_mode(
+        let row = plan_mode::enter_plan_mode(
             self.pool,
             EnterPlanModeParams {
                 user_id: context.user_id,
@@ -77,7 +77,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 bear_slug: context.bear_slug.clone(),
                 acp_session_id: acp_session_id.to_string(),
                 reason,
-                requested_by: AcpPlanModeRequestedBy::Pair,
+                requested_by: PlanModeRequestedBy::Pair,
                 previous_permission_mode,
             },
         )
@@ -106,7 +106,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         context: &DenToolInvocationContext,
         acp_session_id: &str,
     ) -> Result<PlanModeStatusView, DenError> {
-        let row = acp_plan_mode::active_for_session(
+        let row = plan_mode::active_for_session(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -130,7 +130,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         acp_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
-        let current = acp_plan_mode::get_for_session(
+        let current = plan_mode::get_for_session(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -147,7 +147,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 current.state
             )));
         }
-        let row = acp_plan_mode::approve_plan_mode(
+        let row = plan_mode::approve_plan_mode(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -185,8 +185,8 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         let stores = self.stores.ok_or_else(|| {
             DenError::System("plan mode exit requires memory stores".to_string())
         })?;
-        let markdown = acp_plan_mode::render_plan_artifact_markdown(title, body);
-        let current_plan = acp_plan_mode::get_for_session(
+        let markdown = plan_mode::render_plan_artifact_markdown(title, body);
+        let current_plan = plan_mode::get_for_session(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -225,7 +225,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 .unwrap_or(&logical_path)
                 .to_string()
         };
-        let row = acp_plan_mode::submit_plan_artifact(
+        let row = plan_mode::submit_plan_artifact(
             self.pool,
             SubmitPlanModeParams {
                 user_id: context.user_id,
@@ -272,7 +272,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         acp_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
-        let row = acp_plan_mode::cancel_plan_mode(
+        let row = plan_mode::cancel_plan_mode(
             self.pool,
             context.user_id,
             context.bear_id,

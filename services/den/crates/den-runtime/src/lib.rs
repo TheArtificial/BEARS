@@ -13,7 +13,7 @@
 pub mod acp_tools;
 
 /// Plan-mode state machine and transitions (turn/plan coordination).
-pub mod acp_plan_mode;
+pub mod plan_mode;
 
 /// Canonical native runtime event model (`AcpGatewayEvent`) + its ACP-SSE adapter.
 pub mod acp_events;

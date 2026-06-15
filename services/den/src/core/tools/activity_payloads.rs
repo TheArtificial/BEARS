@@ -2,11 +2,11 @@ use serde_json::{json, Value};
 
 use crate::core::work_plans;
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     turn_state,
 };
 
-pub(crate) fn plan_mode_workplan_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> Value {
+pub(crate) fn plan_mode_workplan_payload(row: &plan_mode::PlanModeSessionRow) -> Value {
     turn_state::turn_state_from_sources(
         &den_runtime::acp_tools::AcpResolvedSessionPolicy {
             mode_label: if row.state == "approved" {

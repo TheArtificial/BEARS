@@ -25,7 +25,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_runtime::{
-    acp_plan_mode,
+    plan_mode,
     acp_sessions,
     bears::{db as bears_db, BearProfile},
     conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
@@ -210,7 +210,7 @@ pub(super) async fn list_acp_sessions_inner(
             );
             continue;
         }
-        let plan_mode = acp_plan_mode::active_for_session(
+        let plan_mode = plan_mode::active_for_session(
             &state.sqlx_pool,
             user_id,
             bear.id,
@@ -275,7 +275,7 @@ pub(super) async fn get_acp_session_runtime_inner(
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
+        plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
     let activity_plan = PgDocketService::from_pool(&state.sqlx_pool)
         .get_visible_work_plan(
             bear.id,
@@ -537,15 +537,15 @@ pub(super) async fn set_session_mode_inner(
     let message;
     match requested_mode.as_str() {
         "plan" => {
-            acp_plan_mode::enter_plan_mode(
+            plan_mode::enter_plan_mode(
                 &state.sqlx_pool,
-                acp_plan_mode::EnterPlanModeParams {
+                plan_mode::EnterPlanModeParams {
                     user_id,
                     bear_id: bear.id,
                     bear_slug: bear.slug.clone(),
                     acp_session_id: session_id.to_string(),
                     reason: reason.to_string(),
-                    requested_by: acp_plan_mode::AcpPlanModeRequestedBy::User,
+                    requested_by: plan_mode::PlanModeRequestedBy::User,
                     previous_permission_mode: Some("ask".to_string()),
                 },
             )
@@ -557,10 +557,10 @@ pub(super) async fn set_session_mode_inner(
         }
         "ask" => {
             if let Some(active) =
-                acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+                plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
                     .await?
             {
-                acp_plan_mode::cancel_plan_mode(
+                plan_mode::cancel_plan_mode(
                     &state.sqlx_pool,
                     user_id,
                     bear.id,
@@ -578,12 +578,12 @@ pub(super) async fn set_session_mode_inner(
         }
         "write" => {
             let active_plan =
-                acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+                plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
                     .await?;
             if let Some(active) = active_plan.as_ref() {
                 match active.state.as_str() {
                     "submitted" => {
-                        acp_plan_mode::approve_plan_mode(
+                        plan_mode::approve_plan_mode(
                             &state.sqlx_pool,
                             user_id,
                             bear.id,
@@ -594,7 +594,7 @@ pub(super) async fn set_session_mode_inner(
                         message = "Write mode enabled by user request; the submitted plan was approved by the authenticated ACP human.".to_string();
                     }
                     "active" => {
-                        acp_plan_mode::cancel_plan_mode(
+                        plan_mode::cancel_plan_mode(
                             &state.sqlx_pool,
                             user_id,
                             bear.id,
@@ -628,7 +628,7 @@ pub(super) async fn set_session_mode_inner(
     }
 
     let plan_mode_row =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
+        plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
     let plan_mode = plan_mode_row
         .clone()
         .map(serde_json::to_value)
@@ -679,7 +679,7 @@ pub(super) async fn get_acp_session_inner(
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
+        plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
     let approval_fallback = plan_mode
         .as_ref()
         .filter(|plan| plan.state == "submitted")

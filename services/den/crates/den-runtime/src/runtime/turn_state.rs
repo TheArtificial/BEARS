@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::{acp_plan_mode, acp_tools::AcpResolvedSessionPolicy};
+use crate::{plan_mode, acp_tools::AcpResolvedSessionPolicy};
 use den_docket::WorkPlanProjection;
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
@@ -38,7 +38,7 @@ pub fn turn_state_json(
 
 pub fn turn_state_from_sources(
     policy: &AcpResolvedSessionPolicy,
-    workplan_row: Option<&acp_plan_mode::AcpPlanModeSessionRow>,
+    workplan_row: Option<&plan_mode::PlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> Value {
     let workplan = workplan_domain_json(policy, workplan_row);
@@ -62,7 +62,7 @@ pub fn turn_state_from_sources(
 
 fn workplan_domain_json(
     policy: &AcpResolvedSessionPolicy,
-    workplan_row: Option<&acp_plan_mode::AcpPlanModeSessionRow>,
+    workplan_row: Option<&plan_mode::PlanModeSessionRow>,
 ) -> Value {
     let state = workflow_state_label(policy);
     let approval_status =

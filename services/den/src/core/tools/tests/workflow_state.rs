@@ -37,7 +37,7 @@ use crate::core::{
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
 use den_runtime::{
-    acp_plan_mode::AcpPlanModeSessionRow,
+    plan_mode::PlanModeSessionRow,
     acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
 };
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
@@ -67,7 +67,7 @@ fn acp_client_descriptors_expose_execution_domain_metadata() {
 #[test]
 fn plan_mode_payload_is_workplan_native() {
     let now = time::OffsetDateTime::UNIX_EPOCH;
-    let row = AcpPlanModeSessionRow {
+    let row = PlanModeSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),

@@ -6,7 +6,7 @@ use crate::core::{
     },
 };
 use den_runtime::{
-    acp_plan_mode::AcpPlanModeSessionRow,
+    plan_mode::PlanModeSessionRow,
     acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
     turn_state::{approval_status_label, workflow_state_label},
 };
@@ -315,7 +315,7 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
         tool_enablement: AcpToolEnablementState::AllTools,
         plan_mode_state: Some("approved".to_string()),
     };
-    let row = AcpPlanModeSessionRow {
+    let row = PlanModeSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),
@@ -372,7 +372,7 @@ fn resolve_turn_context_returns_matching_policy_and_turn_state() {
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    let plan_mode = AcpPlanModeSessionRow {
+    let plan_mode = PlanModeSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),
