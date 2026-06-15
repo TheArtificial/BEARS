@@ -24,6 +24,7 @@ use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},
     archived_conversations,
+    runtime::compaction::{prepare_turn_compaction, CompactionMode, TurnCompactionTrigger},
 };
 
 use crate::api::acp::{
@@ -68,15 +69,49 @@ pub(super) async fn compact_session_inner(
                 "ACP session has no resolved runtime conversation to compact".to_string(),
             )
         })?;
-    tracing::warn!(
-        acp_session_id = %session_id,
-        bear_id = %session.bear_id,
-        conversation_id,
-        "ACP session compact requested; the Den-native runtime has no live conversation compaction (canonical transcript history is retained)"
-    );
+
+    let compaction_mode = CompactionMode::parse(&state.config.compaction_mode);
+    if compaction_mode == CompactionMode::Off {
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "compacted": false,
+            "acp_session_id": session_id,
+            "conversation_id": conversation_id,
+            "compact_result": {
+                "status": "disabled",
+                "reason": "compaction_mode_off",
+            }
+        }))
+        .into_response());
+    }
+
+    let compaction_state = prepare_turn_compaction(
+        &state.sqlx_pool,
+        &state.config,
+        session.bear_id,
+        &conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await
+    .map_err(CustomError::from)?;
+
+    let (compacted, status, diagnostic) = match compaction_state {
+        Some(state) => {
+            let compacted = state.event.status
+                == den_runtime::runtime_compaction_observability::RuntimeCompactionEventStatus::Applied;
+            (
+                compacted,
+                format!("{:?}", state.event.status).to_ascii_lowercase(),
+                state.event.diagnostic,
+            )
+        }
+        None => (false, "disabled".into(), Some("compaction_mode_off".into())),
+    };
+
     Ok(Json(serde_json::json!({
         "ok": true,
-        "compacted": false,
+        "compacted": compacted,
         "acp_session_id": session_id,
         "conversation_id": conversation_id,
         "approval_recovery": {
@@ -84,9 +119,9 @@ pub(super) async fn compact_session_inner(
             "reason": "compaction_only"
         },
         "compact_result": {
-            "status": "unavailable",
+            "status": status,
             "reason": "native_runtime",
-            "diagnostic": "The Den-native runtime does not perform live conversation compaction; canonical transcript history remains intact."
+            "diagnostic": diagnostic,
         }
     }))
     .into_response())
