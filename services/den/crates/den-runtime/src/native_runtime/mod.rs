@@ -31,5 +31,6 @@ pub use turn::{
     continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,
     run_native_profile_turn_collect_assistant_text, start_native_acp_turn_event_stream,
     start_native_profile_turn_event_stream, start_native_web_chat_turn_event_stream,
-    NativeRuntimeConversationBackend, NativeRuntimeDeps, NativeWebChatTurnParams,
+    take_session_overflow_compaction_recovered, NativeRuntimeConversationBackend,
+    NativeRuntimeDeps, NativeWebChatTurnParams,
 };

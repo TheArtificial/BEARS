@@ -231,11 +231,21 @@ Those claims should be backed by the architecture and regression tests described
 
 ## Current implementation status
 
-As of the current slice:
+As of the `test` branch (commit `79b1ee62` and follow-on work):
 
-- the architecture and contract are documented,
-- semantic grouping and initial compaction policy scaffolding exist in code,
-- iterative summary and prompt-assembly scaffolding exist in code,
-- and continuation-evaluation scaffolding is identified as a necessary regression-testing layer.
+- Phases A–H are implemented in `den-runtime`: semantic grouping from transcript, compaction service/events, artifact persistence, compaction-aware assembly with transcript cutoff, token-pressure triggers, deterministic summarization, continuation eval probes, manual compaction, and async post-turn compaction via the `context_compact` worker.
+- Reactive overflow recovery classifies LLM context-length errors, runs emergency compaction with `ModelSafetyMargin`, reassembles the prompt, retries the LLM step once, and surfaces ACP outcomes as `CompactedRetry` when recovery succeeds.
 
-The next natural step is to add deterministic continuation-evaluation fixtures and probes for `pair` and `chat` baselines.
+Still open: operator/admin compaction UI (Phase 7), LLM-backed summarization, Phase 9 rollout checklist, and `archive_harvest` mining of compaction artifacts into memory proposals.
+
+## Reactive overflow recovery
+
+When the LLM provider rejects a prompt for exceeding its context window, Den can recover automatically **if `COMPACTION_MODE=active`**.
+
+1. **Detect** — the agent step classifies handshake errors whose message matches common context-length patterns (for example `context_length_exceeded`, "maximum context", "too many tokens").
+2. **Compact** — sync emergency compaction runs with trigger `ModelSafetyMargin`, perserving protected spans and producing/updating an iterative summary artifact plus a transcript sequence cutoff.
+3. **Reassemble** — the system prompt compaction block and transcript messages are rebuilt from persisted state; in-session tool results appended during the current step are preserved.
+4. **Retry once** — the LLM handshake is retried with the smaller prompt. Only one overflow retry is attempted per agent-loop session step.
+5. **Outcome** — on ACP/`pair`, a successful retry emits terminal turn result `status=recovered`, `reason=compacted_retry`. Web chat benefits from the same retry path but does not persist ACP-style turn outcomes.
+
+In `observe` mode, compaction events may still be recorded for telemetry, but the prompt is not cut and overflow retry is skipped — use `active` mode where emergency shrink is required.

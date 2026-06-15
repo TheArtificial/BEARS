@@ -1200,12 +1200,29 @@ impl Stream for AcpRuntimeSseStream {
                     }
                     if this.turn_controller.phase() != AcpTurnPhase::Terminal {
                         this.turn_controller.on_stream_end();
+                        let compacted_retry = den_runtime::native_runtime::take_session_overflow_compaction_recovered(
+                            &this.context.conversation_id,
+                            &this.context.acp_session_id,
+                        );
+                        let (status, reason, retryable) = if compacted_retry {
+                            (
+                                TurnResultStatus::Recovered,
+                                TurnResultReason::CompactedRetry,
+                                true,
+                            )
+                        } else {
+                            (
+                                TurnResultStatus::Ok,
+                                TurnResultReason::StreamComplete,
+                                false,
+                            )
+                        };
                         let role_result = this.context.role_runtime.turn_result(
-                            TurnResultStatus::Ok,
-                            TurnResultReason::StreamComplete,
+                            status,
+                            reason,
                             this.context.request_id,
                             this.context.turn_scope.clone(),
-                            false,
+                            retryable,
                             this.diagnostics.diagnostic_json_with_turn_controller(
                                 &this.context,
                                 Some(&this.turn_controller),

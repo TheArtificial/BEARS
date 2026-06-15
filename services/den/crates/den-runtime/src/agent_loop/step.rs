@@ -1,25 +1,41 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use den_core::{config::Config, profile::BearProfile, DenError};
 use futures::{Stream, TryStreamExt};
+use sqlx::PgPool;
 use tokio::time::timeout;
 
 use crate::{
     {
-        agent_loop::{context::repair_tool_call_message_chain, AgentLoopSession},
+        agent_loop::{
+            context::repair_tool_call_message_chain,
+            overflow_retry::compact_session_messages_for_overflow,
+            session_store::{AgentLoopSession, AgentLoopSessionStore},
+        },
         llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
         native_runtime::openai_byte_stream_to_event_stream,
+        runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
         runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
     },
 };
-use den_core::DenError;
 
 /// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.
 const NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Max silence between upstream SSE byte chunks after the handshake.
 const NATIVE_LLM_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Dependencies for one-shot context-overflow recovery during an agent step.
+#[derive(Clone)]
+pub struct AgentStepOverflowContext {
+    pub pool: PgPool,
+    pub config: Arc<Config>,
+    pub profile: BearProfile,
+    pub session_store: AgentLoopSessionStore,
+}
 
 enum LazyAgentStepState {
     Init {
@@ -33,11 +49,39 @@ struct LazyAgentStepStream {
 }
 
 impl LazyAgentStepStream {
-    fn new(llm: LlmClient, request: ChatCompletionRequest, session_key: String) -> Self {
+    fn new(
+        llm: LlmClient,
+        request: ChatCompletionRequest,
+        session_key: String,
+        overflow: Option<AgentStepOverflowContext>,
+    ) -> Self {
         let model = request.model.clone();
         let message_count = request.messages.len();
         let tool_count = request.tools.len();
-        let fut = Box::pin(async move {
+        let fut = Self::handshake_future(
+            llm,
+            request,
+            session_key,
+            model,
+            message_count,
+            tool_count,
+            overflow,
+        );
+        Self {
+            state: Some(LazyAgentStepState::Init { fut }),
+        }
+    }
+
+    fn handshake_future(
+        llm: LlmClient,
+        request: ChatCompletionRequest,
+        session_key: String,
+        model: String,
+        message_count: usize,
+        tool_count: usize,
+        overflow: Option<AgentStepOverflowContext>,
+    ) -> Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>> {
+        Box::pin(async move {
             let started = Instant::now();
             tracing::info!(
                 session_key = %session_key,
@@ -74,27 +118,141 @@ impl LazyAgentStepStream {
                         error = %err,
                         "LLM chat/completions handshake failed"
                     );
+                    if let Some(ctx) = overflow {
+                        if den_error_indicates_context_overflow(&err) {
+                            return Self::recover_from_overflow_and_retry(
+                                ctx,
+                                llm,
+                                request,
+                                session_key,
+                                model,
+                                started,
+                            )
+                            .await;
+                        }
+                    }
                     Err(err)
                 }
-                Ok(Ok(byte_stream)) => {
-                    tracing::info!(
-                        session_key = %session_key,
-                        model = %model,
-                        duration_ms = started.elapsed().as_millis(),
-                        idle_timeout_secs = NATIVE_LLM_STREAM_IDLE_TIMEOUT.as_secs(),
-                        "LLM chat/completions handshake connected"
-                    );
-                    let byte_stream = byte_stream_with_idle_timeout(
-                        byte_stream,
-                        NATIVE_LLM_STREAM_IDLE_TIMEOUT,
-                    )
-                    .map_err(DenError::from);
-                    Ok(openai_byte_stream_to_event_stream(byte_stream))
-                }
+                Ok(Ok(byte_stream)) => Self::connect_byte_stream(session_key, model, started, byte_stream),
             }
+        })
+    }
+
+    fn connect_byte_stream(
+        session_key: String,
+        model: String,
+        started: Instant,
+        byte_stream: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
+    ) -> Result<RuntimeEventStream, DenError> {
+        tracing::info!(
+            session_key = %session_key,
+            model = %model,
+            duration_ms = started.elapsed().as_millis(),
+            idle_timeout_secs = NATIVE_LLM_STREAM_IDLE_TIMEOUT.as_secs(),
+            "LLM chat/completions handshake connected"
+        );
+        let byte_stream = byte_stream_with_idle_timeout(byte_stream, NATIVE_LLM_STREAM_IDLE_TIMEOUT)
+            .map_err(DenError::from);
+        Ok(openai_byte_stream_to_event_stream(byte_stream))
+    }
+
+    async fn recover_from_overflow_and_retry(
+        ctx: AgentStepOverflowContext,
+        llm: LlmClient,
+        request: ChatCompletionRequest,
+        session_key: String,
+        model: String,
+        started: Instant,
+    ) -> Result<RuntimeEventStream, DenError> {
+        let session = ctx.session_store.get(&session_key).ok_or_else(|| {
+            DenError::System("agent loop session not found for overflow recovery".into())
+        })?;
+        if session.overflow_retry_attempted {
+            return Err(DenError::System(
+                "LLM context overflow persists after emergency compaction retry".into(),
+            ));
+        }
+        if CompactionMode::parse(&ctx.config.compaction_mode) != CompactionMode::Active {
+            tracing::warn!(
+                session_key = %session_key,
+                compaction_mode = %ctx.config.compaction_mode,
+                "context overflow detected but COMPACTION_MODE is not active; skipping retry"
+            );
+            return Err(DenError::System(
+                "LLM context overflow; enable COMPACTION_MODE=active for emergency recovery".into(),
+            ));
+        }
+
+        tracing::info!(
+            session_key = %session_key,
+            conversation_id = %session.conversation_id,
+            profile = %ctx.profile.as_str(),
+            "context overflow detected; running emergency compaction"
+        );
+
+        let (new_messages, recovered) =
+            compact_session_messages_for_overflow(&ctx.pool, &ctx.config, &session, ctx.profile)
+                .await?;
+
+        ctx.session_store.update(&session_key, |s| {
+            s.messages = new_messages.clone();
+            s.overflow_retry_attempted = true;
+            s.overflow_compaction_recovered = recovered;
         });
-        Self {
-            state: Some(LazyAgentStepState::Init { fut }),
+
+        if !recovered {
+            return Err(DenError::System(
+                "LLM context overflow; emergency compaction did not shrink prompt".into(),
+            ));
+        }
+
+        let retry_request = ChatCompletionRequest {
+            model: request.model.clone(),
+            messages: repair_tool_call_message_chain(new_messages),
+            tools: request.tools,
+            stream: request.stream,
+            tool_choice: request.tool_choice,
+            temperature: request.temperature,
+            max_tokens: request.max_tokens,
+        };
+
+        tracing::info!(
+            session_key = %session_key,
+            model = %model,
+            message_count = retry_request.messages.len(),
+            "retrying LLM chat/completions after emergency compaction"
+        );
+
+        let handshake = timeout(
+            NATIVE_LLM_HANDSHAKE_TIMEOUT,
+            llm.chat_completions_byte_stream(&retry_request),
+        )
+        .await;
+
+        match handshake {
+            Err(_) => Err(DenError::System(format!(
+                "LLM chat/completions retry timed out after {}s",
+                NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
+            ))),
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    session_key = %session_key,
+                    model = %model,
+                    duration_ms = started.elapsed().as_millis(),
+                    error = %err,
+                    "LLM chat/completions retry failed after emergency compaction"
+                );
+                Err(err)
+            }
+            Ok(Ok(byte_stream)) => {
+                tracing::info!(
+                    session_key = %session_key,
+                    model = %model,
+                    duration_ms = started.elapsed().as_millis(),
+                    "LLM chat/completions retry connected after emergency compaction"
+                );
+                Self::connect_byte_stream(session_key, model, started, byte_stream)
+            }
         }
     }
 }
@@ -108,30 +266,26 @@ impl Stream for LazyAgentStepStream {
                 return Poll::Ready(None);
             };
             match state {
-                LazyAgentStepState::Init { mut fut } => {
-                    match fut.as_mut().poll(cx) {
-                        Poll::Ready(Ok(stream)) => {
-                            self.state = Some(LazyAgentStepState::Streaming(stream));
-                        }
-                        Poll::Ready(Err(err)) => {
-                            self.state = None;
-                            return Poll::Ready(Some(Err(err)));
-                        }
-                        Poll::Pending => {
-                            self.state = Some(LazyAgentStepState::Init { fut });
-                            return Poll::Pending;
-                        }
+                LazyAgentStepState::Init { mut fut } => match fut.as_mut().poll(cx) {
+                    Poll::Ready(Ok(stream)) => {
+                        self.state = Some(LazyAgentStepState::Streaming(stream));
                     }
-                }
+                    Poll::Ready(Err(err)) => {
+                        self.state = None;
+                        return Poll::Ready(Some(Err(err)));
+                    }
+                    Poll::Pending => {
+                        self.state = Some(LazyAgentStepState::Init { fut });
+                        return Poll::Pending;
+                    }
+                },
                 LazyAgentStepState::Streaming(mut stream) => {
                     match Pin::new(&mut stream).poll_next(cx) {
                         Poll::Ready(Some(item)) => {
                             self.state = Some(LazyAgentStepState::Streaming(stream));
                             return Poll::Ready(Some(item));
                         }
-                        Poll::Ready(None) => {
-                            return Poll::Ready(None);
-                        }
+                        Poll::Ready(None) => return Poll::Ready(None),
                         Poll::Pending => {
                             self.state = Some(LazyAgentStepState::Streaming(stream));
                             return Poll::Pending;
@@ -151,6 +305,7 @@ impl Stream for LazyAgentStepStream {
 pub async fn run_agent_step_stream(
     llm: &LlmClient,
     session: &AgentLoopSession,
+    overflow: Option<AgentStepOverflowContext>,
 ) -> Result<RuntimeEventStream, DenError> {
     let messages = repair_tool_call_message_chain(session.messages.clone());
     tracing::info!(
@@ -159,6 +314,7 @@ pub async fn run_agent_step_stream(
         message_count = messages.len(),
         tool_count = session.tools.len(),
         step = session.step,
+        overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
     );
     let request = ChatCompletionRequest {
@@ -174,5 +330,6 @@ pub async fn run_agent_step_stream(
         llm.clone(),
         request,
         session.session_key.clone(),
+        overflow,
     )))
 }

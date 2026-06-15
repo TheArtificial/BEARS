@@ -13,7 +13,7 @@ use crate::{
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
-            NativeToolDispatchMode, SessionTrackingStream,
+            AgentStepOverflowContext, NativeToolDispatchMode, SessionTrackingStream,
         },
         bears::BearProfile,
         conversation_persistence,
@@ -34,6 +34,29 @@ use crate::{
 use den_core::DenError;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
+
+/// Returns whether this turn recovered from context overflow via emergency compaction.
+/// Clears the session flag after reading (for ACP terminal turn_result mapping).
+pub fn take_session_overflow_compaction_recovered(
+    conversation_id: &str,
+    acp_session_id: &str,
+) -> bool {
+    let key = agent_loop_session_key(conversation_id, acp_session_id);
+    SESSION_STORE.take_overflow_compaction_recovered(&key)
+}
+
+fn overflow_context(
+    pool: PgPool,
+    config: Arc<Config>,
+    profile: BearProfile,
+) -> AgentStepOverflowContext {
+    AgentStepOverflowContext {
+        pool,
+        config,
+        profile,
+        session_store: SESSION_STORE.clone(),
+    }
+}
 
 /// Shared dependencies for internal native profile turns (no full `ApiState` required).
 pub struct NativeRuntimeDeps<'a> {
@@ -274,6 +297,9 @@ async fn build_session(
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
+        profile: profile.profile,
+        overflow_retry_attempted: false,
+        overflow_compaction_recovered: false,
     };
     SESSION_STORE.insert(session.clone());
     Ok(session)
@@ -308,7 +334,12 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     )
     .await?;
     let llm = LlmClient::new(deps.config);
-    let mut stream = run_agent_step_stream(&llm, &session).await?;
+    let overflow = overflow_context(
+        deps.pool.clone(),
+        Arc::new(deps.config.clone()),
+        role,
+    );
+    let mut stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let mut text = String::new();
     while let Some(item) = stream.next().await {
         if let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta }) = item? {
@@ -370,7 +401,12 @@ pub async fn start_native_web_chat_turn_event_stream(
         "native web chat turn assembled"
     );
     let llm = LlmClient::new(params.deps.config);
-    let stream = run_agent_step_stream(&llm, &session).await?;
+    let overflow = overflow_context(
+        params.deps.pool.clone(),
+        Arc::new(params.deps.config.clone()),
+        BearProfile::Chat,
+    );
+    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let runtime = NativeWebChatLoopRuntime {
         pool: params.deps.pool.clone(),
         config: Arc::new(params.deps.config.clone()),
@@ -440,7 +476,12 @@ pub async fn start_native_profile_turn_event_stream(
     )
     .await?;
     let llm = LlmClient::new(request.config);
-    let stream = run_agent_step_stream(&llm, &session).await?;
+    let overflow = overflow_context(
+        request.sqlx_pool.clone(),
+        Arc::new(request.config.clone()),
+        role,
+    );
+    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let stream = wrap_session_stream(
         stream,
         &session,
@@ -543,7 +584,12 @@ pub async fn continue_native_acp_turn_event_stream(
         ));
     }
     let llm = LlmClient::new(request.config);
-    let stream = run_agent_step_stream(&llm, &session).await?;
+    let overflow = overflow_context(
+        request.sqlx_pool.clone(),
+        Arc::new(request.config.clone()),
+        profile,
+    );
+    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let stream = wrap_session_stream(
         stream,
         &session,

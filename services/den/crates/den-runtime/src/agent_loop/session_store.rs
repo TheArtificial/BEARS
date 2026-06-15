@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use den_core::profile::BearProfile;
 use uuid::Uuid;
 
 use crate::{
@@ -23,6 +24,9 @@ pub struct AgentLoopSession {
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
+    pub profile: BearProfile,
+    pub overflow_retry_attempted: bool,
+    pub overflow_compaction_recovered: bool,
 }
 
 #[derive(Clone, Default)]
@@ -56,6 +60,16 @@ impl AgentLoopSessionStore {
 
     pub fn remove(&self, key: &str) {
         self.inner.lock().expect("agent loop session lock").remove(key);
+    }
+
+    /// Read and clear the overflow-recovery flag for ACP turn outcome mapping.
+    pub fn take_overflow_compaction_recovered(&self, key: &str) -> bool {
+        let mut recovered = false;
+        self.update(key, |session| {
+            recovered = session.overflow_compaction_recovered;
+            session.overflow_compaction_recovered = false;
+        });
+        recovered
     }
 }
 

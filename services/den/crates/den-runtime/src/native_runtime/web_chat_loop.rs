@@ -20,7 +20,7 @@ use crate::{
             spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
             tool_call_finished_event, tool_call_finished_event_for_content,
             tool_call_finished_event_for_incomplete,
-            AgentLoopSessionStore, NativeToolDispatchMode,
+            AgentLoopSessionStore, AgentStepOverflowContext, NativeToolDispatchMode,
             SessionTrackingStream,
         },
         runtime_compaction::enqueue_compaction_after_turn,
@@ -247,7 +247,13 @@ impl NativeWebChatLoopStream {
                 .session_store
                 .get(&runtime.session_key)
                 .ok_or_else(|| DenError::System("native web chat session not found".to_string()))?;
-            let raw = run_agent_step_stream(&runtime.llm, &session).await?;
+            let overflow = AgentStepOverflowContext {
+                pool: runtime.pool.clone(),
+                config: runtime.config.clone(),
+                profile: BearProfile::Chat,
+                session_store: runtime.session_store.clone(),
+            };
+            let raw = run_agent_step_stream(&runtime.llm, &session, Some(overflow)).await?;
             Ok(NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session))
         }));
     }

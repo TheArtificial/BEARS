@@ -10,6 +10,7 @@ use crate::runtime_conversations::{
 pub mod artifact_store;
 pub mod grouping;
 pub mod lifecycle;
+pub mod overflow;
 pub mod policy;
 pub mod render;
 pub mod service;
@@ -23,6 +24,7 @@ pub use lifecycle::{
     prepare_turn_compaction, render_compaction_prompt_context, run_compaction_job,
     TurnCompactionState, TurnCompactionTrigger,
 };
+pub use overflow::{den_error_indicates_context_overflow, is_context_length_overflow_message};
 pub use policy::{compaction_policy_for_profile, CompactionMode, CompactionTiming};
 pub use render::render_compacted_context_block;
 pub use summarize::summarize_compacted_groups;
@@ -119,7 +121,14 @@ pub fn choose_compaction_decision(
     trigger: RuntimeCompactionTriggerKind,
     policy: &RuntimeCompactionPolicy,
 ) -> Option<RuntimeCompactionDecision> {
-    if groups.len() <= policy.max_groups_before_compaction {
+    let force = matches!(
+        trigger,
+        RuntimeCompactionTriggerKind::ModelSafetyMargin | RuntimeCompactionTriggerKind::Manual
+    );
+    if groups.is_empty() {
+        return None;
+    }
+    if !force && groups.len() <= policy.max_groups_before_compaction {
         return None;
     }
 
