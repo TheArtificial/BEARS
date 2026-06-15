@@ -5,7 +5,7 @@
 > **Note.** Memory "files"/"paths" are logical-path projections over SQLite `memory_records`, not files in a MemFS/git branch.
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
-Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist for `pair` (and read tools for `curate`) against SQLite. **The open gap is tool exposure** — user-facing `chat` turns currently receive no memory tools (see [Implementation status](#implementation-status-2026-06)) — plus derived recall and ADR-0041 schema deltas.
+Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist for `pair`, `chat`, and read tools for `curate` against SQLite. **Open gaps:** `work`/`watch` exposure, ADR-0041 schema deltas, and harvest/consolidation automation.
 
 Related docs:
 
@@ -27,11 +27,12 @@ Related docs:
 | `session_info`, `memory_write_entry`, `memory_status` | P0 | Implemented (SQLite) |
 | `memory_browse`, `memory_read`, `memory_search` (`LIKE`) | P1 | Implemented (SQLite) |
 | `memory_request_review` + proposals/promotions | P4 | Implemented (SQLite `memory_proposals`) |
-| Exposure to `chat`/`work`/`watch` profiles | P2/P3 | **Not done** — primary current gap |
-| Hybrid/semantic recall (Qdrant) | P5 | **Not done** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
+| Exposure to `chat` profile | P2 | **Done** — descriptors + keyword-gated web tool surface |
+| Exposure to `work`/`watch` profiles | P2/P3 | **Not done** |
+| Hybrid/semantic recall (Qdrant) | P5 | **Partial** — turn-start recall + hybrid `memory_search` when Qdrant configured ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
 | ADR-0041 schema deltas (`salience`, `valid_from`/`invalid_at`, supersession, harvest marks) | Data model | **Not done** |
 
-Memory tools are gated by per-profile `allowed_roles` (in `den-tools` descriptors). `chat` is granted none, and web-chat turns often send an empty tool list — so user-facing bears report "no memory tools." Closing that gate is the first exposure task.
+Memory tools are gated by per-profile `allowed_roles` (in `den-tools` descriptors). `chat` is granted read/write memory tools; web-chat turns use a keyword-gated tool surface so casual prompts stay tool-free while memory-aware prompts unlock the full roster. Proactive key-memory projection and derived recall run on every `chat` turn (same assembler path as `pair`).
 
 ---
 

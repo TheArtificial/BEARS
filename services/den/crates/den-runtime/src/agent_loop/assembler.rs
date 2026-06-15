@@ -84,7 +84,7 @@ pub struct AssembledNativeTurn {
     pub messages: Vec<ChatMessage>,
     pub key_memory_projection: Option<KeyMemoryProjectionResult>,
     /// Diagnostic for the derived-recall section (ADR-0038 Phase 2); `None` when recall is
-    /// disabled, skipped (e.g. chat profile / empty query), or failed best-effort.
+    /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
 }
 
@@ -94,9 +94,6 @@ async fn build_recall_section(
     ctx: &AssembleTurnContext<'_>,
     anchor_text: &str,
 ) -> Option<(String, Value)> {
-    if ctx.profile == BearProfile::Chat {
-        return None;
-    }
     // TODO(ADR-0038 Phase 2 follow-up): enrich the recall query beyond the raw human message
     // with session focus + the primary work-surface context (see DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
     let query_text = ctx.human_message.map(str::trim).filter(|s| !s.is_empty())?;
@@ -156,24 +153,7 @@ pub async fn assemble_native_turn_for_bear(
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, DenError> {
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
-    let projection = if ctx.profile == BearProfile::Chat {
-        KeyMemoryProjectionResult {
-            rendered_text: String::new(),
-            diagnostic: serde_json::json!({
-                "source": "key_memory_projection",
-                "status": "skipped_for_chat",
-            }),
-            cache_key: KeyMemoryProjectionCacheKey {
-                bear_id: ctx.bear_id,
-                profile: ctx.profile,
-                conversation_id: ctx.conversation_id.to_string(),
-                primary_surface_slug: None,
-                sequence_high_water: 0,
-                compiled_config_token: String::new(),
-            },
-        }
-    } else {
-        match project_key_memory(KeyMemoryProjectionInput {
+    let projection = match project_key_memory(KeyMemoryProjectionInput {
         pool: ctx.pool,
         stores: ctx.stores,
         bear,
@@ -214,7 +194,6 @@ pub async fn assemble_native_turn_for_bear(
                 },
             }
         }
-    }
     };
     if let Some(expected) = ctx.key_memory_cache {
         if &projection.cache_key != expected {

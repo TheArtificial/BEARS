@@ -280,7 +280,7 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`). **Derived recall** (Qdrant + platform embedding standard) is specified in [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) and not yet wired. Remaining parity gaps: vector recall lane, conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
+Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`) for all profiles including `chat`. **Derived recall** (Qdrant + platform embedding standard, [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) is wired for turn-start injection and hybrid `memory_search` when `QDRANT_URL` is set. Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
 
 ## What this supersedes
 
