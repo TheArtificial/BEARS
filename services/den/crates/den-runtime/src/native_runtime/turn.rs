@@ -224,6 +224,7 @@ async fn build_session(
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
             pool: deps.pool,
+            config: deps.config,
             stores: deps.stores,
             bear_id,
             profile: profile.profile,

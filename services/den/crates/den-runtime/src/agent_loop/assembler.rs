@@ -1,3 +1,4 @@
+use den_core::config::Config;
 use den_core::DenError;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -31,6 +32,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
     pub pool: &'a PgPool,
+    pub config: &'a Config,
     pub stores: &'a MemoryStoreManager,
     pub bear_id: Uuid,
     pub profile: BearProfile,
@@ -81,6 +83,48 @@ impl<'a> AssembleTurnContext<'a> {
 pub struct AssembledNativeTurn {
     pub messages: Vec<ChatMessage>,
     pub key_memory_projection: Option<KeyMemoryProjectionResult>,
+    /// Diagnostic for the derived-recall section (ADR-0038 Phase 2); `None` when recall is
+    /// disabled, skipped (e.g. chat profile / empty query), or failed best-effort.
+    pub recall_diagnostic: Option<Value>,
+}
+
+/// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
+/// its diagnostic, or `None` when recall is disabled/empty/failed — recall must never fail a turn.
+async fn build_recall_section(
+    ctx: &AssembleTurnContext<'_>,
+    anchor_text: &str,
+) -> Option<(String, Value)> {
+    if ctx.profile == BearProfile::Chat {
+        return None;
+    }
+    let query_text = ctx.human_message.map(str::trim).filter(|s| !s.is_empty())?;
+    let qdrant = crate::recall::QdrantRecall::from_config(ctx.config)?;
+    let embedder = den_llm::EmbeddingClient::new(ctx.config);
+    if !embedder.is_enabled() {
+        return None;
+    }
+    let projection = match crate::recall::recall_for_turn(
+        &qdrant,
+        &embedder,
+        &ctx.config.embedding_standard,
+        ctx.bear_id,
+        query_text,
+        5,
+    )
+    .await
+    {
+        Ok(projection) => projection,
+        Err(err) => {
+            tracing::warn!(
+                bear_id = %ctx.bear_id,
+                error = %err,
+                "recall query failed; continuing without recalled memory"
+            );
+            return None;
+        }
+    };
+    let block = crate::recall::render_recall_block(&projection, anchor_text)?;
+    Some((block, projection.diagnostic))
 }
 
 pub async fn assemble_native_turn_messages(
@@ -185,6 +229,14 @@ pub async fn assemble_native_turn_for_bear(
         system_text.push_str("\n\n");
         system_text.push_str(&block);
     }
+    let recall_diagnostic = match build_recall_section(&ctx, &system_text).await {
+        Some((recall_block, diagnostic)) => {
+            system_text.push_str("\n\n");
+            system_text.push_str(&recall_block);
+            Some(diagnostic)
+        }
+        None => None,
+    };
     if let Some(runtime) = ctx
         .turn_runtime_context
         .map(str::trim)
@@ -249,5 +301,6 @@ pub async fn assemble_native_turn_for_bear(
     Ok(AssembledNativeTurn {
         messages,
         key_memory_projection: Some(projection),
+        recall_diagnostic,
     })
 }

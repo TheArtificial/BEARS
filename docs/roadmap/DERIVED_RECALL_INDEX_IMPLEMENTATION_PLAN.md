@@ -46,13 +46,16 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 > **Follow-ups (not blocking):** supersession is still selected by sequence (no `supersedes_memory_id` writes yet in `den-memory`), so head transitions rely on latest-at-path; reconcile already drops non-head memory ids. Live worker exercise end-to-end (rebuilt Den + a real embedding key) is pending.
 
-## Phase 2 — Bear recall in turn context
+## Phase 2 — Bear recall in turn context  ✅ landed (retrieval + assembler section)
 
-- `core/recall/query.rs`: embed recall query; filtered Qdrant search; merge/dedupe against key memory projection.
-- Context assembler: optional `## Recalled memory` section with char budget (~2–3k) after `# Projected memory`.
-- Diagnostic JSON alongside `key_memory_projection`.
+- ✅ `den-runtime::recall::query` (`recall_for_turn`): embeds the turn query via `EmbeddingClient` (embedder-agnostic, same `PassageEmbedder` trait as the indexer), runs a `bear_id` + `source_class` + `embedding_standard`-scoped Qdrant vector search (`QdrantRecall::search`), then dedupes to the best-scoring chunk per `memory_id` and returns the top *N* (default 5) `RecalledPassage`s. The chunk `text` is now denormalized into the Qdrant payload (ADR-0038 §2 derived data) so recall renders snippets with **no** SQLite round-trip.
+- ✅ Context assembler (`assemble_native_turn_for_bear`): best-effort `## Recalled memory` section appended after the key-memory projection block, with a ~2.6k-char budget and per-snippet truncation. `render_recall_block` drops any passage whose `logical_path` already appears in the projection text, so **recall never duplicates anchors**. Recall is skipped for the `chat` profile and for empty queries.
+- ✅ Fail-open everywhere: unset `QDRANT_URL`, a disabled embedding client (no `LLM_API_URL`), or any transport error yields no recall section rather than failing the turn. Access-bearing gating is a no-op today (no access rules yet) and lands with the entity layer (Phase 6).
+- ✅ Diagnostic JSON (`recall_query`: status, raw_hits, passages, embedding_standard) surfaced on `AssembledNativeTurn.recall_diagnostic` alongside `key_memory_projection`.
 
-**Exit:** ACP/native turn tests with seeded vectors; no duplicate anchor/recall text.
+**Exit:** ✅ unit tests (anchor dedupe, all-deduped→`None`, snippet truncation) + a gated **live Postgres + Qdrant** retrieval test (`recall_query_retrieves_indexed_passage_against_live_qdrant`, deterministic embedder, no API key): index a passage → query the same text → the passage returns as a top hit (score ~1.0) with its payload text + path → render dedupes it against an anchored path.
+
+> **Follow-ups (not blocking):** richer query text (session focus / primary work surface, not just the human message); persisting `recall_diagnostic` to turn telemetry; live exercise with a real embedding key (shared with the Phase 1 live-worker follow-up).
 
 ## Phase 3 — Hybrid `memory_search`
 

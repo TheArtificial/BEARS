@@ -19,6 +19,14 @@ pub struct QdrantPoint {
     pub payload: Value,
 }
 
+/// A scored search result: the point id, its similarity score, and the stored payload.
+#[derive(Debug, Clone)]
+pub struct RecallHit {
+    pub id: String,
+    pub score: f32,
+    pub payload: Value,
+}
+
 /// Minimal Qdrant REST client scoped to the active embedding standard's recall collection.
 #[derive(Clone)]
 pub struct QdrantRecall {
@@ -161,6 +169,67 @@ impl QdrantRecall {
             )));
         }
         Ok(())
+    }
+
+    /// Vector search with an optional payload filter (ADR-0038 Phase 2 recall query).
+    ///
+    /// Returns the top `limit` hits (id, score, payload) for the given query vector. A `null`
+    /// filter searches the whole collection; callers always scope by `bear_id`.
+    pub async fn search(
+        &self,
+        vector: &[f32],
+        filter: Value,
+        limit: u64,
+    ) -> Result<Vec<RecallHit>, DenError> {
+        let url = format!(
+            "{}/collections/{}/points/search",
+            self.base_url, self.collection
+        );
+        let mut body = json!({
+            "vector": vector,
+            "limit": limit,
+            "with_payload": true,
+        });
+        if !filter.is_null() {
+            body["filter"] = filter;
+        }
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant search ({url}): {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| DenError::System(format!("qdrant search body ({url}): {e}")))?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "qdrant search HTTP {status} ({url}): {text}"
+            )));
+        }
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|e| DenError::System(format!("qdrant search parse ({url}): {e}")))?;
+        let result = value
+            .get("result")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DenError::System(format!("qdrant search missing result array: {text}")))?;
+        let hits = result
+            .iter()
+            .filter_map(|item| {
+                let id = match item.get("id") {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Number(n)) => n.to_string(),
+                    _ => return None,
+                };
+                let score = item.get("score").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let payload = item.get("payload").cloned().unwrap_or(Value::Null);
+                Some(RecallHit { id, score, payload })
+            })
+            .collect();
+        Ok(hits)
     }
 
     /// Count points matching a Qdrant filter (used for inspection/diagnostics + tests).

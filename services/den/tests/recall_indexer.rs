@@ -10,8 +10,8 @@
 use den::{config::Config, startup::run_sqlx_migrations};
 use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
 use den_runtime::recall::{
-    reconcile::list_indexable_heads, DeterministicEmbedder, IndexRequest, QdrantRecall,
-    RecallIndexer,
+    recall_for_turn, reconcile::list_indexable_heads, render_recall_block, DeterministicEmbedder,
+    IndexRequest, QdrantRecall, RecallIndexer,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -111,6 +111,96 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
         .await
         .expect("count after remove");
     assert_eq!(count_after_remove, 0, "supersede must remove old passages");
+}
+
+/// Phase 2 recall query: index a passage, then query it back. The deterministic embedder maps
+/// identical text to an identical vector, so querying with the indexed body must return that
+/// passage as a top hit (score ~1.0) — proving embed → filtered search → payload shaping works
+/// end-to-end without an embedding key. Gated on `DATABASE_URL` + `QDRANT_URL`.
+#[tokio::test]
+async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
+    dotenvy::dotenv().ok();
+    if !recall_env_ready() {
+        eprintln!("skipping: DATABASE_URL/QDRANT_URL not set");
+        return;
+    }
+
+    let config = Config::load();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&config.database_url)
+        .await
+        .expect("connect Postgres");
+    run_sqlx_migrations(&pool).await.expect("apply migrations");
+
+    let qdrant = QdrantRecall::from_config(&config).expect("QDRANT_URL set");
+    qdrant.ensure_collection().await.expect("ensure collection");
+
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM bears LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .expect("query bears");
+    let Some(bear_id) = bear_id else {
+        eprintln!("skipping: no seeded bear in DB");
+        return;
+    };
+
+    let embedder = DeterministicEmbedder::new(config.embedding_dimensions);
+    let indexer = RecallIndexer::new(&pool, &qdrant, &embedder, config.embedding_standard.clone());
+
+    let unique = Uuid::new_v4();
+    // Short, distinctive, single-chunk body (well under the chunk target).
+    let body = format!(
+        "Zephyr protocol calibration notes for run {unique}; the lighthouse keeper logs tidal anomalies."
+    );
+    let logical_path = "core/recall/query-smoke.md";
+    let memory_id = format!("smoke-recall-query-{unique}");
+    let req = IndexRequest {
+        bear_id,
+        memory_id: memory_id.clone(),
+        logical_path: Some(logical_path.into()),
+        scope_type: "shared".into(),
+        scope_profile: None,
+        work_surface_ref: None,
+        kind: "summary".into(),
+        visibility: "normal".into(),
+        content_text: body.clone(),
+    };
+
+    let outcome = indexer.index_record(&req).await.expect("index_record");
+    assert_eq!(outcome.embedded_chunks, 1, "single-chunk body: {outcome:?}");
+
+    let projection = recall_for_turn(
+        &qdrant,
+        &embedder,
+        &config.embedding_standard,
+        bear_id,
+        &body,
+        5,
+    )
+    .await
+    .expect("recall_for_turn");
+
+    let hit = projection
+        .passages
+        .iter()
+        .find(|p| p.memory_id == memory_id)
+        .unwrap_or_else(|| panic!("indexed passage should be recalled: {:?}", projection.passages));
+    assert!(hit.score > 0.99, "identical vector should score ~1.0, got {}", hit.score);
+    assert_eq!(hit.logical_path.as_deref(), Some(logical_path));
+    assert!(hit.text.contains("Zephyr protocol"), "payload text round-trips: {hit:?}");
+
+    // Renders without anchors; dedupes the passage when its path is already an anchor.
+    assert!(render_recall_block(&projection, "").is_some(), "renders a block");
+    if let Some(block) = render_recall_block(&projection, logical_path) {
+        assert!(!block.contains(logical_path), "anchored path must be deduped");
+    }
+
+    indexer
+        .remove_record(bear_id, &memory_id)
+        .await
+        .expect("remove_record cleanup");
 }
 
 /// Head selection + policy filtering for whole-Bear reconcile (Phase 1b). Infra-free: uses a

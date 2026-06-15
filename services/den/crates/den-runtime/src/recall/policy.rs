@@ -83,6 +83,9 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
         "source_class": SOURCE_CLASS_BEAR_MEMORY,
         "content_hash": chunk.content_hash,
         "chunk_index": chunk.index,
+        // Denormalized chunk text so recall can render snippets without a SQLite round-trip.
+        // This is derived data; SQLite remains the source of truth (ADR-0038 §2).
+        "text": chunk.text,
         "bear_id": req.bear_id.to_string(),
         "memory_id": req.memory_id,
         "scope_type": req.scope_type,
@@ -160,5 +163,6 @@ mod tests {
         assert_eq!(payload["content_hash"], "abc");
         assert_eq!(payload["work_surface_ref"], "x");
         assert_eq!(payload["kind"], "overview");
+        assert_eq!(payload["text"], "body");
     }
 }
