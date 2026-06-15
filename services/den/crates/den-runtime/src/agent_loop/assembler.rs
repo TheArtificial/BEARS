@@ -97,6 +97,8 @@ async fn build_recall_section(
     if ctx.profile == BearProfile::Chat {
         return None;
     }
+    // TODO(ADR-0038 Phase 2 follow-up): enrich the recall query beyond the raw human message
+    // with session focus + the primary work-surface context (see DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
     let query_text = ctx.human_message.map(str::trim).filter(|s| !s.is_empty())?;
     let qdrant = crate::recall::QdrantRecall::from_config(ctx.config)?;
     let embedder = den_llm::EmbeddingClient::new(ctx.config);
