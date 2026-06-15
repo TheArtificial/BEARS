@@ -43,14 +43,22 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 - `GET /bear/{slug}/persona` — compiled prompts and block bindings
 - `GET /bear/{slug}/profiles` — native profile binding table
 - `GET /bear/{slug}/profiles/{profile}` — profile detail for `chat`, `pair`, `curate`, `work`, or `watch`
-- `GET|POST /bear/{slug}/memory` — unified memory browser (tree, search, delete/review for bear admins)
-- `GET|POST /bear/{slug}/memory/proposals/{proposal_id}` — memory review proposal detail and resolution
-- `GET /bear/{slug}/memory/records/{memory_id}` — single memory record inspector
 - `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
 - `GET /bear/{slug}/context` — prompt memory blocks
 - `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
 - `GET /bear/{slug}/advanced` — diagnostics and provision action
 - `POST /bear/{slug}/provision-missing-roles` — provision missing native profile bindings (redirects to `/profiles`)
+
+## Bear memory & entities (`src/bear_memory.rs`)
+
+- `GET /bear/{slug}/memory` — memory dashboard ("how much memory": counts by kind/role, recall coverage, entity summary, recent additions, governance)
+- `GET /bear/{slug}/memory/recent` — recent additions feed (newest records across all roles)
+- `GET /bear/{slug}/memory/search?q=&mode=` — search (keyword always; `mode=semantic` uses the recall index when configured)
+- `GET|POST /bear/{slug}/memory/browse` — library of logical paths grouped by scope; POST deletes/requests review for selected paths (bear admins)
+- `GET /bear/{slug}/memory/records/{memory_id}` — single entry: content, history (versions at path), referenced entities, recall status
+- `GET|POST /bear/{slug}/memory/proposals/{proposal_id}` — memory review proposal detail and resolution
+- `GET /bear/{slug}/entities?type=` — entity library (ADR-0042), optionally filtered by type
+- `GET /bear/{slug}/entities/{entity_id}` — entity detail: handles, linked memory records, cross-links
 
 ## Member bear management (`src/web/bear_management.rs`)
 
@@ -62,7 +70,6 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 - `GET|POST /bear/{slug}/edit/prompt` — edit system prompt (bear admins)
 - `GET|POST /bear/{slug}/edit/configuration` — edit default model only via Bifrost catalog (bear admins)
 - `GET|POST /bear/{slug}/code-token` — ACP code token for pair profile
-- `GET /bear/{slug}/memory/browse` — permanent redirect to `/bear/{slug}/memory` (query preserved)
 - `GET /bear/{slug}/memory/browse/runtime-blocks` — permanent redirect to `/bear/{slug}/advanced` (deprecated)
 - `GET /bear/{slug}/memory/browse/proposals/{id}` — permanent redirect to `/bear/{slug}/memory/proposals/{id}`
 - `POST /bear/{slug}/delete` — delete bear row (bear admins only)

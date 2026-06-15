@@ -8,7 +8,7 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{config::Config, DenError};
 
 use super::indexer::PassageEmbedder;
 use super::policy::SOURCE_CLASS_BEAR_MEMORY;
@@ -130,6 +130,40 @@ pub async fn recall_for_turn<E: PassageEmbedder + ?Sized>(
         "embedding_standard": embedding_standard,
     });
     Ok(RecallProjection { passages, diagnostic })
+}
+
+/// Convenience semantic search over a Bear's recall index for the admin UI: builds the live
+/// Qdrant client + Bifrost embedding client from config and runs [`recall_for_turn`]. Returns
+/// an empty, `disabled`-tagged projection (never an error) when recall isn't fully configured,
+/// so callers can fall back to keyword search.
+pub async fn semantic_search_for_bear(
+    config: &Config,
+    bear_id: Uuid,
+    query_text: &str,
+    limit: usize,
+) -> Result<RecallProjection, DenError> {
+    let Some(qdrant) = QdrantRecall::from_config(config) else {
+        return Ok(RecallProjection {
+            passages: Vec::new(),
+            diagnostic: json!({ "source": "recall_query", "status": "disabled", "reason": "qdrant_unset" }),
+        });
+    };
+    let embedder = den_llm::EmbeddingClient::new(config);
+    if !embedder.is_enabled() {
+        return Ok(RecallProjection {
+            passages: Vec::new(),
+            diagnostic: json!({ "source": "recall_query", "status": "disabled", "reason": "embeddings_unset" }),
+        });
+    }
+    recall_for_turn(
+        &qdrant,
+        &embedder,
+        &config.embedding_standard,
+        bear_id,
+        query_text,
+        limit,
+    )
+    .await
 }
 
 /// Render the `## Recalled memory` section, dropping passages whose `logical_path` already

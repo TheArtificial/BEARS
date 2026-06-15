@@ -69,6 +69,34 @@ pub async fn list_indexed_memory_ids(
     Ok(rows)
 }
 
+/// Per-Bear recall coverage stats: live passage (chunk) count and the number of distinct
+/// memory records that have at least one live passage. Used by the memory admin dashboard.
+pub async fn passage_stats(
+    pool: &PgPool,
+    bear_id: Uuid,
+    embedding_standard: &str,
+) -> Result<(i64, i64), DenError> {
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(*) AS passages, COUNT(DISTINCT memory_id) AS memories
+        FROM recall_passages
+        WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(bear_id)
+    .bind(embedding_standard)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| DenError::System(format!("recall_passages stats: {e}")))?;
+    let passages: i64 = row
+        .try_get("passages")
+        .map_err(|e| DenError::System(e.to_string()))?;
+    let memories: i64 = row
+        .try_get("memories")
+        .map_err(|e| DenError::System(e.to_string()))?;
+    Ok((passages, memories))
+}
+
 /// Insert or refresh a passage registry row (idempotent on the chunk identity).
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_passage(

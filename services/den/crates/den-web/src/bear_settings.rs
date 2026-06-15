@@ -27,16 +27,7 @@ use den_runtime::{
         provision, BearProfile,
     },
     conversation_persistence::{self, list_messages_page},
-    memory::{
-        admin_inspect::{
-            bear_memory_admin_stats, get_memory_record_by_id, list_all_logical_paths,
-            list_recent_memory_records,
-        },
-        store::list_memory_proposals, tools as sqlite_memory, BearMemoryAdminStats,
-        MemoryStoreManager,
-    },
-    memory_proposals::{self, CreateMemoryProposal},
-    pair_reflection,
+    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
 };
 
@@ -49,7 +40,7 @@ use crate::web::admin::bears::{
 
 use super::{
     bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
-    bear_profile::{build_role_detail_view, role_memory_label},
+    bear_profile::build_role_detail_view,
 };
 
 pub fn router() -> Router<AppState> {
@@ -59,18 +50,6 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
         .route_with_tsr("/bear/{slug}/profiles", get(profiles_view))
         .route_with_tsr("/bear/{slug}/profiles/{profile}", get(profile_detail_view))
-        .route_with_tsr(
-            "/bear/{slug}/memory",
-            get(memory_view).post(memory_delete_post),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/memory/proposals/{proposal_id}",
-            get(memory_proposal_get).post(memory_proposal_post),
-        )
-        .route_with_tsr(
-            "/bear/{slug}/memory/records/{memory_id}",
-            get(memory_record_view),
-        )
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
@@ -104,66 +83,6 @@ pub fn router() -> Router<AppState> {
 struct DomainQuery {
     #[serde(default)]
     message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryQuery {
-    #[serde(default)]
-    role: Option<String>,
-    #[serde(default)]
-    q: Option<String>,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    deleted: Option<usize>,
-    #[serde(default)]
-    review_requested: Option<usize>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryDeleteForm {
-    role: String,
-    #[serde(default)]
-    paths: Vec<String>,
-    #[serde(default)]
-    action: Option<String>,
-    #[serde(default)]
-    confirm: String,
-    #[serde(default)]
-    review_title: Option<String>,
-    #[serde(default)]
-    review_summary: Option<String>,
-    #[serde(default)]
-    review_rationale: Option<String>,
-    #[serde(default)]
-    suggested_action: Option<String>,
-    #[serde(default)]
-    sensitivity: Option<String>,
-    #[serde(default)]
-    requires_human: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryProposalResolutionForm {
-    status: String,
-    #[serde(default)]
-    review_notes: Option<String>,
-    #[serde(default)]
-    decision_summary: Option<String>,
-}
-
-#[derive(Serialize)]
-struct MemoryRoleRow {
-    profile: String,
-    label: String,
-    description: String,
-    runtime_family: String,
-    selected: bool,
-    status_label: String,
-    file_count: usize,
-    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,21 +130,21 @@ struct CompiledRolePromptRow {
     char_count: usize,
 }
 
-fn bear_nav_context(bear: &den_runtime::bears::Bear, active: &str) -> minijinja::Value {
+pub(crate) fn bear_nav_context(bear: &den_runtime::bears::Bear, active: &str) -> minijinja::Value {
     context! {
         bear,
         bear_nav_active => active,
     }
 }
 
-async fn session_user(auth_session: &AuthSession) -> Result<&SessionUser, CustomError> {
+pub(crate) async fn session_user(auth_session: &AuthSession) -> Result<&SessionUser, CustomError> {
     auth_session
         .user
         .as_ref()
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))
 }
 
-async fn load_session_bear(
+pub(crate) async fn load_session_bear(
     state: &AppState,
     auth_session: &AuthSession,
     slug: &str,
@@ -239,7 +158,7 @@ async fn load_session_bear(
     Ok(Ok((bear, can_manage_bear)))
 }
 
-async fn load_session_bear_manage(
+pub(crate) async fn load_session_bear_manage(
     state: &AppState,
     auth_session: &AuthSession,
     slug: &str,
@@ -470,422 +389,6 @@ async fn profile_detail_view(
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "profiles"),
-        },
-    )
-    .await
-}
-
-async fn memory_view(
-    Path(slug): Path<String>,
-    Query(query): Query<MemoryQuery>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let id = bear.id;
-    let stats = memory_stats_for_bear(&state, id).await?;
-    let manager = MemoryStoreManager::new(state.config.as_ref());
-    let store = manager.store_for_bear(id).await?;
-    let requested_role = query.role.as_deref().unwrap_or("pair");
-    let selected_role = requested_role
-        .parse::<BearProfile>()
-        .unwrap_or(BearProfile::Pair);
-    let selected_role_name = selected_role.as_str().to_string();
-    let search_query = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let selected_path = query.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
-
-    bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), id).await?;
-    let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), id).await?;
-    let mut role_rows = Vec::new();
-    for agent in agents {
-        let role = agent
-            .parsed_profile()
-            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
-        let mut row = MemoryRoleRow {
-            profile: role.as_str().to_string(),
-            label: role_memory_label(role).to_string(),
-            description: match role {
-                BearProfile::Chat => "Notes and local memory from chat-like conversations.",
-                BearProfile::Pair => "Coding collaboration notes, logs, decisions, and summaries.",
-                BearProfile::Curate => "Review, reflection, and memory integration work.",
-                BearProfile::Work => "Task execution logs, decisions, and summaries.",
-                BearProfile::Watch => "Event/subscription logs and summaries.",
-            }
-            .to_string(),
-            runtime_family: role.runtime_family().to_string(),
-            selected: role == selected_role,
-            status_label: "Unavailable".to_string(),
-            file_count: 0,
-            error: None,
-        };
-        match sqlite_memory::sqlite_memory_status(&store, role.as_str()).await {
-            Ok(status) => {
-                let available = status
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| status.get("available").and_then(|v| v.as_bool()))
-                    .unwrap_or(true);
-                row.status_label = if available {
-                    "Available"
-                } else {
-                    "Unavailable"
-                }
-                .to_string();
-                row.file_count = status
-                    .get("file_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize;
-            }
-            Err(err) => {
-                row.status_label = "Error".to_string();
-                row.error = Some(err.to_string());
-            }
-        }
-        role_rows.push(row);
-    }
-
-    let selected_tree =
-        match sqlite_memory::sqlite_memory_browse(&store, selected_role.as_str()).await {
-            Ok(v) => {
-                let files = v
-                    .get("children")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!([]));
-                Some(serde_json::json!({ "files": files }))
-            }
-            Err(err) => {
-                tracing::warn!(bear_id = %id, role = selected_role.as_str(), "Could not load memory tree: {err}");
-                None
-            }
-        };
-
-    let search_results = if let Some(q) = search_query {
-        match sqlite_memory::sqlite_memory_search(&store, selected_role.as_str(), q, 50).await {
-            Ok(v) => {
-                let hits = v
-                    .get("hits")
-                    .and_then(|h| h.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let results: Vec<serde_json::Value> = hits
-                    .iter()
-                    .map(|h| {
-                        let snippet = h.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
-                        serde_json::json!({
-                            "path": h.get("path").and_then(|p| p.as_str()).unwrap_or(""),
-                            "title": serde_json::Value::Null,
-                            "snippet": snippet,
-                            "size_bytes": snippet.len(),
-                        })
-                    })
-                    .collect();
-                let result_count = results.len();
-                Some(serde_json::json!({
-                    "results": results,
-                    "result_count": result_count,
-                    "scanned_file_count": result_count,
-                }))
-            }
-            Err(err) => {
-                tracing::warn!(bear_id = %id, role = selected_role.as_str(), "Could not search memory: {err}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let selected_file = if let Some(path) = selected_path {
-        match sqlite_memory::sqlite_memory_read(&store, path).await {
-            Ok(v) if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) => {
-                Some(serde_json::json!({
-                    "path": v.get("path").and_then(|p| p.as_str()).unwrap_or(path),
-                    "content": v.get("content").and_then(|c| c.as_str()).unwrap_or(""),
-                }))
-            }
-            Ok(_) | Err(_) => None,
-        }
-    } else {
-        None
-    };
-
-    let paths = list_all_logical_paths(&manager, id).await.unwrap_or_default();
-    let recent = list_recent_memory_records(&manager, id, 12)
-        .await
-        .unwrap_or_default();
-    let proposals = list_memory_proposals(&store, None, 20)
-        .await
-        .unwrap_or_default();
-    let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 10)
-        .await
-        .unwrap_or_default();
-    let memory_proposals =
-        memory_proposals::list_for_bear(state.sqlx_pool(), id, None, 25)
-            .await
-            .unwrap_or_default();
-
-    web::render_template(
-        &state,
-        "bear/settings/memory.html",
-        auth_session,
-        context! {
-            stats,
-            role_rows,
-            selected_role => selected_role_name,
-            search_query => search_query.unwrap_or(""),
-            selected_path => selected_path.unwrap_or(""),
-            selected_tree,
-            search_results,
-            selected_file,
-            paths,
-            recent,
-            proposals,
-            pair_reflection_runs,
-            memory_proposals,
-            delete_notice => query.deleted,
-            review_notice => query.review_requested,
-            delete_error => query.error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "memory"),
-        },
-    )
-    .await
-}
-
-async fn memory_delete_post(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<MemoryDeleteForm>,
-) -> Result<Response, CustomError> {
-    let user = session_user(&auth_session).await?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
-        ));
-    }
-    let role = form
-        .role
-        .parse::<BearProfile>()
-        .map_err(CustomError::ValidationError)?;
-    let action = form.action.as_deref().unwrap_or("delete").trim();
-    let confirm = form.confirm.trim();
-    let mut paths = form
-        .paths
-        .into_iter()
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.dedup();
-    let memory_base = format!("/bear/{}/memory", bear.slug);
-    if paths.is_empty() {
-        return Ok(Redirect::to(&format!(
-            "{memory_base}?role={}&error={}",
-            role.as_str(),
-            urlencoding::encode("Select at least one memory file.")
-        ))
-        .into_response());
-    }
-    if action == "request_review" {
-        let title = form
-            .review_title
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Review selected memory");
-        let summary = form
-            .review_summary
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Selected memory files were marked for Reflection/curate review from the Bear memory UI.");
-        let proposal = memory_proposals::create(
-            state.sqlx_pool(),
-            CreateMemoryProposal {
-                bear_id: bear.id,
-                source_profile: role,
-                source_agent_id: bears_db::profile_binding_id(state.sqlx_pool(), bear.id, role)
-                    .await?,
-                source_paths: paths,
-                source_refs: serde_json::json!([]),
-                suggested_action: form
-                    .suggested_action
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("unspecified"),
-                target_ref: None,
-                title,
-                summary,
-                rationale: form.review_rationale.as_deref().map(str::trim).unwrap_or(""),
-                proposed_content: None,
-                proposed_patch: None,
-                refs: serde_json::json!({}),
-                sensitivity: form
-                    .sensitivity
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("normal"),
-                requires_human: form.requires_human.as_deref() == Some("on"),
-                project_to_conversation: true,
-            },
-        )
-        .await?;
-        return Ok(Redirect::to(&format!(
-            "{memory_base}?role={}&review_requested=1&path={}",
-            role.as_str(),
-            urlencoding::encode(
-                proposal
-                    .source_paths
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or("")
-            )
-        ))
-        .into_response());
-    }
-    if confirm != role.as_str() && confirm != bear.slug {
-        return Ok(Redirect::to(&format!(
-            "{memory_base}?role={}&error={}",
-            role.as_str(),
-            urlencoding::encode("Type the profile name or Bear slug to confirm deletion.")
-        ))
-        .into_response());
-    }
-    let manager = MemoryStoreManager::new(state.config.as_ref());
-    let store = manager.store_for_bear(bear.id).await?;
-    let mut deleted = 0usize;
-    for path in &paths {
-        let result = sqlx::query(
-            "DELETE FROM memory_records WHERE bear_id = ? AND scope_profile = ? AND logical_path = ?",
-        )
-        .bind(bear.id.to_string())
-        .bind(role.as_str())
-        .bind(path)
-        .execute(store.pool())
-        .await
-        .map_err(|err| CustomError::System(format!("delete memory records failed: {err}")))?;
-        if result.rows_affected() > 0 {
-            deleted += 1;
-        }
-    }
-    Ok(Redirect::to(&format!(
-        "{memory_base}?role={}&deleted={deleted}",
-        role.as_str()
-    ))
-    .into_response())
-}
-
-async fn memory_proposal_get(
-    Path((slug, proposal_id)): Path<(String, Uuid)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let user = session_user(&auth_session).await?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let proposal = memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
-    web::render_template(
-        &state,
-        "bear/memory_proposal.html",
-        auth_session,
-        context! {
-            bear,
-            proposal,
-            can_manage_bear,
-            errors => None::<String>,
-            ..bear_nav_context(&bear, "memory"),
-        },
-    )
-    .await
-}
-
-async fn memory_proposal_post(
-    Path((slug, proposal_id)): Path<(String, Uuid)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-    Form(form): Form<MemoryProposalResolutionForm>,
-) -> Result<Response, CustomError> {
-    let user = session_user(&auth_session).await?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
-        return Ok(r.into_response());
-    }
-    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
-    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
-        return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
-        ));
-    }
-    let status = form.status.trim();
-    if !matches!(
-        status,
-        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
-    ) {
-        return Err(CustomError::ValidationError(
-            "invalid memory proposal status".to_string(),
-        ));
-    }
-    memory_proposals::resolve_for_bear(
-        state.sqlx_pool(),
-        memory_proposals::ProposalResolutionParams {
-            bear_id: bear.id,
-            proposal_id,
-            reviewer_profile: BearProfile::Curate,
-            reviewer_agent_id: None,
-            status,
-            review_notes: form.review_notes.as_deref(),
-            decision_summary: form.decision_summary.as_deref(),
-            result_path: None,
-            result_commit: None,
-            project_to_conversation: true,
-        },
-    )
-    .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/memory/proposals/{proposal_id}",
-        bear.slug
-    ))
-    .into_response())
-}
-
-async fn memory_record_view(
-    Path((slug, memory_id)): Path<(String, String)>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let manager = MemoryStoreManager::new(state.config.as_ref());
-    let record = get_memory_record_by_id(&manager, bear.id, &memory_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("memory record not found".to_string()))?;
-    web::render_template(
-        &state,
-        "bear/settings/memory_record.html",
-        auth_session,
-        context! {
-            record,
-            memory_id,
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "memory"),
         },
     )
     .await

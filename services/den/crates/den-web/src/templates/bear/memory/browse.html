@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% set memory_subnav = "browse" %}
+
+{% block title %}Browse memory · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>Memory library</h2>
+  <p class="form-hint">Every logical path the Bear has written, grouped by scope. Each path links to its current entry; the count shows how many versions exist.</p>
+
+  {% if delete_notice %}<p class="success">Deleted memory at {{ delete_notice }} path(s).</p>{% endif %}
+  {% if review_notice %}<p class="success">Review requested; a memory proposal was created for curate.</p>{% endif %}
+  {% if delete_error %}<p class="form-errors">{{ delete_error | e }}</p>{% endif %}
+</div>
+
+{% if groups %}
+{% for group in groups %}
+<div class="box">
+  <h3><code>{{ group.label | e }}/</code></h3>
+  <table>
+    <thead>
+      <tr>{% if can_manage_bear %}<th></th>{% endif %}<th>Path</th><th>Kind</th><th>Versions</th><th>Updated</th></tr>
+    </thead>
+    <tbody>
+      {% for p in group.paths %}
+      <tr>
+        {% if can_manage_bear %}
+        <td><input type="checkbox" form="memory-delete-form" name="paths" value="{{ p.logical_path | e }}"></td>
+        {% endif %}
+        <td>
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | e }}"><code>{{ p.logical_path | e }}</code></a>
+          <span class="form-hint">({{ p.scope_type | e }}{% if p.scope_profile %} / {{ p.scope_profile | e }}{% endif %})</span>
+        </td>
+        <td>{{ p.kind | e }}</td>
+        <td>{{ p.version_count }}</td>
+        <td class="form-hint">{{ p.head_created_at | e }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+{% if can_manage_bear %}
+<div class="box">
+  <h3>Manage selected paths</h3>
+  <p class="form-hint">Select one or more paths above, then delete them or request a curate review. Deletion removes <strong>all versions</strong> at the selected role-local paths and cannot be undone.</p>
+  <form id="memory-delete-form" method="post" action="/bear/{{ bear.slug | e }}/memory/browse">
+    <div class="fields-grid">
+      <label>Role (scope_profile)
+        <input type="text" name="role" placeholder="pair" required>
+      </label>
+      <label>Confirm (type the role name or Bear slug)
+        <input type="text" name="confirm" placeholder="{{ bear.slug | e }}">
+      </label>
+    </div>
+    <details style="margin: 0.5rem 0;">
+      <summary>Request curate review instead of deleting</summary>
+      <div class="fields-grid">
+        <label>Title <input type="text" name="review_title" placeholder="Review selected memory"></label>
+        <label>Suggested action <input type="text" name="suggested_action" placeholder="unspecified"></label>
+      </div>
+      <label>Summary <textarea name="review_summary" rows="2"></textarea></label>
+      <label>Rationale <textarea name="review_rationale" rows="2"></textarea></label>
+      <label><input type="checkbox" name="requires_human" value="on"> Requires human review</label>
+    </details>
+    <button type="submit" name="action" value="request_review">Request review</button>
+    <button type="submit" name="action" value="delete" class="danger" style="margin-left: 0.5rem;">Delete selected</button>
+  </form>
+</div>
+{% endif %}
+
+{% else %}
+<div class="box"><p class="form-hint">No memory recorded yet.</p></div>
+{% endif %}
+{% endblock %}

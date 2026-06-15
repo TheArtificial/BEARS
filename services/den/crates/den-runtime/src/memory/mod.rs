@@ -17,8 +17,10 @@ pub use den_memory as store;
 mod store_round_trip_tests;
 
 pub use admin_inspect::{
-    bear_memory_admin_stats, bear_sqlite_db_path, get_memory_record_by_id, list_all_logical_paths,
-    list_recent_memory_records, BearMemoryAdminStats,
+    bear_memory_admin_stats, bear_sqlite_db_path, count_records_by_kind, count_records_by_profile,
+    get_memory_record_by_id, get_memory_record_detail, head_entry_count, list_all_logical_paths,
+    list_path_summaries, list_recent_memory_records, search_memory_records, BearMemoryAdminStats,
+    MemoryCountBucket, MemoryRecordDetail, PathSummary,
 };
 pub use curation::{
     create_observation, create_proposal, get_observation, get_proposal, list_proposals,

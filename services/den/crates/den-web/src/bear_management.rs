@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -74,7 +74,6 @@ pub fn router() -> Router<AppState> {
             get(bear_edit_configuration_get).post(bear_edit_configuration_post),
         )
         .route_with_tsr("/bear/{slug}/code-token", get(bear_code_token_get).post(bear_code_token_post))
-        .route_with_tsr("/bear/{slug}/memory/browse", get(memory_browse_redirect))
         .route_with_tsr("/bear/{slug}/memory/browse/runtime-blocks", get(runtime_blocks_redirect))
         .route_with_tsr(
             "/bear/{slug}/memory/browse/proposals/{proposal_id}",
@@ -126,37 +125,6 @@ async fn legacy_details_path_redirect(Path((slug, rest)): Path<(String, String)>
     Redirect::permanent(&target)
 }
 
-async fn memory_browse_redirect(
-    Path(slug): Path<String>,
-    Query(q): Query<BearMemoryBrowseRedirectQuery>,
-) -> Redirect {
-    let mut target = format!("/bear/{}/memory", slug.trim());
-    let mut params = Vec::new();
-    if let Some(role) = q.role.filter(|s| !s.is_empty()) {
-        params.push(format!("role={}", urlencoding::encode(&role)));
-    }
-    if let Some(qs) = q.q.filter(|s| !s.is_empty()) {
-        params.push(format!("q={}", urlencoding::encode(&qs)));
-    }
-    if let Some(path) = q.path.filter(|s| !s.is_empty()) {
-        params.push(format!("path={}", urlencoding::encode(&path)));
-    }
-    if let Some(deleted) = q.deleted {
-        params.push(format!("deleted={deleted}"));
-    }
-    if let Some(review) = q.review_requested {
-        params.push(format!("review_requested={review}"));
-    }
-    if let Some(error) = q.error.filter(|s| !s.is_empty()) {
-        params.push(format!("error={}", urlencoding::encode(&error)));
-    }
-    if !params.is_empty() {
-        target.push('?');
-        target.push_str(&params.join("&"));
-    }
-    Redirect::permanent(&target)
-}
-
 async fn runtime_blocks_redirect(Path(slug): Path<String>) -> Redirect {
     Redirect::permanent(&format!(
         "/bear/{}/advanced?message={}",
@@ -173,17 +141,6 @@ async fn memory_proposal_legacy_redirect(
         slug.trim()
     ))
 }
-
-#[derive(Debug, Deserialize)]
-struct BearMemoryBrowseRedirectQuery {
-    role: Option<String>,
-    q: Option<String>,
-    path: Option<String>,
-    deleted: Option<usize>,
-    review_requested: Option<usize>,
-    error: Option<String>,
-}
-
 
 #[derive(Serialize)]
 struct AcpToolDetailRow {
