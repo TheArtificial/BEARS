@@ -78,6 +78,7 @@ Extends the hybrid retriever ([ADR-0041](../decisions/adr-0041-archival-recall-a
 
 **Bounded graph leg (record↔entity expansion).**
 
+- _Prerequisite landed_ ([Bear Entity Layer Phase 4](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md)): each passage payload now denormalizes its resolved **descriptive** `entity_ids` (via `relations::descriptive_entity_ids_by_source` at reconcile time), and `recall::search_bear_memory_for_entities` gives an entity-membership-scoped vector leg — the seed for the expansion below.
 - Starting from entities resolved in the query/turn context, expand over the **bipartite** record↔entity relation graph (`memory_relations`): entity → its records → co-occurring entities → their records.
 - **Depth-capped (default 2 hops), read-only, retrieval-time only.** No stored transitive edges, no inference, no entity↔entity edges — consistent with [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) anti-RDF guardrails. This is query expansion, not a knowledge graph.
 - Only `recall_effect != gate` relations participate; access-bearing gating still applies via the required `AccessContext` (the `memory_access_rules` query) before results return.

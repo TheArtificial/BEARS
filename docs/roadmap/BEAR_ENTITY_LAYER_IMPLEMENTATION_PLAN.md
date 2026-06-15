@@ -62,20 +62,26 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** write tests — descriptive vs access routing; misfiling impossible; access-bearing rejects unresolved targets; union view returns both with correct `class`.
 
-## Phase 4 — Enforcement + recall/projection integration  🟡 partially landed (gate + projection); recall-leg wiring deferred
+## Phase 4 — Enforcement + recall/projection integration  🟡 partially landed (gate + projection + entity-filter recall leg); boost + bounded-graph deferred
 
 **Landed** (`den-memory/src/access.rs`, `den-runtime/.../key_memory_projection.rs`):
 
 - `AccessContext` is the **fail-closed** gate (`record_visible`) and the **only** reader of `memory_access_rules`; an empty context hides every access-gated record.
 - Key memory projection takes a **mandatory `access: AccessContext`** field — omitting it is a compile error. Every projected record is gated; `audience` (ANY-of addressees) and `confined_to` (ALL-of scopes, hard non-leak) are enforced, and the `omitted_by_access` diagnostic records suppressions. The production caller passes `AccessContext::empty()` until session identity is resolved to entities (Phase 6) — a no-op today since no access rules exist yet, which is exactly why the gate lands **before** access-rule writes.
 
-**Deferred** (blocked on the recall index — [Derived Recall Index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), needs Qdrant):
+**Landed — entity-filter recall leg** (`den-memory/src/relations.rs`, `den-runtime/src/recall/{policy,reconcile,query}.rs`):
 
-- Descriptive relations feeding recall **boost/filter**; carrying resolved `entity_id`s in the Qdrant passage payload.
+- `relations::descriptive_entity_ids_by_source` — one bulk query mapping each record to its distinct **descriptive** (`recall_effect = boost`) entity ids; the access-bearing gate (`memory_access_rules`) is excluded. Reconcile fetches it once per pass and threads it onto each `IndexRequest`.
+- The Qdrant passage payload now denormalizes `entity_ids` (derived data; SQLite + the relation tables remain canonical), so passages can be filtered/boosted by entity without a SQLite round-trip.
+- `recall::search_bear_memory_for_entities` (+ private `entity_scope_filter`): bear-wide, entity-membership-scoped semantic search — the query-side consumer of the denormalized ids and the seed leg for bounded-graph expansion + entity-centric admin recall. Best-effort/`disabled`-tagged like the other recall entry points.
+- Tests: `descriptive_entity_ids_by_source` excludes access-bearing rows; payload carries `entity_ids`; `entity_scope_filter` shape; gated live round-trip (`entity_scoped_recall_filters_by_payload_entity_ids`) proving a matching entity filter retrieves the passage and an unrelated one excludes it.
+
+**Deferred:**
+
+- Score **boost** (vs. the landed filter) for shared-entity overlap, and `applies_when` proactive surfacing in projection (descriptive boost). Needs query-time resolved entities (work surfaces already resolve; session identity is Phase 6).
 - The **bounded graph recall leg** ([DERIVED_RECALL Phase 3.5](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6) over the `memory_relations` bipartite links (depth-capped, read-only, gated relations excluded, `AccessContext` applied — [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §4).
-- `applies_when` proactive surfacing in projection (descriptive boost).
 
-**Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (recall slice):** pending recall infra.
+**Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (entity-filter recall slice, met):** payload denormalization + entity-scoped retrieval proven end-to-end against live Qdrant. **Exit (boost + bounded-graph):** pending query-time entity resolution / Phase 3.5.
 
 ## Phase 5 — Anchors generalize
 
