@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    acp_tool_turns::AcpToolTurnCoordinator,
+    tool_turns::ToolTurnCoordinator,
     acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
 };
 use den_core::DenError;
@@ -166,7 +166,7 @@ impl RoleTurnResult {
 
 #[derive(Debug, Clone)]
 pub struct RoleRuntime {
-    tool_turns: AcpToolTurnCoordinator,
+    tool_turns: ToolTurnCoordinator,
     turn_cancellations: Option<AcpActiveTurnCancelRegistry>,
 }
 
@@ -193,7 +193,7 @@ pub struct AcpTurnLifecycleLease {
 
 impl AcpTurnLifecycleRuntime {
     pub fn new(
-        tool_turns: AcpToolTurnCoordinator,
+        tool_turns: ToolTurnCoordinator,
         turn_cancellations: AcpActiveTurnCancelRegistry,
     ) -> Self {
         Self {
@@ -238,7 +238,7 @@ impl AcpTurnLifecycleRuntime {
 }
 
 impl RoleRuntime {
-    pub fn new(tool_turns: AcpToolTurnCoordinator) -> Self {
+    pub fn new(tool_turns: ToolTurnCoordinator) -> Self {
         Self {
             tool_turns,
             turn_cancellations: None,
@@ -246,7 +246,7 @@ impl RoleRuntime {
     }
 
     pub fn with_turn_cancellations(
-        tool_turns: AcpToolTurnCoordinator,
+        tool_turns: ToolTurnCoordinator,
         turn_cancellations: AcpActiveTurnCancelRegistry,
     ) -> Self {
         Self {
@@ -262,7 +262,7 @@ impl RoleRuntime {
     pub fn tool_turn_runtime_snapshot(
         &self,
         acp_session_id: &str,
-        tool_turns: &AcpToolTurnCoordinator,
+        tool_turns: &ToolTurnCoordinator,
     ) -> Value {
         if let Some(registry) = self.turn_cancellations.as_ref() {
             registry.runtime_snapshot_for_session(acp_session_id, tool_turns)
@@ -329,7 +329,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    pub guard: crate::acp_tool_turns::AcpActiveTurnGuard,
+    pub guard: crate::tool_turns::ActiveTurnGuard,
 }
 
 impl RoleTurnGuard {

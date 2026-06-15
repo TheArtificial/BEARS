@@ -21,7 +21,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_runtime::{
-    acp_tool_turns::{AcpToolResultDelivery, AcpToolResultRequest},
+    tool_turns::{ToolResultDelivery, ToolResultRequest},
     acp_tools::{acp_diag_phase, AcpToolStatus},
 };
 
@@ -31,7 +31,7 @@ pub(in crate::acp) async fn tool_result(
     State(state): State<ApiState>,
     Path((slug, session_id, tool_call_id)): Path<(String, String, String)>,
     headers: HeaderMap,
-    Json(body): Json<AcpToolResultRequest>,
+    Json(body): Json<ToolResultRequest>,
 ) -> Response {
     let request_id = Uuid::new_v4();
     let contract = body
@@ -45,7 +45,7 @@ pub(in crate::acp) async fn tool_result(
         };
         if let Ok(auth) = authenticate_acp_code_token_with_auth(&state, &token, &slug).await {
             let synthetic = compatibility_tool_result_body(&err, &tool_call_id, body);
-            let _ = state.acp_tool_turns.deliver_result(
+            let _ = state.tool_turns.deliver_result(
                 auth.user_id,
                 &slug,
                 &session_id,
@@ -67,7 +67,7 @@ pub(super) async fn tool_result_inner(
     session_id: String,
     tool_call_id: String,
     headers: HeaderMap,
-    body: AcpToolResultRequest,
+    body: ToolResultRequest,
 ) -> Result<Response, CustomError> {
     let token = auth::extract_bearer_token(&headers)
         .map_err(|err| CustomError::Authentication(err.message))?;
@@ -83,10 +83,10 @@ pub(super) async fn tool_result_inner(
     })?;
     let delivery =
         state
-            .acp_tool_turns
+            .tool_turns
             .deliver_result(user_id, &slug, &session_id, &tool_call_id, body)?;
     match delivery {
-        AcpToolResultDelivery::Delivered {
+        ToolResultDelivery::Delivered {
             mut body,
             request_id,
             bear_id,
@@ -110,7 +110,7 @@ pub(super) async fn tool_result_inner(
                 "ACP tool result received"
             );
             Ok(Json(acp_tool_result_response_from_delivery(
-                AcpToolResultDelivery::Delivered {
+                ToolResultDelivery::Delivered {
                     body,
                     request_id,
                     bear_id,
@@ -119,19 +119,19 @@ pub(super) async fn tool_result_inner(
                 &session_id,
                 tool_call_id,
                 parsed_status,
-                &state.acp_tool_turns,
+                &state.tool_turns,
             ))
             .into_response())
         }
-        delivery @ (AcpToolResultDelivery::TurnMissing { .. }
-        | AcpToolResultDelivery::AlreadySettled { .. }
-        | AcpToolResultDelivery::RecentlySettled { .. }) => {
+        delivery @ (ToolResultDelivery::TurnMissing { .. }
+        | ToolResultDelivery::AlreadySettled { .. }
+        | ToolResultDelivery::RecentlySettled { .. }) => {
             Ok(Json(acp_tool_result_response_from_delivery(
                 delivery,
                 &session_id,
                 tool_call_id,
                 parsed_status,
-                &state.acp_tool_turns,
+                &state.tool_turns,
             ))
             .into_response())
         }

@@ -185,7 +185,7 @@ pub(super) async fn cancel_session_inner(
         .acp_turn_cancellations
         .cancel_session(&session.acp_session_id);
     let active = state
-        .acp_tool_turns
+        .tool_turns
         .cancel_active_turn(&session.acp_session_id);
     let pair_agent_id =
         bears_db::profile_binding_id(&state.sqlx_pool, session.bear_id, BearProfile::Pair)
@@ -215,7 +215,7 @@ pub(super) async fn cancel_session_inner(
     )
     .await;
     state
-        .acp_tool_turns
+        .tool_turns
         .cleanup_session(&session.acp_session_id);
     tracing::info!(
         bear_id = %session.bear_id,

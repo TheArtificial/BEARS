@@ -145,7 +145,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
     let turn_lifecycle = AcpTurnLifecycleRuntime::new(
-        state.acp_tool_turns.clone(),
+        state.tool_turns.clone(),
         state.acp_turn_cancellations.clone(),
     );
     let lifecycle_lease = match turn_lifecycle.acquire_pair_turn(
@@ -283,7 +283,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
         event_upstream,
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),
-            tool_turns: state.acp_tool_turns.clone(),
+            tool_turns: state.tool_turns.clone(),
             user_id,
             user_profile: user::user_by_id(&state.sqlx_pool, user_id).await.ok(),
             bear_id: bear.id,
@@ -333,7 +333,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
         // Stop as soon as the obligation is registered: we only need eager progress up to
         // that point, never past it into the result-wait.
         if !state
-            .acp_tool_turns
+            .tool_turns
             .pending_for_session(session_id)
             .is_empty()
         {

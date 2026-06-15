@@ -5,11 +5,11 @@ use crate::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
     acp_plan_mode,
-    acp_tool_turns::AcpToolResultRequest,
+    tool_turns::ToolResultRequest,
     turn_state,
 };
 
-pub(in crate::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
+pub(in crate::acp) fn mode_from_den_tool_result(result: &ToolResultRequest) -> Option<&str> {
     result
         .structured_content
         .get("mode_update")
@@ -18,7 +18,7 @@ pub(in crate::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -
 }
 
 pub(in crate::acp) fn plan_update_from_den_tool_result(
-    result: &AcpToolResultRequest,
+    result: &ToolResultRequest,
 ) -> Option<AcpGatewayEvent> {
     if let Some(plan) = result.structured_content.get("plan") {
         let items = plan.get("items").and_then(Value::as_array)?;
@@ -50,7 +50,7 @@ pub(in crate::acp) fn plan_approval_fallback_payload(
 }
 
 fn plan_approval_fallback_from_tool_result(
-    result: &AcpToolResultRequest,
+    result: &ToolResultRequest,
 ) -> Option<AcpGatewayEvent> {
     let workplan = result.structured_content.get("workplan")?;
     let raw_state = workplan

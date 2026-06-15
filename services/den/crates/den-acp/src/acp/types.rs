@@ -11,7 +11,7 @@ use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
 use den_runtime::{
     acp_events::AcpGatewayEvent,
-    acp_tool_turns::{AcpToolResultRequest, AcpToolTurnCoordinator},
+    tool_turns::{ToolResultRequest, ToolTurnCoordinator},
     acp_turn_controller::AcpToolExecutionRoute as ControllerToolExecutionRoute,
     memory::MemoryStoreManager,
     role_runtime::{RoleRuntime, RoleTurnScope},
@@ -63,7 +63,7 @@ pub(crate) struct AcpResolvedTurnContext {
 #[derive(Clone)]
 pub(in crate::acp) struct AcpStreamContext {
     pub(in crate::acp) pool: PgPool,
-    pub(in crate::acp) tool_turns: AcpToolTurnCoordinator,
+    pub(in crate::acp) tool_turns: ToolTurnCoordinator,
     pub(in crate::acp) user_id: i32,
     pub(in crate::acp) user_profile: Option<crate::core::user::User>,
     pub(in crate::acp) bear_id: Uuid,
@@ -107,7 +107,7 @@ pub(in crate::acp) struct PersistedToolRequestEffect {
     pub(in crate::acp) tool_call_id: String,
     pub(in crate::acp) tool_name: String,
     pub(in crate::acp) route: ToolExecutionRoute,
-    pub(in crate::acp) den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+    pub(in crate::acp) den_server_result_rx: Option<oneshot::Receiver<ToolResultRequest>>,
 }
 
 pub(in crate::acp) type AcpFrameResult = Result<
@@ -129,12 +129,12 @@ pub(in crate::acp) type AcpContinueToolPrepared = Result<
 >;
 
 pub(in crate::acp) enum AcpResolvedToolResult {
-    Receiver(oneshot::Receiver<AcpToolResultRequest>),
+    Receiver(oneshot::Receiver<ToolResultRequest>),
 }
 
 pub(in crate::acp) enum AcpPendingFuture {
     Frame(Pin<Box<dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send>>),
-    Tool(Pin<Box<dyn Future<Output = Option<Box<AcpToolResultRequest>>> + Send>>),
+    Tool(Pin<Box<dyn Future<Output = Option<Box<ToolResultRequest>>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = AcpContinueToolPrepared> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }

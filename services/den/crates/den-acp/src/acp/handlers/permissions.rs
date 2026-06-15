@@ -22,7 +22,7 @@ use den_oauth::auth;
 use den_runtime::{
     acp_plan_mode,
     acp_sessions,
-    acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
+    tool_turns::{ToolResultRequest, ToolTurnRegistration},
     acp_tools::acp_tool_policy_json_for_provider,
 };
 
@@ -213,7 +213,7 @@ pub(super) async fn permission_result_inner(
         pending
             .context
             .tool_turns
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: pending.user_id,
                 bear_id: pending.bear_id,
                 bear_slug: pending.context.bear_slug.clone(),
@@ -252,7 +252,7 @@ pub(super) async fn permission_result_inner(
         )
         .await
     } else {
-        AcpToolResultRequest {
+        ToolResultRequest {
             turn_id: None,
             request_id: Some(pending.context.request_id.to_string()),
             tool_call_id: Some(pending.tool_call_id.clone()),

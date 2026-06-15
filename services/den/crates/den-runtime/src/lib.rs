@@ -19,7 +19,7 @@ pub mod acp_plan_mode;
 pub mod acp_events;
 
 /// Active-turn coordination + tool-result requests (turn lifecycle).
-pub mod acp_tool_turns;
+pub mod tool_turns;
 
 /// Active-turn cancellation registry + turn controller (turn lifecycle).
 pub mod acp_turn_controller;

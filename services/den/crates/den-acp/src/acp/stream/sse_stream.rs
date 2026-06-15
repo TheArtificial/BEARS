@@ -26,7 +26,7 @@ use crate::{
 use den_http::errors::{CustomError, DenError};
 use den_runtime::{
     acp_events::{acp_event_to_adapter_sse, AcpGatewayEvent},
-    acp_tool_turns::AcpToolResultRequest,
+    tool_turns::ToolResultRequest,
     acp_turn_controller::{AcpActiveTurnCancelRegistry, AcpTurnController, AcpTurnPhase},
     role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
     runtime_contracts::RuntimeConversationRef,
@@ -52,7 +52,7 @@ pub(in crate::acp) struct AcpRuntimeSseStream {
     pub(in crate::acp) assistant_text_buffer: String,
     pub(in crate::acp) waiting_adapter_tool_result:
         Option<(String, String, AcpResolvedToolResult)>,
-    pub(in crate::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
+    pub(in crate::acp) queued_tool_result_continuation: Option<ToolResultRequest>,
     pub(in crate::acp) diagnostics: AcpStreamDiagnostics,
     pub(in crate::acp) logged_summary: bool,
     pub(in crate::acp) persist_future: Option<AcpPendingFuture>,
@@ -550,7 +550,7 @@ impl Stream for AcpRuntimeSseStream {
                     )
                     .await
                     {
-                        Err(_) => Some(Box::new(AcpToolResultRequest {
+                        Err(_) => Some(Box::new(ToolResultRequest {
                             tool_call_id: Some(tool_call_id.clone()),
                             tool_name: Some(tool_name.clone()),
                             approval_request_id: approval_request_id.clone(),
@@ -568,7 +568,7 @@ impl Stream for AcpRuntimeSseStream {
                             }),
                             ..Default::default()
                         })),
-                        Ok(Err(err)) => Some(Box::new(AcpToolResultRequest {
+                        Ok(Err(err)) => Some(Box::new(ToolResultRequest {
                             tool_call_id: Some(tool_call_id.clone()),
                             tool_name: Some(tool_name.clone()),
                             approval_request_id: approval_request_id.clone(),
@@ -853,7 +853,7 @@ impl Stream for AcpRuntimeSseStream {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
-                                    acp_tool_turns: this.context.tool_turns.clone(),
+                                    tool_turns: this.context.tool_turns.clone(),
                                     acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
                                     memory_stores: this.context.memory_stores.clone(),
                                 };
@@ -1029,9 +1029,9 @@ impl Stream for AcpRuntimeSseStream {
                         outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
                         "ACP starting runtime continuation for queued tool result"
                     );
-                    let prepared_continuation = match den_runtime::acp_tool_turns::AcpToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
+                    let prepared_continuation = match den_runtime::tool_turns::ToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
                         Ok(prepared) => prepared,
-                        Err(den_runtime::acp_tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
+                        Err(den_runtime::tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
                             display_tool_name,
                         }) => {
                             this.pending.push_back(acp_event_to_adapter_sse(
@@ -1054,7 +1054,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
-                        acp_tool_turns: this.context.tool_turns.clone(),
+                        tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
@@ -1113,7 +1113,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
-                        acp_tool_turns: this.context.tool_turns.clone(),
+                        tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
@@ -1148,7 +1148,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
-                        acp_tool_turns: this.context.tool_turns.clone(),
+                        tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };

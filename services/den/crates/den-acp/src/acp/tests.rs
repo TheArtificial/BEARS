@@ -72,9 +72,9 @@ use den_runtime::prompt_memory_blocks::{
             },
         runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
         acp_sessions,
-        acp_tool_turns::{
-                AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
-                AcpToolTurnRegistration,
+        tool_turns::{
+                ToolResultDelivery, ToolResultRequest, ToolTurnCoordinator,
+                ToolTurnRegistration,
             },
         acp_tools::{AcpResolvedSessionPolicy, AcpToolStatus},
         bears::BearProfile,
@@ -99,7 +99,7 @@ use den_runtime::prompt_memory_blocks::{
             sqlx_pool: pool,
             config: config.clone(),
             bifrost: Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
-            acp_tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         }
@@ -424,7 +424,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -441,7 +441,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id,
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -553,7 +553,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -570,7 +570,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id: Uuid::new_v4(),
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -669,7 +669,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -686,7 +686,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id: Uuid::new_v4(),
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -756,7 +756,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn tool_result_prepare_runtime_continuation_maps_timeout_status_to_runtime_timeout() {
-        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+        let prepared = ToolTurnCoordinator::prepare_runtime_continuation(&ToolResultRequest {
             tool_call_id: Some("tool-call-timeout".to_string()),
             tool_name: Some("functions.fs.read_text_file".to_string()),
             approval_request_id: None,
@@ -784,7 +784,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn tool_result_prepare_runtime_continuation_maps_timed_out_status_to_runtime_timeout() {
-        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+        let prepared = ToolTurnCoordinator::prepare_runtime_continuation(&ToolResultRequest {
             tool_call_id: Some("tool-call-timed-out".to_string()),
             tool_name: Some("functions.fs.read_text_file".to_string()),
             approval_request_id: None,
@@ -804,7 +804,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn tool_result_prepare_runtime_continuation_with_approval_request_maps_to_approval_decision() {
-        let prepared = AcpToolTurnCoordinator::prepare_runtime_continuation(&AcpToolResultRequest {
+        let prepared = ToolTurnCoordinator::prepare_runtime_continuation(&ToolResultRequest {
             tool_call_id: Some("tool-call-approval".to_string()),
             tool_name: Some("functions.process.run".to_string()),
             approval_request_id: Some("approval-123".to_string()),
@@ -860,7 +860,7 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("upsert acp session");
 
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let (_result_tx_unused, result_rx) = tokio::sync::oneshot::channel();
 
         let active_turn_guard = tool_turns
@@ -923,7 +923,7 @@ use den_runtime::prompt_memory_blocks::{
         assert!(stream.pending.is_empty(), "terminal should be held while tool continuation is pending");
 
         stream.persist_future = Some(AcpPendingFuture::Tool(Box::pin(async move {
-            Some(Box::new(AcpToolResultRequest {
+            Some(Box::new(ToolResultRequest {
                 request_id: Some(request_id.to_string()),
                 tool_call_id: Some(tool_call_id.clone()),
                 tool_name: Some("functions.fs.read_text_file".to_string()),
@@ -975,7 +975,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -992,7 +992,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id,
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -1082,7 +1082,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -1099,7 +1099,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id,
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -1190,7 +1190,7 @@ use den_runtime::prompt_memory_blocks::{
 
         let context = AcpStreamContext {
             pool: pool.clone(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id,
             user_profile: None,
             bear_id,
@@ -1207,7 +1207,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id,
             pair_agent_id: "pair-agent".to_string(),
             config: Arc::new(Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -2748,7 +2748,7 @@ use den_runtime::prompt_memory_blocks::{
             sqlx_pool: pool,
             config: config.clone(),
             bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
-            acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new(),
+            tool_turns: den_runtime::tool_turns::ToolTurnCoordinator::new(),
             acp_turn_cancellations: den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         };
@@ -2847,7 +2847,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://localhost/den_test")
             .unwrap();
         let role_runtime =
-            den_runtime::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+            den_runtime::role_runtime::RoleRuntime::new(ToolTurnCoordinator::new());
         let request_id = Uuid::new_v4();
         let turn_scope = den_runtime::role_runtime::RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -2859,7 +2859,7 @@ use den_runtime::prompt_memory_blocks::{
             .unwrap();
         let context = AcpStreamContext {
             pool,
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id: 1,
             user_profile: None,
             bear_id: Uuid::new_v4(),
@@ -2918,7 +2918,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://localhost/den_test")
             .unwrap();
         let role_runtime =
-            den_runtime::role_runtime::RoleRuntime::new(AcpToolTurnCoordinator::new());
+            den_runtime::role_runtime::RoleRuntime::new(ToolTurnCoordinator::new());
         let request_id = Uuid::new_v4();
         let turn_scope = den_runtime::role_runtime::RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -2930,7 +2930,7 @@ use den_runtime::prompt_memory_blocks::{
             .unwrap();
         let context = AcpStreamContext {
             pool,
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id: 1,
             user_profile: None,
             bear_id: Uuid::new_v4(),
@@ -3026,10 +3026,10 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://localhost/den_test")
             .unwrap();
         let request_id = Uuid::new_v4();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
         registry
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
@@ -3120,9 +3120,9 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn acp_tool_result_turn_missing_returns_late_result_ignored() {
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let response = acp_tool_result_response_from_delivery(
-            AcpToolResultDelivery::TurnMissing {
+            ToolResultDelivery::TurnMissing {
                 turn_id: Some("turn-1".to_string()),
                 tool_call_id: "call-1".to_string(),
             },
@@ -3143,10 +3143,10 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn acp_tool_result_recently_settled_timeout_returns_timed_out_settlement() {
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let (tx, _rx) = tokio::sync::oneshot::channel();
         registry
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
@@ -3165,7 +3165,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-session",
                 "call-timeout",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call-timeout".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     status: "timeout".to_string(),
@@ -3174,7 +3174,7 @@ use den_runtime::prompt_memory_blocks::{
                 },
             )
             .unwrap();
-        assert!(matches!(delivered, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(delivered, ToolResultDelivery::Delivered { .. }));
         registry.remove("acp-session", "call-timeout");
         let late = registry
             .deliver_result(
@@ -3182,7 +3182,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-session",
                 "call-timeout",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call-timeout".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     status: "ok".to_string(),
@@ -3216,7 +3216,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let request_id = Uuid::new_v4();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let role_runtime = RoleRuntime::new(tool_turns.clone());
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -3525,7 +3525,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let request_id = Uuid::new_v4();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let role_runtime = RoleRuntime::new(tool_turns.clone());
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -3581,7 +3581,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let request_id = Uuid::new_v4();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let role_runtime = RoleRuntime::new(tool_turns.clone());
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -3700,7 +3700,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
@@ -3787,7 +3787,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-test-session",
                 "call_test",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     turn_id: Some("turn-test".to_string()),
                     request_id: Some("request-test".to_string()),
                     tool_call_id: Some("call_test".to_string()),
@@ -3801,7 +3801,7 @@ use den_runtime::prompt_memory_blocks::{
                 },
             )
             .unwrap();
-        assert!(matches!(delivery, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(delivery, ToolResultDelivery::Delivered { .. }));
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
@@ -3885,7 +3885,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let cancel_registry = den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
@@ -3956,7 +3956,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-error-session",
                 "call_error",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     turn_id: Some("turn-error".to_string()),
                     request_id: Some("request-error".to_string()),
                     tool_call_id: Some("call_error".to_string()),
@@ -3970,7 +3970,7 @@ use den_runtime::prompt_memory_blocks::{
                 },
             )
             .unwrap();
-        assert!(matches!(delivery, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(delivery, ToolResultDelivery::Delivered { .. }));
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {
@@ -4049,7 +4049,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4151,7 +4151,7 @@ use den_runtime::prompt_memory_blocks::{
                     "test-bear",
                     "acp-test-session",
                     "call_test",
-                    AcpToolResultRequest {
+                    ToolResultRequest {
                         turn_id: Some("turn-test".to_string()),
                         request_id: Some("request-test".to_string()),
                         tool_call_id: Some("call_test".to_string()),
@@ -4165,7 +4165,7 @@ use den_runtime::prompt_memory_blocks::{
                     },
                 )
                 .unwrap();
-            assert!(matches!(delivery, AcpToolResultDelivery::Delivered { .. }));
+            assert!(matches!(delivery, ToolResultDelivery::Delivered { .. }));
         }
 
         let mut output = pre_result_output;
@@ -4196,7 +4196,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4284,7 +4284,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4416,7 +4416,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4479,7 +4479,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-conflict-failed-terminal",
                 "call_conflict",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_conflict".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     approval_request_id: None,
@@ -4558,7 +4558,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4620,7 +4620,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-test-session",
                 "call_session_info",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_session_info".to_string()),
                     tool_name: Some("session_info".to_string()),
                     status: "ok".to_string(),
@@ -4628,7 +4628,7 @@ use den_runtime::prompt_memory_blocks::{
                 },
             )
             .unwrap();
-        assert!(matches!(missing, AcpToolResultDelivery::TurnMissing { .. }));
+        assert!(matches!(missing, ToolResultDelivery::TurnMissing { .. }));
         drop(stream);
     }
 
@@ -4642,7 +4642,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4796,7 +4796,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -4908,7 +4908,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-timeout-session",
                 "call_timeout",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_timeout".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     status: "ok".to_string(),
@@ -4919,8 +4919,8 @@ use den_runtime::prompt_memory_blocks::{
             .unwrap();
         assert!(matches!(
             late,
-            AcpToolResultDelivery::RecentlySettled { .. }
-                | AcpToolResultDelivery::TurnMissing { .. }
+            ToolResultDelivery::RecentlySettled { .. }
+                | ToolResultDelivery::TurnMissing { .. }
         ));
     }
 
@@ -4935,7 +4935,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -5058,11 +5058,11 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn acp_tool_result_endpoint_treats_replayed_identical_result_as_idempotent() {
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         registry
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
@@ -5076,7 +5076,7 @@ use den_runtime::prompt_memory_blocks::{
             })
             .expect("register tool turn");
 
-        let body = AcpToolResultRequest {
+        let body = ToolResultRequest {
             tool_call_id: Some("call_idempotent".to_string()),
             tool_name: Some("fs_read_text_file".to_string()),
             status: "ok".to_string(),
@@ -5095,7 +5095,7 @@ use den_runtime::prompt_memory_blocks::{
                 body.clone(),
             )
             .expect("first delivery");
-        assert!(matches!(first, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(first, ToolResultDelivery::Delivered { .. }));
 
         let delivered = result_rx.blocking_recv().expect("receiver gets delivered body");
         assert_eq!(delivered.content.as_deref(), Some("same body"));
@@ -5129,11 +5129,11 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn acp_tool_result_endpoint_marks_changed_replay_as_conflict() {
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
         registry
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
@@ -5147,7 +5147,7 @@ use den_runtime::prompt_memory_blocks::{
             })
             .expect("register tool turn");
 
-        let first = AcpToolResultRequest {
+        let first = ToolResultRequest {
             tool_call_id: Some("call_conflict".to_string()),
             tool_name: Some("fs_read_text_file".to_string()),
             status: "ok".to_string(),
@@ -5156,7 +5156,7 @@ use den_runtime::prompt_memory_blocks::{
             diagnostic: serde_json::json!({"phase":"first"}),
             ..Default::default()
         };
-        let changed = AcpToolResultRequest {
+        let changed = ToolResultRequest {
             content: Some("changed body".to_string()),
             structured_content: serde_json::json!({"k":"v2"}),
             diagnostic: serde_json::json!({"phase":"second"}),
@@ -5172,7 +5172,7 @@ use den_runtime::prompt_memory_blocks::{
                 first,
             )
             .expect("first delivery");
-        assert!(matches!(first_delivery, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(first_delivery, ToolResultDelivery::Delivered { .. }));
 
         let replay = registry
             .deliver_result(
@@ -5207,7 +5207,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -5289,7 +5289,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-cancel-session",
                 "call_cancel",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_cancel".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     status: "ok".to_string(),
@@ -5298,7 +5298,7 @@ use den_runtime::prompt_memory_blocks::{
                 },
             )
             .unwrap();
-        assert!(matches!(late, AcpToolResultDelivery::TurnMissing { .. }));
+        assert!(matches!(late, ToolResultDelivery::TurnMissing { .. }));
         assert!(stream.next().await.is_none());
     }
 
@@ -5337,7 +5337,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -5415,7 +5415,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-requires-approval-active-tool",
                 "call_active",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_active".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     status: "ok".to_string(),
@@ -5426,9 +5426,9 @@ use den_runtime::prompt_memory_blocks::{
             .unwrap();
         assert!(matches!(
             late,
-            AcpToolResultDelivery::RecentlySettled { .. }
-                | AcpToolResultDelivery::TurnMissing { .. }
-                | AcpToolResultDelivery::Delivered { .. }
+            ToolResultDelivery::RecentlySettled { .. }
+                | ToolResultDelivery::TurnMissing { .. }
+                | ToolResultDelivery::Delivered { .. }
         ));
     }
 
@@ -5467,7 +5467,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -5589,7 +5589,7 @@ use den_runtime::prompt_memory_blocks::{
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = AcpToolTurnCoordinator::new();
+        let registry = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let role_runtime = RoleRuntime::new(registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
@@ -5652,7 +5652,7 @@ use den_runtime::prompt_memory_blocks::{
                 "test-bear",
                 "acp-continuation-conflict",
                 "call_conflict",
-                AcpToolResultRequest {
+                ToolResultRequest {
                     tool_call_id: Some("call_conflict".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
                     approval_request_id: None,
@@ -5823,7 +5823,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let request_id = Uuid::new_v4();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let role_runtime = RoleRuntime::new(tool_turns.clone());
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
@@ -5867,7 +5867,7 @@ use den_runtime::prompt_memory_blocks::{
             pool: sqlx::postgres::PgPoolOptions::new()
                 .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
                 .unwrap(),
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: ToolTurnCoordinator::new(),
             user_id: 1,
             user_profile: None,
             bear_id: Uuid::new_v4(),
@@ -5884,7 +5884,7 @@ use den_runtime::prompt_memory_blocks::{
             request_id: Uuid::new_v4(),
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(den_core::config::Config::test_stub()),
-            role_runtime: RoleRuntime::new(AcpToolTurnCoordinator::new()),
+            role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(
                 Uuid::new_v4(),
                 "acp-session-resolved-helper",

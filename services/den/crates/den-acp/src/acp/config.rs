@@ -8,7 +8,7 @@ use crate::{
     core::web_policy,
 };
 use den_runtime::{
-    acp_tool_turns::AcpToolResultRequest,
+    tool_turns::ToolResultRequest,
     acp_tools::acp_tool_policy_json_for_provider,
 };
 
@@ -73,7 +73,7 @@ pub(in crate::acp) fn pending_web_fetch_approvals() -> PendingWebFetchMap {
 pub(in crate::acp) struct PendingWebFetchApproval {
     pub(in crate::acp) user_id: i32,
     pub(in crate::acp) bear_id: Uuid,
-    pub(in crate::acp) result_tx: oneshot::Sender<AcpToolResultRequest>,
+    pub(in crate::acp) result_tx: oneshot::Sender<ToolResultRequest>,
     pub(in crate::acp) context: AcpStreamContext,
     pub(in crate::acp) provider_name: String,
     pub(in crate::acp) tool_call_id: String,

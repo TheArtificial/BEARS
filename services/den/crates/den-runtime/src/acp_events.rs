@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::{
-    acp_tool_turns::AcpToolResultRequest,
+    tool_turns::ToolResultRequest,
     acp_tools::{
         acp_diag_phase, acp_tool_display_for_provider, acp_tool_policy_json_for_provider,
         supported_provider_tool_names, AcpToolName,
@@ -54,8 +54,8 @@ pub enum AcpGatewayEvent {
         args: serde_json::Value,
         approval_required: bool,
         approval_reason: Option<String>,
-        result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
-        result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+        result_tx: Option<oneshot::Sender<ToolResultRequest>>,
+        result_rx: Option<oneshot::Receiver<ToolResultRequest>>,
     },
     PermissionRequest {
         request_id: String,

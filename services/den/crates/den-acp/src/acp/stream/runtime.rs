@@ -21,7 +21,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
-    acp_tool_turns::{AcpToolResultRequest, AcpToolTurnRegistration},
+    tool_turns::{ToolResultRequest, ToolTurnRegistration},
     bears::{db as bears_db, BearProfile},
     conversation_events::{
             canonical_persistence_context, spawn_persist_canonical_conversation_record,
@@ -289,7 +289,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unsupported ACP/Den tool")
                         .to_string();
-                    let result = AcpToolResultRequest {
+                    let result = ToolResultRequest {
                         turn_id: None,
                         request_id: Some(context.request_id.to_string()),
                         tool_call_id: Some(tool_call_id.clone()),
@@ -357,7 +357,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
                             "ACP adapter-local tool request missing result channel".to_string(),
                         )
                     })?;
-                    context.tool_turns.register(AcpToolTurnRegistration {
+                    context.tool_turns.register(ToolTurnRegistration {
                         user_id: context.user_id,
                         bear_id: context.bear_id,
                         bear_slug: context.bear_slug.clone(),
@@ -456,7 +456,7 @@ pub(in crate::acp) async fn route_web_fetch_tool_request(
     if decision.is_approved() && web_policy::is_local_web_url(&normalized) {
         *tool_name = "local_web_fetch".to_string();
         args["url"] = serde_json::json!(normalized.url);
-        context.tool_turns.register(AcpToolTurnRegistration {
+        context.tool_turns.register(ToolTurnRegistration {
             user_id: context.user_id,
             bear_id: context.bear_id,
             bear_slug: context.bear_slug.clone(),
@@ -581,7 +581,7 @@ struct WebFetchToolArgs {
 }
 
 pub(in crate::acp) fn settle_den_tool_error(
-    result_tx: oneshot::Sender<AcpToolResultRequest>,
+    result_tx: oneshot::Sender<ToolResultRequest>,
     context: &AcpStreamContext,
     tool_call_id: &str,
     tool_name: &str,
@@ -590,7 +590,7 @@ pub(in crate::acp) fn settle_den_tool_error(
     message: impl Into<String>,
 ) {
     let message = message.into();
-    let result = AcpToolResultRequest {
+    let result = ToolResultRequest {
         turn_id: None,
         request_id: Some(context.request_id.to_string()),
         tool_call_id: Some(tool_call_id.to_string()),
@@ -616,7 +616,7 @@ pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
     tool_name: &str,
     tool_call_id: &str,
     args: serde_json::Value,
-) -> AcpToolResultRequest {
+) -> ToolResultRequest {
     match tool_name {
         "bear_environment" => {
             let tool_context = DenToolInvocationContext {
@@ -663,7 +663,7 @@ pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
                 },
             };
             match run_builtin_den_tool(context, DEN_BEAR_ENVIRONMENT, args, tool_context).await {
-                Ok(value) => AcpToolResultRequest {
+                Ok(value) => ToolResultRequest {
                     turn_id: None,
                     request_id: Some(context.request_id.to_string()),
                     tool_call_id: Some(tool_call_id.to_string()),
@@ -681,7 +681,7 @@ pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
                     }),
                     ..Default::default()
                 },
-                Err(err) => AcpToolResultRequest {
+                Err(err) => ToolResultRequest {
                     turn_id: None,
                     request_id: Some(context.request_id.to_string()),
                     tool_call_id: Some(tool_call_id.to_string()),
@@ -699,7 +699,7 @@ pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
                 },
             }
         }
-        _ => AcpToolResultRequest {
+        _ => ToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),
             tool_call_id: Some(tool_call_id.to_string()),
@@ -725,7 +725,7 @@ pub(in crate::acp) async fn invoke_acp_den_tool(
     tool_call_id: &str,
     approval_request_id: Option<&str>,
     args: serde_json::Value,
-) -> AcpToolResultRequest {
+) -> ToolResultRequest {
     if canonical_name == DEN_BEAR_ENVIRONMENT {
         return invoke_acp_runtime_local_tool(context, "bear_environment", tool_call_id, args)
             .await;
@@ -772,7 +772,7 @@ pub(in crate::acp) async fn invoke_acp_den_tool(
         },
     };
     match run_builtin_den_tool(context, canonical_name, args, tool_context).await {
-        Ok(value) => AcpToolResultRequest {
+        Ok(value) => ToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),
             tool_call_id: Some(tool_call_id.to_string()),
@@ -790,7 +790,7 @@ pub(in crate::acp) async fn invoke_acp_den_tool(
             }),
             ..Default::default()
         },
-        Err(err) => AcpToolResultRequest {
+        Err(err) => ToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),
             tool_call_id: Some(tool_call_id.to_string()),

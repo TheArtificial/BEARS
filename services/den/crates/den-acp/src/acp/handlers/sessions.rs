@@ -295,12 +295,12 @@ pub(super) async fn get_acp_session_runtime_inner(
         runtime_conversation_id(&row),
     );
     let role_runtime = RoleRuntime::with_turn_cancellations(
-        state.acp_tool_turns.clone(),
+        state.tool_turns.clone(),
         state.acp_turn_cancellations.clone(),
     );
-    let runtime = role_runtime.tool_turn_runtime_snapshot(session_id, &state.acp_tool_turns);
+    let runtime = role_runtime.tool_turn_runtime_snapshot(session_id, &state.tool_turns);
     let active_turn = state
-        .acp_tool_turns
+        .tool_turns
         .active_turn_for_session(session_id)
         .map(|turn| turn.diagnostic());
     let stream_turn = state
@@ -315,13 +315,13 @@ pub(super) async fn get_acp_session_runtime_inner(
             })
         });
     let pending = state
-        .acp_tool_turns
+        .tool_turns
         .pending_for_session(session_id)
         .into_iter()
         .map(|turn| turn.diagnostic())
         .collect::<Vec<_>>();
     let expired = state
-        .acp_tool_turns
+        .tool_turns
         .expired_pending_for_session(session_id)
         .into_iter()
         .map(|turn| turn.diagnostic())

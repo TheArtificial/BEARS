@@ -6,7 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::acp::AdapterContract;
-use den_runtime::acp_tool_turns::AcpToolResultRequest;
+use den_runtime::tool_turns::ToolResultRequest;
 
 pub(super) const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 pub(super) const BEARS_ACP_ADAPTER_CONTRACT_CURRENT: u32 = 1;
@@ -118,8 +118,8 @@ pub(super) fn acp_compatibility_error_response(
 pub(super) fn compatibility_tool_result_body(
     err: &AcpCompatibilityError,
     tool_call_id: &str,
-    mut original: AcpToolResultRequest,
-) -> AcpToolResultRequest {
+    mut original: ToolResultRequest,
+) -> ToolResultRequest {
     let (status, message, phase) = match err {
         AcpCompatibilityError::AdapterOutOfDate { .. } => (
             "error",

@@ -6,7 +6,7 @@ use crate::acp::{
     AcpToolResultResponse,
 };
 use den_runtime::{
-    acp_tool_turns::{AcpToolResultDelivery, AcpToolTurnCoordinator},
+    tool_turns::{ToolResultDelivery, ToolTurnCoordinator},
     acp_tools::AcpToolStatus,
 };
 
@@ -19,14 +19,14 @@ pub(super) fn default_unavailable_context_budget() -> serde_json::Value {
 }
 
 pub(super) fn acp_tool_result_response_from_delivery(
-    delivery: AcpToolResultDelivery,
+    delivery: ToolResultDelivery,
     session_id: &str,
     tool_call_id_param: String,
     parsed_status: AcpToolStatus,
-    tool_turns: &AcpToolTurnCoordinator,
+    tool_turns: &ToolTurnCoordinator,
 ) -> AcpToolResultResponse {
     match delivery {
-        AcpToolResultDelivery::Delivered { body, .. } => AcpToolResultResponse {
+        ToolResultDelivery::Delivered { body, .. } => AcpToolResultResponse {
             accepted: true,
             reason: "delivered".to_string(),
             settlement: None,
@@ -34,7 +34,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
             tool_call_id: tool_call_id_param,
             diagnostic: Some(delivered_tool_result_diagnostic(parsed_status)),
         },
-        AcpToolResultDelivery::TurnMissing {
+        ToolResultDelivery::TurnMissing {
             turn_id,
             tool_call_id,
         } => AcpToolResultResponse {
@@ -45,7 +45,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
             tool_call_id,
             diagnostic: Some(late_tool_result_ignored_diagnostic()),
         },
-        AcpToolResultDelivery::AlreadySettled {
+        ToolResultDelivery::AlreadySettled {
             turn_id,
             tool_call_id,
         } => AcpToolResultResponse {
@@ -58,7 +58,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
                 .recently_settled(session_id, &tool_call_id)
                 .map(|cached| cached.diagnostic()),
         },
-        AcpToolResultDelivery::RecentlySettled {
+        ToolResultDelivery::RecentlySettled {
             turn_id,
             tool_call_id,
             cached,

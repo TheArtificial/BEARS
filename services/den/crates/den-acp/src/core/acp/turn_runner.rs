@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::service::ApiState;
 use den_http::errors::DenError;
 use den_runtime::{
-    acp_tool_turns::AcpToolTurnCoordinator,
+    tool_turns::ToolTurnCoordinator,
     runtime_contracts::{RuntimeEventStream, RuntimeStreamContinuation},
 };
 
@@ -22,7 +22,7 @@ pub use den_runtime::turn_runner::{
 
 pub struct AcpStaleRuntimeCleanupParams {
     pub state: ApiState,
-    pub tool_turns: AcpToolTurnCoordinator,
+    pub tool_turns: ToolTurnCoordinator,
     pub acp_session_id: String,
     pub bear_id: Uuid,
     pub pair_agent_id: String,

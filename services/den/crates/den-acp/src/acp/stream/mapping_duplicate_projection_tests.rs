@@ -1,7 +1,7 @@
 use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
 use crate::acp::stream::support::AcpStreamDiagnostics;
 use crate::acp::AcpStreamContext;
-use den_runtime::acp_tool_turns::AcpToolTurnCoordinator;
+use den_runtime::tool_turns::ToolTurnCoordinator;
 use den_runtime::acp_events::AcpGatewayEvent;
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
 use den_runtime::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
@@ -13,7 +13,7 @@ fn test_mapping_context() -> AcpStreamContext {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
         .unwrap();
-    let registry = AcpToolTurnCoordinator::new();
+    let registry = ToolTurnCoordinator::new();
     let request_id = Uuid::new_v4();
     let role_runtime = RoleRuntime::new(registry.clone());
     let turn_scope = RoleTurnScope::acp_pair(

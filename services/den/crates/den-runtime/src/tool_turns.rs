@@ -17,7 +17,7 @@ use den_core::DenError;
 const ACTIVE_TURN_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct AcpToolResultRequest {
+pub struct ToolResultRequest {
     pub turn_id: Option<String>,
     pub request_id: Option<String>,
     pub tool_call_id: Option<String>,
@@ -38,7 +38,7 @@ const SETTLED_RESULT_TTL: Duration = Duration::from_secs(5 * 60);
 const SETTLED_RESULT_MAX_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone)]
-pub struct AcpPendingToolTurn {
+pub struct PendingToolTurn {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
@@ -52,7 +52,7 @@ pub struct AcpPendingToolTurn {
     pub deadline_at: Instant,
 }
 
-impl AcpPendingToolTurn {
+impl PendingToolTurn {
     pub fn diagnostic(&self) -> serde_json::Value {
         serde_json::json!({
             "request_id": self.request_id,
@@ -71,7 +71,7 @@ impl AcpPendingToolTurn {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct AcpToolTurnCleanupSummary {
+pub struct ToolTurnCleanupSummary {
     pub pending_removed: usize,
     pub settled_removed: usize,
 }
@@ -89,7 +89,7 @@ pub struct PreparedRuntimeContinuation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcpToolSettlementSummary {
+pub struct ToolSettlementSummary {
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
     pub display_tool_name: String,
@@ -99,7 +99,7 @@ pub struct AcpToolSettlementSummary {
     pub timed_out: bool,
 }
 
-impl AcpToolTurnCleanupSummary {
+impl ToolTurnCleanupSummary {
     pub fn to_json(self) -> serde_json::Value {
         serde_json::json!({
             "pending_removed": self.pending_removed,
@@ -109,7 +109,7 @@ impl AcpToolTurnCleanupSummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpSettledToolResult {
+pub struct SettledToolResult {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
@@ -124,8 +124,8 @@ pub struct AcpSettledToolResult {
     pub settled_at: Instant,
 }
 
-impl AcpSettledToolResult {
-    fn from_turn(turn: &AcpToolTurn, body: &AcpToolResultRequest) -> Self {
+impl SettledToolResult {
+    fn from_turn(turn: &AcpToolTurn, body: &ToolResultRequest) -> Self {
         Self {
             user_id: turn.user_id,
             bear_id: turn.bear_id,
@@ -173,11 +173,11 @@ struct AcpToolTurn {
     settled: bool,
     registered_at: Instant,
     deadline_at: Instant,
-    result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
+    result_tx: Option<oneshot::Sender<ToolResultRequest>>,
 }
 
 #[derive(Debug)]
-pub struct AcpToolTurnRegistration {
+pub struct ToolTurnRegistration {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
@@ -187,13 +187,13 @@ pub struct AcpToolTurnRegistration {
     pub tool_name: String,
     pub approval_request_id: Option<String>,
     pub timeout_ms: u64,
-    pub result_tx: oneshot::Sender<AcpToolResultRequest>,
+    pub result_tx: oneshot::Sender<ToolResultRequest>,
 }
 
 #[derive(Debug)]
-pub enum AcpToolResultDelivery {
+pub enum ToolResultDelivery {
     Delivered {
-        body: AcpToolResultRequest,
+        body: ToolResultRequest,
         request_id: Uuid,
         bear_id: Uuid,
         tool_name: String,
@@ -209,12 +209,12 @@ pub enum AcpToolResultDelivery {
     RecentlySettled {
         turn_id: Option<String>,
         tool_call_id: String,
-        cached: AcpSettledToolResult,
+        cached: SettledToolResult,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpActiveTurn {
+pub struct ActiveTurn {
     pub acp_session_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
@@ -222,7 +222,7 @@ pub struct AcpActiveTurn {
     pub deadline_at: Instant,
 }
 
-impl AcpActiveTurn {
+impl ActiveTurn {
     pub fn diagnostic(&self) -> serde_json::Value {
         serde_json::json!({
             "session_id": self.acp_session_id,
@@ -237,22 +237,22 @@ impl AcpActiveTurn {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpToolTurnCoordinator {
+pub struct ToolTurnCoordinator {
     turns: Arc<Mutex<HashMap<String, AcpToolTurn>>>,
-    settled_results: Arc<Mutex<HashMap<String, AcpSettledToolResult>>>,
-    active_turns: Arc<Mutex<HashMap<String, AcpActiveTurn>>>,
-    orphaned_result_txs: Arc<Mutex<HashMap<String, oneshot::Sender<AcpToolResultRequest>>>>,
+    settled_results: Arc<Mutex<HashMap<String, SettledToolResult>>>,
+    active_turns: Arc<Mutex<HashMap<String, ActiveTurn>>>,
+    orphaned_result_txs: Arc<Mutex<HashMap<String, oneshot::Sender<ToolResultRequest>>>>,
 }
 
 #[derive(Debug)]
-pub struct AcpActiveTurnGuard {
-    coordinator: AcpToolTurnCoordinator,
+pub struct ActiveTurnGuard {
+    coordinator: ToolTurnCoordinator,
     session_id: String,
     request_id: Uuid,
     released: bool,
 }
 
-impl AcpActiveTurnGuard {
+impl ActiveTurnGuard {
     pub fn release(mut self) {
         if !self.released {
             self.coordinator
@@ -262,7 +262,7 @@ impl AcpActiveTurnGuard {
     }
 }
 
-impl Drop for AcpActiveTurnGuard {
+impl Drop for ActiveTurnGuard {
     fn drop(&mut self) {
         if !self.released {
             self.coordinator
@@ -272,13 +272,13 @@ impl Drop for AcpActiveTurnGuard {
     }
 }
 
-impl Default for AcpToolTurnCoordinator {
+impl Default for ToolTurnCoordinator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AcpToolTurnCoordinator {
+impl ToolTurnCoordinator {
     pub fn new() -> Self {
         Self {
             turns: Arc::new(Mutex::new(HashMap::new())),
@@ -293,7 +293,7 @@ impl AcpToolTurnCoordinator {
         session_id: &str,
         request_id: Uuid,
         conversation_id: Option<String>,
-    ) -> Result<AcpActiveTurnGuard, DenError> {
+    ) -> Result<ActiveTurnGuard, DenError> {
         let mut active_turns = self.active_turns.lock().map_err(|_| {
             DenError::System("ACP active turn registry lock poisoned".to_string())
         })?;
@@ -305,7 +305,7 @@ impl AcpToolTurnCoordinator {
                 existing.diagnostic()
             )));
         }
-        let turn = AcpActiveTurn {
+        let turn = ActiveTurn {
             acp_session_id: session_id.to_string(),
             request_id,
             conversation_id,
@@ -313,7 +313,7 @@ impl AcpToolTurnCoordinator {
             deadline_at: now + ACTIVE_TURN_TTL,
         };
         active_turns.insert(session_id.to_string(), turn);
-        Ok(AcpActiveTurnGuard {
+        Ok(ActiveTurnGuard {
             coordinator: self.clone(),
             session_id: session_id.to_string(),
             request_id,
@@ -321,7 +321,7 @@ impl AcpToolTurnCoordinator {
         })
     }
 
-    pub fn cancel_active_turn(&self, session_id: &str) -> Option<AcpActiveTurn> {
+    pub fn cancel_active_turn(&self, session_id: &str) -> Option<ActiveTurn> {
         self.active_turns.lock().ok()?.remove(session_id)
     }
 
@@ -336,7 +336,7 @@ impl AcpToolTurnCoordinator {
         }
     }
 
-    pub fn active_turn_for_session(&self, session_id: &str) -> Option<AcpActiveTurn> {
+    pub fn active_turn_for_session(&self, session_id: &str) -> Option<ActiveTurn> {
         let mut active_turns = self.active_turns.lock().ok()?;
         let now = Instant::now();
         active_turns.retain(|_, turn| turn.deadline_at > now);
@@ -347,7 +347,7 @@ impl AcpToolTurnCoordinator {
         format!("{session_id}\n{tool_call_id}")
     }
 
-    pub fn register(&self, registration: AcpToolTurnRegistration) -> Result<(), DenError> {
+    pub fn register(&self, registration: ToolTurnRegistration) -> Result<(), DenError> {
         let key = Self::key(&registration.acp_session_id, &registration.tool_call_id);
         let mut turns = self
             .turns
@@ -390,8 +390,8 @@ impl AcpToolTurnCoordinator {
         bear_slug: &str,
         session_id: &str,
         tool_call_id: &str,
-        mut body: AcpToolResultRequest,
-    ) -> Result<AcpToolResultDelivery, DenError> {
+        mut body: ToolResultRequest,
+    ) -> Result<ToolResultDelivery, DenError> {
         let key = Self::key(session_id, tool_call_id);
         let mut turns = self
             .turns
@@ -416,13 +416,13 @@ impl AcpToolTurnCoordinator {
                         "tool result does not match the authenticated ACP session".to_string(),
                     ));
                 }
-                return Ok(AcpToolResultDelivery::RecentlySettled {
+                return Ok(ToolResultDelivery::RecentlySettled {
                     turn_id: body.turn_id,
                     tool_call_id: tool_call_id.to_string(),
                     cached,
                 });
             }
-            return Ok(AcpToolResultDelivery::TurnMissing {
+            return Ok(ToolResultDelivery::TurnMissing {
                 turn_id: body.turn_id,
                 tool_call_id: tool_call_id.to_string(),
             });
@@ -465,7 +465,7 @@ impl AcpToolTurnCoordinator {
             }
         }
         if turn.settled {
-            return Ok(AcpToolResultDelivery::AlreadySettled {
+            return Ok(ToolResultDelivery::AlreadySettled {
                 turn_id: body.turn_id,
                 tool_call_id: tool_call_id.to_string(),
             });
@@ -490,13 +490,13 @@ impl AcpToolTurnCoordinator {
         let request_id = turn.request_id;
         let bear_id = turn.bear_id;
         let tool_name = turn.tool_name.clone();
-        let cached = AcpSettledToolResult::from_turn(turn, &body);
+        let cached = SettledToolResult::from_turn(turn, &body);
         if let Some(result_tx) = turn.result_tx.take() {
             let _ = result_tx.send(body.clone());
         }
         drop(turns);
         self.cache_settled_result(cached)?;
-        Ok(AcpToolResultDelivery::Delivered {
+        Ok(ToolResultDelivery::Delivered {
             body,
             request_id,
             bear_id,
@@ -504,7 +504,7 @@ impl AcpToolTurnCoordinator {
         })
     }
 
-    pub fn pending_for_session(&self, session_id: &str) -> Vec<AcpPendingToolTurn> {
+    pub fn pending_for_session(&self, session_id: &str) -> Vec<PendingToolTurn> {
         let Ok(turns) = self.turns.lock() else {
             return Vec::new();
         };
@@ -512,7 +512,7 @@ impl AcpToolTurnCoordinator {
         turns
             .iter()
             .filter(|(key, turn)| key.starts_with(&prefix) && !turn.settled)
-            .map(|(_, turn)| AcpPendingToolTurn {
+            .map(|(_, turn)| PendingToolTurn {
                 user_id: turn.user_id,
                 bear_id: turn.bear_id,
                 bear_slug: turn.bear_slug.clone(),
@@ -528,7 +528,7 @@ impl AcpToolTurnCoordinator {
             .collect()
     }
 
-    pub fn expired_pending_for_session(&self, session_id: &str) -> Vec<AcpPendingToolTurn> {
+    pub fn expired_pending_for_session(&self, session_id: &str) -> Vec<PendingToolTurn> {
         let now = Instant::now();
         self.pending_for_session(session_id)
             .into_iter()
@@ -541,7 +541,7 @@ impl AcpToolTurnCoordinator {
         session_id: &str,
         tool_call_id: &str,
         reason: impl Into<String>,
-    ) -> Option<AcpToolResultRequest> {
+    ) -> Option<ToolResultRequest> {
         let mut turns = self.turns.lock().ok()?;
         let turn = turns.get_mut(&Self::key(session_id, tool_call_id))?;
         if turn.settled {
@@ -549,7 +549,7 @@ impl AcpToolTurnCoordinator {
         }
         turn.settled = true;
         let reason = reason.into();
-        let body = AcpToolResultRequest {
+        let body = ToolResultRequest {
             turn_id: None,
             request_id: Some(turn.request_id.to_string()),
             tool_call_id: Some(turn.tool_call_id.clone()),
@@ -567,7 +567,7 @@ impl AcpToolTurnCoordinator {
             }),
             ..Default::default()
         };
-        let cached = AcpSettledToolResult::from_turn(turn, &body);
+        let cached = SettledToolResult::from_turn(turn, &body);
         if let Some(result_tx) = turn.result_tx.take() {
             let _ = result_tx.send(body.clone());
         }
@@ -596,10 +596,10 @@ impl AcpToolTurnCoordinator {
     pub fn cleanup_expired_tool_turns_for_session(
         &self,
         session_id: &str,
-    ) -> AcpToolTurnCleanupSummary {
+    ) -> ToolTurnCleanupSummary {
         let prefix = format!("{session_id}\n");
         let now = Instant::now();
-        let mut summary = AcpToolTurnCleanupSummary::default();
+        let mut summary = ToolTurnCleanupSummary::default();
         if let Ok(mut turns) = self.turns.lock() {
             turns.retain(|key, turn| {
                 let remove = key.starts_with(&prefix) && !turn.settled && turn.deadline_at <= now;
@@ -616,9 +616,9 @@ impl AcpToolTurnCoordinator {
         &self,
         session_id: &str,
         request_id: Uuid,
-    ) -> AcpToolTurnCleanupSummary {
+    ) -> ToolTurnCleanupSummary {
         let prefix = format!("{session_id}\n");
-        let mut summary = AcpToolTurnCleanupSummary::default();
+        let mut summary = ToolTurnCleanupSummary::default();
         if let Ok(mut turns) = self.turns.lock() {
             turns.retain(|key, turn| {
                 let remove = key.starts_with(&prefix) && turn.request_id == request_id;
@@ -655,7 +655,7 @@ impl AcpToolTurnCoordinator {
     }
 
     pub fn prepare_runtime_continuation(
-        result: &AcpToolResultRequest,
+        result: &ToolResultRequest,
     ) -> Result<PreparedRuntimeContinuation, PrepareRuntimeContinuationError> {
         let display_tool_name = result
             .tool_name
@@ -700,8 +700,8 @@ impl AcpToolTurnCoordinator {
     pub fn settle_after_result(
         &self,
         session_id: &str,
-        result: &AcpToolResultRequest,
-    ) -> AcpToolSettlementSummary {
+        result: &ToolResultRequest,
+    ) -> ToolSettlementSummary {
         let removed_pending_turn = result
             .tool_call_id
             .as_deref()
@@ -713,7 +713,7 @@ impl AcpToolTurnCoordinator {
                 }
             })
             .unwrap_or(false);
-        AcpToolSettlementSummary {
+        ToolSettlementSummary {
             tool_call_id: result.tool_call_id.clone(),
             tool_name: result.tool_name.clone(),
             display_tool_name: result
@@ -742,7 +742,7 @@ impl AcpToolTurnCoordinator {
         }
     }
 
-    fn cache_settled_result(&self, result: AcpSettledToolResult) -> Result<(), DenError> {
+    fn cache_settled_result(&self, result: SettledToolResult) -> Result<(), DenError> {
         let mut settled = self.settled_results.lock().map_err(|_| {
             DenError::System("ACP settled tool result cache lock poisoned".to_string())
         })?;
@@ -759,14 +759,14 @@ impl AcpToolTurnCoordinator {
         &self,
         session_id: &str,
         tool_call_id: &str,
-    ) -> Option<AcpSettledToolResult> {
+    ) -> Option<SettledToolResult> {
         let mut settled = self.settled_results.lock().ok()?;
         prune_settled_results(&mut settled);
         settled.get(&Self::key(session_id, tool_call_id)).cloned()
     }
 }
 
-fn prune_settled_results(settled: &mut HashMap<String, AcpSettledToolResult>) {
+fn prune_settled_results(settled: &mut HashMap<String, SettledToolResult>) {
     settled.retain(|_, result| result.settled_at.elapsed() <= SETTLED_RESULT_TTL);
     if settled.len() <= SETTLED_RESULT_MAX_ENTRIES {
         return;
@@ -786,8 +786,8 @@ fn prune_settled_results(settled: &mut HashMap<String, AcpSettledToolResult>) {
 mod tests {
     use super::*;
 
-    fn result_body(tool_call_id: Option<&str>) -> AcpToolResultRequest {
-        AcpToolResultRequest {
+    fn result_body(tool_call_id: Option<&str>) -> ToolResultRequest {
+        ToolResultRequest {
             turn_id: Some("turn-1".to_string()),
             request_id: Some("request-1".to_string()),
             tool_call_id: tool_call_id.map(str::to_string),
@@ -803,10 +803,10 @@ mod tests {
 
     #[test]
     fn fills_missing_result_ids_from_registered_turn() {
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let (tx, mut rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -822,7 +822,7 @@ mod tests {
         let delivery = coordinator
             .deliver_result(7, "meta", "session-1", "call-1", result_body(None))
             .unwrap();
-        assert!(matches!(delivery, AcpToolResultDelivery::Delivered { .. }));
+        assert!(matches!(delivery, ToolResultDelivery::Delivered { .. }));
         let delivered = rx.try_recv().unwrap();
         assert_eq!(delivered.tool_call_id.as_deref(), Some("call-1"));
         assert_eq!(delivered.approval_request_id.as_deref(), Some("approval-1"));
@@ -834,11 +834,11 @@ mod tests {
         // `pending_for_session`. Adapter-local tool requests must register here (they
         // previously did not), or the stream races to terminal and the result is rejected
         // as `late_result_ignored`.
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (tx, _rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -861,10 +861,10 @@ mod tests {
     fn approval_request_id_mismatch_is_rejected() {
         // The registered obligation's approval id must match what the client echoes back.
         // A regenerated/dropped approval id surfaced here as a 400 (ValidationError).
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let (tx, _rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -890,11 +890,11 @@ mod tests {
 
     #[test]
     fn duplicate_after_removal_reports_recently_settled() {
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let (tx, _rx) = oneshot::channel();
         let request_id = Uuid::new_v4();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -917,7 +917,7 @@ mod tests {
                     result_body(Some("call-1"))
                 )
                 .unwrap(),
-            AcpToolResultDelivery::Delivered { .. }
+            ToolResultDelivery::Delivered { .. }
         ));
         coordinator.remove("session-1", "call-1");
         match coordinator
@@ -930,7 +930,7 @@ mod tests {
             )
             .unwrap()
         {
-            AcpToolResultDelivery::RecentlySettled { cached, .. } => {
+            ToolResultDelivery::RecentlySettled { cached, .. } => {
                 assert_eq!(cached.request_id, request_id);
                 assert_eq!(cached.tool_name, "fs_read_text_file");
                 assert_eq!(cached.status, "ok");
@@ -942,10 +942,10 @@ mod tests {
 
     #[test]
     fn duplicate_result_reports_already_settled() {
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let (tx, _rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -968,7 +968,7 @@ mod tests {
                     result_body(Some("call-1"))
                 )
                 .unwrap(),
-            AcpToolResultDelivery::Delivered { .. }
+            ToolResultDelivery::Delivered { .. }
         ));
         assert!(matches!(
             coordinator
@@ -980,13 +980,13 @@ mod tests {
                     result_body(Some("call-1"))
                 )
                 .unwrap(),
-            AcpToolResultDelivery::AlreadySettled { .. }
+            ToolResultDelivery::AlreadySettled { .. }
         ));
     }
 
     #[test]
     fn request_scoped_cleanup_preserves_other_request_and_active_turn() {
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let session_id = "session-1";
         let stale_request_id = Uuid::new_v4();
         let active_request_id = Uuid::new_v4();
@@ -996,7 +996,7 @@ mod tests {
         let (stale_tx, _stale_rx) = oneshot::channel();
         let (active_tx, _active_rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -1010,7 +1010,7 @@ mod tests {
             })
             .unwrap();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -1045,7 +1045,7 @@ mod tests {
                     "meta",
                     session_id,
                     "call-active",
-                    AcpToolResultRequest {
+                    ToolResultRequest {
                         tool_call_id: Some("call-active".to_string()),
                         tool_name: Some("fs_edit_file".to_string()),
                         approval_request_id: Some("approval-active".to_string()),
@@ -1057,13 +1057,13 @@ mod tests {
                     }
                 )
                 .unwrap(),
-            AcpToolResultDelivery::Delivered { .. }
+            ToolResultDelivery::Delivered { .. }
         ));
     }
 
     #[test]
     fn expired_cleanup_preserves_nonexpired_request_and_active_turn() {
-        let coordinator = AcpToolTurnCoordinator::new();
+        let coordinator = ToolTurnCoordinator::new();
         let session_id = "session-1";
         let expired_request_id = Uuid::new_v4();
         let active_request_id = Uuid::new_v4();
@@ -1073,7 +1073,7 @@ mod tests {
         let (expired_tx, _expired_rx) = oneshot::channel();
         let (active_tx, _active_rx) = oneshot::channel();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),
@@ -1087,7 +1087,7 @@ mod tests {
             })
             .unwrap();
         coordinator
-            .register(AcpToolTurnRegistration {
+            .register(ToolTurnRegistration {
                 user_id: 7,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "meta".to_string(),

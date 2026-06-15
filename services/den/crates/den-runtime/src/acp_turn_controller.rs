@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::acp_tool_turns::AcpToolTurnCoordinator;
+use crate::tool_turns::ToolTurnCoordinator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpTurnPhase {
@@ -210,7 +210,7 @@ impl AcpActiveTurnCancelRegistry {
     pub fn runtime_snapshot_for_session(
         &self,
         acp_session_id: &str,
-        tool_turns: &AcpToolTurnCoordinator,
+        tool_turns: &ToolTurnCoordinator,
     ) -> Value {
         let Some(active) = self.active_for_session(acp_session_id) else {
             return json!({
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn active_turn_runtime_snapshot_reports_idle_without_active_turn() {
         let registry = AcpActiveTurnCancelRegistry::new();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
 
         assert_eq!(snapshot["state"], "idle");
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn active_turn_runtime_snapshot_reports_running_without_pending_tools() {
         let registry = AcpActiveTurnCancelRegistry::new();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (_handle, _rx) =
             registry.register("acp-session", request_id, Some("conv-test".to_string()));
@@ -851,12 +851,12 @@ mod tests {
     #[test]
     fn active_turn_runtime_snapshot_reports_requires_action_with_pending_tool() {
         let registry = AcpActiveTurnCancelRegistry::new();
-        let tool_turns = AcpToolTurnCoordinator::new();
+        let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (_handle, _rx) = registry.register("acp-session", request_id, None);
         let (tx, _rx) = tokio::sync::oneshot::channel();
         tool_turns
-            .register(crate::acp_tool_turns::AcpToolTurnRegistration {
+            .register(crate::tool_turns::ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),

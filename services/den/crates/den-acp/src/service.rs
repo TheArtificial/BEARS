@@ -28,7 +28,7 @@ pub struct ApiState {
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
     /// Process-local active ACP direct tool turns.
-    pub(crate) acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator,
+    pub(crate) tool_turns: den_runtime::tool_turns::ToolTurnCoordinator,
     /// Process-local active ACP stream cancellation signals.
     pub(crate) acp_turn_cancellations:
         den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry,
@@ -50,7 +50,7 @@ impl ApiState {
             sqlx_pool,
             config,
             bifrost,
-            acp_tool_turns: den_runtime::acp_tool_turns::AcpToolTurnCoordinator::new(),
+            tool_turns: den_runtime::tool_turns::ToolTurnCoordinator::new(),
             acp_turn_cancellations:
                 den_runtime::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
             memory_stores,
