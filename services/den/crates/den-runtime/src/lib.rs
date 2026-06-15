@@ -53,8 +53,8 @@ pub mod conversation;
 /// ACP session store (conversation↔session mapping over Postgres).
 pub mod acp_sessions;
 
-/// Runtime-side ACP turn contracts (start/continue request inputs + materialization).
-pub mod acp_turn_runner;
+/// Runtime-side turn contracts (start/continue request inputs + materialization).
+pub mod turn_runner;
 
 /// The native agent loop: assembly, step streaming, approvals, transcript projection.
 pub mod agent_loop;

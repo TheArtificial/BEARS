@@ -31,6 +31,10 @@ pub struct IndexRequest {
     pub kind: String,
     pub visibility: String,
     pub content_text: String,
+    /// Resolved **descriptive** entity ids linked to this record (ADR-0042 §7 `recall_effect =
+    /// boost`); denormalized into the passage payload so recall can filter/boost by entity. The
+    /// access-bearing gate is excluded. Empty when the record has no descriptive relations.
+    pub entity_ids: Vec<String>,
 }
 
 /// Whether a record is eligible for the recall index (ADR-0038 §4 default policy).
@@ -94,6 +98,9 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
         "logical_path": req.logical_path,
         "kind": req.kind,
         "visibility": req.visibility,
+        // Resolved descriptive entities for entity-scoped recall (filter/boost); derived data,
+        // canonical relations remain the source of truth (ADR-0042 Phase 4 recall leg).
+        "entity_ids": req.entity_ids,
     })
 }
 
@@ -149,6 +156,7 @@ mod tests {
             kind: "overview".into(),
             visibility: "normal".into(),
             content_text: "body".into(),
+            entity_ids: vec!["ent-1".into(), "ent-2".into()],
         };
         let chunk = Chunk {
             index: 0,
@@ -164,5 +172,6 @@ mod tests {
         assert_eq!(payload["work_surface_ref"], "x");
         assert_eq!(payload["kind"], "overview");
         assert_eq!(payload["text"], "body");
+        assert_eq!(payload["entity_ids"], serde_json::json!(["ent-1", "ent-2"]));
     }
 }

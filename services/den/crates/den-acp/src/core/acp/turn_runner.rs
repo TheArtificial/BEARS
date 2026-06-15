@@ -13,11 +13,11 @@ use den_runtime::{
     runtime_contracts::{RuntimeEventStream, RuntimeStreamContinuation},
 };
 
-pub use den_runtime::acp_turn_runner::{
-    default_acp_tool_continue_stream_context, looks_like_runtime_waiting_for_approval_error,
-    materialize_acp_runtime_conversation_if_needed, AcpRuntimeMaterializationResult,
-    AcpTurnContinueRequest, AcpTurnStartRequest, AcpTurnStreamContext,
-    ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+pub use den_runtime::turn_runner::{
+    default_tool_continue_stream_context, looks_like_runtime_waiting_for_approval_error,
+    materialize_runtime_conversation_if_needed, RuntimeMaterializationResult,
+    TurnContinueRequest, TurnStartRequest, TurnStreamContext,
+    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 };
 
 pub struct AcpStaleRuntimeCleanupParams {
@@ -33,13 +33,13 @@ pub struct AcpStaleRuntimeCleanupParams {
 }
 
 pub async fn start_acp_turn_event_stream_with_retries(
-    request: AcpTurnStartRequest<'_>,
+    request: TurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
     den_runtime::native_runtime::start_native_acp_turn_event_stream(request).await
 }
 
 pub async fn continue_acp_turn_with_runtime(
-    request: AcpTurnContinueRequest<'_>,
+    request: TurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     den_runtime::native_runtime::continue_native_acp_turn_event_stream(
         request,

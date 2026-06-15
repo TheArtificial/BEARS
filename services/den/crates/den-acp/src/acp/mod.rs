@@ -57,8 +57,8 @@ use crate::{
     core::{
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
-            default_acp_tool_continue_stream_context, AcpStaleRuntimeCleanupParams,
-            AcpTurnContinueRequest,
+            default_tool_continue_stream_context, AcpStaleRuntimeCleanupParams,
+            TurnContinueRequest,
         },
     },
 };

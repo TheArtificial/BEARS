@@ -59,7 +59,7 @@ use den_runtime::prompt_memory_blocks::{
                 AcpConversationResolution, AcpConversationSelectionSource,
             },
             acp_turn_runner::{
-                ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+                STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             },
         },
     };
@@ -2418,7 +2418,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
-        let reason = ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON;
+        let reason = STALE_APPROVAL_RECOVERY_DENIAL_REASON;
         assert!(!reason.contains("Denied by BEARS"));
         assert!(reason.contains("expired ACP approval request"));
         assert!(reason.contains("not a user or web policy block"));

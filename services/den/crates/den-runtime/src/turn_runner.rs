@@ -19,9 +19,9 @@ use crate::{
 };
 
 /// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
-pub const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
+pub const STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 
-pub struct AcpTurnStartRequest<'a> {
+pub struct TurnStartRequest<'a> {
     pub sqlx_pool: &'a PgPool,
     pub config: &'a Config,
     pub memory_stores: &'a MemoryStoreManager,
@@ -42,7 +42,7 @@ pub struct AcpTurnStartRequest<'a> {
     pub stream_tokens: bool,
 }
 
-pub struct AcpTurnContinueRequest<'a> {
+pub struct TurnContinueRequest<'a> {
     pub sqlx_pool: &'a PgPool,
     pub config: &'a Config,
     pub memory_stores: &'a MemoryStoreManager,
@@ -51,11 +51,11 @@ pub struct AcpTurnContinueRequest<'a> {
     pub conversation: RuntimeConversationRef,
     pub binding: &'a crate::runtime_contracts::RoleRuntimeBinding,
     pub continuation: RuntimeContinuation,
-    pub stream_context: AcpTurnStreamContext,
+    pub stream_context: TurnStreamContext,
 }
 
-pub fn default_acp_tool_continue_stream_context() -> AcpTurnStreamContext {
-    AcpTurnStreamContext {
+pub fn default_tool_continue_stream_context() -> TurnStreamContext {
+    TurnStreamContext {
         client_tools: None,
         stream_tokens: false,
         max_steps: 4,
@@ -63,7 +63,7 @@ pub fn default_acp_tool_continue_stream_context() -> AcpTurnStreamContext {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpTurnStreamContext {
+pub struct TurnStreamContext {
     pub client_tools: Option<serde_json::Value>,
     pub stream_tokens: bool,
     pub max_steps: u32,
@@ -73,7 +73,7 @@ pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
     crate::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
 }
 
-pub struct AcpRuntimeMaterializationResult {
+pub struct RuntimeMaterializationResult {
     pub conversation_id: String,
     pub created: bool,
 }
@@ -82,20 +82,20 @@ pub struct AcpRuntimeMaterializationResult {
 ///
 /// Prompt bootstrap usually resolves `upstream_target` to `den-conv-*` before the
 /// turn starts; this function then returns early without creating a second conversation.
-pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
+pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBackend>(
     runtime_conversations: &B,
-    request: &AcpTurnStartRequest<'_>,
-) -> Result<AcpRuntimeMaterializationResult, DenError> {
+    request: &TurnStartRequest<'_>,
+) -> Result<RuntimeMaterializationResult, DenError> {
     if request.upstream_target.starts_with("conv-")
         || is_native_runtime_conversation_id(request.upstream_target)
     {
-        return Ok(AcpRuntimeMaterializationResult {
+        return Ok(RuntimeMaterializationResult {
             conversation_id: request.upstream_target.to_string(),
             created: false,
         });
     }
     if !request.conversation_selection.starts_with("new-") {
-        return Ok(AcpRuntimeMaterializationResult {
+        return Ok(RuntimeMaterializationResult {
             conversation_id: request.upstream_target.to_string(),
             created: false,
         });
@@ -123,7 +123,7 @@ pub async fn materialize_acp_runtime_conversation_if_needed<B: RuntimeConversati
         },
     )
     .await?;
-    Ok(AcpRuntimeMaterializationResult {
+    Ok(RuntimeMaterializationResult {
         conversation_id: conv_id,
         created: true,
     })

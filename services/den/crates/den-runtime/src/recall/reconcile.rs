@@ -8,7 +8,7 @@ use sqlx::PgPool;
 
 use den_core::DenError;
 
-use crate::memory::store::BearMemoryStore;
+use crate::memory::store::{relations, BearMemoryStore};
 
 use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
@@ -65,6 +65,9 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
     .await
     .map_err(|e| DenError::System(format!("list indexable heads: {e}")))?;
 
+    // One bulk pass for resolved descriptive entities, denormalized into each passage payload.
+    let entity_ids_by_source = relations::descriptive_entity_ids_by_source(store).await?;
+
     Ok(rows
         .into_iter()
         .filter_map(
@@ -81,6 +84,10 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                 if !is_indexable(&scope_type, &kind, &visibility) {
                     return None;
                 }
+                let entity_ids = entity_ids_by_source
+                    .get(&memory_id)
+                    .cloned()
+                    .unwrap_or_default();
                 Some(IndexRequest {
                     bear_id,
                     memory_id,
@@ -91,6 +98,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                     kind,
                     visibility,
                     content_text,
+                    entity_ids,
                 })
             },
         )

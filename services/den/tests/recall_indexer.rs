@@ -12,7 +12,7 @@ use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
 use den_runtime::memory::tools::sqlite_memory_search;
 use den_runtime::recall::{
     recall_for_turn, reconcile::list_indexable_heads, render_recall_block, DeterministicEmbedder,
-    IndexRequest, QdrantRecall, RecallIndexer,
+    IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -70,6 +70,7 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
         kind: "summary".into(),
         visibility: "normal".into(),
         content_text: body.clone(),
+        entity_ids: Vec::new(),
     };
 
     let mem_filter = json!({ "must": [{ "key": "memory_id", "match": { "value": memory_id } }] });
@@ -167,6 +168,7 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
         kind: "summary".into(),
         visibility: "normal".into(),
         content_text: body.clone(),
+        entity_ids: Vec::new(),
     };
 
     let outcome = indexer.index_record(&req).await.expect("index_record");
@@ -197,6 +199,116 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
     if let Some(block) = render_recall_block(&projection, logical_path) {
         assert!(!block.contains(logical_path), "anchored path must be deduped");
     }
+
+    indexer
+        .remove_record(bear_id, &memory_id)
+        .await
+        .expect("remove_record cleanup");
+}
+
+/// Entity recall leg (ADR-0042 Phase 4): a record's resolved descriptive `entity_ids` are
+/// denormalized into the passage payload, so an entity-membership filter retrieves it and an
+/// unrelated entity filter excludes it. Uses the deterministic embedder + a manual entity filter
+/// (the `search_bear_memory_for_entities` config path needs a live embedding key). Gated on
+/// `DATABASE_URL` + `QDRANT_URL`.
+#[tokio::test]
+async fn entity_scoped_recall_filters_by_payload_entity_ids() {
+    dotenvy::dotenv().ok();
+    if !recall_env_ready() {
+        eprintln!("skipping: DATABASE_URL/QDRANT_URL not set");
+        return;
+    }
+
+    let config = Config::load();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&config.database_url)
+        .await
+        .expect("connect Postgres");
+    run_sqlx_migrations(&pool).await.expect("apply migrations");
+
+    let qdrant = QdrantRecall::from_config(&config).expect("QDRANT_URL set");
+    qdrant.ensure_collection().await.expect("ensure collection");
+
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM bears LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .expect("query bears");
+    let Some(bear_id) = bear_id else {
+        eprintln!("skipping: no seeded bear in DB");
+        return;
+    };
+
+    let embedder = DeterministicEmbedder::new(config.embedding_dimensions);
+    let indexer = RecallIndexer::new(&pool, &qdrant, &embedder, config.embedding_standard.clone());
+
+    let unique = Uuid::new_v4();
+    let entity_id = format!("ent-alpha-{unique}");
+    let body = format!("Entity-linked recall note {unique}: the cartographer charts the fjords.");
+    let memory_id = format!("smoke-recall-entity-{unique}");
+    let req = IndexRequest {
+        bear_id,
+        memory_id: memory_id.clone(),
+        logical_path: Some("core/recall/entity-smoke.md".into()),
+        scope_type: "shared".into(),
+        scope_profile: None,
+        work_surface_ref: None,
+        kind: "summary".into(),
+        visibility: "normal".into(),
+        content_text: body.clone(),
+        entity_ids: vec![entity_id.clone()],
+    };
+
+    let outcome = indexer.index_record(&req).await.expect("index_record");
+    assert_eq!(outcome.embedded_chunks, 1, "single-chunk body: {outcome:?}");
+
+    let query_vec = embedder
+        .embed(&[body.clone()])
+        .await
+        .expect("embed query")
+        .into_iter()
+        .next()
+        .expect("one vector");
+
+    // Matching entity filter retrieves the passage, and the payload carries entity_ids.
+    let match_filter = json!({ "must": [
+        { "key": "bear_id", "match": { "value": bear_id.to_string() } },
+        { "key": "entity_ids", "match": { "any": [entity_id] } },
+    ] });
+    let hits = qdrant
+        .search(&query_vec, match_filter, 5)
+        .await
+        .expect("entity-scoped search");
+    let hit = hits
+        .iter()
+        .find(|h| h.payload.get("memory_id").and_then(|v| v.as_str()) == Some(memory_id.as_str()))
+        .unwrap_or_else(|| panic!("entity-linked passage should be recalled: {hits:?}"));
+    let payload_entities = hit
+        .payload
+        .get("entity_ids")
+        .and_then(|v| v.as_array())
+        .expect("payload entity_ids array");
+    assert!(
+        payload_entities.iter().any(|e| e.as_str() == Some(entity_id.as_str())),
+        "payload entity_ids round-trips: {hit:?}"
+    );
+
+    // An unrelated entity filter excludes the passage.
+    let miss_filter = json!({ "must": [
+        { "key": "bear_id", "match": { "value": bear_id.to_string() } },
+        { "key": "entity_ids", "match": { "any": [format!("ent-nonexistent-{unique}")] } },
+    ] });
+    let miss = qdrant
+        .search(&query_vec, miss_filter, 5)
+        .await
+        .expect("entity miss search");
+    assert!(
+        !miss
+            .iter()
+            .any(|h| h.payload.get("memory_id").and_then(|v| v.as_str()) == Some(memory_id.as_str())),
+        "unrelated entity filter must exclude the passage: {miss:?}"
+    );
 
     indexer
         .remove_record(bear_id, &memory_id)

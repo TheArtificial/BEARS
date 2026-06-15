@@ -71,6 +71,17 @@ fn role_scope_filter(bear_id: Uuid, embedding_standard: &str, role: &str) -> Val
     json!({ "must": must })
 }
 
+/// Mandatory bear-scope conditions plus an **entity-membership** clause: passages whose
+/// denormalized `entity_ids` array contains *any* of `entity_ids` (ADR-0042 §7 descriptive
+/// relations; the access-bearing gate is never denormalized here). The empty-`entity_ids` case is
+/// handled by callers (no entities ⇒ no scope ⇒ skip). Bear-wide; a turn-time caller layers role
+/// scoping on top.
+fn entity_scope_filter(bear_id: Uuid, embedding_standard: &str, entity_ids: &[String]) -> Value {
+    let mut must = bear_scope_conditions(bear_id, embedding_standard);
+    must.push(json!({ "key": "entity_ids", "match": { "any": entity_ids } }));
+    json!({ "must": must })
+}
+
 /// Embed `query_text`, run a `filter`-scoped Qdrant search, and dedupe to the best-scoring chunk
 /// per memory id, returning up to `limit` passages ordered by similarity. Best-effort: errors
 /// surface as `Err` so the caller can log + degrade; an empty/blank query returns no passages.
@@ -234,6 +245,41 @@ pub async fn search_bear_memory_for_role(
         return Ok(disabled_projection("embeddings_unset"));
     }
     let filter = role_scope_filter(bear_id, &config.embedding_standard, role);
+    search_passages(
+        &qdrant,
+        &embedder,
+        filter,
+        &config.embedding_standard,
+        query_text,
+        limit,
+    )
+    .await
+}
+
+/// **Entity-scoped** semantic search (ADR-0042 Phase 4 recall leg): rank the Bear's passages that
+/// are linked by a descriptive relation to any of `entity_ids`, by relevance to `query_text`.
+/// This is the query-side consumer of the denormalized passage `entity_ids` and the seed leg for
+/// future bounded-graph expansion + entity-centric admin recall. Bear-wide (the human admin sees
+/// all). Builds live Qdrant + Bifrost embedding clients from config; returns a `disabled`/`skipped`
+/// projection (never an error) when recall isn't configured or no entities are supplied.
+pub async fn search_bear_memory_for_entities(
+    config: &Config,
+    bear_id: Uuid,
+    entity_ids: &[String],
+    query_text: &str,
+    limit: usize,
+) -> Result<RecallProjection, DenError> {
+    if entity_ids.is_empty() {
+        return Ok(disabled_projection("no_entities"));
+    }
+    let Some(qdrant) = QdrantRecall::from_config(config) else {
+        return Ok(disabled_projection("qdrant_unset"));
+    };
+    let embedder = den_llm::EmbeddingClient::new(config);
+    if !embedder.is_enabled() {
+        return Ok(disabled_projection("embeddings_unset"));
+    }
+    let filter = entity_scope_filter(bear_id, &config.embedding_standard, entity_ids);
     search_passages(
         &qdrant,
         &embedder,
@@ -452,6 +498,21 @@ mod tests {
         assert_eq!(should[0]["match"]["value"], "shared");
         assert_eq!(should[1]["key"], "scope_profile");
         assert_eq!(should[1]["match"]["value"], "work");
+    }
+
+    #[test]
+    fn entity_scope_filter_requires_entity_membership() {
+        let bear = Uuid::nil();
+        let filter = entity_scope_filter(bear, "bears-embed-v1", &["e1".into(), "e2".into()]);
+        let must = filter["must"].as_array().expect("must array");
+        // Three mandatory scope conditions + one entity-membership clause.
+        assert_eq!(must.len(), 4, "{filter}");
+        assert_eq!(must[0]["key"], "bear_id");
+        assert_eq!(must[3]["key"], "entity_ids");
+        let any = must[3]["match"]["any"].as_array().expect("any array");
+        assert_eq!(any.len(), 2);
+        assert_eq!(any[0], "e1");
+        assert_eq!(any[1], "e2");
     }
 
     #[test]

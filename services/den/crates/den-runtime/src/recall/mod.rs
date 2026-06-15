@@ -23,7 +23,8 @@ pub use policy::IndexRequest;
 pub use qdrant::{collection_name, QdrantPoint, QdrantRecall, RecallHit};
 pub use query::{
     hybrid_memory_search, recall_for_turn, recall_for_turn_scoped, render_recall_block,
-    search_bear_memory_for_role, semantic_search_for_bear, RecallProjection, RecalledPassage,
+    search_bear_memory_for_entities, search_bear_memory_for_role, semantic_search_for_bear,
+    RecallProjection, RecalledPassage,
 };
 pub use reconcile::{reconcile_bear, ReconcileOutcome};
 

@@ -9,7 +9,7 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     {
-        acp_turn_runner::{materialize_acp_runtime_conversation_if_needed, AcpTurnContinueRequest, AcpTurnStartRequest},
+        turn_runner::{materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest},
         agent_loop::{
             agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
             record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
@@ -435,20 +435,20 @@ pub async fn start_native_web_chat_turn_event_stream(
 }
 
 pub async fn start_native_acp_turn_event_stream(
-    request: AcpTurnStartRequest<'_>,
+    request: TurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
     start_native_profile_turn_event_stream(request, BearProfile::Pair).await
 }
 
 pub async fn start_native_profile_turn_event_stream(
-    request: AcpTurnStartRequest<'_>,
+    request: TurnStartRequest<'_>,
     role: BearProfile,
 ) -> Result<RuntimeEventStream, DenError> {
     let profile = NativeCapabilityProfile::for_profile(role);
     let runtime_conversations =
         NativeRuntimeConversationBackend::with_pool(request.sqlx_pool.clone());
     let materialized =
-        materialize_acp_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
+        materialize_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
     let acp_session_id = request.session_id;
     let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
@@ -509,14 +509,14 @@ pub async fn start_native_profile_turn_event_stream(
 }
 
 pub async fn continue_native_profile_turn_event_stream(
-    request: AcpTurnContinueRequest<'_>,
+    request: TurnContinueRequest<'_>,
     role: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     continue_native_acp_turn_event_stream(request, role).await
 }
 
 pub async fn continue_native_acp_turn_event_stream(
-    request: AcpTurnContinueRequest<'_>,
+    request: TurnContinueRequest<'_>,
     profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
     let acp_session_id = request.acp_session_id;

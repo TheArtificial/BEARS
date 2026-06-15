@@ -16,8 +16,8 @@ use crate::{
         map_runtime_stream_event_to_acp_adapter_events_with_persistence,
         mode_from_den_tool_result, plan_update_from_den_tool_result,
         AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
-        AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-        RoleRuntimeBinding, default_acp_tool_continue_stream_context,
+        AcpStaleRuntimeCleanupParams, AcpStreamContext, TurnContinueRequest,
+        RoleRuntimeBinding, default_tool_continue_stream_context,
     },
     acp::types::PersistedToolRequestEffect,
     service::ApiState,
@@ -1065,7 +1065,7 @@ impl Stream for AcpRuntimeSseStream {
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();
                     let continuation_request = prepared_continuation.continuation;
-                    let stream_context = default_acp_tool_continue_stream_context();
+                    let stream_context = default_tool_continue_stream_context();
                     let continuation_conversation = RuntimeConversationRef {
                         id: this
                             .context
@@ -1075,7 +1075,7 @@ impl Stream for AcpRuntimeSseStream {
                     };
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
-                            let prepared = continue_acp_turn_with_runtime(AcpTurnContinueRequest {
+                            let prepared = continue_acp_turn_with_runtime(TurnContinueRequest {
                                 sqlx_pool: &api_state.sqlx_pool,
                                 config: &api_state.config,
                                 memory_stores: &api_state.memory_stores,

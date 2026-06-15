@@ -5,6 +5,8 @@
 //! `memory_access_rules` is the only table the recall gate consults; it is append-only and
 //! enforces that access-bearing targets are at least `resolved` (ADR-0042 §11 trust gate).
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -198,6 +200,33 @@ pub async fn list_relations_for_entity(
     .await
     .map_err(|e| DenError::System(format!("list relations for entity failed: {e}")))?;
     Ok(rows.into_iter().map(RelationSqlRow::into_row).collect())
+}
+
+/// Map of `src_memory_id` → its distinct **descriptive** entity ids, for every record in the
+/// Bear that carries one. Descriptive relations (`memory_relations`) are the recall-participating
+/// links (ADR-0042 §7 `recall_effect = boost`); the access-bearing gate (`memory_access_rules`)
+/// is intentionally excluded. The recall indexer uses this to denormalize resolved entities into
+/// the derived Qdrant passage payload (a single bulk query per reconcile, not per record).
+pub async fn descriptive_entity_ids_by_source(
+    store: &BearMemoryStore,
+) -> Result<HashMap<String, Vec<String>>, DenError> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r"
+        SELECT DISTINCT src_memory_id, entity_id
+        FROM memory_relations
+        WHERE bear_id = ? AND state = 'active'
+        ORDER BY src_memory_id, entity_id
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("descriptive entity ids by source failed: {e}")))?;
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for (src, entity) in rows {
+        map.entry(src).or_default().push(entity);
+    }
+    Ok(map)
 }
 
 /// The recall gate input (ADR-0042 §7): the access-bearing relations on a record. This is the
@@ -436,6 +465,36 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(bad_rel, DenError::ValidationError(_)));
+    }
+
+    #[tokio::test]
+    async fn descriptive_entity_ids_by_source_excludes_access_bearing() {
+        let store = new_test_store().await;
+        let person = resolved_person(&store, "Ryan", "ryan@acme.com").await;
+        let other = resolved_person(&store, "Dana", "dana@acme.com").await;
+
+        // Descriptive relations participate in recall; access-bearing (gate) must be excluded.
+        append_relation(&store, "mem-1", &person, "subject", &json!({}), "pair", None, None)
+            .await
+            .unwrap();
+        append_relation(&store, "mem-1", &other, "participant", &json!({}), "pair", None, None)
+            .await
+            .unwrap();
+        append_relation(&store, "mem-1", &person, "audience", &json!({}), "curate", None, None)
+            .await
+            .unwrap();
+        append_relation(&store, "mem-2", &other, "subject", &json!({}), "pair", None, None)
+            .await
+            .unwrap();
+
+        let map = descriptive_entity_ids_by_source(&store).await.unwrap();
+
+        let mut mem1 = map.get("mem-1").cloned().unwrap_or_default();
+        mem1.sort();
+        let mut expected = vec![person.clone(), other.clone()];
+        expected.sort();
+        assert_eq!(mem1, expected, "descriptive entities only, gate row excluded");
+        assert_eq!(map.get("mem-2").map(Vec::len), Some(1));
     }
 
     #[tokio::test]

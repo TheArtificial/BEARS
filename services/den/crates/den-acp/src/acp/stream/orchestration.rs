@@ -174,7 +174,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
     let cancel_rx = lifecycle_lease.cancel_rx;
 
     let event_upstream = match crate::core::acp_turn_runner::start_acp_turn_event_stream_with_retries(
-        crate::core::acp_turn_runner::AcpTurnStartRequest {
+        crate::core::acp_turn_runner::TurnStartRequest {
             sqlx_pool: &state.sqlx_pool,
             config: &state.config,
             memory_stores: &state.memory_stores,
