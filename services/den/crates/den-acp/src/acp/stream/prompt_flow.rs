@@ -33,9 +33,9 @@ use den_runtime::{
             persist_canonical_conversation_record, CanonicalConversationRecord,
             ConversationEventProvenance, ConversationPersistenceContext,
         },
-    client_tools::client_tool_descriptors_for_client_context,
     bears::{db as bears_db, BearProfile},
 };
+use crate::acp::client_tool_advertisement::client_tool_descriptors_for_client_context;
 
 pub(in crate::acp) async fn run_prompt_flow(
     state: DenState,

@@ -5,6 +5,7 @@
 //! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
 pub(super) mod client;
+pub mod client_tool_advertisement;
 pub(super) mod compat;
 pub(super) mod config;
 pub(super) mod handlers;
@@ -62,9 +63,10 @@ use crate::{
         },
     },
 };
+use crate::acp::client_tool_advertisement::provider_tool_names_for_client_context;
 use den_runtime::{
     gateway_events::GatewayEvent,
-    client_tools::{provider_tool_names_for_client_context, resolve_session_policy_for_mode},
+    client_tools::resolve_session_policy_for_mode,
     turn_controller::ActiveTurnCancelHandle,
     runtime_provider::RoleRuntimeBinding,
 };

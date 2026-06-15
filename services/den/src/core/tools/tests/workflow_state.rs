@@ -36,9 +36,10 @@ use crate::core::{
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
+use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
 use den_runtime::{
     plan_mode::PlanModeSessionRow,
-    client_tools::{client_tool_descriptor, READ_TEXT_FILE_TOOL},
+    client_tools::ClientToolName,
 };
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 
@@ -59,7 +60,7 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 
 #[test]
 fn acp_client_descriptors_expose_execution_domain_metadata() {
-    let descriptor = client_tool_descriptor(&READ_TEXT_FILE_TOOL);
+    let descriptor = client_tool_descriptor(ClientToolName::ReadTextFile);
     assert_eq!(descriptor["x-bears-domain"], "execution");
     assert_eq!(descriptor["x-bears-content-class"], "read_files");
 }
