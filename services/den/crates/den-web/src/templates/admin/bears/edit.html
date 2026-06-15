@@ -66,6 +66,6 @@
 
   <button type="submit">Save changes</button>
 </form>
-<p><a href="/admin/bears/{{ bear.id }}">View bear details</a></p>
+<p><a href="/bear/{{ bear.slug | e }}/overview">View bear overview</a></p>
 </div>
 {% endblock %}

@@ -5,7 +5,7 @@
 {% block admin_content %}
 <div class="box">
 <h3>Edit bear prompts</h3>
-<p><a href="/admin/bears/{{ bear.id }}">Back to bear</a></p>
+<p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
 
 <form method="post">
 {% if context_profile_enabled %}

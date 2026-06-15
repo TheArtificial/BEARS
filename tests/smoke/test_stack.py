@@ -424,7 +424,7 @@ def test_acp_pair_does_not_persist_runtime_context_in_letta_user_message():
         assert needle not in serialized_history
 
 
-def test_seeded_user_can_open_seeded_bear_page():
+def seeded_user_session():
     session = requests.Session()
     login = request_with_retries(
         "POST",
@@ -435,10 +435,55 @@ def test_seeded_user_can_open_seeded_bear_page():
         allow_redirects=False,
     )
     assert login.status_code in (302, 303), login.text
+    return session
+
+
+def test_seeded_user_can_open_seeded_bear_page():
+    session = seeded_user_session()
 
     response = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=5)
     assert response.status_code == 200, response.text
     assert "Test Bear" in response.text
+
+
+def test_bear_admin_overview_and_domain_routes():
+    session = seeded_user_session()
+    domain_pages = [
+        (f"/bear/{SEEDED_BEAR_SLUG}/overview", ("Readiness", "Profiles")),
+        (f"/bear/{SEEDED_BEAR_SLUG}/profiles", ("Profiles",)),
+        (f"/bear/{SEEDED_BEAR_SLUG}/memory", ("Memory",)),
+        (f"/bear/{SEEDED_BEAR_SLUG}/access", ("Access",)),
+        (f"/bear/{SEEDED_BEAR_SLUG}/persona", ("Persona",)),
+    ]
+    for path, needles in domain_pages:
+        response = session.get(f"{DEN}{path}", timeout=10)
+        assert response.status_code == 200, f"{path} -> {response.status_code}: {response.text[:400]}"
+        for needle in needles:
+            assert needle in response.text, f"{path} missing {needle!r}"
+
+    chat = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}", timeout=10)
+    assert chat.status_code == 200, chat.text
+    assert f"/bear/{SEEDED_BEAR_SLUG}/overview" in chat.text, chat.text[:600]
+    assert f"/bear/{SEEDED_BEAR_SLUG}/details" not in chat.text, chat.text[:600]
+    assert "Overview</a" in chat.text, chat.text[:600]
+
+
+def test_bear_details_legacy_path_redirects_to_overview():
+    session = seeded_user_session()
+    response = session.get(
+        f"{DEN}/bear/{SEEDED_BEAR_SLUG}/details",
+        timeout=10,
+        allow_redirects=False,
+    )
+    assert response.status_code in (301, 308), (
+        f"expected permanent redirect, got {response.status_code}: {response.text[:200]}"
+    )
+    location = response.headers.get("location", "")
+    assert f"/bear/{SEEDED_BEAR_SLUG}/overview" in location, location
+
+    follow = session.get(f"{DEN}/bear/{SEEDED_BEAR_SLUG}/details", timeout=10)
+    assert follow.status_code == 200, follow.text
+    assert "Readiness" in follow.text, follow.text[:400]
 
 
 def test_acp_tool_result_replay_continues_and_is_idempotent_when_api_enabled():

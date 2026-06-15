@@ -13,7 +13,7 @@
   {% for m in memberships %}
     <tr>
       <td><strong>{{ m.username | e }}</strong></td>
-      <td><a href="/admin/bears/{{ m.bear_id }}"><code>{{ m.bear_slug | e }}</code></a> — {{ m.bear_name | e }}</td>
+      <td><a href="/bear/{{ m.bear_slug | e }}/overview"><code>{{ m.bear_slug | e }}</code></a> — {{ m.bear_name | e }}</td>
       <td>{% if m.role == 'admin' %}Admin{% elif m.role == 'member' or not m.role %}Member{% else %}{{ m.role | e }}{% endif %}</td>
     </tr>
   {% endfor %}
