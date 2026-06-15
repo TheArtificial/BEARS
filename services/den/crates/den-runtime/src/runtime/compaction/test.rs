@@ -4,8 +4,9 @@ use crate::{
     runtime::compaction::{
         artifact_ref_from_decision, build_runtime_context_envelope,
         choose_compaction_decision, merge_iterative_summary,
-        semantic_groups_from_runtime_messages, RuntimeCompactionDecision,
-        RuntimeCompactionPolicy, RuntimeCompactionStrategy, RuntimeContextEnvelopeInput,
+        semantic_groups_from_conversation_messages, semantic_groups_from_runtime_messages,
+        RuntimeCompactionDecision, RuntimeCompactionPolicy, RuntimeCompactionStrategy,
+        RuntimeContextEnvelopeInput, TranscriptGroupingRow,
     },
     runtime_conversations::{
         RuntimeCompactionArtifactKind, RuntimeCompactionBoundary,
@@ -231,4 +232,252 @@ fn prompt_assembly_keeps_compacted_context_separate_from_recent_groups() {
         envelope.compacted_context.unwrap().important_constraints,
         vec!["do not compact approvals"]
     );
+}
+
+#[test]
+fn transcript_grouping_bundles_tool_call_and_result_rows() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new("user", "inspect the repo", json!({}))
+            .with_message_id("msg-1")
+            .with_sequence_no(1),
+        TranscriptGroupingRow::new("assistant", "I'll search first", json!({}))
+            .with_message_id("msg-2")
+            .with_sequence_no(2),
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: memory_search",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_search",
+                "args": {"query": "compaction"},
+            }),
+        )
+        .with_message_id("msg-3")
+        .with_sequence_no(3)
+        .with_tool_call_id("call-1"),
+        TranscriptGroupingRow::new(
+            "tool_result",
+            "Tool result: memory_search",
+            json!({
+                "event": "tool_result",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_search",
+                "status": "completed",
+                "content": "found notes",
+            }),
+        )
+        .with_message_id("msg-4")
+        .with_sequence_no(4)
+        .with_tool_call_id("call-1"),
+        TranscriptGroupingRow::new("assistant", "here are the notes", json!({}))
+            .with_message_id("msg-5")
+            .with_sequence_no(5),
+    ]);
+
+    assert_eq!(groups.len(), 4);
+    assert_eq!(groups[0].kind, RuntimeSemanticGroupKind::UserTurn);
+    assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::AssistantReply);
+    assert_eq!(groups[2].kind, RuntimeSemanticGroupKind::ToolInteraction);
+    assert_eq!(groups[2].message_count, 2);
+    assert_eq!(groups[2].start_message_id.as_deref(), Some("msg-3"));
+    assert_eq!(groups[2].end_message_id.as_deref(), Some("msg-4"));
+    assert!(!groups[2].protected);
+    assert_eq!(groups[3].kind, RuntimeSemanticGroupKind::AssistantReply);
+}
+
+#[test]
+fn transcript_grouping_marks_orphan_tool_call_as_protected() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: fs_edit_file",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-orphan",
+                "tool_name": "fs_edit_file",
+                "args": {"path": "README.md"},
+            }),
+        )
+        .with_message_id("msg-orphan")
+        .with_sequence_no(10)
+        .with_tool_call_id("call-orphan"),
+        TranscriptGroupingRow::new("assistant", "continuing without result", json!({}))
+            .with_message_id("msg-after")
+            .with_sequence_no(11),
+    ]);
+
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].kind, RuntimeSemanticGroupKind::ToolInteraction);
+    assert_eq!(groups[0].message_count, 1);
+    assert!(groups[0].protected);
+    assert_eq!(groups[0].start_message_id.as_deref(), Some("msg-orphan"));
+}
+
+#[test]
+fn transcript_grouping_classifies_pending_approval_tool_span() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: fs_edit_file",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-approval",
+                "tool_name": "fs_edit_file",
+                "approval_request_id": "approval-1",
+                "approval_required": true,
+                "args": {"path": "README.md"},
+            }),
+        )
+        .with_message_id("msg-call")
+        .with_sequence_no(20)
+        .with_tool_call_id("call-approval"),
+        TranscriptGroupingRow::new(
+            "workflow_event",
+            "Approval granted",
+            json!({
+                "event": "approval_decision",
+                "approval_request_id": "approval-1",
+                "decision": "approve",
+            }),
+        )
+        .with_message_id("msg-approval")
+        .with_sequence_no(21),
+    ]);
+
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].kind, RuntimeSemanticGroupKind::ApprovalInteraction);
+    assert!(groups[0].protected);
+    assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::ApprovalInteraction);
+    assert!(groups[1].protected);
+}
+
+#[test]
+fn transcript_grouping_resolves_approval_tool_pair_after_result() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: fs_edit_file",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-resolved",
+                "tool_name": "fs_edit_file",
+                "approval_request_id": "approval-2",
+                "approval_required": true,
+                "args": {"path": "README.md"},
+            }),
+        )
+        .with_message_id("msg-call")
+        .with_sequence_no(30)
+        .with_tool_call_id("call-resolved"),
+        TranscriptGroupingRow::new(
+            "tool_result",
+            "Tool result: fs_edit_file",
+            json!({
+                "event": "tool_result",
+                "tool_call_id": "call-resolved",
+                "tool_name": "fs_edit_file",
+                "approval_request_id": "approval-2",
+                "status": "completed",
+                "content": "edited",
+            }),
+        )
+        .with_message_id("msg-result")
+        .with_sequence_no(31)
+        .with_tool_call_id("call-resolved"),
+    ]);
+
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].kind, RuntimeSemanticGroupKind::ToolInteraction);
+    assert_eq!(groups[0].message_count, 2);
+    assert!(!groups[0].protected);
+}
+
+#[test]
+fn transcript_grouping_treats_compaction_marker_as_protected_boundary() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new("user", "older question", json!({}))
+            .with_message_id("msg-old")
+            .with_sequence_no(1),
+        TranscriptGroupingRow::new(
+            "compaction_marker",
+            "Compaction boundary",
+            json!({
+                "event": "compaction_applied",
+                "artifact_id": "artifact-1",
+            }),
+        )
+        .with_message_id("msg-marker")
+        .with_sequence_no(2),
+        TranscriptGroupingRow::new("assistant", "continuing after compaction", json!({}))
+            .with_message_id("msg-new")
+            .with_sequence_no(3),
+    ]);
+
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::PriorCompactionArtifact);
+    assert!(groups[1].protected);
+    assert_eq!(groups[1].start_message_id.as_deref(), Some("msg-marker"));
+}
+
+#[test]
+fn transcript_grouping_handles_multiple_consecutive_tool_bundles() {
+    let groups = semantic_groups_from_conversation_messages(&[
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: memory_browse",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-a",
+                "tool_name": "memory_browse",
+                "args": {},
+            }),
+        )
+        .with_message_id("msg-a-call")
+        .with_sequence_no(40),
+        TranscriptGroupingRow::new(
+            "tool_result",
+            "Tool result: memory_browse",
+            json!({
+                "event": "tool_result",
+                "tool_call_id": "call-a",
+                "tool_name": "memory_browse",
+                "status": "completed",
+                "content": "tree",
+            }),
+        )
+        .with_message_id("msg-a-result")
+        .with_sequence_no(41),
+        TranscriptGroupingRow::new(
+            "tool_call",
+            "Tool request: memory_read",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-b",
+                "tool_name": "memory_read",
+                "args": {"path": "core/notes.md"},
+            }),
+        )
+        .with_message_id("msg-b-call")
+        .with_sequence_no(42),
+        TranscriptGroupingRow::new(
+            "tool_result",
+            "Tool result: memory_read",
+            json!({
+                "event": "tool_result",
+                "tool_call_id": "call-b",
+                "tool_name": "memory_read",
+                "status": "incomplete",
+                "content": null,
+            }),
+        )
+        .with_message_id("msg-b-result")
+        .with_sequence_no(43),
+    ]);
+
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].message_count, 2);
+    assert!(!groups[0].protected);
+    assert_eq!(groups[1].message_count, 2);
+    assert!(groups[1].protected);
 }

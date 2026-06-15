@@ -7,6 +7,12 @@ use crate::runtime_conversations::{
     RuntimeSemanticGroupKind,
 };
 
+pub mod grouping;
+
+pub use grouping::{
+    semantic_groups_from_conversation_messages, TranscriptGroupingRow,
+};
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeCompactionStrategy {
     CollapseToolBundles,

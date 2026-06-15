@@ -13,6 +13,10 @@ use crate::{
             canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
         },
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
+        runtime::compaction::{
+            semantic_groups_from_conversation_messages, TranscriptGroupingRow,
+        },
+        runtime_conversations::RuntimeSemanticGroup,
     },
 };
 
@@ -21,6 +25,59 @@ struct TranscriptRow {
     message_type: String,
     content_text: String,
     content_json: Value,
+}
+
+type TranscriptHistoryRow = (
+    String,
+    i64,
+    String,
+    String,
+    Value,
+    Option<String>,
+);
+
+const TRANSCRIPT_HISTORY_QUERY: &str = r"
+        SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE external_conversation_id = $1 AND bear_id = $2
+            LIMIT 1
+        )
+        AND (
+            visibility != 'diagnostic_only'
+            OR message_type IN ('tool_call', 'tool_result')
+        )
+        ORDER BY sequence_no ASC
+        LIMIT 80
+        ";
+
+fn transcript_grouping_rows_from_history(history_rows: Vec<TranscriptHistoryRow>) -> Vec<TranscriptGroupingRow> {
+    history_rows
+        .into_iter()
+        .map(
+            |(message_id, sequence_no, message_type, content_text, content_json, tool_call_id)| {
+                TranscriptGroupingRow {
+                    message_id: Some(message_id),
+                    sequence_no: Some(sequence_no),
+                    message_type,
+                    content_text,
+                    content_json,
+                    tool_call_id,
+                }
+            },
+        )
+        .collect()
+}
+
+fn transcript_rows_from_grouping_rows(rows: &[TranscriptGroupingRow]) -> Vec<TranscriptRow> {
+    rows.iter()
+        .map(|row| TranscriptRow {
+            message_type: row.message_type.clone(),
+            content_text: row.content_text.clone(),
+            content_json: row.content_json.clone(),
+        })
+        .collect()
 }
 
 fn assistant_has_tool_call(messages: &[ChatMessage], tool_call_id: &str) -> bool {
@@ -335,41 +392,40 @@ fn backfill_incomplete_tool_results(
     }
 }
 
+pub async fn load_transcript_grouping_rows(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+) -> Result<Vec<TranscriptGroupingRow>, DenError> {
+    let history_rows = sqlx::query_as::<_, TranscriptHistoryRow>(TRANSCRIPT_HISTORY_QUERY)
+        .bind(conversation_id)
+        .bind(bear_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    Ok(transcript_grouping_rows_from_history(history_rows))
+}
+
+/// Loads persisted transcript rows and derives semantic compaction groups.
+///
+/// Intended for Phase B prompt-assembler integration; not yet called from the live path.
+#[expect(dead_code, reason = "Phase B assembler integration")]
+pub async fn load_transcript_semantic_groups(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+) -> Result<Vec<RuntimeSemanticGroup>, DenError> {
+    let rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    Ok(semantic_groups_from_conversation_messages(&rows))
+}
+
 pub async fn load_transcript_messages(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
 ) -> Result<Vec<ChatMessage>, DenError> {
-    let history_rows = sqlx::query_as::<_, (String, String, Value)>(
-        r"
-        SELECT message_type, content_text, content_json
-        FROM conversation_messages
-        WHERE conversation_id = (
-            SELECT id FROM conversations
-            WHERE external_conversation_id = $1 AND bear_id = $2
-            LIMIT 1
-        )
-        AND (
-            visibility != 'diagnostic_only'
-            OR message_type IN ('tool_call', 'tool_result')
-        )
-        ORDER BY sequence_no ASC
-        LIMIT 80
-        ",
-    )
-    .bind(conversation_id)
-    .bind(bear_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    let rows: Vec<TranscriptRow> = history_rows
-        .into_iter()
-        .map(|(message_type, content_text, content_json)| TranscriptRow {
-            message_type,
-            content_text,
-            content_json,
-        })
-        .collect();
+    let grouping_rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    let rows = transcript_rows_from_grouping_rows(&grouping_rows);
     backfill_incomplete_tool_results(pool, bear_id, conversation_id, &rows);
     Ok(reconstruct_transcript_messages(rows))
 }
