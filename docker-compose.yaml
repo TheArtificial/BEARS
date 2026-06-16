@@ -156,10 +156,6 @@ services:
                 SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
                 GIT_SHA: ${GIT_SHA:-${SOURCE_COMMIT:-}}
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
-            cache_from:
-                - type=local,src=.docker-cache/den
-            cache_to:
-                - type=local,dest=.docker-cache/den,mode=max
         image: ${DEN_IMAGE:-bears-den:local}
         restart: unless-stopped
         depends_on:
