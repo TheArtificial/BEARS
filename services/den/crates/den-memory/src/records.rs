@@ -266,6 +266,55 @@ pub async fn list_records_for_logical_path(
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
+/// Minimal record fields for rendering a recall hit (bounded-graph leg). Cheaper than a full
+/// [`MemoryRecordRow`] and carries no metadata/sequence.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecallRecordMin {
+    pub memory_id: String,
+    pub logical_path: Option<String>,
+    pub kind: String,
+    pub content_text: String,
+}
+
+/// Fetch minimal fields for a set of memory ids, **role-scoped** to memory visible to `role`
+/// (shared ∨ own profile-local) at normal visibility. Order is unspecified and role-hidden ids are
+/// dropped; the caller re-associates by id. Used by the bounded-graph recall leg.
+pub async fn fetch_records_min(
+    store: &BearMemoryStore,
+    memory_ids: &[String],
+    role: &str,
+) -> Result<Vec<RecallRecordMin>, DenError> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; memory_ids.len()].join(",");
+    let sql = format!(
+        "SELECT memory_id, logical_path, kind, content_text FROM memory_records \
+         WHERE bear_id = ? AND visibility = 'normal' \
+           AND (scope_type = 'shared' OR scope_profile = ?) \
+           AND memory_id IN ({placeholders})"
+    );
+    let mut query = sqlx::query_as::<_, (String, Option<String>, String, String)>(&sql)
+        .bind(store.bear_id().to_string())
+        .bind(role);
+    for id in memory_ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("fetch records min failed: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .map(|(memory_id, logical_path, kind, content_text)| RecallRecordMin {
+            memory_id,
+            logical_path,
+            kind,
+            content_text,
+        })
+        .collect())
+}
+
 #[derive(sqlx::FromRow)]
 struct MemoryRecordSqlRow {
     memory_id: String,

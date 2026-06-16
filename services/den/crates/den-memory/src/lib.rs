@@ -32,8 +32,9 @@ pub use entity::{
 pub use logical_path::{LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
 pub use relations::{
-    append_relation, list_access_rules_for_source, list_relations_for_entity,
-    list_relations_for_source, RelationRow,
+    append_relation, bounded_graph_expand, descriptive_entity_ids_for_records,
+    list_access_rules_for_source, list_relations_for_entity, list_relations_for_source,
+    record_ids_for_entities, GraphReach, RelationRow,
 };
 pub use resolver::{resolve, resolve_work_surface, Assertion, Resolution, Signal};
 pub use observations::{
@@ -43,9 +44,9 @@ pub use observations::{
 pub use promotions::{append_memory_promotion, promote_to_shared_core};
 pub use proposals::{create_memory_proposal, list_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal};
 pub use records::{
-    append_memory_record, has_work_surface_canonical_anchor, head_record_for_logical_path,
-    list_profile_local_head_records, list_records_for_logical_path, memory_sequence_high_water,
-    MemoryRecordRow, BearMemoryStore,
+    append_memory_record, fetch_records_min, has_work_surface_canonical_anchor,
+    head_record_for_logical_path, list_profile_local_head_records, list_records_for_logical_path,
+    memory_sequence_high_water, BearMemoryStore, MemoryRecordRow, RecallRecordMin,
 };
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,

@@ -229,6 +229,104 @@ pub async fn descriptive_entity_ids_by_source(
     Ok(map)
 }
 
+/// Distinct **descriptive** entity ids linked to any of `memory_ids` (one hop record→entity over
+/// `memory_relations`). The access-bearing gate is excluded by construction. Empty in ⇒ empty out.
+pub async fn descriptive_entity_ids_for_records(
+    store: &BearMemoryStore,
+    memory_ids: &[String],
+) -> Result<Vec<String>, DenError> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; memory_ids.len()].join(",");
+    let sql = format!(
+        "SELECT DISTINCT entity_id FROM memory_relations \
+         WHERE bear_id = ? AND state = 'active' AND src_memory_id IN ({placeholders})"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(store.bear_id().to_string());
+    for id in memory_ids {
+        query = query.bind(id);
+    }
+    query
+        .fetch_all(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("entity ids for records failed: {e}")))
+}
+
+/// Distinct source record ids descriptively linked to any of `entity_ids` (one hop entity→record
+/// over `memory_relations`). Empty in ⇒ empty out.
+pub async fn record_ids_for_entities(
+    store: &BearMemoryStore,
+    entity_ids: &[String],
+) -> Result<Vec<String>, DenError> {
+    if entity_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; entity_ids.len()].join(",");
+    let sql = format!(
+        "SELECT DISTINCT src_memory_id FROM memory_relations \
+         WHERE bear_id = ? AND state = 'active' AND entity_id IN ({placeholders})"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(store.bear_id().to_string());
+    for id in entity_ids {
+        query = query.bind(id);
+    }
+    query
+        .fetch_all(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("record ids for entities failed: {e}")))
+}
+
+/// A record reached by bounded-graph expansion, with its hop distance from the seed set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphReach {
+    pub memory_id: String,
+    pub hop: u32,
+}
+
+/// Bounded, read-only, retrieval-time expansion over the **bipartite** record↔entity descriptive
+/// relation graph (ADR-0042 §4 anti-RDF guardrails; DERIVED_RECALL Phase 3.5). Starting from
+/// `seed_memory_ids`, alternately hops record→entity→record up to `max_depth` (default 2),
+/// returning the newly reached memory ids (excluding the seeds) with their hop distance, closest
+/// hops first. No stored transitive edges, no inference, no entity↔entity edges — pure query
+/// expansion. Access/role gating is applied by the caller when rendering the reached records.
+pub async fn bounded_graph_expand(
+    store: &BearMemoryStore,
+    seed_memory_ids: &[String],
+    max_depth: u32,
+    limit: usize,
+) -> Result<Vec<GraphReach>, DenError> {
+    use std::collections::HashSet;
+    if seed_memory_ids.is_empty() || max_depth == 0 || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut seen: HashSet<String> = seed_memory_ids.iter().cloned().collect();
+    let mut frontier: Vec<String> = seed_memory_ids.to_vec();
+    let mut out: Vec<GraphReach> = Vec::new();
+    for hop in 1..=max_depth {
+        let entities = descriptive_entity_ids_for_records(store, &frontier).await?;
+        if entities.is_empty() {
+            break;
+        }
+        let candidates = record_ids_for_entities(store, &entities).await?;
+        let mut next: Vec<String> = Vec::new();
+        for memory_id in candidates {
+            if seen.insert(memory_id.clone()) {
+                out.push(GraphReach { memory_id: memory_id.clone(), hop });
+                next.push(memory_id);
+                if out.len() >= limit {
+                    return Ok(out);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    Ok(out)
+}
+
 /// The recall gate input (ADR-0042 §7): the access-bearing relations on a record. This is the
 /// only reader of `memory_access_rules`; the recall assembler must consult it before returning.
 pub async fn list_access_rules_for_source(
@@ -495,6 +593,32 @@ mod tests {
         expected.sort();
         assert_eq!(mem1, expected, "descriptive entities only, gate row excluded");
         assert_eq!(map.get("mem-2").map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn bounded_graph_expand_reaches_indirect_records_depth_capped() {
+        let store = new_test_store().await;
+        let e1 = resolved_person(&store, "Alice", "alice@acme.com").await;
+        let e2 = resolved_person(&store, "Bob", "bob@acme.com").await;
+
+        // A—e1—B (1 hop apart), B—e2—C (so C is 2 hops from A, never sharing an entity with A).
+        append_relation(&store, "rec-A", &e1, "subject", &json!({}), "pair", None, None).await.unwrap();
+        append_relation(&store, "rec-B", &e1, "participant", &json!({}), "pair", None, None).await.unwrap();
+        append_relation(&store, "rec-B", &e2, "subject", &json!({}), "pair", None, None).await.unwrap();
+        append_relation(&store, "rec-C", &e2, "participant", &json!({}), "pair", None, None).await.unwrap();
+
+        // Depth 2 from A reaches B (hop 1) and C (hop 2); the seed A is excluded.
+        let reached = bounded_graph_expand(&store, &["rec-A".into()], 2, 10).await.unwrap();
+        let by_id: std::collections::HashMap<&str, u32> =
+            reached.iter().map(|r| (r.memory_id.as_str(), r.hop)).collect();
+        assert_eq!(by_id.get("rec-B"), Some(&1), "B is one hop via the shared entity: {reached:?}");
+        assert_eq!(by_id.get("rec-C"), Some(&2), "C is two hops, never directly co-located: {reached:?}");
+        assert!(!by_id.contains_key("rec-A"), "seed is excluded from results");
+
+        // Depth 1 stops at B; C is beyond the cap.
+        let shallow = bounded_graph_expand(&store, &["rec-A".into()], 1, 10).await.unwrap();
+        let ids: Vec<&str> = shallow.iter().map(|r| r.memory_id.as_str()).collect();
+        assert_eq!(ids, vec!["rec-B"], "depth 1 reaches only the 1-hop neighbor: {shallow:?}");
     }
 
     #[tokio::test]

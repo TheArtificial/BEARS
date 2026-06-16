@@ -8,11 +8,14 @@
 //! no-op in environments without the recall stack.
 
 use den::{config::Config, startup::run_sqlx_migrations};
-use den_memory::{append_memory_record, LogicalMemoryPath, MemoryStoreManager};
+use den_memory::{
+    append_memory_record, append_relation, resolve, Assertion, LogicalMemoryPath,
+    MemoryStoreManager, Resolution, Signal,
+};
 use den_runtime::memory::tools::sqlite_memory_search;
 use den_runtime::recall::{
-    recall_for_turn, reconcile::list_indexable_heads, render_recall_block, DeterministicEmbedder,
-    IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
+    hybrid_memory_search, recall_for_turn, reconcile::list_indexable_heads, render_recall_block,
+    DeterministicEmbedder, IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -314,6 +317,92 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         .remove_record(bear_id, &memory_id)
         .await
         .expect("remove_record cleanup");
+}
+
+/// Phase 3.5 bounded-graph leg: `hybrid_memory_search` surfaces a record never matched by the
+/// keyword/vector legs but reachable via a **shared entity** (bipartite record↔entity expansion).
+/// Infra-free: temp SQLite, no Qdrant ⇒ the vector leg is disabled, so the keyword + graph legs
+/// run against canonical SQLite alone — exactly the ADR-0038 Phase 3.5 "record never directly
+/// matched" exit case.
+#[tokio::test]
+async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
+    let tmp = std::env::temp_dir().join(format!("den-recall-graph-{}", Uuid::new_v4()));
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
+
+    let stores = MemoryStoreManager::new(&config);
+    let bear_id = Uuid::new_v4();
+    let store = stores.store_for_bear(bear_id).await.expect("temp store");
+
+    let token = "graphonlytoken";
+    // Direct hit: a shared record containing the query token.
+    let direct = append_memory_record(
+        &store,
+        &LogicalMemoryPath::shared_core("summary"),
+        "summary",
+        "curate",
+        None,
+        &format!("shared note mentioning {token}"),
+        &json!({}),
+    )
+    .await
+    .expect("write direct");
+    // Neighbor: a shared record with no query term — keyword/vector can never match it directly.
+    let neighbor = append_memory_record(
+        &store,
+        &LogicalMemoryPath::shared_core("knowledge"),
+        "note",
+        "curate",
+        None,
+        "neighbor note with no query term at all",
+        &json!({}),
+    )
+    .await
+    .expect("write neighbor");
+
+    // Link both records to one shared entity so the graph leg can bridge direct → neighbor.
+    let entity_id = match resolve(
+        &store,
+        "person",
+        Some("Alice"),
+        &[Signal::new("email", "alice@acme.com")],
+        Assertion::Inferred,
+    )
+    .await
+    .unwrap()
+    {
+        Resolution::Resolved(e) | Resolution::Created(e) => e.entity_id,
+        other => panic!("expected a resolved/created entity, got {other:?}"),
+    };
+    append_relation(&store, &direct.memory_id, &entity_id, "subject", &json!({}), "curate", None, None)
+        .await
+        .expect("link direct");
+    append_relation(&store, &neighbor.memory_id, &entity_id, "participant", &json!({}), "curate", None, None)
+        .await
+        .expect("link neighbor");
+
+    let result = hybrid_memory_search(&config, bear_id, "work", token, 10)
+        .await
+        .expect("hybrid search");
+
+    // Vector disabled (no Qdrant); keyword finds the direct hit; the graph leg reaches the neighbor.
+    assert_eq!(result["strategy"], "keyword+graph", "{result}");
+    let hits = result["hits"].as_array().expect("hits array");
+    let by_id: std::collections::HashMap<&str, &serde_json::Value> = hits
+        .iter()
+        .filter_map(|h| h["memory_id"].as_str().map(|id| (id, h)))
+        .collect();
+    let direct_hit = by_id
+        .get(direct.memory_id.as_str())
+        .unwrap_or_else(|| panic!("direct keyword hit present: {hits:?}"));
+    assert_eq!(direct_hit["source"], "keyword");
+    let neighbor_hit = by_id
+        .get(neighbor.memory_id.as_str())
+        .unwrap_or_else(|| panic!("graph leg should surface the indirectly-linked neighbor: {hits:?}"));
+    assert_eq!(neighbor_hit["source"], "graph");
+    assert_eq!(neighbor_hit["hop"], 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Head selection + policy filtering for whole-Bear reconcile (Phase 1b). Infra-free: uses a

@@ -291,14 +291,68 @@ pub async fn search_bear_memory_for_entities(
     .await
 }
 
-/// Hybrid `memory_search` (ADR-0038 Phase 3): the **union** of the derived vector leg and the
-/// keyword (`LIKE`) leg over canonical SQLite, both role-scoped to the same visibility. Vector
-/// hits rank first (semantic relevance is higher-signal and carries a `score`); keyword-only
-/// matches fill the remaining slots, surfacing exact-substring hits the vector leg missed.
+/// Default hop cap for the bounded-graph recall leg (ADR-0042 §4 / DERIVED_RECALL Phase 3.5).
+const GRAPH_MAX_DEPTH: u32 = 2;
+
+/// Bounded-graph recall leg: expand from `seed_memory_ids` over the descriptive record↔entity
+/// graph (depth `max_depth`) and render the newly reached records as role-scoped hits, closest
+/// hops first. Read-only, retrieval-time; no stored edges/inference (ADR-0042 anti-RDF). Surfaces
+/// records related through a shared entity that the vector/keyword legs never matched. Reached
+/// records are role-gated by `fetch_records_min` (shared ∨ own role-local); access-bearing gating
+/// is inherent (traversal is over the descriptive table only) and `AccessContext` is applied by
+/// the caller once access rules exist.
+pub async fn graph_expand_hits(
+    config: &Config,
+    bear_id: Uuid,
+    role: &str,
+    seed_memory_ids: &[String],
+    max_depth: u32,
+    limit: usize,
+) -> Result<Vec<Value>, DenError> {
+    if seed_memory_ids.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let stores = crate::memory::MemoryStoreManager::new(config);
+    let store = stores.store_for_bear(bear_id).await?;
+    let reached =
+        crate::memory::store::bounded_graph_expand(&store, seed_memory_ids, max_depth, limit)
+            .await?;
+    if reached.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<String> = reached.iter().map(|r| r.memory_id.clone()).collect();
+    let records = crate::memory::store::fetch_records_min(&store, &ids, role).await?;
+    let by_id: std::collections::HashMap<&str, &crate::memory::store::RecallRecordMin> =
+        records.iter().map(|r| (r.memory_id.as_str(), r)).collect();
+    // Preserve reach order (closest hops first); skip ids the role can't see.
+    let hits = reached
+        .iter()
+        .filter_map(|reach| {
+            by_id.get(reach.memory_id.as_str()).map(|rec| {
+                json!({
+                    "memory_id": rec.memory_id,
+                    "path": rec.logical_path,
+                    "kind": rec.kind,
+                    "score": Value::Null,
+                    "snippet": truncate_chars(&rec.content_text, SNIPPET_CHARS),
+                    "source": "graph",
+                    "hop": reach.hop,
+                })
+            })
+        })
+        .collect();
+    Ok(hits)
+}
+
+/// Hybrid `memory_search` (ADR-0038 Phase 3 + 3.5): the **union** of three role-scoped legs over
+/// the same visibility — the derived **vector** index, the **keyword** (`LIKE`) leg over canonical
+/// SQLite, and the bounded-**graph** leg that expands from the direct hits over the record↔entity
+/// relation graph. Vector hits rank first (higher-signal, carry a `score`), then keyword-only
+/// exact matches, then graph-reached records (relevant by association, never directly matched).
 ///
-/// The vector leg is best-effort: an unconfigured index or any transport error degrades to the
-/// keyword leg alone (logged), never failing the tool. The keyword leg reads the canonical store,
-/// so its errors propagate.
+/// Every leg beyond keyword is best-effort: an unconfigured index/transport error (vector) or a
+/// relation-store error (graph) degrades to the remaining legs (logged), never failing the tool.
+/// The keyword leg reads the canonical store, so its errors propagate.
 pub async fn hybrid_memory_search(
     config: &Config,
     bear_id: Uuid,
@@ -319,16 +373,36 @@ pub async fn hybrid_memory_search(
     let limit_i64 = i64::try_from(limit).unwrap_or(10);
     let keyword = crate::memory::tools::sqlite_memory_search(&store, role, query, limit_i64).await?;
 
-    Ok(merge_search_results(&vector, &keyword, query, limit))
+    // Seed the graph leg with the records the direct legs already matched.
+    let mut seeds: Vec<String> = vector.passages.iter().map(|p| p.memory_id.clone()).collect();
+    if let Some(arr) = keyword.get("hits").and_then(Value::as_array) {
+        for hit in arr {
+            if let Some(id) = hit.get("memory_id").and_then(Value::as_str) {
+                seeds.push(id.to_string());
+            }
+        }
+    }
+    let graph = match graph_expand_hits(config, bear_id, role, &seeds, GRAPH_MAX_DEPTH, limit).await
+    {
+        Ok(hits) => hits,
+        Err(error) => {
+            tracing::warn!(%error, "recall graph leg failed; returning direct results only");
+            Vec::new()
+        }
+    };
+
+    Ok(merge_search_results(&vector, &keyword, &graph, query, limit))
 }
 
-/// Merge a vector projection with the keyword leg's JSON into the unified `memory_search` result.
-/// De-dupes by `memory_id` (a record surfaced by the higher-signal vector leg is not repeated as
-/// a keyword hit), preserves vector ranking, caps to `limit`, and tags each hit's `source` plus a
-/// top-level `strategy` (`hybrid` | `vector` | `keyword`).
+/// Merge the vector projection, the keyword leg's JSON, and the bounded-graph leg's hits into the
+/// unified `memory_search` result. De-dupes by `memory_id` in priority order (vector ≻ keyword ≻
+/// graph — a record surfaced by a higher-signal leg is not repeated), caps to `limit`, and tags
+/// each hit's `source` plus a top-level `strategy` (the `+`-joined list of contributing legs, e.g.
+/// `vector+keyword+graph`, or a single leg, or `none`).
 fn merge_search_results(
     vector: &RecallProjection,
     keyword: &Value,
+    graph: &[Value],
     query: &str,
     limit: usize,
 ) -> Value {
@@ -368,12 +442,34 @@ fn merge_search_results(
             }));
         }
     }
+
+    let mut graph_count = 0usize;
+    for hit in graph {
+        let Some(memory_id) = hit.get("memory_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !seen.insert(memory_id.to_string()) {
+            continue;
+        }
+        graph_count += 1;
+        hits.push(hit.clone());
+    }
     hits.truncate(limit);
 
-    let strategy = match (vector_count > 0, keyword_count > 0) {
-        (true, true) => "hybrid",
-        (true, false) => "vector",
-        (false, _) => "keyword",
+    let mut legs: Vec<&str> = Vec::new();
+    if vector_count > 0 {
+        legs.push("vector");
+    }
+    if keyword_count > 0 {
+        legs.push("keyword");
+    }
+    if graph_count > 0 {
+        legs.push("graph");
+    }
+    let strategy = if legs.is_empty() {
+        "none".to_string()
+    } else {
+        legs.join("+")
     };
     json!({
         "ok": true,
@@ -528,10 +624,10 @@ mod tests {
                 { "memory_id": "m2", "path": "work/b.md", "kind": "note", "snippet": "exact match" },
             ]
         });
-        let value = merge_search_results(&vector, &keyword, "fox", 10);
+        let value = merge_search_results(&vector, &keyword, &[], "fox", 10);
 
         assert_eq!(value["storage"], "hybrid");
-        assert_eq!(value["strategy"], "hybrid");
+        assert_eq!(value["strategy"], "vector+keyword");
         let hits = value["hits"].as_array().expect("hits array");
         assert_eq!(hits.len(), 2, "m1 deduped, m2 appended: {hits:?}");
         // Vector hit ranks first and carries its score + source.
@@ -550,6 +646,7 @@ mod tests {
         let only_vector = merge_search_results(
             &RecallProjection { passages: vec![passage("m1", "core/a.md", 0.9)], diagnostic: Value::Null },
             &json!({ "hits": [] }),
+            &[],
             "q",
             10,
         );
@@ -558,10 +655,37 @@ mod tests {
         let only_keyword = merge_search_results(
             &RecallProjection { passages: vec![], diagnostic: Value::Null },
             &json!({ "hits": [{ "memory_id": "m9", "path": "p", "kind": "note", "snippet": "s" }] }),
+            &[],
             "q",
             10,
         );
         assert_eq!(only_keyword["strategy"], "keyword");
+    }
+
+    #[test]
+    fn merge_appends_graph_leg_after_direct_hits_and_dedupes() {
+        let vector = RecallProjection {
+            passages: vec![passage("m1", "core/a.md", 0.9)],
+            diagnostic: Value::Null,
+        };
+        let keyword = json!({ "hits": [{ "memory_id": "m2", "path": "work/b.md", "kind": "note", "snippet": "kw" }] });
+        // m1 is re-surfaced by the graph leg (must dedupe); m3 is a genuine 2-hop reach.
+        let graph = vec![
+            json!({ "memory_id": "m1", "path": "core/a.md", "kind": "note", "score": Value::Null, "snippet": "dup", "source": "graph", "hop": 1 }),
+            json!({ "memory_id": "m3", "path": "core/c.md", "kind": "note", "score": Value::Null, "snippet": "reached via shared entity", "source": "graph", "hop": 2 }),
+        ];
+        let value = merge_search_results(&vector, &keyword, &graph, "q", 10);
+
+        assert_eq!(value["strategy"], "vector+keyword+graph");
+        let hits = value["hits"].as_array().expect("hits array");
+        assert_eq!(hits.len(), 3, "m1 deduped against the vector hit: {hits:?}");
+        assert_eq!(hits[0]["memory_id"], "m1");
+        assert_eq!(hits[1]["memory_id"], "m2");
+        // Graph-reached record ranks last and carries its provenance + hop distance.
+        assert_eq!(hits[2]["memory_id"], "m3");
+        assert_eq!(hits[2]["source"], "graph");
+        assert_eq!(hits[2]["hop"], 2);
+        assert!(hits[2]["score"].is_null());
     }
 
     #[test]
@@ -571,7 +695,7 @@ mod tests {
             diagnostic: Value::Null,
         };
         let keyword = json!({ "hits": [{ "memory_id": "m3", "path": "p", "kind": "note", "snippet": "s" }] });
-        let value = merge_search_results(&vector, &keyword, "q", 2);
+        let value = merge_search_results(&vector, &keyword, &[], "q", 2);
         let hits = value["hits"].as_array().expect("hits");
         assert_eq!(hits.len(), 2, "capped to limit");
         assert_eq!(hits[0]["memory_id"], "m1");
