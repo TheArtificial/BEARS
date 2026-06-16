@@ -19,11 +19,17 @@ async fn main() {
 
 async fn run_main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("seed") {
-        den::run().await?;
-        return Ok(());
+    match args.first().map(String::as_str) {
+        Some("seed") => run_seed(&args).await,
+        Some("reindex") => den::reindex::run_reindex(den::reindex::parse_args(&args)?).await,
+        _ => {
+            den::run().await?;
+            Ok(())
+        }
     }
+}
 
+async fn run_seed(args: &[String]) -> anyhow::Result<()> {
     let mut profile = SeedProfile::Smoke;
     let mut i = 1;
     while i < args.len() {

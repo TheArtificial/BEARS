@@ -10,6 +10,7 @@ pub use den_http::build_info;
 pub use den_core::config;
 pub mod core;
 pub use den_http::errors;
+pub mod reindex;
 pub mod seeds;
 pub mod startup;
 // The web edge (server-rendered UI + /v1) moved to the `den-web` crate (v1.5

@@ -28,7 +28,7 @@ pub use query::{
     render_recall_block, search_bear_memory_for_entities, search_bear_memory_for_role,
     semantic_search_for_bear, RecallProjection, RecalledPassage,
 };
-pub use reconcile::{reconcile_bear, ReconcileOutcome};
+pub use reconcile::{reconcile_bear, reindex_bear_now, ReconcileOutcome};
 pub use temporal::{parse_time_expression, TemporalQuery};
 
 #[cfg(any(test, feature = "test-util"))]

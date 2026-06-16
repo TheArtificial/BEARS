@@ -5,10 +5,13 @@
 use std::collections::HashSet;
 
 use sqlx::PgPool;
+use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{config::Config, DenError};
+use den_llm::EmbeddingClient;
 
 use crate::memory::store::{relations, BearMemoryStore};
+use crate::memory::MemoryStoreManager;
 
 use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
@@ -137,4 +140,20 @@ pub async fn reconcile_bear<E: PassageEmbedder>(
         }
     }
     Ok(outcome)
+}
+
+/// Operator-facing synchronous reindex (ADR-0038 Phase 5 tooling): reconcile one Bear's recall
+/// index immediately with the live embedding client, bypassing the `recall_index` queue. Used by
+/// the `den reindex` CLI. Errors if recall is disabled (`QDRANT_URL` unset).
+pub async fn reindex_bear_now(
+    pg: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+) -> Result<ReconcileOutcome, DenError> {
+    let qdrant = QdrantRecall::from_config(config)
+        .ok_or_else(|| DenError::System("recall disabled (QDRANT_URL unset)".to_string()))?;
+    let store = stores.store_for_bear(bear_id).await?;
+    let embedder = EmbeddingClient::new(config);
+    reconcile_bear(pg, &qdrant, &embedder, &store, &config.embedding_standard).await
 }
