@@ -1,7 +1,7 @@
 # BearWire JSON specification
 
 **Status:** Draft  
-**References:** [ADR-0030: BearWire resource-oriented event model](../decisions/adr-0030-bearwire-resource-oriented-event-model.md), [ADR-0007: BearWire protocol](../decisions/adr-0007-bearwire-protocol.md)
+**References:** [ADR-0030: BearWire resource-oriented event model](../decisions/adr-0030-bearwire-resource-oriented-event-model.md), [ADR-0007: BearWire protocol](../decisions/adr-0007-bearwire-protocol.md), [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md)
 
 ## Purpose
 

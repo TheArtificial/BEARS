@@ -412,7 +412,8 @@ reflection.run_requested
 The resource-oriented event model defined by this ADR should be reflected in:
 
 - a JSON-based BearWire protocol document describing event envelopes, payload schemas, and method families; and
-- a Rust-based BearWire design document describing type models, enums, identifiers, and projection rules.
+- a Rust-based BearWire design document describing type models, enums, identifiers, and projection rules; and
+- [ADR-0034: BearWire as the Den ↔ armature wire](adr-0034-bearwire-as-den-armature-wire.md) plus [implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md) for shipping the wire on Den and armatures.
 
 ## Related documents
 

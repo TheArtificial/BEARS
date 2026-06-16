@@ -808,6 +808,8 @@ Rejected for this boundary. GraphQL is useful for human UI queries and subscript
 
 ## Related documents
 
+- [ADR-0034: BearWire as the Den ↔ armature wire](adr-0034-bearwire-as-den-armature-wire.md) — decision to replace adapter-SSE with BearWire on the Den ↔ armature hop
+- [BearWire armature wire implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
 - [ACP Session Bindings](acp-session-bindings.md)
 - [ACP Conversation Resolver](acp-conversation-resolver.md)
 - [Tool Naming and Execution Strategy](tool-naming-and-execution-strategy.md)
