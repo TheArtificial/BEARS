@@ -154,7 +154,7 @@ services:
             dockerfile: Dockerfile
             args:
                 SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                GIT_SHA: ${GIT_SHA:-}
+                GIT_SHA: ${GIT_SHA:-${SOURCE_COMMIT:-}}
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
             cache_from:
                 - type=local,src=.docker-cache/den
@@ -216,6 +216,16 @@ services:
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
         volumes:
             - bears-den-sqlite-data:/var/lib/den/bear-sqlite
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${PORT:-3000}/health/ready || exit 1",
+                ]
+            interval: 30s
+            timeout: 15s
+            retries: 5
+            start_period: 120s
         expose:
             - "3000"
             - "3001"
