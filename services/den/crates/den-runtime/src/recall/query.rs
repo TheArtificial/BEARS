@@ -6,6 +6,8 @@
 //! rather than failing the turn (the canonical key-memory projection still renders).
 
 use serde_json::{json, Value};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::{config::Config, DenError};
@@ -13,6 +15,7 @@ use den_core::{config::Config, DenError};
 use super::indexer::PassageEmbedder;
 use super::policy::SOURCE_CLASS_BEAR_MEMORY;
 use super::qdrant::QdrantRecall;
+use super::temporal::{parse_time_expression, TemporalQuery};
 
 /// Total character budget for the rendered recall section (ADR-0038 Phase 2: ~2–3k).
 const RECALL_CHAR_BUDGET: usize = 2_600;
@@ -360,18 +363,36 @@ pub async fn hybrid_memory_search(
     query: &str,
     limit: usize,
 ) -> Result<Value, DenError> {
-    let vector = match search_bear_memory_for_role(config, bear_id, role, query, limit).await {
-        Ok(projection) => projection,
-        Err(error) => {
-            tracing::warn!(%error, "recall vector leg failed; returning keyword results only");
-            disabled_projection("vector_error")
-        }
+    // Temporal leg (Phase 3.5): split a time expression off the query so the direct legs match on
+    // the topical remainder while recall filters/boosts on effective event time.
+    let temporal = parse_time_expression(query, OffsetDateTime::now_utc());
+    let effective_query = temporal
+        .as_ref()
+        .map(|t| t.residual_query.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(query);
+    // Over-fetch when a temporal filter will prune, so enough in-window hits survive the cap.
+    let fetch_limit = if temporal.is_some() {
+        limit.saturating_mul(5).clamp(limit, 200)
+    } else {
+        limit
     };
+
+    let vector =
+        match search_bear_memory_for_role(config, bear_id, role, effective_query, fetch_limit).await
+        {
+            Ok(projection) => projection,
+            Err(error) => {
+                tracing::warn!(%error, "recall vector leg failed; returning keyword results only");
+                disabled_projection("vector_error")
+            }
+        };
 
     let stores = crate::memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
-    let limit_i64 = i64::try_from(limit).unwrap_or(10);
-    let keyword = crate::memory::tools::sqlite_memory_search(&store, role, query, limit_i64).await?;
+    let limit_i64 = i64::try_from(fetch_limit).unwrap_or(10);
+    let keyword =
+        crate::memory::tools::sqlite_memory_search(&store, role, effective_query, limit_i64).await?;
 
     // Seed the graph leg with the records the direct legs already matched.
     let mut seeds: Vec<String> = vector.passages.iter().map(|p| p.memory_id.clone()).collect();
@@ -382,16 +403,95 @@ pub async fn hybrid_memory_search(
             }
         }
     }
-    let graph = match graph_expand_hits(config, bear_id, role, &seeds, GRAPH_MAX_DEPTH, limit).await
-    {
-        Ok(hits) => hits,
-        Err(error) => {
-            tracing::warn!(%error, "recall graph leg failed; returning direct results only");
-            Vec::new()
-        }
+    let graph =
+        match graph_expand_hits(config, bear_id, role, &seeds, GRAPH_MAX_DEPTH, fetch_limit).await {
+            Ok(hits) => hits,
+            Err(error) => {
+                tracing::warn!(%error, "recall graph leg failed; returning direct results only");
+                Vec::new()
+            }
+        };
+
+    let mut result = merge_search_results(&vector, &keyword, &graph, query, fetch_limit);
+
+    if let Some(temporal) = &temporal {
+        let hits = result
+            .get("hits")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut filtered = match filter_hits_by_temporal(&store, hits, temporal).await {
+            Ok(hits) => hits,
+            Err(error) => {
+                tracing::warn!(%error, "recall temporal leg failed; returning unfiltered results");
+                Vec::new()
+            }
+        };
+        filtered.truncate(limit);
+        result["hits"] = Value::Array(filtered);
+        result["temporal"] = json!({
+            "matched": temporal.matched,
+            "as_of": temporal.as_of,
+            "from": temporal.from.and_then(|d| d.format(&Rfc3339).ok()),
+            "to": temporal.to.and_then(|d| d.format(&Rfc3339).ok()),
+        });
+    }
+
+    Ok(result)
+}
+
+/// Drop hits whose effective event time (`COALESCE(valid_from, created_at)`) falls outside the
+/// parsed window. For point-in-time (`as of`) queries, also drop records already superseded as of
+/// the upper bound, walking the supersession chain (Phase 3.5).
+async fn filter_hits_by_temporal(
+    store: &crate::memory::store::BearMemoryStore,
+    hits: Vec<Value>,
+    temporal: &TemporalQuery,
+) -> Result<Vec<Value>, DenError> {
+    if hits.is_empty() {
+        return Ok(hits);
+    }
+    let ids: Vec<String> = hits
+        .iter()
+        .filter_map(|h| h.get("memory_id").and_then(Value::as_str).map(String::from))
+        .collect();
+    let times = crate::memory::store::effective_time_by_ids(store, &ids).await?;
+    let superseders = if temporal.as_of {
+        crate::memory::store::superseder_times_by_superseded(store, &ids).await?
+    } else {
+        std::collections::HashMap::new()
     };
 
-    Ok(merge_search_results(&vector, &keyword, &graph, query, limit))
+    Ok(hits
+        .into_iter()
+        .filter(|hit| {
+            let Some(id) = hit.get("memory_id").and_then(Value::as_str) else {
+                return false;
+            };
+            // No effective time ⇒ can't satisfy a temporal constraint.
+            let Some(effective) = times.get(id) else {
+                return false;
+            };
+            if let Some(from) = temporal.from {
+                if *effective < from {
+                    return false;
+                }
+            }
+            if let Some(to) = temporal.to {
+                if *effective >= to {
+                    return false;
+                }
+                if temporal.as_of {
+                    if let Some(sup_times) = superseders.get(id) {
+                        if sup_times.iter().any(|st| *st < to) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        })
+        .collect())
 }
 
 /// Merge the vector projection, the keyword leg's JSON, and the bounded-graph leg's hits into the

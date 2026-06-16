@@ -25,6 +25,9 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
             .map_err(|e| DenError::System(format!("rename author_role failed: {e}")))?;
     }
 
+    // Additive bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5).
+    add_bitemporal_columns_if_missing(pool, &names).await?;
+
     // Retire the legacy record→record `memory_links` base table; relations now live in
     // `memory_relations`/`memory_access_rules` with `memory_links` as a read view (ADR-0042 §7).
     retire_legacy_memory_links_table(pool).await?;
@@ -57,6 +60,28 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // Retire the vestigial `entity_ref` column (never populated); relations carry aboutness now.
     drop_entity_ref_column_if_present(pool, &names).await?;
 
+    Ok(())
+}
+
+/// Add the bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5) to pre-existing
+/// per-Bear SQLite files. Additive and idempotent; `valid_from` defaults to `created_at` on write,
+/// `invalid_at` is forward-looking (set on supersession). Recall reads COALESCE(valid_from,created_at).
+async fn add_bitemporal_columns_if_missing(
+    pool: &SqlitePool,
+    record_columns: &[String],
+) -> Result<(), DenError> {
+    if !record_columns.iter().any(|c| c == "valid_from") {
+        sqlx::query("ALTER TABLE memory_records ADD COLUMN valid_from TEXT NULL")
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("add valid_from column failed: {e}")))?;
+    }
+    if !record_columns.iter().any(|c| c == "invalid_at") {
+        sqlx::query("ALTER TABLE memory_records ADD COLUMN invalid_at TEXT NULL")
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("add invalid_at column failed: {e}")))?;
+    }
     Ok(())
 }
 
@@ -134,7 +159,9 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 supersedes_memory_id TEXT NULL,
                 visibility TEXT NOT NULL DEFAULT 'normal',
                 logical_path TEXT NULL,
-                work_surface_ref TEXT NULL
+                work_surface_ref TEXT NULL,
+                valid_from TEXT NULL,
+                invalid_at TEXT NULL
             )
             ",
         )
@@ -147,7 +174,8 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
             INSERT INTO memory_records_new (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
-                supersedes_memory_id, visibility, logical_path, work_surface_ref
+                supersedes_memory_id, visibility, logical_path, work_surface_ref,
+                valid_from, invalid_at
             )
             SELECT
                 memory_id,
@@ -164,7 +192,9 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 supersedes_memory_id,
                 visibility,
                 logical_path,
-                work_surface_ref
+                work_surface_ref,
+                valid_from,
+                invalid_at
             FROM memory_records
             ",
         )

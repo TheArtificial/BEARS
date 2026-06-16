@@ -75,8 +75,8 @@ impl BearMemoryStore {
             INSERT INTO memory_records (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
-                visibility, logical_path, work_surface_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                visibility, logical_path, work_surface_ref, valid_from
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(&memory_id)
@@ -93,6 +93,7 @@ impl BearMemoryStore {
         .bind(visibility)
         .bind(&logical_path)
         .bind(&logical.work_surface_ref)
+        .bind(&created_at)
         .execute(&self.pool)
         .await
         .map_err(|e| DenError::System(format!("append memory_record failed: {e}")))?;
@@ -313,6 +314,221 @@ pub async fn fetch_records_min(
             content_text,
         })
         .collect())
+}
+
+fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+}
+
+/// Effective event time `COALESCE(valid_from, created_at)` parsed to UTC instants, keyed by memory
+/// id (Phase 3.5 temporal leg). Unparseable timestamps are skipped. Empty in ⇒ empty out.
+pub async fn effective_time_by_ids(
+    store: &BearMemoryStore,
+    memory_ids: &[String],
+) -> Result<std::collections::HashMap<String, OffsetDateTime>, DenError> {
+    if memory_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = vec!["?"; memory_ids.len()].join(",");
+    let sql = format!(
+        "SELECT memory_id, COALESCE(valid_from, created_at) FROM memory_records \
+         WHERE bear_id = ? AND memory_id IN ({placeholders})"
+    );
+    let mut query = sqlx::query_as::<_, (String, String)>(&sql).bind(store.bear_id().to_string());
+    for id in memory_ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("effective time lookup failed: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, ts)| parse_rfc3339(&ts).map(|t| (id, t)))
+        .collect())
+}
+
+/// For each of `memory_ids`, the effective times of records that supersede it (records whose
+/// `supersedes_memory_id` points at it). Used to exclude records already superseded as of a
+/// point-in-time query (Phase 3.5).
+pub async fn superseder_times_by_superseded(
+    store: &BearMemoryStore,
+    memory_ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<OffsetDateTime>>, DenError> {
+    if memory_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = vec!["?"; memory_ids.len()].join(",");
+    let sql = format!(
+        "SELECT supersedes_memory_id, COALESCE(valid_from, created_at) FROM memory_records \
+         WHERE bear_id = ? AND supersedes_memory_id IN ({placeholders})"
+    );
+    let mut query =
+        sqlx::query_as::<_, (Option<String>, String)>(&sql).bind(store.bear_id().to_string());
+    for id in memory_ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("superseder time lookup failed: {e}")))?;
+    let mut map: std::collections::HashMap<String, Vec<OffsetDateTime>> =
+        std::collections::HashMap::new();
+    for (superseded, ts) in rows {
+        if let (Some(id), Some(t)) = (superseded, parse_rfc3339(&ts)) {
+            map.entry(id).or_default().push(t);
+        }
+    }
+    Ok(map)
+}
+
+/// Point-in-time recall (Phase 3.5): the record that was head at `logical_path` as of instant
+/// `at`, walking the supersession chain. A record is the as-of head when its effective time is
+/// `<= at`, no record whose effective time is `<= at` supersedes it, and (among those) it has the
+/// greatest effective time. Returns `None` if nothing existed at the path by then.
+pub async fn head_record_as_of(
+    store: &BearMemoryStore,
+    logical_path: &str,
+    at: OffsetDateTime,
+) -> Result<Option<MemoryRecordRow>, DenError> {
+    let rows = sqlx::query_as::<_, AsOfSqlRow>(
+        r"
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
+               logical_path, work_surface_ref, metadata_json, created_at,
+               supersedes_memory_id, COALESCE(valid_from, created_at) AS effective_at
+        FROM memory_records
+        WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .bind(logical_path)
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("as-of head lookup failed: {e}")))?;
+
+    let parsed: Vec<(AsOfSqlRow, OffsetDateTime)> = rows
+        .into_iter()
+        .filter_map(|r| parse_rfc3339(&r.effective_at).map(|t| (r, t)))
+        .collect();
+
+    // Records superseded by something already effective by `at` are not the as-of head.
+    let mut superseded_as_of: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (row, effective) in &parsed {
+        if *effective <= at {
+            if let Some(prior) = &row.supersedes_memory_id {
+                superseded_as_of.insert(prior.clone());
+            }
+        }
+    }
+
+    let best = parsed
+        .into_iter()
+        .filter(|(row, effective)| {
+            *effective <= at && !superseded_as_of.contains(&row.memory_id)
+        })
+        .max_by(|(a, ta), (b, tb)| ta.cmp(tb).then(a.sequence_no.cmp(&b.sequence_no)));
+    Ok(best.map(|(row, _)| row.into_row()))
+}
+
+#[derive(sqlx::FromRow)]
+struct AsOfSqlRow {
+    memory_id: String,
+    sequence_no: i64,
+    scope_type: String,
+    scope_profile: Option<String>,
+    kind: String,
+    content_text: String,
+    logical_path: Option<String>,
+    work_surface_ref: Option<String>,
+    metadata_json: String,
+    created_at: String,
+    supersedes_memory_id: Option<String>,
+    effective_at: String,
+}
+
+#[cfg(test)]
+mod as_of_tests {
+    use super::*;
+    use crate::test_support::new_test_store;
+    use time::format_description::well_known::Rfc3339;
+
+    fn at(rfc: &str) -> OffsetDateTime {
+        OffsetDateTime::parse(rfc, &Rfc3339).unwrap()
+    }
+
+    async fn insert_version(
+        store: &BearMemoryStore,
+        memory_id: &str,
+        seq: i64,
+        valid_from: &str,
+        supersedes: Option<&str>,
+    ) {
+        sqlx::query(
+            r"
+            INSERT INTO memory_records (
+                memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
+                author_profile, author_agent_id, created_at, content_text, metadata_json,
+                visibility, logical_path, work_surface_ref, valid_from, supersedes_memory_id
+            ) VALUES (?, ?, ?, 'shared', NULL, 'note', 'curate', NULL, ?, 'policy text', '{}',
+                      'normal', 'core/policy.md', NULL, ?, ?)
+            ",
+        )
+        .bind(memory_id)
+        .bind(store.bear_id().to_string())
+        .bind(seq)
+        .bind(valid_from)
+        .bind(valid_from)
+        .bind(supersedes)
+        .execute(store.pool())
+        .await
+        .expect("insert version");
+    }
+
+    #[tokio::test]
+    async fn head_record_as_of_walks_supersession_chain() {
+        let store = new_test_store().await;
+        insert_version(&store, "v1", 1, "2026-01-01T00:00:00Z", None).await;
+        insert_version(&store, "v2", 2, "2026-03-01T00:00:00Z", Some("v1")).await;
+
+        // Before anything existed.
+        assert!(head_record_as_of(&store, "core/policy.md", at("2025-12-01T00:00:00Z"))
+            .await
+            .unwrap()
+            .is_none());
+
+        // v1 is current until v2 becomes effective.
+        let feb = head_record_as_of(&store, "core/policy.md", at("2026-02-01T00:00:00Z"))
+            .await
+            .unwrap()
+            .expect("v1 head in feb");
+        assert_eq!(feb.memory_id, "v1");
+
+        // Once v2 is effective it supersedes v1.
+        let apr = head_record_as_of(&store, "core/policy.md", at("2026-04-01T00:00:00Z"))
+            .await
+            .unwrap()
+            .expect("v2 head in apr");
+        assert_eq!(apr.memory_id, "v2");
+    }
+}
+
+impl AsOfSqlRow {
+    fn into_row(self) -> MemoryRecordRow {
+        MemoryRecordRow {
+            memory_id: self.memory_id,
+            sequence_no: self.sequence_no,
+            scope_type: MemoryScopeType::parse(&self.scope_type)
+                .unwrap_or(MemoryScopeType::ProfileLocal),
+            scope_profile: self.scope_profile,
+            kind: self.kind,
+            content_text: self.content_text,
+            logical_path: self.logical_path,
+            work_surface_ref: self.work_surface_ref,
+            metadata_json: serde_json::from_str(&self.metadata_json)
+                .unwrap_or_else(|_| Value::Object(Default::default())),
+            created_at: self.created_at,
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]

@@ -405,6 +405,65 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// Phase 3.5 temporal leg: `hybrid_memory_search` parses a time expression off the query and
+/// filters hits by effective event time. Infra-free (temp SQLite, no Qdrant). Records written now
+/// survive a `today` window but are pruned by a `before <past-date>` window; the result carries a
+/// `temporal` diagnostic either way.
+#[tokio::test]
+async fn hybrid_search_temporal_leg_filters_by_effective_time() {
+    let tmp = std::env::temp_dir().join(format!("den-recall-temporal-{}", Uuid::new_v4()));
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = tmp.to_string_lossy().into_owned();
+
+    let stores = MemoryStoreManager::new(&config);
+    let bear_id = Uuid::new_v4();
+    let store = stores.store_for_bear(bear_id).await.expect("temp store");
+
+    let token = "temporaltoken";
+    for kind in ["summary", "knowledge"] {
+        append_memory_record(
+            &store,
+            &LogicalMemoryPath::shared_core(kind),
+            kind,
+            "curate",
+            None,
+            &format!("shared note mentioning {token}"),
+            &json!({}),
+        )
+        .await
+        .expect("write record");
+    }
+
+    // A `today` window keeps just-written records and strips the temporal phrase from the query.
+    let today = hybrid_memory_search(&config, bear_id, "work", &format!("{token} today"), 10)
+        .await
+        .expect("today search");
+    assert_eq!(today["temporal"]["matched"], "today", "{today}");
+    assert!(
+        !today["hits"].as_array().expect("hits").is_empty(),
+        "records written now fall in the today window: {today}"
+    );
+
+    // A window entirely in the past prunes every just-written record.
+    let past = hybrid_memory_search(
+        &config,
+        bear_id,
+        "work",
+        &format!("{token} before 2000-01-01"),
+        10,
+    )
+    .await
+    .expect("past search");
+    assert!(past["temporal"]["to"].is_string(), "{past}");
+    assert_eq!(
+        past["hits"].as_array().expect("hits").len(),
+        0,
+        "nothing is effective before the year 2000: {past}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// Head selection + policy filtering for whole-Bear reconcile (Phase 1b). Infra-free: uses a
 /// throwaway temp SQLite store, no Postgres/Qdrant, so it always runs.
 #[tokio::test]

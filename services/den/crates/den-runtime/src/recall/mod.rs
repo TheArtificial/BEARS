@@ -9,6 +9,7 @@
 //! - [`indexer`] — orchestration (chunk → embed → upsert → register).
 //! - [`reconcile`] — whole-Bear reconcile against canonical heads.
 //! - [`query`] — recall query for the turn assembler (embed → search → render).
+//! - [`temporal`] — time-expression parsing for the temporal recall leg (Phase 3.5).
 
 pub mod chunking;
 pub mod indexer;
@@ -17,6 +18,7 @@ pub mod qdrant;
 pub mod query;
 pub mod reconcile;
 pub mod registry;
+pub mod temporal;
 
 pub use indexer::{IndexOutcome, PassageEmbedder, RecallIndexer};
 pub use policy::IndexRequest;
@@ -27,6 +29,7 @@ pub use query::{
     semantic_search_for_bear, RecallProjection, RecalledPassage,
 };
 pub use reconcile::{reconcile_bear, ReconcileOutcome};
+pub use temporal::{parse_time_expression, TemporalQuery};
 
 #[cfg(any(test, feature = "test-util"))]
 pub use indexer::DeterministicEmbedder;

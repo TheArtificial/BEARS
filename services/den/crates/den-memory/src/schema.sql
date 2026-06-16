@@ -23,7 +23,12 @@ CREATE TABLE IF NOT EXISTS memory_records (
     supersedes_memory_id TEXT NULL,
     visibility TEXT NOT NULL DEFAULT 'normal',
     logical_path TEXT NULL,
-    work_surface_ref TEXT NULL
+    work_surface_ref TEXT NULL,
+    -- Bi-temporal event time (ADR-0041 / DERIVED_RECALL Phase 3.5): when the asserted fact became
+    -- true or ceased to be true. created_at remains transaction time. Recall reads
+    -- COALESCE(valid_from, created_at). invalid_at is forward-looking (set on supersession).
+    valid_from TEXT NULL,
+    invalid_at TEXT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memory_records_bear_sequence
     ON memory_records (bear_id, sequence_no);
