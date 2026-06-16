@@ -327,20 +327,52 @@ pub async fn graph_expand_hits(
     let records = crate::memory::store::fetch_records_min(&store, &ids, role).await?;
     let by_id: std::collections::HashMap<&str, &crate::memory::store::RecallRecordMin> =
         records.iter().map(|r| (r.memory_id.as_str(), r)).collect();
-    // Preserve reach order (closest hops first); skip ids the role can't see.
-    let hits = reached
+
+    // Entity-overlap boost: rank reached records that share more entities with the seed set higher
+    // within each hop tier (a stronger association than a single shared entity).
+    let seed_entities: std::collections::HashSet<String> =
+        crate::memory::store::relations::descriptive_entity_ids_for_records(&store, seed_memory_ids)
+            .await?
+            .into_iter()
+            .collect();
+    let entities_by_record =
+        crate::memory::store::relations::descriptive_entity_ids_by_source(&store).await?;
+    let overlap = |memory_id: &str| -> usize {
+        entities_by_record
+            .get(memory_id)
+            .map(|entities| entities.iter().filter(|e| seed_entities.contains(*e)).count())
+            .unwrap_or(0)
+    };
+
+    // Role-visible reached records, ordered by hop asc, then overlap desc, then id (determinism).
+    let mut ordered: Vec<(&crate::memory::store::GraphReach, usize)> = reached
         .iter()
-        .filter_map(|reach| {
-            by_id.get(reach.memory_id.as_str()).map(|rec| {
-                json!({
-                    "memory_id": rec.memory_id,
-                    "path": rec.logical_path,
-                    "kind": rec.kind,
-                    "score": Value::Null,
-                    "snippet": truncate_chars(&rec.content_text, SNIPPET_CHARS),
-                    "source": "graph",
-                    "hop": reach.hop,
-                })
+        .filter(|reach| by_id.contains_key(reach.memory_id.as_str()))
+        .map(|reach| {
+            let score = overlap(&reach.memory_id);
+            (reach, score)
+        })
+        .collect();
+    ordered.sort_by(|(a, oa), (b, ob)| {
+        a.hop
+            .cmp(&b.hop)
+            .then(ob.cmp(oa))
+            .then(a.memory_id.cmp(&b.memory_id))
+    });
+
+    let hits = ordered
+        .into_iter()
+        .map(|(reach, entity_overlap)| {
+            let rec = by_id[reach.memory_id.as_str()];
+            json!({
+                "memory_id": rec.memory_id,
+                "path": rec.logical_path,
+                "kind": rec.kind,
+                "score": Value::Null,
+                "snippet": truncate_chars(&rec.content_text, SNIPPET_CHARS),
+                "source": "graph",
+                "hop": reach.hop,
+                "entity_overlap": entity_overlap,
             })
         })
         .collect();

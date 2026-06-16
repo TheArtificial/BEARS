@@ -401,6 +401,8 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
         .unwrap_or_else(|| panic!("graph leg should surface the indirectly-linked neighbor: {hits:?}"));
     assert_eq!(neighbor_hit["source"], "graph");
     assert_eq!(neighbor_hit["hop"], 1);
+    // Entity-overlap boost: the neighbor shares exactly the one bridging entity with the seed.
+    assert_eq!(neighbor_hit["entity_overlap"], 1, "{hits:?}");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

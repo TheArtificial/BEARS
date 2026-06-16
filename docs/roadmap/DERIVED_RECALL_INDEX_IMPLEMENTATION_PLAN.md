@@ -1,6 +1,6 @@
 # Derived Recall Index — Implementation Plan
 
-**Status:** Planned  
+**Status:** Phases 0–3.5 + 5 landed; Phase 4 (Cabinet) deferred on its ingestion pipeline  
 **Architecture:** [ADR-0038 — Platform embedding standard and derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)  
 **Contracts:** [Den archival memory and ingestion](../architecture/den-archival-memory-and-ingestion-contract.md), [Den-native runtime — turn context](../architecture/den-native-runtime.md#turn-context-assembly)
 
@@ -30,7 +30,7 @@ Complements existing **key memory projection** (path anchors); does not replace 
 - ✅ Den `Config` consumes the new env (`qdrant_url`, `embedding_standard`, `embedding_model`, `embedding_dimensions`) in `den-core/src/config.rs`.
 - ✅ Register embedding model in Bifrost `config.json` (`text-embedding-3-small` authorized on the openai provider key); Den embedding client (`den-llm::EmbeddingClient`) calls `/v1/embeddings` with the active standard's model + dimensions. *(Invocation from the indexer lands in Phase 1.)*
 - ✅ Qdrant client (`den-runtime::recall::QdrantRecall`) + startup collection bootstrap (`den/src/startup.rs`) + `/status.json` health check (`web/stack_health.rs`); a recall-enabled full-stack smoke is wired via `SMOKE_RECALL=1` in `scripts/smoke{,-stack}.sh`.
-- ⏳ Preflight (`services/preflight/preflight.py`): warn when recall enabled but Qdrant unreachable (runtime `/status.json` check already covers this at request time); native runtime works without recall (LIKE fallback).
+- ✅ Preflight: startup `bootstrap_recall_index` (`den/src/startup.rs`) logs a warning when `QDRANT_URL` is set but Qdrant is unreachable (`ensure_collection` fails), then continues with LIKE fallback; the runtime `/status.json` check also covers this at request time.
 
 **Exit:** smoke embed of fixture text; health check passes. *(Health check ✅; live fixture embed pending a real embedding-capable key in the smoke env.)*
 
@@ -56,7 +56,7 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 **Exit:** ✅ unit tests (anchor dedupe, all-deduped→`None`, snippet truncation) + a gated **live Postgres + Qdrant** retrieval test (`recall_query_retrieves_indexed_passage_against_live_qdrant`, deterministic embedder, no API key): index a passage → query the same text → the passage returns as a top hit (score ~1.0) with its payload text + path → render dedupes it against an anchored path.
 
-> **Follow-ups (not blocking):** richer query text (session focus / primary work surface, not just the human message); persisting `recall_diagnostic` to turn telemetry; live exercise with a real embedding key (shared with the Phase 1 live-worker follow-up).
+> **Follow-ups (not blocking):** richer query text (session focus / primary work surface, not just the human message) — *deferred: the assembler `client_context` carries no topical work-surface field yet; lands with the Phase 6 session→entity focus*; persisting `recall_diagnostic` to turn telemetry — *deferred: no turn-telemetry sink exists; the diagnostic is already returned on `AssembledNativeTurn` and surfaced in the recall admin panel*; live exercise with a real embedding key (shared with the Phase 1 live-worker follow-up).
 
 ## Phase 3 — Hybrid `memory_search`  ✅ landed
 
@@ -66,39 +66,42 @@ Complements existing **key memory projection** (path anchors); does not replace 
 
 **Exit:** ✅ tool tests for both legs — infra-free unit tests for the role-scope filter shape and the merge (union + de-dupe, `strategy` selection, limit-capping prioritizing vector), an infra-free keyword-leg test proving the role boundary (shared + own role visible, another role's profile-local excluded), and the existing gated **live Postgres + Qdrant** retrieval test covering the shared `search_passages` core.
 
-## Phase 3.5 — Temporal + bounded graph recall legs
+## Phase 3.5 — Temporal + bounded graph recall legs  ✅ landed
 
 Extends the hybrid retriever ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6) beyond vector + keyword + anchors with two cheap legs, both over **canonical SQLite** (no new store). Borrowed from Hindsight's TEMPR (temporal + graph strategies) without adopting its graph/temporal store.
 
-**Temporal leg.**
+**Temporal leg.**  ✅ landed
 
-- Parse explicit/relative time expressions in the query ("last spring", "in June", "before the migration") into a time range; filter/boost candidates by `valid_from`/`invalid_at` (event time) and `created_at` (transaction time) — ADR-0041 §7 bi-temporal-lite.
-- Point-in-time recall: "as of `<date>`" returns the record that was the valid head at that time (walk the supersession chain), not only the current head.
+- ✅ Additive `valid_from`/`invalid_at` event-time columns on `memory_records` (idempotent ALTER for existing per-Bear SQLite; `append` writes `valid_from = created_at`; recall reads `COALESCE(valid_from, created_at)`). `invalid_at` is forward-looking (set on supersession).
+- ✅ `recall::temporal::parse_time_expression` parses explicit/relative expressions (`today`, `yesterday`, `last N days|weeks|months|years`, `this week|month|year`, `in June [2026]`, explicit `YYYY-MM-DD`, `before`/`since`/`after`, `as of`) into an effective-time window + residual query. `hybrid_memory_search` strips the temporal phrase (so the direct legs match the topical remainder), over-fetches, and filters hits by window, emitting a `temporal` diagnostic.
+- ✅ Point-in-time recall: `den_memory::head_record_as_of` returns the valid head at an instant by walking the supersession chain (`effective ≤ at` and not superseded-by-then); `as of` queries also drop hits already superseded as of the upper bound.
 - Recency stays a ranking factor for untimed queries.
 
-**Bounded graph leg (record↔entity expansion).**
+**Bounded graph leg (record↔entity expansion).**  ✅ landed
 
-- _Prerequisite landed_ ([Bear Entity Layer Phase 4](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md)): each passage payload now denormalizes its resolved **descriptive** `entity_ids` (via `relations::descriptive_entity_ids_by_source` at reconcile time), and `recall::search_bear_memory_for_entities` gives an entity-membership-scoped vector leg — the seed for the expansion below.
-- Starting from entities resolved in the query/turn context, expand over the **bipartite** record↔entity relation graph (`memory_relations`): entity → its records → co-occurring entities → their records.
-- **Depth-capped (default 2 hops), read-only, retrieval-time only.** No stored transitive edges, no inference, no entity↔entity edges — consistent with [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) anti-RDF guardrails. This is query expansion, not a knowledge graph.
-- Only `recall_effect != gate` relations participate; access-bearing gating still applies via the required `AccessContext` (the `memory_access_rules` query) before results return.
-- Answers indirect queries ("where does Alice work?") by reaching `Alice → works_at → Google → located_in → Mountain View` through shared-entity hops.
+- ✅ _Prerequisite landed_ ([Bear Entity Layer Phase 4](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md)): each passage payload denormalizes its resolved **descriptive** `entity_ids`, and `recall::search_bear_memory_for_entities` gives an entity-membership-scoped vector leg.
+- ✅ `den_memory::bounded_graph_expand` expands over the **bipartite** record↔entity relation graph (`memory_relations`): record → entity → co-occurring records. Seeded by the vector/keyword hits, it surfaces records related through a shared entity that the direct legs never matched. Exposed as a third `memory_search` leg (`source: "graph"`, with `hop` + `entity_overlap`), fail-open.
+- ✅ **Depth-capped (default 2 hops), read-only, retrieval-time only.** No stored transitive edges, no inference, no entity↔entity edges — consistent with [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) anti-RDF guardrails. Reached records are role-scoped (shared ∨ own role-local); access-bearing relations are excluded by construction (traversal is over the descriptive table) and `AccessContext` is applied by the caller once access rules exist.
+- ✅ **Entity-overlap boost:** within each hop tier, reached records sharing more entities with the seed set rank higher.
 
-**Exit:** recall tests for (a) a relative-time query resolving to the correct historical head, and (b) a 2-hop entity query returning a record never directly matched by vector/keyword; both respect `AccessContext`.
+**Exit:** ✅ recall tests for (a) a relative-time / `before`-window query filtering by effective time + an as-of supersession-chain walk, and (b) an infra-free 2-hop entity query returning a record never directly matched by keyword (vector disabled, no Qdrant); plus parser-grammar units and a merge dedupe/ordering unit test.
 
-## Phase 4 — Cabinet integration
+## Phase 4 — Cabinet integration  ◻ deferred (blocked on the Cabinet ingestion pipeline)
 
-- Cabinet pipeline ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)) uses **same** `bears-embed-v1` into Qdrant (`source_class=cabinet_passage`).
+- Cabinet pipeline ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)) would use the **same** `bears-embed-v1` into Qdrant (`source_class=cabinet_passage`).
 - Cross-corpus query policy: optional Cabinet hits when mission/work-surface link + ACL allow.
+
+> **Deferred:** there is no Cabinet passage/ingestion pipeline in the codebase yet (no `cabinet_passage` producer). Building the recall side alone would be unwired dead code; this phase unblocks once ADR-0008 ingestion lands.
 
 **Exit:** end-to-end test — Cabinet passage + related Bear memory rank near each other for shared topic query.
 
-## Phase 5 — `archive_index` + migration tooling
+## Phase 5 — `archive_index` + migration tooling  ✅ lane + reindex CLI landed (embedding-standard migration deferred)
 
-- Reflection `archive_index` run type drives reconcile sweep (registry vs canonical vs Qdrant).
-- CLI/admin: `reindex-bear`, `reindex-cabinet`, `migrate-embedding-standard` (build v2 collection, progress, alias flip).
+- ✅ The `recall_index` reflection lane **is** the reconcile sweep (registry vs canonical vs Qdrant): `bear_reflection_runs` `recall_index` lane + worker claim (`FOR UPDATE SKIP LOCKED`) → `reconcile_bear`. (`archive_index` was the aspirational name; the implemented lane is `recall_index`.)
+- ✅ CLI: `den reindex (--bear <uuid> | --all)` runs a synchronous whole-Bear reconcile (`recall::reindex_bear_now`) with per-Bear counts, bypassing the queue so it works one-shot without `RUN_WORKERS`; bails cleanly when `QDRANT_URL` is unset.
+- ◻ `migrate-embedding-standard` (build v2 collection, progress, alias flip) and `reindex-cabinet` are **deferred**: the former needs Qdrant alias plumbing + a second embedding standard (only `bears-embed-v1` exists); the latter waits on Phase 4.
 
-**Exit:** documented runbook for `bears-embed-v2` dry run on staging.
+**Exit:** documented runbook for `bears-embed-v2` dry run on staging *(pending the migration tooling above)*.
 
 ## Risks
 
