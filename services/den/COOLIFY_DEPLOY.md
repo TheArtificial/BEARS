@@ -52,6 +52,8 @@ Open **Build Arguments** / **Docker Build Args** (wording varies by Coolify vers
 | `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The image build copies `.sqlx/` from the Git checkout into the build context. Regenerate metadata with `cargo sqlx prepare` when queries change. |
 | `SOURCE_DATE_EPOCH` (optional) | Unix timestamp (seconds) used as **`GET /version`** → `built_at_utc` when set at image build time; otherwise the build uses the real clock when `build.rs` runs. Useful for reproducible builds. |
 
+If you want `/version` and `/status.json` to report deploy metadata **without** changing Docker build args on every push, prefer **runtime** environment variables instead of build args. Den checks `DEN_GIT_SHA_OVERRIDE` first, then `GIT_SHA`, then `SOURCE_COMMIT`, and falls back to the compile-time `GIT_SHA` baked by `build.rs`. It also checks `DEN_BUILT_AT_OVERRIDE` first and otherwise falls back to the compile-time `DEN_BUILT_AT_UTC` from `build.rs`.
+
 If you omit `SQLX_OFFLINE=true`, the build needs a reachable Postgres so SQLx can verify queries against a database that has applied the current migrations (same as before). Offline builds are the usual **CI / air-gapped** approach (see [`docs/deploy.md`](docs/deploy.md)).
 
 At **container start**, Den connects using the **runtime** `DATABASE_URL` and applies any pending migrations there automatically.
@@ -85,6 +87,8 @@ Strongly recommended for production:
 | `WEB_SERVER_URL` | Public origin of the web app (**no** trailing slash), for example `https://den.example.com`. |
 | `API_SERVER_URL` | Public origin of the API when `RUN_API=true`; for BEARS ACP this can be a subdomain such as `https://api.bears.[domain]`, another hostname, or a published port such as `https://bears.[domain]:3001`. |
 | `SESSION_COOKIE_DOMAIN` | Cookie `Domain` when sessions must span subdomains; omit for host-only cookies. |
+| `DEN_GIT_SHA_OVERRIDE` | Optional runtime-only commit identifier for `/version` and `/status.json`. Recommended when your Coolify build omits `GIT_SHA` build args to preserve Docker cache reuse. If your Coolify setup exposes a commit variable at container runtime, map it here. |
+| `DEN_BUILT_AT_OVERRIDE` | Optional runtime-only timestamp for `/version` and `/status.json` (for example an RFC 3339 deploy timestamp). Use this if you want the status page to show deploy-time metadata instead of the compile-time timestamp from the crate build script. |
 
 Integrations (set when you wire the rest of the stack):
 

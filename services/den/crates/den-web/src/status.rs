@@ -130,7 +130,7 @@ fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
             .as_ref()
             .map(|g| g.updated_at.clone())
             .unwrap_or_else(|| "—".to_string()),
-        in_sync: sync_label(den.git_sha, payload.ghcr_den.as_ref()),
+        in_sync: sync_label(&den.git_sha, payload.ghcr_den.as_ref()),
     }];
 
     match &payload.codepool_version {
