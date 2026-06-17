@@ -52,7 +52,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 ## Bear memory & entities (`src/bear_memory.rs`)
 
 - `GET /bear/{slug}/memory` — memory dashboard ("how much memory": counts by kind/role, recall coverage, entity summary, recent additions, governance)
-- `POST /bear/{slug}/memory/import-letta` — bear-admin multipart upload (`bundle`) that stages a Letta git bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`; redirects back to the memory dashboard with success/error notices (no ETL import yet)
+- `POST /bear/{slug}/memory/import-letta` — bear-admin multipart upload (`bundle`) that stages a Letta git bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports current MemFS heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
 - `GET /bear/{slug}/memory/recent` — recent additions feed (newest records across all roles)
 - `GET /bear/{slug}/memory/search?q=&mode=` — search (keyword always; `mode=semantic` uses the recall index when configured)
 - `GET|POST /bear/{slug}/memory/browse` — library of logical paths grouped by scope; POST deletes/requests review for selected paths (bear admins)

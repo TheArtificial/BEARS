@@ -24,11 +24,12 @@ pub use admin_inspect::{
 };
 pub use curation::{
     create_observation, create_proposal, get_observation, get_proposal, list_proposals,
-    mark_observation_review_queued_for_bear, promote_core_content, record_reflection_outcome_complete,
-    record_reflection_outcome_start, resolve_proposal,
+    mark_observation_review_queued_for_bear, promote_core_content,
+    record_reflection_outcome_complete, record_reflection_outcome_start, resolve_proposal,
 };
 pub use store::{
-    has_work_surface_canonical_anchor, head_record_for_logical_path, list_profile_local_head_records,
-    memory_sequence_high_water, record_visible, AccessContext, BearMemoryStore, LogicalMemoryPath,
+    has_work_surface_canonical_anchor, head_record_for_logical_path, import_memfs_bundle,
+    list_profile_local_head_records, memory_sequence_high_water, record_visible, AccessContext,
+    BearMemoryStore, LogicalMemoryPath, MemfsBranchReport, MemfsImportOptions, MemfsImportReport,
     MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
 };

@@ -176,8 +176,10 @@
 <div class="box" id="letta-import">
     <h3>Letta memory upload</h3>
     <p class="form-hint">
-        This currently stages a Letta bundle for later ETL import. It does not
-        import records into SQLite yet.
+        Upload a Letta git bundle to import current memory heads into this
+        Bear's SQLite store. The uploaded bundle is also staged under
+        <code>imports/</code>
+        for audit and retry.
     </p>
     <form
         method="post"
@@ -189,7 +191,8 @@
         <p><button type="submit">Upload Letta memory</button></p>
     </form>
     <p class="form-hint">
-        Max upload size: 128 MiB. Expected format: git bundle.
+        Max upload size: 128 MiB. Expected format: git bundle. Current import
+        mode is heads-only.
     </p>
 </div>
 {% endif %}

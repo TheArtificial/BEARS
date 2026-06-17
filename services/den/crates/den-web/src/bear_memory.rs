@@ -32,10 +32,12 @@ use den_runtime::{
             get_memory_record_detail, head_entry_count, list_path_summaries,
             list_recent_memory_records, search_memory_records, PathSummary,
         },
+        import_memfs_bundle,
         store::{
             self, list_relations_for_entity, list_relations_for_source, MemoryRecordRow,
             MemoryStoreManager,
         },
+        MemfsImportOptions,
     },
     memory_proposals::{self, CreateMemoryProposal},
     pair_reflection,
@@ -681,10 +683,36 @@ async fn import_letta_post(
     std::fs::write(&file_path, &bundle_bytes)
         .map_err(|err| CustomError::System(format!("failed to stage Letta bundle: {err}")))?;
 
+    let stores = MemoryStoreManager::new(state.config.as_ref());
+    let store = stores.store_for_bear(bear.id).await?;
+    let report = match import_memfs_bundle(
+        &store,
+        &file_path,
+        &MemfsImportOptions {
+            dry_run: false,
+            include_workflow_artifacts: false,
+        },
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(err) => {
+            tracing::warn!(bear_id = %bear.id, error = %err, path = %file_path.display(), "Letta bundle import failed after staging");
+            return Ok(dashboard_redirect_with_query(
+                &bear.slug,
+                "import_error",
+                "Bundle upload succeeded, but importing into SQLite failed. The staged bundle was kept under imports/ for retry.",
+            ));
+        }
+    };
+
     Ok(dashboard_redirect_with_query(
         &bear.slug,
         "import_notice",
-        "Letta memory bundle staged for later ETL import. No records were imported yet.",
+        &format!(
+            "Imported {} memory paths (skipped {}, quarantined {}) from the uploaded Letta bundle. The bundle was also staged under imports/.",
+            report.imported_count, report.skipped_count, report.quarantined_count
+        ),
     ))
 }
 
