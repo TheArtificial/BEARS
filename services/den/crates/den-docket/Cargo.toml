@@ -1,6 +1,6 @@
 [package]
 name = "den-docket"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 # Docket: Den's control-plane work-management subsystem (ADR-0034).

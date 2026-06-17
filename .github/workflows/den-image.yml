@@ -37,14 +37,33 @@ jobs:
               run: |
                   set -euo pipefail
 
-                  version=$(awk -F '"' '
-                    $0 == "[package]" { in_package=1; next }
-                    /^\[/ && $0 != "[package]" { in_package=0 }
-                    in_package && $1 ~ /^version[[:space:]]*=/ { print $2; exit }
-                  ' services/den/Cargo.toml)
+                  read_version_file() {
+                    python3 - "$1" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+data = tomllib.loads(text)
+pkg = data.get("package", {})
+version = pkg.get("version")
+if isinstance(version, str):
+    print(version)
+elif isinstance(version, dict) and version.get("workspace"):
+    print(data["workspace"]["package"]["version"])
+else:
+    raise SystemExit("Could not resolve Den package version")
+PY
+                  }
+
+                  read_version_stdin() {
+                    python3 -c 'import sys, tomllib; data = tomllib.loads(sys.stdin.read()); pkg = data.get("package", {}); version = pkg.get("version"); print(version if isinstance(version, str) else data["workspace"]["package"]["version"] if isinstance(version, dict) and version.get("workspace") else (_ for _ in ()).throw(SystemExit("Could not resolve Den package version")))'
+                  }
+
+                  version=$(read_version_file services/den/Cargo.toml)
 
                   if [ -z "${version}" ]; then
-                    echo "Could not read package.version from services/den/Cargo.toml" >&2
+                    echo "Could not read Den version from services/den/Cargo.toml" >&2
                     exit 1
                   fi
 
@@ -54,11 +73,7 @@ jobs:
                     if [ -z "${compare_ref}" ] || [ "${compare_ref}" = "0000000000000000000000000000000000000000" ]; then
                       compare_ref="origin/${DEFAULT_BRANCH}"
                     fi
-                    previous=$(git show "${compare_ref}:services/den/Cargo.toml" 2>/dev/null | awk -F '"' '
-                      $0 == "[package]" { in_package=1; next }
-                      /^\[/ && $0 != "[package]" { in_package=0 }
-                      in_package && $1 ~ /^version[[:space:]]*=/ { print $2; exit }
-                    ' || true)
+                    previous=$(git show "${compare_ref}:services/den/Cargo.toml" 2>/dev/null | read_version_stdin || true)
                     if [ "${previous}" = "${version}" ]; then
                       changed=false
                     fi

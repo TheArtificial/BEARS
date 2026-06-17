@@ -11,4 +11,12 @@ if [ ! -d "${ROOT}/.git/hooks" ]; then
 fi
 
 install -m 0755 "${HOOK_SRC}" "${HOOK_DST}"
-echo "install-git-hooks: installed ${HOOK_DST}"
+cat <<EOF
+install-git-hooks: installed ${HOOK_DST}
+
+Optional Den patch auto-bump on every commit:
+  git config hooks.autoBumpDenPatch true
+
+Disable it with:
+  git config --unset hooks.autoBumpDenPatch
+EOF

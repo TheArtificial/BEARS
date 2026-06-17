@@ -1,6 +1,6 @@
 [package]
 name = "den-acp"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 # den-acp: the ACP (Agent Client Protocol) HTTP edge — the native ACP protocol

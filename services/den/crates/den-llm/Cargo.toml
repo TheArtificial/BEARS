@@ -1,6 +1,6 @@
 [package]
 name = "den-llm"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 # OpenAI-compatible streaming inference client (Bifrost / LLM_API_URL).

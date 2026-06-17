@@ -1,6 +1,6 @@
 [package]
 name = "den-http"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 # den-http: the shared HTTP/identity foundation for the den binary's edge crates

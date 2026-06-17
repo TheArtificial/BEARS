@@ -1,6 +1,6 @@
 [package]
 name = "den-oauth"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 # den-oauth: the OAuth 2.0 authorization server (RFC 6749 / RFC 7636) plus the
