@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "den"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "den-acp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "den-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "den-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "den-docket"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "den-core",
  "serde",
@@ -680,7 +680,7 @@ dependencies = [
 
 [[package]]
 name = "den-http"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "den-llm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "den-core",
@@ -723,7 +723,7 @@ dependencies = [
 
 [[package]]
 name = "den-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "den-core",
  "serde",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "den-oauth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "axum-login",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "den-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "den-web"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ammonia",
  "axum",
