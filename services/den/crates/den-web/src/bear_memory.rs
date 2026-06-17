@@ -7,9 +7,9 @@
 //! per-entity detail pages that cross-link via the `memory_links` relation view.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use axum_extra::extract::Form;
@@ -47,16 +47,14 @@ use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_man
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/memory", get(dashboard_view))
+        .route_with_tsr("/bear/{slug}/memory/import-letta", post(import_letta_post))
         .route_with_tsr("/bear/{slug}/memory/recent", get(recent_view))
         .route_with_tsr("/bear/{slug}/memory/search", get(search_view))
         .route_with_tsr(
             "/bear/{slug}/memory/browse",
             get(browse_view).post(browse_delete_post),
         )
-        .route_with_tsr(
-            "/bear/{slug}/memory/records/{memory_id}",
-            get(record_view),
-        )
+        .route_with_tsr("/bear/{slug}/memory/records/{memory_id}", get(record_view))
         .route_with_tsr(
             "/bear/{slug}/memory/proposals/{proposal_id}",
             get(proposal_get).post(proposal_post),
@@ -68,6 +66,14 @@ pub fn router() -> Router<AppState> {
 // ---------------------------------------------------------------------------
 // Query / form types
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct DashboardQuery {
+    #[serde(default)]
+    import_notice: Option<String>,
+    #[serde(default)]
+    import_error: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 struct SearchQuery {
@@ -277,8 +283,26 @@ fn path_group_label(logical_path: &str) -> String {
 // Dashboard — "how much memory"
 // ---------------------------------------------------------------------------
 
+const LETTA_IMPORT_MAX_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
+
+fn dashboard_redirect_with_query(slug: &str, key: &str, message: &str) -> Response {
+    let encoded = urlencoding::encode(message);
+    Redirect::to(&format!("/bear/{slug}/memory?{key}={encoded}")).into_response()
+}
+
+fn looks_like_git_bundle(bytes: &[u8]) -> bool {
+    let first_line = bytes.split(|b| *b == b'\n').next().unwrap_or(&[]);
+    if first_line.is_empty() {
+        return false;
+    }
+    String::from_utf8_lossy(first_line)
+        .to_ascii_lowercase()
+        .contains("git bundle")
+}
+
 async fn dashboard_view(
     Path(slug): Path<String>,
+    Query(query): Query<DashboardQuery>,
     State(state): State<AppState>,
     auth_session: crate::auth_backend::AuthSession,
 ) -> Result<Response, CustomError> {
@@ -292,8 +316,12 @@ async fn dashboard_view(
 
     let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
     let head_count = head_entry_count(&manager, id).await.unwrap_or(0);
-    let by_kind = count_records_by_kind(&manager, id).await.unwrap_or_default();
-    let by_profile = count_records_by_profile(&manager, id).await.unwrap_or_default();
+    let by_kind = count_records_by_kind(&manager, id)
+        .await
+        .unwrap_or_default();
+    let by_profile = count_records_by_profile(&manager, id)
+        .await
+        .unwrap_or_default();
 
     // Derived recall coverage (Postgres registry). Only meaningful when recall is configured.
     let recall = if config.qdrant_url.is_some() {
@@ -308,9 +336,9 @@ async fn dashboard_view(
 
     // Entity layer summary (ADR-0042). Populated as the Bear resolves entities (Phase 6+);
     // empty for most Bears today.
-    let entity_summary = entity_summary(&manager, id).await.unwrap_or_else(|_| {
-        json!({ "total": 0, "by_type": [], "by_resolution": [] })
-    });
+    let entity_summary = entity_summary(&manager, id)
+        .await
+        .unwrap_or_else(|_| json!({ "total": 0, "by_type": [], "by_resolution": [] }));
 
     let recent: Vec<RecordListItem> = list_recent_memory_records(&manager, id, 8)
         .await
@@ -340,6 +368,8 @@ async fn dashboard_view(
             recent,
             proposals,
             pair_reflection_runs,
+            import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
@@ -348,10 +378,7 @@ async fn dashboard_view(
     .await
 }
 
-async fn entity_summary(
-    manager: &MemoryStoreManager,
-    bear_id: Uuid,
-) -> Result<Value, CustomError> {
+async fn entity_summary(manager: &MemoryStoreManager, bear_id: Uuid) -> Result<Value, CustomError> {
     let store = manager.store_for_bear(bear_id).await?;
     let entities = store::list_entities(&store, None, 500).await?;
     let total = entities.len();
@@ -429,8 +456,7 @@ async fn search_view(
     let config = state.config.as_ref();
     let manager = MemoryStoreManager::new(config);
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let semantic_available =
-        config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
+    let semantic_available = config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
 
     let mut mode_used = "keyword";
@@ -459,14 +485,14 @@ async fn search_view(
                 }
                 Ok(_) => {
                     notice = Some(
-                        "Semantic search returned no matches; showing keyword results."
-                            .to_string(),
+                        "Semantic search returned no matches; showing keyword results.".to_string(),
                     );
                 }
                 Err(err) => {
                     tracing::warn!(bear_id = %bear.id, error = %err, "semantic search failed; keyword fallback");
-                    notice =
-                        Some("Semantic search is unavailable; showing keyword results.".to_string());
+                    notice = Some(
+                        "Semantic search is unavailable; showing keyword results.".to_string(),
+                    );
                 }
             }
         }
@@ -532,7 +558,11 @@ async fn browse_view(
             });
         }
     }
-    groups.sort_by(|a, b| group_rank(&a.label).cmp(&group_rank(&b.label)).then(a.label.cmp(&b.label)));
+    groups.sort_by(|a, b| {
+        group_rank(&a.label)
+            .cmp(&group_rank(&b.label))
+            .then(a.label.cmp(&b.label))
+    });
 
     web::render_template(
         &state,
@@ -562,6 +592,100 @@ fn group_rank(label: &str) -> usize {
         "watch" => 5,
         _ => 9,
     }
+}
+
+async fn import_letta_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: crate::auth_backend::AuthSession,
+    mut multipart: Multipart,
+) -> Result<Response, CustomError> {
+    let user = session_user(&auth_session).await?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+
+    let mut bundle_bytes: Option<Vec<u8>> = None;
+    while let Some(mut field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(err) => {
+            tracing::warn!(bear_id = %bear.id, error = %err, "invalid Letta bundle multipart upload");
+            return Ok(dashboard_redirect_with_query(
+                &bear.slug,
+                "import_error",
+                "Invalid multipart upload.",
+            ));
+        }
+    } {
+        if field.name() != Some("bundle") {
+            continue;
+        }
+        let mut data = Vec::new();
+        while let Some(chunk) = match field.chunk().await {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                tracing::warn!(bear_id = %bear.id, error = %err, "failed reading Letta bundle upload field");
+                return Ok(dashboard_redirect_with_query(
+                    &bear.slug,
+                    "import_error",
+                    "Failed reading uploaded bundle.",
+                ));
+            }
+        } {
+            if data.len() + chunk.len() > LETTA_IMPORT_MAX_UPLOAD_BYTES {
+                return Ok(dashboard_redirect_with_query(
+                    &bear.slug,
+                    "import_error",
+                    "Bundle exceeds the 128 MiB upload limit.",
+                ));
+            }
+            data.extend_from_slice(&chunk);
+        }
+        bundle_bytes = Some(data);
+        break;
+    }
+
+    let bundle_bytes = match bundle_bytes {
+        Some(bytes) if !bytes.is_empty() => bytes,
+        _ => {
+            return Ok(dashboard_redirect_with_query(
+                &bear.slug,
+                "import_error",
+                "Please select a bundle file.",
+            ));
+        }
+    };
+
+    if !looks_like_git_bundle(&bundle_bytes) {
+        return Ok(dashboard_redirect_with_query(
+            &bear.slug,
+            "import_error",
+            "Upload must be a git bundle.",
+        ));
+    }
+
+    let import_dir = std::path::Path::new(&state.config.bear_sqlite_data_dir)
+        .join("imports")
+        .join(bear.id.to_string());
+    std::fs::create_dir_all(&import_dir).map_err(|err| {
+        CustomError::System(format!("failed to create Letta import directory: {err}"))
+    })?;
+
+    let file_path = import_dir.join(format!("letta-memory-{}.bundle", Uuid::new_v4()));
+    std::fs::write(&file_path, &bundle_bytes)
+        .map_err(|err| CustomError::System(format!("failed to stage Letta bundle: {err}")))?;
+
+    Ok(dashboard_redirect_with_query(
+        &bear.slug,
+        "import_notice",
+        "Letta memory bundle staged for later ETL import. No records were imported yet.",
+    ))
 }
 
 async fn browse_delete_post(
@@ -633,7 +757,11 @@ async fn browse_delete_post(
                 target_ref: None,
                 title,
                 summary,
-                rationale: form.review_rationale.as_deref().map(str::trim).unwrap_or(""),
+                rationale: form
+                    .review_rationale
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or(""),
                 proposed_content: None,
                 proposed_patch: None,
                 refs: serde_json::json!({}),
@@ -725,7 +853,10 @@ async fn record_view(
             });
         }
     }
-    let is_head = history.first().map(|h| h.memory_id == memory_id).unwrap_or(true);
+    let is_head = history
+        .first()
+        .map(|h| h.memory_id == memory_id)
+        .unwrap_or(true);
 
     // Referenced entities (descriptive + access-bearing) via the relation view.
     let mut entities: Vec<LinkedEntity> = Vec::new();
@@ -799,7 +930,11 @@ async fn entities_view(
     };
     let manager = MemoryStoreManager::new(state.config.as_ref());
     let store = manager.store_for_bear(bear.id).await?;
-    let type_filter = query.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let type_filter = query
+        .r#type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let rows = store::list_entities(&store, type_filter, 200)
         .await
         .unwrap_or_default();

@@ -1,138 +1,283 @@
-{% extends "base.html" %}
-{% set memory_subnav = "dashboard" %}
-
-{% block title %}Memory · {{ bear.slug }}{% endblock %}
-
-{% block content %}
-{% include "bear/settings/_bear_nav.html" %}
-{% include "bear/memory/_memory_nav.html" %}
+{% extends "base.html" %} {% set memory_subnav = "dashboard" %} {% block title
+%}Memory · {{ bear.slug }}{% endblock %} {% block content %} {% include
+"bear/settings/_bear_nav.html" %} {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
-  <h2>Memory dashboard</h2>
-  <p class="form-hint">Canonical memory lives in this Bear's SQLite store; the recall index and entity layer are derived.</p>
+    <h2>Memory dashboard</h2>
+    <p class="form-hint">
+        Canonical memory lives in this Bear's SQLite store; the recall index and
+        entity layer are derived.
+    </p>
 
-  {% if stats %}
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; margin: 1rem 0;">
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ stats.record_count }}</strong><br>records (all versions)</div>
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ head_count }}</strong><br>current entries</div>
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ stats.shared_count }}</strong><br>shared (core)</div>
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ stats.profile_local_count }}</strong><br>role-local</div>
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ stats.distinct_paths }}</strong><br>logical paths</div>
-    <div class="box" style="margin: 0;"><strong style="font-size: 1.6rem;">{{ stats.sequence_high_water }}</strong><br>sequence high-water</div>
-  </div>
-  <p class="form-hint">
-    DB: <code>{{ stats.db_path | e }}</code>
-    {% if stats.db_size_bytes %}({{ stats.db_size_bytes }} bytes){% endif %}
-    · pending proposals: {{ stats.pending_proposals }}
-    · pending observations: {{ stats.pending_observations }}
-  </p>
-  {% else %}
-  <p class="form-errors">Memory store statistics are unavailable for this Bear.</p>
-  {% endif %}
+    {% if import_notice %}
+    <p><strong>{{ import_notice | e }}</strong></p>
+    {% endif %} {% if import_error %}
+    <p class="form-errors">{{ import_error | e }}</p>
+    {% endif %} {% if stats %}
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+            gap: 0.75rem;
+            margin: 1rem 0;
+        "
+    >
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem">{{ stats.record_count }}</strong
+            ><br />records (all versions)
+        </div>
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem">{{ head_count }}</strong
+            ><br />current entries
+        </div>
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem">{{ stats.shared_count }}</strong
+            ><br />shared (core)
+        </div>
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem"
+                >{{ stats.profile_local_count }}</strong
+            ><br />role-local
+        </div>
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem">{{ stats.distinct_paths }}</strong
+            ><br />logical paths
+        </div>
+        <div class="box" style="margin: 0">
+            <strong style="font-size: 1.6rem"
+                >{{ stats.sequence_high_water }}</strong
+            ><br />sequence high-water
+        </div>
+    </div>
+    <p class="form-hint">
+        DB: <code>{{ stats.db_path | e }}</code>
+        {% if stats.db_size_bytes %}({{ stats.db_size_bytes }} bytes){% endif %}
+        · pending proposals: {{ stats.pending_proposals }} · pending
+        observations: {{ stats.pending_observations }}
+    </p>
+    {% else %}
+    <p class="form-errors">
+        Memory store statistics are unavailable for this Bear.
+    </p>
+    {% endif %}
 </div>
 
-<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-  <div class="box">
-    <h3>By kind</h3>
-    {% if by_kind %}
-    <table>
-      <thead><tr><th>Kind</th><th>Records</th></tr></thead>
-      <tbody>
-        {% for b in by_kind %}<tr><td><code>{{ b.label | e }}</code></td><td>{{ b.count }}</td></tr>{% endfor %}
-      </tbody>
-    </table>
-    {% else %}<p class="form-hint">No records yet.</p>{% endif %}
-  </div>
+<section
+    class="two-columns"
+    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem"
+>
+    <div class="box">
+        <h3>By kind</h3>
+        {% if by_kind %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Kind</th>
+                    <th>Records</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in by_kind %}
+                <tr>
+                    <td><code>{{ b.label | e }}</code></td>
+                    <td>{{ b.count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">No records yet.</p>
+        {% endif %}
+    </div>
 
-  <div class="box">
-    <h3>By role / scope</h3>
-    {% if by_profile %}
-    <table>
-      <thead><tr><th>Scope</th><th>Records</th></tr></thead>
-      <tbody>
-        {% for b in by_profile %}<tr><td><code>{{ b.label | e }}</code></td><td>{{ b.count }}</td></tr>{% endfor %}
-      </tbody>
-    </table>
-    {% else %}<p class="form-hint">No records yet.</p>{% endif %}
-  </div>
+    <div class="box">
+        <h3>By role / scope</h3>
+        {% if by_profile %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Scope</th>
+                    <th>Records</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in by_profile %}
+                <tr>
+                    <td><code>{{ b.label | e }}</code></td>
+                    <td>{{ b.count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">No records yet.</p>
+        {% endif %}
+    </div>
 </section>
 
-<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-  <div class="box">
-    <h3>Derived recall index</h3>
-    {% if recall %}
-    <p><strong>{{ recall.passages }}</strong> passages across <strong>{{ recall.memories }}</strong> records indexed for semantic recall.</p>
-    <p class="form-hint">Recall is enabled (Qdrant configured). Indexing runs asynchronously after canonical writes.</p>
-    {% else %}
-    <p class="form-hint">Recall index is not configured for this deployment (no <code>QDRANT_URL</code>). Search falls back to keyword matching.</p>
-    {% endif %}
-  </div>
+<section
+    class="two-columns"
+    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem"
+>
+    <div class="box">
+        <h3>Derived recall index</h3>
+        {% if recall %}
+        <p>
+            <strong>{{ recall.passages }}</strong> passages across
+            <strong>{{ recall.memories }}</strong> records indexed for semantic
+            recall.
+        </p>
+        <p class="form-hint">
+            Recall is enabled (Qdrant configured). Indexing runs asynchronously
+            after canonical writes.
+        </p>
+        {% else %}
+        <p class="form-hint">
+            Recall index is not configured for this deployment (no
+            <code>QDRANT_URL</code>). Search falls back to keyword matching.
+        </p>
+        {% endif %}
+    </div>
 
-  <div class="box">
-    <h3>Entities <span class="form-hint">(ADR-0042)</span></h3>
-    <p><strong>{{ entity_summary.total }}</strong> known {{ entity_summary.total == 1 and "entity" or "entities" }}. <a href="/bear/{{ bear.slug | e }}/entities">Browse entities →</a></p>
-    {% if entity_summary.by_type %}
-    <table>
-      <thead><tr><th>Type</th><th>Count</th></tr></thead>
-      <tbody>
-        {% for b in entity_summary.by_type %}<tr><td><code>{{ b.label | e }}</code></td><td>{{ b.count }}</td></tr>{% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="form-hint">No entities resolved yet. The Bear populates these as it recognizes people, work surfaces, missions, and other entities in its memory.</p>
-    {% endif %}
-  </div>
+    <div class="box">
+        <h3>Entities <span class="form-hint">(ADR-0042)</span></h3>
+        <p>
+            <strong>{{ entity_summary.total }}</strong> known {{
+            entity_summary.total == 1 and "entity" or "entities" }}.
+            <a href="/bear/{{ bear.slug | e }}/entities">Browse entities →</a>
+        </p>
+        {% if entity_summary.by_type %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in entity_summary.by_type %}
+                <tr>
+                    <td><code>{{ b.label | e }}</code></td>
+                    <td>{{ b.count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">
+            No entities resolved yet. The Bear populates these as it recognizes
+            people, work surfaces, missions, and other entities in its memory.
+        </p>
+        {% endif %}
+    </div>
 </section>
+
+{% if can_manage_bear %}
+<div class="box" id="letta-import">
+    <h3>Letta memory upload</h3>
+    <p class="form-hint">
+        This currently stages a Letta bundle for later ETL import. It does not
+        import records into SQLite yet.
+    </p>
+    <form
+        method="post"
+        action="/bear/{{ bear.slug | e }}/memory/import-letta"
+        enctype="multipart/form-data"
+    >
+        <label for="bundle"><strong>Bundle file</strong></label>
+        <input id="bundle" name="bundle" type="file" required />
+        <p><button type="submit">Upload Letta memory</button></p>
+    </form>
+    <p class="form-hint">
+        Max upload size: 128 MiB. Expected format: git bundle.
+    </p>
+</div>
+{% endif %}
 
 <div class="box">
-  <h3>Recent additions</h3>
-  {% if recent %}
-  <ul>
-    {% for r in recent %}
-    <li>
-      <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | e }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
-      <span class="form-hint">· {{ r.kind | e }} · {{ r.scope_label | e }} · #{{ r.sequence_no }} · {{ r.created_at | e }}</span>
-    </li>
-    {% endfor %}
-  </ul>
-  <p><a href="/bear/{{ bear.slug | e }}/memory/recent">See full feed →</a></p>
-  {% else %}<p class="form-hint">No memory recorded yet.</p>{% endif %}
+    <h3>Recent additions</h3>
+    {% if recent %}
+    <ul>
+        {% for r in recent %}
+        <li>
+            <a
+                href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | e }}"
+                ><code>{{ r.logical_path or r.memory_id | e }}</code></a
+            >
+            <span class="form-hint"
+                >· {{ r.kind | e }} · {{ r.scope_label | e }} · #{{
+                r.sequence_no }} · {{ r.created_at | e }}</span
+            >
+        </li>
+        {% endfor %}
+    </ul>
+    <p><a href="/bear/{{ bear.slug | e }}/memory/recent">See full feed →</a></p>
+    {% else %}
+    <p class="form-hint">No memory recorded yet.</p>
+    {% endif %}
 </div>
 
 <div class="box">
-  <h3>Review &amp; governance</h3>
-  <h4>Memory proposals</h4>
-  {% if proposals %}
-  <table>
-    <thead><tr><th>Title</th><th>From</th><th>Status</th><th>Created</th></tr></thead>
-    <tbody>
-      {% for p in proposals %}
-      <tr>
-        <td><a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ p.id }}">{{ p.title | e }}</a></td>
-        <td>{{ p.source_profile | e }}</td>
-        <td>{{ p.status | e }}</td>
-        <td class="form-hint">{{ p.created_at }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="form-hint">No memory proposals.</p>{% endif %}
+    <h3>Review &amp; governance</h3>
+    <h4>Memory proposals</h4>
+    {% if proposals %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>From</th>
+                <th>Status</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in proposals %}
+            <tr>
+                <td>
+                    <a
+                        href="/bear/{{ bear.slug | e }}/memory/proposals/{{ p.id }}"
+                        >{{ p.title | e }}</a
+                    >
+                </td>
+                <td>{{ p.source_profile | e }}</td>
+                <td>{{ p.status | e }}</td>
+                <td class="form-hint">{{ p.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No memory proposals.</p>
+    {% endif %}
 
-  <h4>Pair reflection runs</h4>
-  {% if pair_reflection_runs %}
-  <table>
-    <thead><tr><th>Trigger</th><th>Status</th><th>Summary path</th><th>Created</th></tr></thead>
-    <tbody>
-      {% for run in pair_reflection_runs %}
-      <tr>
-        <td>{{ run.trigger | e }}</td>
-        <td>{{ run.status | e }}</td>
-        <td>{% if run.summary_path %}<code>{{ run.summary_path | e }}</code>{% else %}—{% endif %}</td>
-        <td class="form-hint">{{ run.created_at }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="form-hint">No pair reflection runs.</p>{% endif %}
+    <h4>Pair reflection runs</h4>
+    {% if pair_reflection_runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Trigger</th>
+                <th>Status</th>
+                <th>Summary path</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in pair_reflection_runs %}
+            <tr>
+                <td>{{ run.trigger | e }}</td>
+                <td>{{ run.status | e }}</td>
+                <td>
+                    {% if run.summary_path %}<code
+                        >{{ run.summary_path | e }}</code
+                    >{% else %}—{% endif %}
+                </td>
+                <td class="form-hint">{{ run.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No pair reflection runs.</p>
+    {% endif %}
 </div>
 {% endblock %}
