@@ -317,6 +317,7 @@ async fn dashboard_view(
     let manager = MemoryStoreManager::new(config);
 
     let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
+    let letta_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
     let head_count = head_entry_count(&manager, id).await.unwrap_or(0);
     let by_kind = count_records_by_kind(&manager, id)
         .await
@@ -372,6 +373,7 @@ async fn dashboard_view(
             pair_reflection_runs,
             import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            letta_import_locked,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
@@ -672,6 +674,22 @@ async fn import_letta_post(
         ));
     }
 
+    let stores = MemoryStoreManager::new(state.config.as_ref());
+    let store = stores.store_for_bear(bear.id).await?;
+    let record_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ?",
+    )
+    .bind(bear.id.to_string())
+    .fetch_one(store.pool())
+    .await?;
+    if record_count > 0 {
+        return Ok(dashboard_redirect_with_query(
+            &bear.slug,
+            "import_error",
+            "Letta memory import is disabled for Bears that already have memory records.",
+        ));
+    }
+
     let import_dir = std::path::Path::new(&state.config.bear_sqlite_data_dir)
         .join("imports")
         .join(bear.id.to_string());
@@ -683,8 +701,6 @@ async fn import_letta_post(
     std::fs::write(&file_path, &bundle_bytes)
         .map_err(|err| CustomError::System(format!("failed to stage Letta bundle: {err}")))?;
 
-    let stores = MemoryStoreManager::new(state.config.as_ref());
-    let store = stores.store_for_bear(bear.id).await?;
     let report = match import_memfs_bundle(
         &store,
         &file_path,

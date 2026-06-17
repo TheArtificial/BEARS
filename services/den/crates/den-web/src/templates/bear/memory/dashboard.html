@@ -181,14 +181,45 @@
         <code>imports/</code>
         for audit and retry.
     </p>
+    {% if letta_import_locked %}
+    <p class="form-hint">
+        This import is disabled because this Bear already has memory records.
+        Letta bundle import is intended only for the initial backfill into an
+        empty Bear memory store.
+    </p>
+    {% endif %}
     <form
         method="post"
         action="/bear/{{ bear.slug | e }}/memory/import-letta"
         enctype="multipart/form-data"
     >
         <label for="bundle"><strong>Bundle file</strong></label>
-        <input id="bundle" name="bundle" type="file" required />
-        <p><button type="submit">Upload Letta memory</button></p>
+        <input
+            id="bundle"
+            name="bundle"
+            type="file"
+            required{%
+            if
+            letta_import_locked
+            %}
+            disabled{%
+            endif
+            %}
+        />
+        <p>
+            <button
+                type="submit"
+                {%
+                if
+                letta_import_locked
+                %}
+                disabled{%
+                endif
+                %}
+            >
+                Upload Letta memory
+            </button>
+        </p>
     </form>
     <p class="form-hint">
         Max upload size: 128 MiB. Expected format: git bundle. Current import

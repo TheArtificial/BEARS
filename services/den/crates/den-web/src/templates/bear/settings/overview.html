@@ -89,9 +89,18 @@
             <p><em>Stats unavailable</em></p>
             {% endif %} {% if can_manage_bear %}
             <p>
-                <a href="/bear/{{ bear.slug | e }}/memory#letta-import"
+                {% if letta_import_locked %}
+                <span
+                    title="Not available once a Bear already has memory records."
+                    >Stage Letta bundle</span
+                >
+                {% else %}
+                <a
+                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
+                    title="Upload a Letta git bundle for the initial empty-store backfill."
                     >Stage Letta bundle</a
                 >
+                {% endif %}
             </p>
             {% endif %}
         </section>
