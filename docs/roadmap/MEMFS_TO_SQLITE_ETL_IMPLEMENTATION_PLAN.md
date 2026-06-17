@@ -1,6 +1,6 @@
 # MemFS → SQLite ETL — Implementation Plan
 
-**Status:** Planned (design only — no importer landed)  
+**Status:** Phases 1–3 landed (`den import-memfs`, git-dir + bundle, history/supersession, fixture tests, bear-admin Letta bundle upload); Phases 4–5 (validation/rollback runbook, automated post-import reindex) open  
 **Architecture:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [Memory model](../architecture/memory-model.md), [Den-native runtime migration](DEN_NATIVE_RUNTIME_PLAN.md) Phase 8  
 **Related:** [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md), [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) (post-import `recall_index`), [ADR-0013 — MemFS sidecar](../decisions/adr-0013-memfs-sidecar-repo-views.md) (historical source layout)
 

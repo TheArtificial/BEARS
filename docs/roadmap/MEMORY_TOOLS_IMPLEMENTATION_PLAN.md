@@ -29,8 +29,8 @@ Related docs:
 | `memory_request_review` + proposals/promotions | P4 | Implemented (SQLite `memory_proposals`) |
 | Exposure to `chat` profile | P2 | **Done** — descriptors + keyword-gated web tool surface |
 | Exposure to `work`/`watch` profiles | P2/P3 | **Not done** |
-| Hybrid/semantic recall (Qdrant) | P5 | **Partial** — turn-start recall + hybrid `memory_search` when Qdrant configured ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
-| ADR-0041 schema deltas (`salience`, `valid_from`/`invalid_at`, supersession, harvest marks) | Data model | **Not done** |
+| Hybrid/semantic recall (Qdrant) | P5 | **Landed** — turn-start recall + hybrid `memory_search` (vector + keyword + graph + temporal) when Qdrant configured ([DERIVED_RECALL_INDEX](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)) |
+| ADR-0041 schema deltas (`salience` on records, `memory_harvest_marks`, consolidation supersession writes) | Data model | **Partial** — `valid_from`/`invalid_at` on `memory_records` landed; `salience` on records, harvest marks, live supersession writes open |
 
 Memory tools are gated by per-profile `allowed_roles` (in `den-tools` descriptors). `chat` is granted read/write memory tools; web-chat turns use a keyword-gated tool surface so casual prompts stay tool-free while memory-aware prompts unlock the full roster. Proactive key-memory projection and derived recall run on every `chat` turn (same assembler path as `pair`).
 

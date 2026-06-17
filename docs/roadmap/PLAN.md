@@ -22,9 +22,11 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Crate split / build time** | **v0–v2 complete**: workspace (`den-core`, `den-llm`, `den-memory`, `den-docket`, `den-runtime`, `den-http`, `den-oauth`, `den-web`, `den-acp`, `den-api`); clippy pedantic/nursery gated | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
 | **ACP `pair`** | Native loop + client-armature local tools; hardening active (continuation, approval ledger, wedge prevention) | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) |
-| **Memory tools** | SQLite-backed read/write for `pair`/`chat`/`curate`; `memory_search` is **keyword-only** today (`LIKE`) | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
-| **Derived recall** | **Phases 0–2 landed** (Qdrant optional, indexer worker, turn-start recall); **Phase 3 hybrid `memory_search` open** | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
-| **Bear entity layer** | **Phases 0–3 landed**; access gate + projection partial; tools/recall legs open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
+| **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
+| **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` exposure open | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
+| **Derived recall** | **Phases 0–3.5 + 5 landed** (indexer, turn recall, hybrid search, temporal + graph legs, `den reindex`); Cabinet + embedding v2 deferred | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
+| **MemFS → SQLite ETL** | **`den import-memfs` + UI upload landed**; validation/rollback runbook open | [`MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md`](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
+| **Bear entity layer** | **Phases 0–4 partial landed** (gate, entity-filter + graph recall); anchors + tools + portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
 | **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
@@ -44,9 +46,9 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 ### What is next (priority order)
 
 1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` profile.
-2. **Hybrid `memory_search` (recall Phase 3)** — merge Qdrant vector hits with SQL `LIKE`; ranked provenance; graceful degradation. Closes the gap between proactive turn-start recall and on-demand tool search.
-3. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
-4. **Memory automation P1+** — autonomous `memory_curate` conductor, `archive_harvest`, consolidation/supersession writes ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
+2. **MemFS → SQLite cutover** — validate import runbook on staging Bears; post-import `den reindex` ([`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) §1).
+3. **ADR-0041 harvest + consolidation** — `salience` on records, `memory_harvest_marks`, supersession writes, `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5).
+4. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
 5. **Entity layer Phases 5–6** — entity anchors, `entity_browse`/`entity_resolve`, curate merge/split tools.
 6. **Context compaction** — Den-owned transcript compaction per ADR-0032.
 7. **Phase 8 migration** — operator backfill runbook (Letta history / residual MemFS → native stores); schema/UI rename cleanup.
@@ -59,7 +61,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 - **Trust profiles, not Letta agent types.** `chat`/`pair`/`curate`/`work`/`watch` are Den capability profiles with `den-native:{bear_id}:{profile}` bindings — not per-role Letta agent ids (legacy columns may remain for compat).
 - **ACP direct mode supersedes Codepool relay.** [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical.
 - **Workplan ≠ semantic memory.** Activity/workplan artifacts stay in the workflow-state ontology ([`workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md)), not `den.memory.*`.
-- **`memory_search` today ≠ hybrid yet.** Tool search is SQL `LIKE`; vector recall is turn-start only until recall Phase 3.
+- **`memory_search` is hybrid when Qdrant is configured** (vector + keyword + graph + temporal); keyword-only fallback when recall disabled. See [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md).
 
 ## Near-term priorities
 

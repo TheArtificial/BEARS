@@ -78,10 +78,10 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Deferred:**
 
-- Score **boost** (vs. the landed filter) for shared-entity overlap, and `applies_when` proactive surfacing in projection (descriptive boost). Needs query-time resolved entities (work surfaces already resolve; session identity is Phase 6).
-- The **bounded graph recall leg** ([DERIVED_RECALL Phase 3.5](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6) over the `memory_relations` bipartite links (depth-capped, read-only, gated relations excluded, `AccessContext` applied — [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §4).
+- Score **boost** in the **vector** leg (vs. the landed graph-leg `entity_overlap` boost) for shared-entity overlap, and `applies_when` proactive surfacing in projection (descriptive boost). Needs query-time resolved entities (work surfaces already resolve; session identity is Phase 6).
+- ~~The **bounded graph recall leg**~~ — **landed** in [DERIVED_RECALL Phase 3.5](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) (`bounded_graph_expand` + `memory_search` graph leg).
 
-**Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (entity-filter recall slice, met):** payload denormalization + entity-scoped retrieval proven end-to-end against live Qdrant. **Exit (boost + bounded-graph):** pending query-time entity resolution / Phase 3.5.
+**Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (entity-filter recall slice, met):** payload denormalization + entity-scoped retrieval proven end-to-end against live Qdrant. **Exit (vector boost + applies_when surfacing):** pending query-time entity resolution / Phase 6. **Exit (bounded-graph):** met (Phase 3.5).
 
 ## Phase 5 — Anchors generalize
 
