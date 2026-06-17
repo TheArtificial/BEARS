@@ -81,25 +81,16 @@
             <h4><a href="/bear/{{ bear.slug }}/memory">Memory</a></h4>
             <p class="form-hint">SQLite cognition store inspector.</p>
             {% if memory_stats %}
-            <p>
-                {{ memory_stats.record_count }} records · {{
-                memory_stats.distinct_paths }} paths
-            </p>
+            <p>{{ memory_stats.record_count }} records · {{ memory_stats.distinct_paths }} paths</p>
             {% else %}
             <p><em>Stats unavailable</em></p>
-            {% endif %} {% if can_manage_bear %}
+            {% endif %}
+            {% if can_manage_bear %}
             <p>
                 {% if letta_import_locked %}
-                <span
-                    title="Not available once a Bear already has memory records."
-                    >Stage Letta bundle</span
-                >
+                <span title="Not available once a Bear already has memory records.">Stage Letta bundle</span>
                 {% else %}
-                <a
-                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
-                    title="Upload a Letta git bundle for the initial empty-store backfill."
-                    >Stage Letta bundle</a
-                >
+                <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Upload a Letta git bundle for the initial empty-store backfill.">Stage Letta bundle</a>
                 {% endif %}
             </p>
             {% endif %}
