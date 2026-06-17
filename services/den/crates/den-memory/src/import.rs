@@ -10,19 +10,30 @@ use den_core::DenError;
 
 use crate::{BearMemoryStore, LogicalMemoryPath};
 
-const IMPORTED_AT_FORMAT: &str = "imported_at";
+const IMPORTED_AT_FIELD: &str = "imported_at";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemfsImportSource {
+    Bundle { path: String },
+    GitDir { path: String },
+}
+
+
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct MemfsImportOptions {
     pub dry_run: bool,
     pub include_workflow_artifacts: bool,
+    pub import_history: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemfsImportReport {
     pub bear_id: String,
-    pub bundle_path: String,
+    pub source: MemfsImportSource,
     pub dry_run: bool,
+    pub import_history: bool,
     pub imported_count: usize,
     pub skipped_count: usize,
     pub quarantined_count: usize,
@@ -48,6 +59,7 @@ struct ImportDraft {
     created_at: String,
     content_text: String,
     metadata_json: Value,
+    supersedes_memory_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,59 +78,54 @@ pub async fn import_memfs_bundle(
             bundle_path.display()
         )));
     }
+    let source = MemfsImportSource::Bundle {
+        path: bundle_path.display().to_string(),
+    };
+    import_memfs_source(store, &source, options).await
+}
 
+pub async fn import_memfs_git_dir(
+    store: &BearMemoryStore,
+    git_dir: &Path,
+    options: &MemfsImportOptions,
+) -> Result<MemfsImportReport, DenError> {
+    if !git_dir.exists() {
+        return Err(DenError::NotFound(format!(
+            "git dir not found: {}",
+            git_dir.display()
+        )));
+    }
+    let source = MemfsImportSource::GitDir {
+        path: git_dir.display().to_string(),
+    };
+    import_memfs_source(store, &source, options).await
+}
+
+async fn import_memfs_source(
+    store: &BearMemoryStore,
+    source: &MemfsImportSource,
+    options: &MemfsImportOptions,
+) -> Result<MemfsImportReport, DenError> {
     let temp_repo = std::env::temp_dir().join(format!("den-memfs-import-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&temp_repo)
         .map_err(|err| DenError::System(format!("create temp import dir failed: {err}")))?;
 
-    let import_result = import_memfs_bundle_inner(store, bundle_path, &temp_repo, options).await;
+    let import_result = import_memfs_source_inner(store, source, &temp_repo, options).await;
     if let Err(err) = std::fs::remove_dir_all(&temp_repo) {
         tracing::warn!(path = %temp_repo.display(), error = %err, "cleanup temp memfs import dir failed");
     }
     import_result
 }
 
-async fn import_memfs_bundle_inner(
+async fn import_memfs_source_inner(
     store: &BearMemoryStore,
-    bundle_path: &Path,
+    source: &MemfsImportSource,
     temp_repo: &Path,
     options: &MemfsImportOptions,
 ) -> Result<MemfsImportReport, DenError> {
-    git(None, &["bundle", "verify"], Some(bundle_path))?;
-    git(None, &["init", "--quiet"], Some(temp_repo))?;
+    materialize_source_to_temp_repo(source, temp_repo)?;
 
-    let bundle_str = bundle_path.to_string_lossy().to_string();
-    git(
-        Some(temp_repo),
-        &["fetch", "--quiet", &bundle_str, "refs/heads/*:refs/heads/*"],
-        None,
-    )?;
-
-    let known_branches = ordered_known_branches();
-    let discovered = git(
-        Some(temp_repo),
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-        None,
-    )?;
-    let mut branches = discovered
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    branches.sort();
-
-    let mut ordered = known_branches
-        .into_iter()
-        .filter(|name| branches.iter().any(|branch| branch == name))
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    for branch in branches {
-        if !ordered.iter().any(|known| known == &branch) {
-            ordered.push(branch);
-        }
-    }
-
+    let branches = ordered_branches(temp_repo)?;
     let import_run_id = Uuid::new_v4().to_string();
     let imported_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -130,7 +137,7 @@ async fn import_memfs_bundle_inner(
     let mut quarantined_count = 0usize;
     let mut imported_paths_sample = Vec::new();
 
-    for branch in ordered {
+    for branch in branches {
         let paths_output = git(
             Some(temp_repo),
             &["ls-tree", "-r", "--name-only", &branch],
@@ -140,11 +147,7 @@ async fn import_memfs_bundle_inner(
         let mut branch_skipped = 0usize;
         let mut branch_quarantined = 0usize;
 
-        for raw_path in paths_output
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        for raw_path in paths_output.lines().map(str::trim).filter(|s| !s.is_empty()) {
             let Some(normalized_path) = normalize_memfs_path(raw_path) else {
                 branch_skipped += 1;
                 continue;
@@ -160,54 +163,8 @@ async fn import_memfs_bundle_inner(
                 continue;
             }
 
-            let last_commit = git(
-                Some(temp_repo),
-                &["log", "-1", "--format=%H", &branch, "--", &normalized_path],
-                None,
-            )?;
-            let commit = last_commit.trim();
-            if commit.is_empty() {
-                branch_skipped += 1;
-                continue;
-            }
-
-            let blob_sha = git(
-                Some(temp_repo),
-                &["rev-parse", &format!("{branch}:{normalized_path}")],
-                None,
-            )?;
-            let blob_sha = blob_sha.trim();
-            if blob_sha.is_empty() {
-                branch_skipped += 1;
-                continue;
-            }
-
-            let created_at = normalize_git_timestamp(
-                git(
-                    Some(temp_repo),
-                    &["log", "-1", "--format=%aI", &branch, "--", &normalized_path],
-                    None,
-                )?
-                .trim(),
-            )?;
-
-            let content_bytes = git_bytes(
-                Some(temp_repo),
-                &["show", &format!("{branch}:{normalized_path}")],
-                None,
-            )?;
-            if content_bytes.is_empty() {
-                branch_skipped += 1;
-                continue;
-            }
-            let content_text = match String::from_utf8(content_bytes) {
-                Ok(value) => value,
-                Err(_) => {
-                    branch_skipped += 1;
-                    continue;
-                }
-            };
-            if content_text.trim().is_empty() {
+            let commit_ids = commit_ids_for_path(temp_repo, &branch, &normalized_path, options.import_history)?;
+            if commit_ids.is_empty() {
                 branch_skipped += 1;
                 continue;
             }
@@ -215,46 +172,94 @@ async fn import_memfs_bundle_inner(
             let logical = LogicalMemoryPath::from_logical_path(&normalized_path);
             let logical_path = logical.to_logical_path();
             let (kind, inferred_kind) = infer_kind(&logical_path, &logical);
-            let memory_id = deterministic_import_memory_id(&branch, &logical_path, commit);
-            let metadata_json = json!({
-                "memfs_import": {
-                    "branch": branch,
-                    "path": normalized_path,
-                    "commit": commit,
-                    "blob_sha": blob_sha,
-                    "import_run_id": import_run_id,
-                    IMPORTED_AT_FORMAT: imported_at,
-                    "inferred_kind": inferred_kind
-                }
-            });
+            let mut previous_memory_id: Option<String> = None;
 
-            let draft = ImportDraft {
-                memory_id,
-                logical,
-                logical_path,
-                kind,
-                author_profile: mapping.author_profile.to_string(),
-                created_at,
-                content_text,
-                metadata_json,
-            };
-
-            if options.dry_run {
-                branch_imported += 1;
-                if imported_paths_sample.len() < 20 {
-                    imported_paths_sample.push(draft.logical_path.clone());
+            for commit in commit_ids {
+                let blob_sha = git(
+                    Some(temp_repo),
+                    &["rev-parse", &format!("{commit}:{normalized_path}")],
+                    None,
+                )?;
+                let blob_sha = blob_sha.trim();
+                if blob_sha.is_empty() {
+                    branch_skipped += 1;
+                    continue;
                 }
-                continue;
-            }
 
-            let inserted = insert_import_draft(store, &draft).await?;
-            if inserted {
-                branch_imported += 1;
-                if imported_paths_sample.len() < 20 {
-                    imported_paths_sample.push(draft.logical_path.clone());
+                let created_at = normalize_git_timestamp(
+                    git(
+                        Some(temp_repo),
+                        &["log", "-1", "--format=%aI", &commit],
+                        None,
+                    )?
+                    .trim(),
+                )?;
+
+                let content_bytes = git_bytes(
+                    Some(temp_repo),
+                    &["show", &format!("{commit}:{normalized_path}")],
+                    None,
+                )?;
+                if content_bytes.is_empty() {
+                    branch_skipped += 1;
+                    continue;
                 }
-            } else {
-                branch_skipped += 1;
+                let content_text = match String::from_utf8(content_bytes) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        branch_skipped += 1;
+                        continue;
+                    }
+                };
+                if content_text.trim().is_empty() {
+                    branch_skipped += 1;
+                    continue;
+                }
+
+                let memory_id = deterministic_import_memory_id(&branch, &logical_path, &commit);
+                let metadata_json = json!({
+                    "memfs_import": {
+                        "branch": branch,
+                        "path": normalized_path,
+                        "commit": commit,
+                        "blob_sha": blob_sha,
+                        "import_run_id": import_run_id,
+                        IMPORTED_AT_FIELD: imported_at,
+                        "inferred_kind": inferred_kind
+                    }
+                });
+
+                let draft = ImportDraft {
+                    memory_id: memory_id.clone(),
+                    logical: logical.clone(),
+                    logical_path: logical_path.clone(),
+                    kind: kind.clone(),
+                    author_profile: mapping.author_profile.to_string(),
+                    created_at,
+                    content_text,
+                    metadata_json,
+                    supersedes_memory_id: if options.import_history {
+                        previous_memory_id.clone()
+                    } else {
+                        None
+                    },
+                };
+
+                if options.dry_run {
+                    branch_imported += 1;
+                    maybe_push_sample(&mut imported_paths_sample, &draft.logical_path, &commit, options.import_history);
+                    previous_memory_id = Some(memory_id);
+                    continue;
+                }
+
+                let inserted = insert_import_draft(store, &draft).await?;
+                if inserted {
+                    branch_imported += 1;
+                    maybe_push_sample(&mut imported_paths_sample, &draft.logical_path, &commit, options.import_history);
+                } else {
+                    branch_skipped += 1;
+                }
+                previous_memory_id = Some(memory_id);
             }
         }
 
@@ -271,14 +276,91 @@ async fn import_memfs_bundle_inner(
 
     Ok(MemfsImportReport {
         bear_id: store.bear_id().to_string(),
-        bundle_path: bundle_path.display().to_string(),
+        source: source.clone(),
         dry_run: options.dry_run,
+        import_history: options.import_history,
         imported_count,
         skipped_count,
         quarantined_count,
         branch_reports,
         imported_paths_sample,
     })
+}
+
+fn materialize_source_to_temp_repo(source: &MemfsImportSource, temp_repo: &Path) -> Result<(), DenError> {
+    git(None, &["init", "--quiet"], Some(temp_repo))?;
+    match source {
+        MemfsImportSource::Bundle { path } => {
+            let bundle_path = Path::new(path);
+            git(None, &["bundle", "verify"], Some(bundle_path))?;
+            git(
+                Some(temp_repo),
+                &["fetch", "--quiet", path, "refs/heads/*:refs/heads/*"],
+                None,
+            )?;
+        }
+        MemfsImportSource::GitDir { path } => {
+            git(
+                Some(temp_repo),
+                &["fetch", "--quiet", path, "refs/heads/*:refs/heads/*"],
+                None,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn ordered_branches(repo: &Path) -> Result<Vec<String>, DenError> {
+    let discovered = git(
+        Some(repo),
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        None,
+    )?;
+    let mut branches = discovered
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    branches.sort();
+
+    let mut ordered = ordered_known_branches()
+        .into_iter()
+        .filter(|name| branches.iter().any(|branch| branch == name))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    for branch in branches {
+        if !ordered.iter().any(|known| known == &branch) {
+            ordered.push(branch);
+        }
+    }
+    Ok(ordered)
+}
+
+fn commit_ids_for_path(
+    repo: &Path,
+    branch: &str,
+    path: &str,
+    import_history: bool,
+) -> Result<Vec<String>, DenError> {
+    let mut args = vec!["log"];
+    if import_history {
+        args.push("--reverse");
+    } else {
+        args.push("-1");
+    }
+    args.push("--format=%H");
+    args.push(branch);
+    args.push("--");
+    args.push(path);
+
+    let output = git(Some(repo), &args, None)?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 async fn insert_import_draft(
@@ -291,8 +373,8 @@ async fn insert_import_draft(
         INSERT OR IGNORE INTO memory_records (
             memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
             author_profile, author_agent_id, created_at, content_text, metadata_json,
-            visibility, logical_path, work_surface_ref, valid_from
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?)
+            supersedes_memory_id, visibility, logical_path, work_surface_ref, valid_from
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?)
         ",
     )
     .bind(&draft.memory_id)
@@ -306,6 +388,7 @@ async fn insert_import_draft(
     .bind(&draft.created_at)
     .bind(&draft.content_text)
     .bind(draft.metadata_json.to_string())
+    .bind(&draft.supersedes_memory_id)
     .bind(&draft.logical_path)
     .bind(&draft.logical.work_surface_ref)
     .bind(&draft.created_at)
@@ -314,6 +397,18 @@ async fn insert_import_draft(
     .map_err(|err| DenError::System(format!("insert imported memory record failed: {err}")))?
     .rows_affected();
     Ok(rows > 0)
+}
+
+fn maybe_push_sample(samples: &mut Vec<String>, logical_path: &str, commit: &str, import_history: bool) {
+    if samples.len() >= 20 {
+        return;
+    }
+    if import_history {
+        let short = &commit[..commit.len().min(12)];
+        samples.push(format!("{logical_path}@{short}"));
+    } else {
+        samples.push(logical_path.to_string());
+    }
 }
 
 fn normalize_git_timestamp(raw: &str) -> Result<String, DenError> {
@@ -442,7 +537,7 @@ fn git_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::head_record_for_logical_path;
+    use crate::{head_record_for_logical_path, list_records_for_logical_path, MemoryScopeType};
     use crate::test_support::new_test_store;
 
     #[test]
@@ -478,62 +573,25 @@ mod tests {
     #[tokio::test]
     async fn imports_bundle_heads_only_and_is_idempotent() {
         let store = new_test_store().await;
-        let temp_root =
-            std::env::temp_dir().join(format!("den-memfs-import-test-{}", Uuid::new_v4()));
-        let repo_dir = temp_root.join("repo");
-        let bundle_path = temp_root.join("fixture.bundle");
-        std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+        let fixture = MemfsFixture::new();
 
-        run_git(&repo_dir, &["init", "--quiet"]);
-        run_git(&repo_dir, &["config", "user.email", "agent@example.com"]);
-        run_git(&repo_dir, &["config", "user.name", "Agent"]);
-
-        write_file(repo_dir.join("core/bear-overview.md"), "# Bear\n");
-        run_git(&repo_dir, &["add", "."]);
-        commit_all(&repo_dir, "curate base");
-        run_git(&repo_dir, &["branch", "-M", "curate"]);
-
-        write_file(repo_dir.join("core/bear-overview.md"), "# Bear v2\n");
-        commit_all(&repo_dir, "curate update");
-
-        run_git(&repo_dir, &["checkout", "-b", "pair"]);
-        write_file(repo_dir.join("pair/notes/session.md"), "pair note\n");
-        commit_all(&repo_dir, "pair note");
-
-        run_git(&repo_dir, &["checkout", "-b", "talk", "curate"]);
-        write_file(repo_dir.join("chat/logs/welcome.md"), "chat log\n");
-        commit_all(&repo_dir, "chat log");
-
-        run_git(&repo_dir, &["checkout", "curate"]);
-        run_git(
-            &repo_dir,
-            &[
-                "bundle",
-                "create",
-                bundle_path.to_str().expect("bundle path utf8"),
-                "curate",
-                "pair",
-                "talk",
-            ],
-        );
-
-        let report = import_memfs_bundle(&store, &bundle_path, &MemfsImportOptions::default())
-            .await
-            .expect("import bundle");
+        let report = import_memfs_bundle(
+            &store,
+            &fixture.bundle_path,
+            &MemfsImportOptions::default(),
+        )
+        .await
+        .expect("import bundle");
         assert_eq!(report.imported_count, 3);
         assert_eq!(report.quarantined_count, 2);
-        assert!(
-            head_record_for_logical_path(&store, "core/bear-overview.md")
-                .await
-                .expect("lookup head")
-                .is_some()
-        );
+        assert!(matches!(report.source, MemfsImportSource::Bundle { .. }));
+
         let head = head_record_for_logical_path(&store, "core/bear-overview.md")
             .await
             .expect("lookup head")
             .expect("head exists");
         assert_eq!(head.content_text, "# Bear v2\n");
-        assert_eq!(head.scope_type, crate::MemoryScopeType::Shared);
+        assert_eq!(head.scope_type, MemoryScopeType::Shared);
 
         let chat = head_record_for_logical_path(&store, "chat/logs/welcome.md")
             .await
@@ -541,15 +599,115 @@ mod tests {
             .expect("chat head exists");
         assert_eq!(chat.scope_profile.as_deref(), Some("chat"));
         assert_eq!(chat.kind, "log");
-        assert_eq!(chat.scope_type, crate::MemoryScopeType::ProfileLocal);
+        assert_eq!(chat.scope_type, MemoryScopeType::ProfileLocal);
 
-        let rerun = import_memfs_bundle(&store, &bundle_path, &MemfsImportOptions::default())
-            .await
-            .expect("reimport bundle");
+        let rerun = import_memfs_bundle(
+            &store,
+            &fixture.bundle_path,
+            &MemfsImportOptions::default(),
+        )
+        .await
+        .expect("reimport bundle");
         assert_eq!(rerun.imported_count, 0);
         assert_eq!(rerun.skipped_count, 3);
+    }
 
-        std::fs::remove_dir_all(&temp_root).ok();
+    #[tokio::test]
+    async fn imports_git_dir_history_and_supersession_chain() {
+        let store = new_test_store().await;
+        let fixture = MemfsFixture::new();
+
+        let report = import_memfs_git_dir(
+            &store,
+            &fixture.git_dir_path,
+            &MemfsImportOptions {
+                import_history: true,
+                ..MemfsImportOptions::default()
+            },
+        )
+        .await
+        .expect("import git dir");
+
+        assert_eq!(report.imported_count, 4);
+        assert!(report.import_history);
+        assert!(matches!(report.source, MemfsImportSource::GitDir { .. }));
+
+        let history = list_records_for_logical_path(&store, "core/bear-overview.md", 10)
+            .await
+            .expect("list history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].content_text, "# Bear v2\n");
+        assert_eq!(history[1].content_text, "# Bear\n");
+
+        let superseded_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND logical_path = ? AND supersedes_memory_id IS NOT NULL",
+        )
+        .bind(store.bear_id().to_string())
+        .bind("core/bear-overview.md")
+        .fetch_one(store.pool())
+        .await
+        .expect("count superseded");
+        assert_eq!(superseded_count, 1);
+
+        let head = head_record_for_logical_path(&store, "core/bear-overview.md")
+            .await
+            .expect("lookup head")
+            .expect("head exists");
+        assert_eq!(head.content_text, "# Bear v2\n");
+    }
+
+    struct MemfsFixture {
+        _temp_root: std::path::PathBuf,
+        bundle_path: std::path::PathBuf,
+        git_dir_path: std::path::PathBuf,
+    }
+
+    impl MemfsFixture {
+        fn new() -> Self {
+            let temp_root =
+                std::env::temp_dir().join(format!("den-memfs-import-test-{}", Uuid::new_v4()));
+            let repo_dir = temp_root.join("repo");
+            let bundle_path = temp_root.join("fixture.bundle");
+            std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+
+            run_git(&repo_dir, &["init", "--quiet"]);
+            run_git(&repo_dir, &["config", "user.email", "agent@example.com"]);
+            run_git(&repo_dir, &["config", "user.name", "Agent"]);
+
+            write_file(repo_dir.join("core/bear-overview.md"), "# Bear\n");
+            commit_all(&repo_dir, "curate base");
+            run_git(&repo_dir, &["branch", "-M", "curate"]);
+
+            write_file(repo_dir.join("core/bear-overview.md"), "# Bear v2\n");
+            commit_all(&repo_dir, "curate update");
+
+            run_git(&repo_dir, &["checkout", "-b", "pair"]);
+            write_file(repo_dir.join("pair/notes/session.md"), "pair note\n");
+            commit_all(&repo_dir, "pair note");
+
+            run_git(&repo_dir, &["checkout", "-b", "talk", "curate"]);
+            write_file(repo_dir.join("chat/logs/welcome.md"), "chat log\n");
+            commit_all(&repo_dir, "chat log");
+
+            run_git(&repo_dir, &["checkout", "curate"]);
+            run_git(
+                &repo_dir,
+                &[
+                    "bundle",
+                    "create",
+                    bundle_path.to_str().expect("bundle path utf8"),
+                    "curate",
+                    "pair",
+                    "talk",
+                ],
+            );
+
+            Self {
+                _temp_root: temp_root,
+                bundle_path,
+                git_dir_path: repo_dir.join(".git"),
+            }
+        }
     }
 
     fn write_file(path: std::path::PathBuf, content: &str) {

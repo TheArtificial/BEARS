@@ -28,7 +28,10 @@ pub use entity::{
     list_handles, merge_entities, resolve_live_entity, set_canonical_ref, set_resolution,
     split_entity, EntityHandleRow, EntityRow,
 };
-pub use import::{import_memfs_bundle, MemfsBranchReport, MemfsImportOptions, MemfsImportReport};
+pub use import::{
+    import_memfs_bundle, import_memfs_git_dir, MemfsBranchReport, MemfsImportOptions,
+    MemfsImportReport, MemfsImportSource,
+};
 pub use logical_path::{LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
 pub use observations::{

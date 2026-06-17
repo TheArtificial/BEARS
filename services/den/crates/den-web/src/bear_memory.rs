@@ -691,6 +691,7 @@ async fn import_letta_post(
         &MemfsImportOptions {
             dry_run: false,
             include_workflow_artifacts: false,
+            import_history: false,
         },
     )
     .await
@@ -705,6 +706,13 @@ async fn import_letta_post(
             ));
         }
     };
+
+    let report_path = file_path.with_extension("report.json");
+    if let Ok(report_json) = serde_json::to_string_pretty(&report) {
+        if let Err(err) = std::fs::write(&report_path, report_json) {
+            tracing::warn!(bear_id = %bear.id, error = %err, path = %report_path.display(), "failed to write Letta import report next to staged bundle");
+        }
+    }
 
     Ok(dashboard_redirect_with_query(
         &bear.slug,
