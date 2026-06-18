@@ -228,6 +228,7 @@ pub async fn run() -> Result<(), StartupError> {
             vec![("/internal", den_acp::internal::router())];
         if config.acp_gateway_enabled {
             peer_routers.push(("/acp", den_acp::acp::router()));
+            peer_routers.push(("/bearwire", den_acp::bearwire::router()));
         }
         let api_app = api::create_api_app(
             sqlx_pool.clone(),
