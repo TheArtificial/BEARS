@@ -17,6 +17,7 @@ use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path as FsPath, PathBuf};
 use uuid::Uuid;
 
 use crate::{
@@ -300,6 +301,52 @@ fn looks_like_git_bundle(bytes: &[u8]) -> bool {
     String::from_utf8_lossy(first_line)
         .to_ascii_lowercase()
         .contains("git bundle")
+}
+
+fn import_dir_for_bear(config: &den_core::config::Config, bear_id: Uuid) -> PathBuf {
+    FsPath::new(&config.bear_sqlite_data_dir)
+        .join("imports")
+        .join(bear_id.to_string())
+}
+
+async fn import_staged_bundle(
+    state: &AppState,
+    bear_id: Uuid,
+    bundle_path: &FsPath,
+) -> Result<den_runtime::memory::MemfsImportReport, CustomError> {
+    let stores = MemoryStoreManager::new(state.config.as_ref());
+    let store = stores.store_for_bear(bear_id).await?;
+    let record_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+            .bind(bear_id.to_string())
+            .fetch_one(store.pool())
+            .await?;
+    if record_count > 0 {
+        return Err(CustomError::ValidationError(
+            "Letta memory import is disabled for Bears that already have memory records."
+                .to_string(),
+        ));
+    }
+
+    let report = import_memfs_bundle(
+        &store,
+        bundle_path,
+        &MemfsImportOptions {
+            dry_run: false,
+            include_workflow_artifacts: false,
+            import_history: false,
+        },
+    )
+    .await?;
+
+    let report_path = bundle_path.with_extension("report.json");
+    if let Ok(report_json) = serde_json::to_string_pretty(&report) {
+        if let Err(err) = std::fs::write(&report_path, report_json) {
+            tracing::warn!(bear_id = %bear_id, error = %err, path = %report_path.display(), "failed to write Letta import report next to staged bundle");
+        }
+    }
+
+    Ok(report)
 }
 
 async fn dashboard_view(
@@ -676,12 +723,11 @@ async fn import_letta_post(
 
     let stores = MemoryStoreManager::new(state.config.as_ref());
     let store = stores.store_for_bear(bear.id).await?;
-    let record_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ?",
-    )
-    .bind(bear.id.to_string())
-    .fetch_one(store.pool())
-    .await?;
+    let record_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+            .bind(bear.id.to_string())
+            .fetch_one(store.pool())
+            .await?;
     if record_count > 0 {
         return Ok(dashboard_redirect_with_query(
             &bear.slug,
@@ -690,9 +736,7 @@ async fn import_letta_post(
         ));
     }
 
-    let import_dir = std::path::Path::new(&state.config.bear_sqlite_data_dir)
-        .join("imports")
-        .join(bear.id.to_string());
+    let import_dir = import_dir_for_bear(state.config.as_ref(), bear.id);
     std::fs::create_dir_all(&import_dir).map_err(|err| {
         CustomError::System(format!("failed to create Letta import directory: {err}"))
     })?;
@@ -701,40 +745,26 @@ async fn import_letta_post(
     std::fs::write(&file_path, &bundle_bytes)
         .map_err(|err| CustomError::System(format!("failed to stage Letta bundle: {err}")))?;
 
-    let report = match import_memfs_bundle(
-        &store,
-        &file_path,
-        &MemfsImportOptions {
-            dry_run: false,
-            include_workflow_artifacts: false,
-            import_history: false,
-        },
-    )
-    .await
-    {
+    let report = match import_staged_bundle(&state, bear.id, &file_path).await {
         Ok(report) => report,
         Err(err) => {
             tracing::warn!(bear_id = %bear.id, error = %err, path = %file_path.display(), "Letta bundle import failed after staging");
+            if let Err(delete_err) = std::fs::remove_file(&file_path) {
+                tracing::warn!(bear_id = %bear.id, error = %delete_err, path = %file_path.display(), "failed to discard staged Letta bundle after import failure");
+            }
             return Ok(dashboard_redirect_with_query(
                 &bear.slug,
                 "import_error",
-                "Bundle upload succeeded, but importing into SQLite failed. The staged bundle was kept under imports/ for retry.",
+                "Bundle upload succeeded, but importing into SQLite failed. The failed upload was discarded; check Den logs for the importer error.",
             ));
         }
     };
-
-    let report_path = file_path.with_extension("report.json");
-    if let Ok(report_json) = serde_json::to_string_pretty(&report) {
-        if let Err(err) = std::fs::write(&report_path, report_json) {
-            tracing::warn!(bear_id = %bear.id, error = %err, path = %report_path.display(), "failed to write Letta import report next to staged bundle");
-        }
-    }
 
     Ok(dashboard_redirect_with_query(
         &bear.slug,
         "import_notice",
         &format!(
-            "Imported {} memory paths (skipped {}, quarantined {}) from the uploaded Letta bundle. The bundle was also staged under imports/.",
+            "Imported {} memory paths (skipped {}, quarantined {}) from the uploaded Letta bundle.",
             report.imported_count, report.skipped_count, report.quarantined_count
         ),
     ))

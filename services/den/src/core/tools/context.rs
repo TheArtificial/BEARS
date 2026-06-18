@@ -11,6 +11,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::{
     conversation::ConversationTitleOps,
     dispatch::ToolContext,
@@ -29,31 +30,25 @@ use den_core::tools::{
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
     workflow::WorkPlanOps,
 };
-use den_core::tools::context::DenToolInvocationContext;
 
 use crate::{
     config::Config,
-    errors::DenError,
-    core::{
-        tools::{
-            activity_payloads::{no_active_workplan_payload, plan_mode_workplan_payload},
-            environment::DenEnvironmentOps,
-            identity::DenBearDirectory,
-            memory_read::DenRoleMemoryStore,
-            memory_review::DenMemoryReviewStore,
-            plan_mode::DenPlanModeOps,
-            prompt_memory::DenPromptMemoryStore,
-            session::DenConversationTitleOps,
-            web::runtime::DenWebFetcher,
-            work_surface::DenWorkSurfaceOps,
-            workflow::DenWorkPlanOps,
-        },
+    core::tools::{
+        activity_payloads::{no_active_workplan_payload, plan_mode_workplan_payload},
+        environment::DenEnvironmentOps,
+        identity::DenBearDirectory,
+        memory_read::DenRoleMemoryStore,
+        memory_review::DenMemoryReviewStore,
+        plan_mode::DenPlanModeOps,
+        prompt_memory::DenPromptMemoryStore,
+        session::DenConversationTitleOps,
+        web::runtime::DenWebFetcher,
+        work_surface::DenWorkSurfaceOps,
+        workflow::DenWorkPlanOps,
     },
+    errors::DenError,
 };
-use den_runtime::{
-    bears::BearProfile,
-    memory::MemoryStoreManager,
-};
+use den_runtime::{bears::BearProfile, memory::MemoryStoreManager};
 
 /// The composition root binding every Den tool capability to the runtime.
 pub(crate) struct DenToolContext<'a> {
@@ -123,9 +118,7 @@ impl<'a> DenToolContext<'a> {
     }
 
     fn conversation(&self) -> DenConversationTitleOps<'a> {
-        DenConversationTitleOps {
-            pool: self.pool,
-        }
+        DenConversationTitleOps { pool: self.pool }
     }
 
     fn work_plans(&self) -> DenWorkPlanOps<'a> {
@@ -166,11 +159,7 @@ impl WebFetcher for DenToolContext<'_> {
         self.web().default_search_max_results()
     }
 
-    async fn provider_search(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Result<Value, DenError> {
+    async fn provider_search(&self, query: &str, max_results: usize) -> Result<Value, DenError> {
         self.web().provider_search(query, max_results).await
     }
 }
@@ -251,7 +240,9 @@ impl MemoryReviewStore for DenToolContext<'_> {
         bear_id: Uuid,
         observation_id: &str,
     ) -> Result<Option<ObservationRecord>, DenError> {
-        self.review().find_observation(bear_id, observation_id).await
+        self.review()
+            .find_observation(bear_id, observation_id)
+            .await
     }
 
     async fn record_observation(
@@ -381,7 +372,9 @@ impl BearDirectory for DenToolContext<'_> {
         bear_id: Uuid,
         binding_id: &str,
     ) -> Result<Option<BearProfile>, DenError> {
-        self.directory().registered_profile(bear_id, binding_id).await
+        self.directory()
+            .registered_profile(bear_id, binding_id)
+            .await
     }
 
     async fn bear_self(&self, bear_id: Uuid) -> Result<Option<BearRecord>, DenError> {
@@ -422,7 +415,9 @@ impl EnvironmentOps for DenToolContext<'_> {
         &self,
         context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError> {
-        self.environment().fetch_acp_adapter_environment(context).await
+        self.environment()
+            .fetch_acp_adapter_environment(context)
+            .await
     }
 }
 

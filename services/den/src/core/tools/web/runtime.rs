@@ -9,18 +9,15 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::DenError;
 use den_core::tools::web::{
     max_fetch_bytes, WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl,
 };
+use den_core::DenError;
 
 use crate::{
     config::Config,
+    core::{tools::support::validate_public_http_url, web_policy},
     errors::CustomError,
-    core::{
-        tools::support::validate_public_http_url,
-        web_policy,
-    },
 };
 
 pub(crate) struct DenWebFetcher<'a> {

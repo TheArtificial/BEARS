@@ -5,9 +5,9 @@
 // The API + ACP edge moved to the `den-api` crate (v1.5 split). Re-exported as
 // `crate::api` so the remaining binary call sites (run/web/seeds) resolve unchanged.
 pub use den_api as api;
+pub use den_core::config;
 pub use den_http::auth_backend;
 pub use den_http::build_info;
-pub use den_core::config;
 pub mod core;
 pub use den_http::errors;
 pub mod import_memfs;
@@ -236,10 +236,10 @@ pub async fn run() -> Result<(), StartupError> {
             peer_routers,
         )
         .await
-            .map_err(|e| {
-                tracing::error!("Failed to create API application: {}", e);
-                std::io::Error::other(e.to_string())
-            })?;
+        .map_err(|e| {
+            tracing::error!("Failed to create API application: {}", e);
+            std::io::Error::other(e.to_string())
+        })?;
 
         task_set.spawn(async move {
             tracing::info!("API service started successfully");

@@ -37,7 +37,8 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportMemfsArgs> {
                 let raw = args
                     .get(i + 1)
                     .ok_or_else(|| anyhow!("--bear requires a UUID"))?;
-                bear_id = Some(Uuid::parse_str(raw).with_context(|| format!("invalid bear id {raw:?}"))?);
+                bear_id =
+                    Some(Uuid::parse_str(raw).with_context(|| format!("invalid bear id {raw:?}"))?);
                 i += 2;
             }
             "--bundle" => {
@@ -133,7 +134,11 @@ pub async fn run_import_memfs(args: ImportMemfsArgs) -> anyhow::Result<()> {
     };
 
     let report_json = serde_json::to_string_pretty(&report).context("serialize import report")?;
-    if let Some(parent) = args.report_path.parent().filter(|path| !path.as_os_str().is_empty()) {
+    if let Some(parent) = args
+        .report_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create report directory {}", parent.display()))?;
     }
@@ -146,7 +151,10 @@ pub async fn run_import_memfs(args: ImportMemfsArgs) -> anyhow::Result<()> {
         println!("post-import checklist:");
         println!("1. Review {}", args.report_path.display());
         println!("2. Spot-check Bear Admin → Memory browse / record detail");
-        println!("3. Run `den reindex --bear {}` when QDRANT_URL is set", args.bear_id);
+        println!(
+            "3. Run `den reindex --bear {}` when QDRANT_URL is set",
+            args.bear_id
+        );
     }
     Ok(())
 }
@@ -169,8 +177,13 @@ mod tests {
             "/tmp/report.json".to_string(),
         ];
         let parsed = parse_args(&args).expect("parse args");
-        assert_eq!(parsed.bear_id, Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap());
-        assert!(matches!(parsed.source, ImportMemfsCliSource::Bundle(ref path) if path == &PathBuf::from("/tmp/sample.bundle")));
+        assert_eq!(
+            parsed.bear_id,
+            Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap()
+        );
+        assert!(
+            matches!(parsed.source, ImportMemfsCliSource::Bundle(ref path) if path == &PathBuf::from("/tmp/sample.bundle"))
+        );
         assert!(parsed.dry_run);
         assert!(parsed.import_history);
         assert_eq!(parsed.report_path, PathBuf::from("/tmp/report.json"));
@@ -187,7 +200,9 @@ mod tests {
             "--include-workflow-artifacts".to_string(),
         ];
         let parsed = parse_args(&args).expect("parse args");
-        assert!(matches!(parsed.source, ImportMemfsCliSource::GitDir(ref path) if path == &PathBuf::from("/tmp/repo.git")));
+        assert!(
+            matches!(parsed.source, ImportMemfsCliSource::GitDir(ref path) if path == &PathBuf::from("/tmp/repo.git"))
+        );
         assert!(parsed.include_workflow_artifacts);
         assert_eq!(parsed.report_path, PathBuf::from("report.json"));
     }

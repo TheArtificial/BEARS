@@ -29,7 +29,8 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ReindexTarget> {
                 let raw = args
                     .get(i + 1)
                     .ok_or_else(|| anyhow!("--bear requires a UUID"))?;
-                let id = Uuid::parse_str(raw).with_context(|| format!("invalid bear id {raw:?}"))?;
+                let id =
+                    Uuid::parse_str(raw).with_context(|| format!("invalid bear id {raw:?}"))?;
                 target = Some(ReindexTarget::Bear(id));
                 i += 2;
             }

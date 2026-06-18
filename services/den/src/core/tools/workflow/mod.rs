@@ -7,7 +7,6 @@ use den_core::tools::workflow::WorkPlanOps;
 
 use crate::{
     config::Config,
-    errors::{CustomError, DenError},
     core::{
         docket::{DocketService, PgDocketService},
         tools::{
@@ -21,11 +20,12 @@ use crate::{
             WorkPlanUpsert, WorkPlanVisibility,
         },
     },
+    errors::{CustomError, DenError},
 };
 use den_runtime::{
-    plan_mode,
     bears::BearProfile,
     memory::{tools as sqlite_memory, MemoryStoreManager},
+    plan_mode,
 };
 
 /// Concrete [`WorkPlanOps`] over the runtime pool/config/stores.
@@ -271,9 +271,8 @@ pub(crate) async fn update_work_plan(
                 items: args.items,
                 workspace_context: args.workspace_context,
             },
-        },
-    )
-    .await?;
+        })
+        .await?;
     let plan = row
         .project_for_profile(role, context.user_id)?
         .ok_or_else(|| {

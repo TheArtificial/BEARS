@@ -3,11 +3,11 @@
 use den::{
     config::Config,
     core::{
+        docket::{DocketService, PgDocketService},
         tools::{
             constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
             session::{invoke_den_tool, DenToolInvocationContext},
         },
-        docket::{DocketService, PgDocketService},
         work_plans::{
             WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus, WorkPlanUpdate,
             WorkPlanUpsert, WorkPlanVisibility,
@@ -67,12 +67,7 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create test bear")
 }
 
-async fn insert_role_agent(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    role: BearProfile,
-    agent_id: &str,
-) {
+async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)

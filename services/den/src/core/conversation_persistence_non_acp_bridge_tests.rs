@@ -24,7 +24,7 @@ async fn persist_for_test(
 }
 
 use den_runtime::{
-    bears::{db::BearParams, db::create_bear, BearProfile},
+    bears::{db::create_bear, db::BearParams, BearProfile},
     conversation_events::{
         canonical_persistence_context, persist_projection, MemoryCurateCompletedPayload,
         MemoryCurateEnqueuedPayload, MemoryCurateFailedPayload, MemoryCurateStartedPayload,
@@ -151,7 +151,10 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
                 result_path: resolved.result_path.clone(),
                 result_commit: resolved.result_commit.clone(),
             }),
-            workflow_text: format!("Memory proposal resolved: {} ({})", resolved.title, resolved.status),
+            workflow_text: format!(
+                "Memory proposal resolved: {} ({})",
+                resolved.title, resolved.status
+            ),
             visible_summary: Some(format!(
                 "Memory proposal '{}' was approved and applied at core/test.md.",
                 resolved.title
@@ -162,12 +165,22 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
 
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
     let texts: Vec<_> = messages.iter().map(|m| m.content_text.as_str()).collect();
-    assert!(texts.iter().any(|text| text.contains("Memory proposal created")));
-    assert!(texts.iter().any(|text| text.contains("Review requested for memory proposal")));
-    assert!(texts.iter().any(|text| text.contains("Memory proposal resolved")));
-    assert!(texts.iter().any(|text| text.contains("was approved and applied at core/test.md")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory proposal created")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Review requested for memory proposal")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory proposal resolved")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("was approved and applied at core/test.md")));
     assert!(messages.iter().any(|m| m.message_type == "workflow_event"));
-    assert!(messages.iter().any(|m| m.role.as_deref() == Some("assistant")));
+    assert!(messages
+        .iter()
+        .any(|m| m.role.as_deref() == Some("assistant")));
     Ok(())
 }
 
@@ -276,7 +289,9 @@ async fn non_acp_memory_curate_lifecycle_projection_persists_records_when_conver
                 completed_at,
             }),
             workflow_text: "Memory curate failed with 2 proposal(s)".to_string(),
-            visible_summary: Some("Memory curate failed for 2 proposal(s): worker crashed".to_string()),
+            visible_summary: Some(
+                "Memory curate failed for 2 proposal(s): worker crashed".to_string(),
+            ),
         },
     ] {
         persist_for_test(
@@ -291,16 +306,44 @@ async fn non_acp_memory_curate_lifecycle_projection_persists_records_when_conver
 
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
     let texts: Vec<_> = messages.iter().map(|m| m.content_text.as_str()).collect();
-    assert!(texts.iter().any(|text| text.contains("Memory curate enqueued with 2 proposal(s)")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate started with 2 proposal(s)")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate completed with 2 proposal(s)")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate failed with 2 proposal(s)")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate was queued for 2 proposal(s).")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate started for 2 proposal(s).")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate completed for 2 proposal(s).")));
-    assert!(texts.iter().any(|text| text.contains("Memory curate failed for 2 proposal(s): worker crashed")));
-    assert!(messages.iter().filter(|m| m.message_type == "workflow_event").count() >= 4);
-    assert!(messages.iter().filter(|m| m.role.as_deref() == Some("assistant")).count() >= 4);
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate enqueued with 2 proposal(s)")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate started with 2 proposal(s)")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate completed with 2 proposal(s)")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate failed with 2 proposal(s)")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate was queued for 2 proposal(s).")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate started for 2 proposal(s).")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate completed for 2 proposal(s).")));
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("Memory curate failed for 2 proposal(s): worker crashed")));
+    assert!(
+        messages
+            .iter()
+            .filter(|m| m.message_type == "workflow_event")
+            .count()
+            >= 4
+    );
+    assert!(
+        messages
+            .iter()
+            .filter(|m| m.role.as_deref() == Some("assistant"))
+            .count()
+            >= 4
+    );
     Ok(())
 }
 
@@ -362,7 +405,9 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
     .await?;
 
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
-    assert!(messages.iter().any(|m| m.content_text.contains("Pair reflection completed for session acp-test-session")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Pair reflection completed for session acp-test-session")));
     assert!(messages.iter().any(|m| m.content_text.contains("Pair reflection summary completed for session acp-test-session and saved to pair/summary.md.")));
     Ok(())
 }
@@ -436,8 +481,14 @@ async fn non_acp_memory_curate_enqueue_projection_respects_conversation_gating(
     .await?;
 
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
-    assert!(messages.iter().any(|m| m.content_text.contains("Memory curate enqueued with 2 proposal(s)")));
-    assert!(messages.iter().any(|m| m.content_text.contains("Memory curate was queued for 2 proposal(s).")));
-    assert!(!messages.iter().any(|m| m.content_text.contains("Should not persist")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Memory curate enqueued with 2 proposal(s)")));
+    assert!(messages.iter().any(|m| m
+        .content_text
+        .contains("Memory curate was queued for 2 proposal(s).")));
+    assert!(!messages
+        .iter()
+        .any(|m| m.content_text.contains("Should not persist")));
     Ok(())
 }

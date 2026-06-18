@@ -13,10 +13,8 @@ use den_core::tools::memory::{RoleMemoryEntryWrite, RoleMemoryStore};
 
 use crate::{
     config::Config,
+    core::tools::{prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext},
     errors::{CustomError, DenError},
-    core::{
-        tools::{prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext},
-    },
 };
 use den_runtime::{
     bears::BearProfile,
@@ -39,17 +37,13 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
     async fn read(&self, bear_id: Uuid, _role: BearProfile, path: &str) -> Result<Value, DenError> {
         let stores = MemoryStoreManager::new(self.config);
         let store = stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_read(&store, path)
-            .await
-            
+        sqlite_memory::sqlite_memory_read(&store, path).await
     }
 
     async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
         let stores = MemoryStoreManager::new(self.config);
         let store = stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_browse(&store, role.as_str())
-            .await
-            
+        sqlite_memory::sqlite_memory_browse(&store, role.as_str()).await
     }
 
     /// Hybrid `memory_search` (ADR-0038 Phase 3): the **union** of the derived vector recall index
@@ -71,9 +65,7 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
         let stores = MemoryStoreManager::new(self.config);
         let store = stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_status(&store, role.as_str())
-            .await
-            
+        sqlite_memory::sqlite_memory_status(&store, role.as_str()).await
     }
 
     async fn write_entry(
@@ -128,4 +120,3 @@ pub(crate) async fn memory_status_value(
 ) -> Result<Value, CustomError> {
     memory_status(pool, config, context, role).await
 }
-

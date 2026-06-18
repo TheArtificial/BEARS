@@ -2,8 +2,8 @@
 
 use den::startup::run_sqlx_migrations;
 use den_runtime::{
-    plan_mode::{self, PlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
     bears::{db as bears_db, db::BearParams, BearProfile},
+    plan_mode::{self, EnterPlanModeParams, PlanModeRequestedBy, SubmitPlanModeParams},
 };
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -55,12 +55,7 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create test bear")
 }
 
-async fn insert_role_agent(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    role: BearProfile,
-    agent_id: &str,
-) {
+async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
@@ -141,22 +136,16 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         Some("pair/plans/mem_test.md")
     );
 
-    let approved = plan_mode::approve_plan_mode(
-        &pool,
-        user_id,
-        bear_id,
-        "acp-plan-mode-session",
-        entered.id,
-    )
-    .await
-    .expect("approve plan mode");
+    let approved =
+        plan_mode::approve_plan_mode(&pool, user_id, bear_id, "acp-plan-mode-session", entered.id)
+            .await
+            .expect("approve plan mode");
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 
-    let active =
-        plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
-            .await
-            .expect("query active plan mode");
+    let active = plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
+        .await
+        .expect("query active plan mode");
     assert!(active.is_none());
 
     let event_count: i64 = sqlx::query_scalar(

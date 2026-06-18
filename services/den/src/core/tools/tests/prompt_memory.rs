@@ -1,21 +1,15 @@
 use crate::{
     config::Config,
-    errors::CustomError,
-    core::{
-        tools::{
-            arguments::DenToolChannelContext,
-            memory_read::memory_status_value,
-            prompt_memory::DenPromptMemoryStore,
-            session::DenToolInvocationContext,
-        },
+    core::tools::{
+        arguments::DenToolChannelContext, memory_read::memory_status_value,
+        prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext,
     },
+    errors::CustomError,
 };
 use den_runtime::{
     bears::BearProfile,
     prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
-    prompt_memory_blocks::{
-            PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
-        },
+    prompt_memory_blocks::{PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType},
 };
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
@@ -64,9 +58,13 @@ async fn prompt_memory_patch(
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    den_core::tools::prompt_memory::prompt_memory_patch(&DenPromptMemoryStore::new(pool), role, arguments)
-        .await
-        .map_err(CustomError::from)
+    den_core::tools::prompt_memory::prompt_memory_patch(
+        &DenPromptMemoryStore::new(pool),
+        role,
+        arguments,
+    )
+    .await
+    .map_err(CustomError::from)
 }
 
 #[tokio::test]
@@ -128,7 +126,11 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let listed = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
         .await
         .expect("list prompt memory blocks");
-    assert!(listed["blocks"].as_array().unwrap().iter().any(|b| b["id"] == block_id));
+    assert!(listed["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["id"] == block_id));
     let patched = prompt_memory_patch(
         &pool,
         &context,
@@ -147,7 +149,11 @@ async fn prompt_memory_tools_round_trip_through_store() {
     let listed_active = prompt_memory_list(&pool, &context, BearProfile::Pair, json!({}))
         .await
         .expect("list active prompt memory blocks");
-    assert!(!listed_active["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
+    assert!(!listed_active["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["id"] == patched["block_id"]));
     let listed_all = prompt_memory_list(
         &pool,
         &context,
@@ -156,7 +162,11 @@ async fn prompt_memory_tools_round_trip_through_store() {
     )
     .await
     .expect("list all prompt memory blocks");
-    assert!(listed_all["blocks"].as_array().unwrap().iter().any(|b| b["id"] == patched["block_id"]));
+    assert!(listed_all["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["id"] == patched["block_id"]));
 }
 
 #[tokio::test]
@@ -251,17 +261,18 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
             .await
             .expect("seed prompt memory block");
     }
-    let selection = den_runtime::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
-        &pool,
-        den_runtime::prompt_memory_block_store::PromptMemoryBlockQuery {
-            bear_id: Some(bear_id),
-            profile_slug,
-            session_id: &session_id,
-            work_surfaces: std::slice::from_ref(&work_surface),
-        },
-    )
-    .await
-    .expect("runtime selection");
+    let selection =
+        den_runtime::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
+            &pool,
+            den_runtime::prompt_memory_block_store::PromptMemoryBlockQuery {
+                bear_id: Some(bear_id),
+                profile_slug,
+                session_id: &session_id,
+                work_surfaces: std::slice::from_ref(&work_surface),
+            },
+        )
+        .await
+        .expect("runtime selection");
     let compiled = den_runtime::prompt_memory_blocks::compile_prompt_memory_blocks(
         &selection.blocks,
         den_runtime::prompt_memory_blocks::PromptMemoryCompilationInput {
@@ -278,7 +289,12 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         .collect::<Vec<_>>();
     assert_eq!(
         included_ids,
-        vec![ids[3].clone(), ids[2].clone(), ids[1].clone(), ids[0].clone()]
+        vec![
+            ids[3].clone(),
+            ids[2].clone(),
+            ids[1].clone(),
+            ids[0].clone()
+        ]
     );
     assert_eq!(selection.diagnostic["matched_count"], 4);
 }
@@ -355,10 +371,14 @@ async fn prompt_memory_upsert_archives_superseded_block() {
     .await
     .expect("upsert replacement block");
     assert_eq!(replacement["superseded_archived_count"], 1);
-    let listed_all =
-        prompt_memory_list(&pool, &context, BearProfile::Pair, json!({"include_archived": true}))
-            .await
-            .expect("list prompt memory blocks");
+    let listed_all = prompt_memory_list(
+        &pool,
+        &context,
+        BearProfile::Pair,
+        json!({"include_archived": true}),
+    )
+    .await
+    .expect("list prompt memory blocks");
     let original = listed_all["blocks"]
         .as_array()
         .unwrap()
@@ -510,6 +530,12 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     let status = memory_status_value(&config, &context, BearProfile::Pair, &pool)
         .await
         .expect("memory status value");
-    assert_eq!(status["prompt_memory_diagnostic"]["source"], "prompt_memory_blocks");
-    assert_eq!(status["prompt_memory_diagnostic"]["active_by_scope"]["session"], 1);
+    assert_eq!(
+        status["prompt_memory_diagnostic"]["source"],
+        "prompt_memory_blocks"
+    );
+    assert_eq!(
+        status["prompt_memory_diagnostic"]["active_by_scope"]["session"],
+        1
+    );
 }

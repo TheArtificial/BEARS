@@ -6,13 +6,11 @@ use den_core::tools::environment::EnvironmentOps;
 
 use crate::{
     config::Config,
-    errors::{CustomError, DenError},
-    core::{
-        tools::{
-            memory_read::memory_status_value, memory_write::source_acp_session_id,
-            session::DenToolInvocationContext,
-        },
+    core::tools::{
+        memory_read::memory_status_value, memory_write::source_acp_session_id,
+        session::DenToolInvocationContext,
     },
+    errors::{CustomError, DenError},
 };
 use den_runtime::bears::BearProfile;
 
@@ -104,4 +102,3 @@ pub(crate) async fn fetch_acp_adapter_environment(
         }),
     }
 }
-

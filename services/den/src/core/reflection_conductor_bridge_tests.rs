@@ -11,12 +11,8 @@ use uuid::Uuid;
 use crate::config::Config;
 use den_runtime::reflection_conductor::*;
 use den_runtime::{
-    bears::BearProfile,
-    memory::MemoryStoreManager,
-    memory_curate_executor,
-    memory_proposals,
+    bears::BearProfile, memory::MemoryStoreManager, memory_curate_executor, memory_proposals,
 };
-
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -160,7 +156,10 @@ async fn memory_curate_worker_loop_processes_queued_runs_until_cancelled() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    assert!(saw_completed, "worker did not complete queued run before timeout");
+    assert!(
+        saw_completed,
+        "worker did not complete queued run before timeout"
+    );
 
     token.cancel();
     handle.await.expect("worker join").expect("worker result");

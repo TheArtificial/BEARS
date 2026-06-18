@@ -14,11 +14,7 @@ use uuid::Uuid;
 
 use den_core::tools::work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome};
 
-use crate::{
-    config::Config,
-    errors::DenError,
-    core::tools::session::DenToolInvocationContext,
-};
+use crate::{config::Config, core::tools::session::DenToolInvocationContext, errors::DenError};
 use den_runtime::{
     bears::BearProfile,
     memory::{tools as sqlite_memory, MemoryStoreManager},
@@ -56,8 +52,7 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
                     "work_surface_slug": slug,
                 }),
             )
-            .await
-            ?;
+            .await?;
             responses.push(written);
         }
         // Async-index these scaffold writes into derived recall (ADR-0038 Phase 1b);
@@ -83,9 +78,7 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
         let hint_payload = infer_work_surface_hint(context, role);
         let candidate_slug = work_surface_candidate_slug(context);
         let store = self.stores.store_for_bear(context.bear_id).await?;
-        let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str())
-            .await
-            ?;
+        let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str()).await?;
         let orientation =
             build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
         Ok(json!({

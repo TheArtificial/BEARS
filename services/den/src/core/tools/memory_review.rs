@@ -16,23 +16,19 @@ use den_core::tools::review::{
     ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
-use crate::{
-    config::Config,
-    errors::DenError,
-};
+use crate::{config::Config, errors::DenError};
 use den_runtime::{
     bear_observations::{self, BearObservationRow},
     bears::BearProfile,
     conversation_events::{
-            memory_proposal_resolved_projection, memory_review_requested_projection,
-            project_to_conversation, ProjectionProvenance, ProjectionSource,
-        },
+        memory_proposal_resolved_projection, memory_review_requested_projection,
+        project_to_conversation, ProjectionProvenance, ProjectionSource,
+    },
     memory::{
-            create_observation, create_proposal, get_observation,
-            get_proposal as db_get_proposal, list_proposals as db_list_proposals,
-            mark_observation_review_queued_for_bear, promote_core_content,
-            resolve_proposal as db_resolve_proposal, MemoryStoreManager,
-        },
+        create_observation, create_proposal, get_observation, get_proposal as db_get_proposal,
+        list_proposals as db_list_proposals, mark_observation_review_queued_for_bear,
+        promote_core_content, resolve_proposal as db_resolve_proposal, MemoryStoreManager,
+    },
     memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
     reflection_conductor::{self, ProposalEnqueueParams},
 };
@@ -147,8 +143,7 @@ impl<'a> DenMemoryReviewStore<'a> {
                 project_to_conversation: conversation_id.is_some(),
             },
         )
-        .await
-        ?;
+        .await?;
 
         let reflection_date = OffsetDateTime::now_utc().date();
         let conversation_key = format!("memory_curate:{reflection_date}");
@@ -176,9 +171,8 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         bear_id: Uuid,
         observation_id: &str,
     ) -> Result<Option<ObservationRecord>, DenError> {
-        let existing = get_observation(self.pool, self.config, self.stores, bear_id, observation_id)
-            .await
-            ?;
+        let existing =
+            get_observation(self.pool, self.config, self.stores, bear_id, observation_id).await?;
         Ok(existing.as_ref().map(observation_record))
     }
 
@@ -200,8 +194,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 source: request.source.clone(),
             },
         )
-        .await
-        ?;
+        .await?;
 
         let proposal = self
             .enqueue_observation_review(&request, &observation, &salience)
@@ -214,8 +207,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             &observation.observation_id,
             proposal.id,
         )
-        .await
-        ?;
+        .await?;
         let mut observation = observation;
         observation.status = "review_queued".to_string();
         observation.proposal_id = Some(proposal.id);
@@ -228,10 +220,15 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         status: Option<String>,
         limit: i64,
     ) -> Result<Value, DenError> {
-        let proposals =
-            db_list_proposals(self.pool, self.config, self.stores, bear_id, status.as_deref(), limit)
-                .await
-                ?;
+        let proposals = db_list_proposals(
+            self.pool,
+            self.config,
+            self.stores,
+            bear_id,
+            status.as_deref(),
+            limit,
+        )
+        .await?;
         Ok(json!(proposals))
     }
 
@@ -240,9 +237,8 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         bear_id: Uuid,
         proposal_id: Uuid,
     ) -> Result<Option<Value>, DenError> {
-        let proposal = db_get_proposal(self.pool, self.config, self.stores, bear_id, proposal_id)
-            .await
-            ?;
+        let proposal =
+            db_get_proposal(self.pool, self.config, self.stores, bear_id, proposal_id).await?;
         Ok(proposal.map(|proposal| json!(proposal)))
     }
 
@@ -264,8 +260,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 project_to_conversation: false,
             },
         )
-        .await
-        ?;
+        .await?;
         self.project_resolved(&request.projection, &resolved);
         Ok(json!(resolved))
     }
@@ -294,8 +289,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 project_to_conversation: false,
             },
         )
-        .await
-        ?;
+        .await?;
         project_to_conversation(
             self.pool,
             proposal.bear_id,
@@ -322,8 +316,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             request.bear_id,
             request.proposal_id,
         )
-        .await
-        ?
+        .await?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
         let content = request.body.clone().unwrap_or_else(|| {
@@ -346,8 +339,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             &content,
             request.reviewer_profile.as_str(),
         )
-        .await
-        ?;
+        .await?;
         let resolved = db_resolve_proposal(
             self.pool,
             self.config,
@@ -365,8 +357,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 project_to_conversation: false,
             },
         )
-        .await
-        ?;
+        .await?;
         self.project_resolved(&request.projection, &resolved);
         Ok(json!({
             "bear_id": request.bear_id,
@@ -379,4 +370,3 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         }))
     }
 }
-

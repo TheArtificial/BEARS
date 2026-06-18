@@ -36,9 +36,9 @@ fn semantic_events_to_adapter_types(events: Vec<RuntimeStreamEvent>) -> Vec<Stri
 }
 
 async fn collect_adapter_types_from_openai_sse(frames: &str) -> Vec<String> {
-    let source = futures::stream::iter(vec![Ok::<Bytes, den_core::DenError>(
-        Bytes::from(frames.to_string()),
-    )]);
+    let source = futures::stream::iter(vec![Ok::<Bytes, den_core::DenError>(Bytes::from(
+        frames.to_string(),
+    ))]);
     let mut stream = openai_byte_stream_to_event_stream(source);
     let mut types = Vec::new();
     while let Some(item) = stream.next().await {
@@ -113,9 +113,10 @@ fn golden_semantic_lifecycle_projects_ordered_adapter_types() {
 
 #[test]
 fn golden_semantic_status_text_projects_to_adapter_sse() {
-    let mapped = runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::StatusText {
-        text: "Indexing memory.".to_string(),
-    });
+    let mapped =
+        runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::StatusText {
+            text: "Indexing memory.".to_string(),
+        });
     let types = mapped
         .into_iter()
         .map(gateway_event_to_adapter_sse)

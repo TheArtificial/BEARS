@@ -11,9 +11,9 @@ pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.
 pub use den_http::{api_utils, email, user};
+pub mod docket;
 pub mod sandbox;
 pub mod tools;
-pub mod docket;
 pub use tools::tool_descriptor_guidance;
 pub use tools::web_policy;
 pub mod work_plans;
@@ -22,12 +22,12 @@ pub mod work_plans;
 // den-only modules (native_runtime / turn_controller), so they live here in the
 // `den` crate rather than in den-runtime. Relocated during the v1.4 runtime lift.
 #[cfg(test)]
-mod runtime_role_bridge_tests;
-#[cfg(test)]
-mod runtime_bearwire_bridge_tests;
-#[cfg(test)]
 mod conversation_persistence_non_acp_bridge_tests;
 #[cfg(test)]
 mod reflection_conductor_bridge_tests;
 #[cfg(test)]
 mod reflection_conversations_bridge_tests;
+#[cfg(test)]
+mod runtime_bearwire_bridge_tests;
+#[cfg(test)]
+mod runtime_role_bridge_tests;

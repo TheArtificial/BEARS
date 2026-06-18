@@ -19,8 +19,6 @@ pub enum MemfsImportSource {
     GitDir { path: String },
 }
 
-
-
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct MemfsImportOptions {
     pub dry_run: bool,
@@ -147,7 +145,11 @@ async fn import_memfs_source_inner(
         let mut branch_skipped = 0usize;
         let mut branch_quarantined = 0usize;
 
-        for raw_path in paths_output.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        for raw_path in paths_output
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             let Some(normalized_path) = normalize_memfs_path(raw_path) else {
                 branch_skipped += 1;
                 continue;
@@ -163,7 +165,8 @@ async fn import_memfs_source_inner(
                 continue;
             }
 
-            let commit_ids = commit_ids_for_path(temp_repo, &branch, &normalized_path, options.import_history)?;
+            let commit_ids =
+                commit_ids_for_path(temp_repo, &branch, &normalized_path, options.import_history)?;
             if commit_ids.is_empty() {
                 branch_skipped += 1;
                 continue;
@@ -247,7 +250,12 @@ async fn import_memfs_source_inner(
 
                 if options.dry_run {
                     branch_imported += 1;
-                    maybe_push_sample(&mut imported_paths_sample, &draft.logical_path, &commit, options.import_history);
+                    maybe_push_sample(
+                        &mut imported_paths_sample,
+                        &draft.logical_path,
+                        &commit,
+                        options.import_history,
+                    );
                     previous_memory_id = Some(memory_id);
                     continue;
                 }
@@ -255,7 +263,12 @@ async fn import_memfs_source_inner(
                 let inserted = insert_import_draft(store, &draft).await?;
                 if inserted {
                     branch_imported += 1;
-                    maybe_push_sample(&mut imported_paths_sample, &draft.logical_path, &commit, options.import_history);
+                    maybe_push_sample(
+                        &mut imported_paths_sample,
+                        &draft.logical_path,
+                        &commit,
+                        options.import_history,
+                    );
                 } else {
                     branch_skipped += 1;
                 }
@@ -287,12 +300,15 @@ async fn import_memfs_source_inner(
     })
 }
 
-fn materialize_source_to_temp_repo(source: &MemfsImportSource, temp_repo: &Path) -> Result<(), DenError> {
+fn materialize_source_to_temp_repo(
+    source: &MemfsImportSource,
+    temp_repo: &Path,
+) -> Result<(), DenError> {
     git(None, &["init", "--quiet"], Some(temp_repo))?;
     match source {
         MemfsImportSource::Bundle { path } => {
             let bundle_path = Path::new(path);
-            git(None, &["bundle", "verify"], Some(bundle_path))?;
+            git(Some(temp_repo), &["bundle", "verify"], Some(bundle_path))?;
             git(
                 Some(temp_repo),
                 &["fetch", "--quiet", path, "refs/heads/*:refs/heads/*"],
@@ -399,7 +415,12 @@ async fn insert_import_draft(
     Ok(rows > 0)
 }
 
-fn maybe_push_sample(samples: &mut Vec<String>, logical_path: &str, commit: &str, import_history: bool) {
+fn maybe_push_sample(
+    samples: &mut Vec<String>,
+    logical_path: &str,
+    commit: &str,
+    import_history: bool,
+) {
     if samples.len() >= 20 {
         return;
     }
@@ -537,8 +558,8 @@ fn git_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{head_record_for_logical_path, list_records_for_logical_path, MemoryScopeType};
     use crate::test_support::new_test_store;
+    use crate::{head_record_for_logical_path, list_records_for_logical_path, MemoryScopeType};
 
     #[test]
     fn normalizes_and_rejects_memfs_paths() {
@@ -575,13 +596,10 @@ mod tests {
         let store = new_test_store().await;
         let fixture = MemfsFixture::new();
 
-        let report = import_memfs_bundle(
-            &store,
-            &fixture.bundle_path,
-            &MemfsImportOptions::default(),
-        )
-        .await
-        .expect("import bundle");
+        let report =
+            import_memfs_bundle(&store, &fixture.bundle_path, &MemfsImportOptions::default())
+                .await
+                .expect("import bundle");
         assert_eq!(report.imported_count, 3);
         assert_eq!(report.quarantined_count, 2);
         assert!(matches!(report.source, MemfsImportSource::Bundle { .. }));
@@ -601,13 +619,10 @@ mod tests {
         assert_eq!(chat.kind, "log");
         assert_eq!(chat.scope_type, MemoryScopeType::ProfileLocal);
 
-        let rerun = import_memfs_bundle(
-            &store,
-            &fixture.bundle_path,
-            &MemfsImportOptions::default(),
-        )
-        .await
-        .expect("reimport bundle");
+        let rerun =
+            import_memfs_bundle(&store, &fixture.bundle_path, &MemfsImportOptions::default())
+                .await
+                .expect("reimport bundle");
         assert_eq!(rerun.imported_count, 0);
         assert_eq!(rerun.skipped_count, 3);
     }

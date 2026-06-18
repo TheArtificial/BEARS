@@ -10,25 +10,20 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::tools::plan_mode::{
-    PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView,
-};
+use den_core::tools::plan_mode::{PlanModeExitView, PlanModeOps, PlanModeStatusView, PlanModeView};
 
 use crate::{
+    core::tools::{session::DenToolInvocationContext, support::clean_optional},
     errors::DenError,
-    core::{
-        tools::{session::DenToolInvocationContext, support::clean_optional},
-    },
 };
 use den_runtime::{
-    plan_mode::{
-            self, PlanModeRequestedBy, PlanModeSessionRow, EnterPlanModeParams,
-            SubmitPlanModeParams,
-        },
     acp_sessions,
-    client_tools::{ResolvedSessionPolicy, ToolEnablementState},
     bears::BearProfile,
+    client_tools::{ResolvedSessionPolicy, ToolEnablementState},
     memory::{tools as sqlite_memory, MemoryStoreManager},
+    plan_mode::{
+        self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
+    },
     turn_state,
 };
 
@@ -182,9 +177,9 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         title: &str,
         body: &str,
     ) -> Result<PlanModeExitView, DenError> {
-        let stores = self.stores.ok_or_else(|| {
-            DenError::System("plan mode exit requires memory stores".to_string())
-        })?;
+        let stores = self
+            .stores
+            .ok_or_else(|| DenError::System("plan mode exit requires memory stores".to_string()))?;
         let markdown = plan_mode::render_plan_artifact_markdown(title, body);
         let current_plan = plan_mode::get_for_session(
             self.pool,
@@ -194,9 +189,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             plan_mode_id,
         )
         .await?
-        .ok_or_else(|| {
-            DenError::NotFound("active ACP plan mode session not found".to_string())
-        })?;
+        .ok_or_else(|| DenError::NotFound("active ACP plan mode session not found".to_string()))?;
         let artifact_path = {
             let artifact_id = format!("plan-mode-{}", current_plan.id);
             let logical_path = format!("pair/plans/{artifact_id}.md");
@@ -299,4 +292,3 @@ impl PlanModeOps for DenPlanModeOps<'_> {
         })
     }
 }
-

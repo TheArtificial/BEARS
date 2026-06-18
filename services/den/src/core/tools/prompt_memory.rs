@@ -11,15 +11,11 @@ use den_core::tools::prompt_memory::{
     PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
 };
 
-use crate::{
-    errors::DenError,
-};
-use den_runtime::{
-    prompt_memory_block_store::{
-        archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
-        list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
-        upsert_prompt_memory_block,
-    },
+use crate::errors::DenError;
+use den_runtime::prompt_memory_block_store::{
+    archive_conflicting_prompt_memory_blocks, archive_prompt_memory_blocks_superseded_by,
+    list_prompt_memory_blocks_for_bear_profile, patch_prompt_memory_block,
+    upsert_prompt_memory_block,
 };
 
 /// Postgres-backed [`PromptMemoryStore`] over a pool reference.
@@ -39,15 +35,11 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
         bear_id: Uuid,
         profile_slug: &str,
     ) -> Result<Vec<PromptMemoryBlock>, DenError> {
-        list_prompt_memory_blocks_for_bear_profile(self.pool, bear_id, profile_slug)
-            .await
-            
+        list_prompt_memory_blocks_for_bear_profile(self.pool, bear_id, profile_slug).await
     }
 
     async fn upsert_block(&self, write: &PromptMemoryBlockWrite) -> Result<(), DenError> {
-        upsert_prompt_memory_block(self.pool, write)
-            .await
-            
+        upsert_prompt_memory_block(self.pool, write).await
     }
 
     async fn patch_block(
@@ -55,15 +47,11 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
         block_id: &str,
         patch: &PromptMemoryBlockPatch,
     ) -> Result<(), DenError> {
-        patch_prompt_memory_block(self.pool, block_id, patch)
-            .await
-            
+        patch_prompt_memory_block(self.pool, block_id, patch).await
     }
 
     async fn archive_conflicting(&self, write: &PromptMemoryBlockWrite) -> Result<u64, DenError> {
-        archive_conflicting_prompt_memory_blocks(self.pool, write)
-            .await
-            
+        archive_conflicting_prompt_memory_blocks(self.pool, write).await
     }
 
     async fn archive_superseded_by(
@@ -79,7 +67,5 @@ impl PromptMemoryStore for DenPromptMemoryStore<'_> {
             supersedes_block_id,
         )
         .await
-        
     }
 }
-

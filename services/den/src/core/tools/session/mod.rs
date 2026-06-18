@@ -1,15 +1,8 @@
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::{
-    config::Config,
-    errors::CustomError,
-    core::tools::context::DenToolContext,
-};
-use den_runtime::{
-    acp_sessions,
-    memory::MemoryStoreManager,
-};
+use crate::{config::Config, core::tools::context::DenToolContext, errors::CustomError};
+use den_runtime::{acp_sessions, memory::MemoryStoreManager};
 
 // The per-call context value now lives in `den-tools` (it is data, not a
 // capability), so tool executors can move there. Re-exported here so existing

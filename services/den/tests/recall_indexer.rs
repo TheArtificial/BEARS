@@ -22,7 +22,8 @@ use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
 fn recall_env_ready() -> bool {
-    std::env::var("DATABASE_URL").is_ok() && !std::env::var("QDRANT_URL").unwrap_or_default().is_empty()
+    std::env::var("DATABASE_URL").is_ok()
+        && !std::env::var("QDRANT_URL").unwrap_or_default().is_empty()
 }
 
 #[tokio::test]
@@ -103,7 +104,10 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
         .count_with_filter(mem_filter.clone())
         .await
         .expect("count after re-index");
-    assert_eq!(count_after_reindex, count, "re-index must not duplicate points");
+    assert_eq!(
+        count_after_reindex, count,
+        "re-index must not duplicate points"
+    );
 
     // Remove (supersede/delete): points disappear from Qdrant.
     let removed = indexer
@@ -192,15 +196,33 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
         .passages
         .iter()
         .find(|p| p.memory_id == memory_id)
-        .unwrap_or_else(|| panic!("indexed passage should be recalled: {:?}", projection.passages));
-    assert!(hit.score > 0.99, "identical vector should score ~1.0, got {}", hit.score);
+        .unwrap_or_else(|| {
+            panic!(
+                "indexed passage should be recalled: {:?}",
+                projection.passages
+            )
+        });
+    assert!(
+        hit.score > 0.99,
+        "identical vector should score ~1.0, got {}",
+        hit.score
+    );
     assert_eq!(hit.logical_path.as_deref(), Some(logical_path));
-    assert!(hit.text.contains("Zephyr protocol"), "payload text round-trips: {hit:?}");
+    assert!(
+        hit.text.contains("Zephyr protocol"),
+        "payload text round-trips: {hit:?}"
+    );
 
     // Renders without anchors; dedupes the passage when its path is already an anchor.
-    assert!(render_recall_block(&projection, "").is_some(), "renders a block");
+    assert!(
+        render_recall_block(&projection, "").is_some(),
+        "renders a block"
+    );
     if let Some(block) = render_recall_block(&projection, logical_path) {
-        assert!(!block.contains(logical_path), "anchored path must be deduped");
+        assert!(
+            !block.contains(logical_path),
+            "anchored path must be deduped"
+        );
     }
 
     indexer
@@ -293,7 +315,9 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         .and_then(|v| v.as_array())
         .expect("payload entity_ids array");
     assert!(
-        payload_entities.iter().any(|e| e.as_str() == Some(entity_id.as_str())),
+        payload_entities
+            .iter()
+            .any(|e| e.as_str() == Some(entity_id.as_str())),
         "payload entity_ids round-trips: {hit:?}"
     );
 
@@ -307,9 +331,9 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         .await
         .expect("entity miss search");
     assert!(
-        !miss
-            .iter()
-            .any(|h| h.payload.get("memory_id").and_then(|v| v.as_str()) == Some(memory_id.as_str())),
+        !miss.iter().any(
+            |h| h.payload.get("memory_id").and_then(|v| v.as_str()) == Some(memory_id.as_str())
+        ),
         "unrelated entity filter must exclude the passage: {miss:?}"
     );
 
@@ -374,12 +398,30 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
         Resolution::Resolved(e) | Resolution::Created(e) => e.entity_id,
         other => panic!("expected a resolved/created entity, got {other:?}"),
     };
-    append_relation(&store, &direct.memory_id, &entity_id, "subject", &json!({}), "curate", None, None)
-        .await
-        .expect("link direct");
-    append_relation(&store, &neighbor.memory_id, &entity_id, "participant", &json!({}), "curate", None, None)
-        .await
-        .expect("link neighbor");
+    append_relation(
+        &store,
+        &direct.memory_id,
+        &entity_id,
+        "subject",
+        &json!({}),
+        "curate",
+        None,
+        None,
+    )
+    .await
+    .expect("link direct");
+    append_relation(
+        &store,
+        &neighbor.memory_id,
+        &entity_id,
+        "participant",
+        &json!({}),
+        "curate",
+        None,
+        None,
+    )
+    .await
+    .expect("link neighbor");
 
     let result = hybrid_memory_search(&config, bear_id, "work", token, 10)
         .await
@@ -396,9 +438,9 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
         .get(direct.memory_id.as_str())
         .unwrap_or_else(|| panic!("direct keyword hit present: {hits:?}"));
     assert_eq!(direct_hit["source"], "keyword");
-    let neighbor_hit = by_id
-        .get(neighbor.memory_id.as_str())
-        .unwrap_or_else(|| panic!("graph leg should surface the indirectly-linked neighbor: {hits:?}"));
+    let neighbor_hit = by_id.get(neighbor.memory_id.as_str()).unwrap_or_else(|| {
+        panic!("graph leg should surface the indirectly-linked neighbor: {hits:?}")
+    });
     assert_eq!(neighbor_hit["source"], "graph");
     assert_eq!(neighbor_hit["hop"], 1);
     // Entity-overlap boost: the neighbor shares exactly the one bridging entity with the seed.
@@ -481,12 +523,24 @@ async fn list_indexable_heads_selects_latest_and_filters_policy() {
     // Two versions of a shared/core summary at the same path → head is the latest.
     let core_path = LogicalMemoryPath::shared_core("summary");
     append_memory_record(
-        &store, &core_path, "summary", "curate", None, "old core body", &json!({}),
+        &store,
+        &core_path,
+        "summary",
+        "curate",
+        None,
+        "old core body",
+        &json!({}),
     )
     .await
     .expect("write old core");
     let head = append_memory_record(
-        &store, &core_path, "summary", "curate", None, "new core body", &json!({}),
+        &store,
+        &core_path,
+        "summary",
+        "curate",
+        None,
+        "new core body",
+        &json!({}),
     )
     .await
     .expect("write new core");
@@ -494,16 +548,29 @@ async fn list_indexable_heads_selects_latest_and_filters_policy() {
     // Ephemeral scratch is excluded by policy.
     let scratch_path = LogicalMemoryPath::profile_local("pair", "scratch");
     append_memory_record(
-        &store, &scratch_path, "scratch", "pair", None, "ephemeral junk", &json!({}),
+        &store,
+        &scratch_path,
+        "scratch",
+        "pair",
+        None,
+        "ephemeral junk",
+        &json!({}),
     )
     .await
     .expect("write scratch");
 
     let heads = list_indexable_heads(&store).await.expect("list heads");
 
-    assert_eq!(heads.len(), 1, "only the shared summary head is indexable: {heads:?}");
+    assert_eq!(
+        heads.len(),
+        1,
+        "only the shared summary head is indexable: {heads:?}"
+    );
     let req = &heads[0];
-    assert_eq!(req.memory_id, head.memory_id, "head must be the latest at the path");
+    assert_eq!(
+        req.memory_id, head.memory_id,
+        "head must be the latest at the path"
+    );
     assert_eq!(req.kind, "summary");
     assert_eq!(req.scope_type, "shared");
     assert!(req.content_text.contains("new core body"), "{req:?}");
@@ -573,8 +640,14 @@ async fn keyword_memory_search_scopes_to_shared_plus_own_role() {
         .iter()
         .filter_map(|h| h["memory_id"].as_str())
         .collect();
-    assert!(ids.contains(&shared.memory_id.as_str()), "shared visible to work: {ids:?}");
-    assert!(ids.contains(&work.memory_id.as_str()), "own role-local visible: {ids:?}");
+    assert!(
+        ids.contains(&shared.memory_id.as_str()),
+        "shared visible to work: {ids:?}"
+    );
+    assert!(
+        ids.contains(&work.memory_id.as_str()),
+        "own role-local visible: {ids:?}"
+    );
     assert!(
         !ids.contains(&pair.memory_id.as_str()),
         "another role's profile-local must not leak: {ids:?}"
@@ -584,7 +657,10 @@ async fn keyword_memory_search_scopes_to_shared_plus_own_role() {
     let first = &hits[0];
     assert!(first["path"].is_string(), "{first}");
     assert!(first["score"].is_null(), "{first}");
-    assert!(first["snippet"].as_str().unwrap().contains(token), "{first}");
+    assert!(
+        first["snippet"].as_str().unwrap().contains(token),
+        "{first}"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
