@@ -18,6 +18,7 @@ use den_core::tools::work_surface::{
     work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
     work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
 };
+use crate::llm::model_registry;
 
 const TIER1_SHARED_PATHS: &[&str] = &[
     "core/bear-overview.md",
@@ -70,11 +71,21 @@ struct ProjectionBudget {
     tiers: [TierBudget; 4],
 }
 
-fn projection_budget_for_profile(role: BearProfile) -> ProjectionBudget {
-    let global_cap = match role {
+
+
+fn projection_budget_for_profile_and_model(
+    role: BearProfile,
+    context_window: Option<u32>,
+) -> ProjectionBudget {
+    let base_global_cap = match role {
         BearProfile::Pair | BearProfile::Chat | BearProfile::Work => 8_000,
         BearProfile::Curate => 6_000,
         BearProfile::Watch => 4_000,
+    };
+    let global_cap = match context_window {
+        Some(ctx) if ctx >= 1_000_000 => base_global_cap * 2,
+        Some(ctx) if ctx >= 200_000 => base_global_cap + (base_global_cap / 2),
+        _ => base_global_cap,
     };
     ProjectionBudget {
         global_cap,
@@ -193,7 +204,15 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         compiled_config_token,
     };
 
-    let budget = projection_budget_for_profile(input.profile);
+    let model_metadata = input
+        .bear
+        .default_model
+        .as_deref()
+        .and_then(model_registry::entry_for_handle);
+    let budget = projection_budget_for_profile_and_model(
+        input.profile,
+        model_metadata.map(|entry| entry.context_window),
+    );
     let mut included = Vec::<Value>::new();
     let mut omitted_budget = Vec::<String>::new();
     let mut omitted_no_surface = Vec::<String>::new();
@@ -387,6 +406,11 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         "omitted_because_no_surface": omitted_no_surface,
         "omitted_by_access": omitted_by_access,
         "global_char_cap": budget.global_cap,
+        "model_metadata": model_metadata.map(|entry| json!({
+            "key": entry.key,
+            "context_window": entry.context_window,
+            "max_output_tokens": entry.max_output_tokens,
+        })),
     });
     Ok(KeyMemoryProjectionResult {
         rendered_text,

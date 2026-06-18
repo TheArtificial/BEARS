@@ -79,6 +79,43 @@ async fn projects_shared_identity_anchors_without_work_surface() {
     assert!(!result.rendered_text.contains("## Work surface:"));
 }
 
+
+
+#[tokio::test]
+async fn long_context_model_metadata_increases_projection_budget() {
+    let bear_id = Uuid::new_v4();
+    let mut bear = legacy_test_bear(bear_id);
+    bear.default_model = Some("openai/gpt-4.1".to_string());
+    let mut config = Config::test_stub();
+    config.bear_sqlite_data_dir = format!("/tmp/bears-kmp-model-budget-{}", Uuid::new_v4());
+    let stores = MemoryStoreManager::new(&config);
+    let pool = noop_pg_pool();
+
+    let result = project_key_memory(KeyMemoryProjectionInput {
+        pool: &pool,
+        stores: &stores,
+        bear: &bear,
+        profile: BearProfile::Pair,
+        conversation_id: "den-conv-test",
+        session_hints: WorkSurfaceSessionHints::default(),
+        work_surface_status_override: None,
+        native_runtime: true,
+        access: AccessContext::empty(),
+    })
+    .await
+    .expect("project");
+
+    assert_eq!(result.diagnostic["global_char_cap"].as_u64(), Some(16_000));
+    assert_eq!(
+        result.diagnostic.pointer("/model_metadata/key").and_then(|v| v.as_str()),
+        Some("openai/gpt-4.1")
+    );
+    assert_eq!(
+        result.diagnostic.pointer("/model_metadata/context_window").and_then(|v| v.as_u64()),
+        Some(1_047_576)
+    );
+}
+
 #[tokio::test]
 async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
     let bear_id = Uuid::new_v4();

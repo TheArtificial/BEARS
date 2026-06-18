@@ -336,10 +336,15 @@ pub fn validate_default_model_for_catalog(
             let requested = default_model_trim.trim();
             let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
             let available = models.iter().any(|model| {
-                model.handle == requested
-                    || requested_resolved == Some(model.handle.as_str())
+                if model.handle == requested {
+                    return true;
+                }
+                let Some(resolved) = requested_resolved else {
+                    return false;
+                };
+                resolved == model.handle
                     || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
-                        == requested_resolved
+                        == Some(resolved)
             });
             if !available {
                 validation_errors.add(
@@ -644,4 +649,54 @@ pub async fn insert_new_bear_row_with_context_profile(
     )
     .await
     .map_err(CustomError::from)
+}
+
+#[cfg(test)]
+mod model_catalog_tests {
+    use super::*;
+
+    fn option(handle: &str) -> ModelOption {
+        ModelOption {
+            handle: handle.to_string(),
+            label: handle.to_string(),
+            context_window: None,
+            max_output_tokens: None,
+        }
+    }
+
+    fn has_default_model_error(errors: &ValidationErrors) -> bool {
+        errors.field_errors().contains_key("default_model")
+    }
+
+    #[test]
+    fn validation_accepts_alias_when_canonical_handle_is_available() {
+        let fetch = Some(Ok(vec![option("openai/gpt-4.1")])) ;
+        let mut errors = ValidationErrors::new();
+        validate_default_model_for_catalog(&fetch, "gpt-4.1", &mut errors);
+        assert!(!has_default_model_error(&errors));
+    }
+
+    #[test]
+    fn validation_accepts_bifrost_available_model_without_den_metadata() {
+        let fetch = Some(Ok(vec![option("openai/new-model")])) ;
+        let mut errors = ValidationErrors::new();
+        validate_default_model_for_catalog(&fetch, "openai/new-model", &mut errors);
+        assert!(!has_default_model_error(&errors));
+    }
+
+    #[test]
+    fn validation_rejects_den_metadata_model_not_available_in_bifrost() {
+        let fetch = Some(Ok(vec![option("openai/gpt-4o")])) ;
+        let mut errors = ValidationErrors::new();
+        validate_default_model_for_catalog(&fetch, "gpt-4.1", &mut errors);
+        assert!(has_default_model_error(&errors));
+    }
+
+    #[test]
+    fn validation_rejects_unknown_model_when_only_unrelated_unknown_is_available() {
+        let fetch = Some(Ok(vec![option("openai/available-but-unknown")])) ;
+        let mut errors = ValidationErrors::new();
+        validate_default_model_for_catalog(&fetch, "openai/not-available-and-unknown", &mut errors);
+        assert!(has_default_model_error(&errors));
+    }
 }
