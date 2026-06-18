@@ -251,6 +251,7 @@ mod tests {
             memfs_repo_path: None,
             provisioning_version: 1,
             system_prompt: "legacy prompt".to_string(),
+            birthday: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
         }

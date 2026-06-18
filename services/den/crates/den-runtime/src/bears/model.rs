@@ -38,6 +38,7 @@ pub struct Bear {
     #[serde(default = "default_provisioning_version")]
     pub provisioning_version: i32,
     pub system_prompt: String,
+    pub birthday: Option<time::Date>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }

@@ -3,13 +3,11 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    {
-        agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput},
-        bears::{model::BearProfile, Bear},
-        memory::{
-            store::{append_memory_record, LogicalMemoryPath},
-            AccessContext, MemoryStoreManager,
-        },
+    agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput},
+    bears::{model::BearProfile, Bear},
+    memory::{
+        store::{append_memory_record, LogicalMemoryPath},
+        AccessContext, MemoryStoreManager,
     },
 };
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
@@ -30,14 +28,14 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         memfs_repo_path: None,
         provisioning_version: 1,
         system_prompt: "You are a test bear.".to_string(),
+        birthday: None,
         created_at: now,
         updated_at: now,
     }
 }
 
 fn noop_pg_pool() -> sqlx::PgPool {
-    sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
-        .expect("lazy pool")
+    sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").expect("lazy pool")
 }
 
 #[tokio::test]
@@ -143,7 +141,9 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
     })
     .await
     .expect("project");
-    assert!(with_anchor.rendered_text.contains("## Work surface: bears-monorepo"));
+    assert!(with_anchor
+        .rendered_text
+        .contains("## Work surface: bears-monorepo"));
     assert!(with_anchor.rendered_text.contains("Canonical overview"));
 }
 

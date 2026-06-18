@@ -6,19 +6,19 @@ use sqlx::types::Json;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-use crate::{
-    errors::CustomError,
-    web::AppState,
-};
+use crate::{errors::CustomError, web::AppState};
 use den_runtime::{
-    bears::{
-            context_composition::{
-                BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
-                DEFAULT_ROLE_CONTRACT_VERSION,
-            },
-            context_profile_from_json, context_profile_to_json, db as bears_db, db::BearParams, templates::first_bear_template, Bear, BearProfile,
-        },
     agent_assist::{ModelOption, ToolOption},
+    bears::{
+        context_composition::{
+            BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
+            DEFAULT_ROLE_CONTRACT_VERSION,
+        },
+        context_profile_from_json, context_profile_to_json, db as bears_db,
+        db::BearParams,
+        templates::first_bear_template,
+        Bear, BearProfile,
+    },
 };
 
 /// Operator and member `<select>` for Letta `agent_type` (subset of Letta `AgentType`; empty = server default).
@@ -449,8 +449,7 @@ impl AdminBearPromptForm {
                 "Pair role prompt is required.".to_string(),
             ));
         }
-        if contracts.watch.trim().is_empty()
-        {
+        if contracts.watch.trim().is_empty() {
             return Err(CustomError::ValidationError(
                 "All role prompts are required for role-aware bears.".to_string(),
             ));
@@ -505,6 +504,7 @@ pub fn composed_system_prompt_for_profile_json(
         memfs_repo_path: None,
         provisioning_version: 1,
         system_prompt: String::new(),
+        birthday: None,
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };

@@ -271,10 +271,16 @@ async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<Stri
 }
 
 fn manifest_for_bear(bear: &den_runtime::bears::Bear) -> Result<BearBundleManifest, CustomError> {
-    let exported_birthdate = bear
-        .created_at
-        .format(&Rfc3339)
-        .map_err(|err| CustomError::System(format!("format Bear birthdate failed: {err}")))?;
+    let exported_birthdate = match bear.birthday {
+        Some(date) => date.to_string(),
+        None => bear
+            .created_at
+            .format(&Rfc3339)
+            .map_err(|err| CustomError::System(format!("format Bear birthdate failed: {err}")))?
+            .chars()
+            .take(10)
+            .collect(),
+    };
     Ok(BearBundleManifest {
         format: BEAR_BUNDLE_FORMAT.to_string(),
         version: BEAR_BUNDLE_VERSION,
@@ -282,7 +288,7 @@ fn manifest_for_bear(bear: &den_runtime::bears::Bear) -> Result<BearBundleManife
             slug: bear.slug.clone(),
             name: bear.name.clone(),
             description: bear.description.clone(),
-            birthdate: exported_birthdate.chars().take(10).collect(),
+            birthdate: exported_birthdate,
             default_model: bear.default_model.clone(),
             tools_enabled: bear.tools_enabled.as_ref().map(|v| v.0.clone()),
             letta_agent_type: bear.letta_agent_type.clone(),
@@ -498,14 +504,12 @@ async fn import_bear_bundle(
 
     let birthdate = manifest.bear.birthdate.trim();
     if !birthdate.is_empty() {
-        sqlx::query("UPDATE bears SET created_at = $1::date, updated_at = NOW() WHERE id = $2")
+        sqlx::query("UPDATE bears SET birthday = $1::date, updated_at = NOW() WHERE id = $2")
             .bind(birthdate)
             .bind(bear_id)
             .execute(state.sqlx_pool())
             .await
-            .map_err(|err| {
-                CustomError::ValidationError(format!("invalid Bear birthdate: {err}"))
-            })?;
+            .map_err(|err| CustomError::ValidationError(format!("invalid Bear birthday: {err}")))?;
     }
 
     bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;

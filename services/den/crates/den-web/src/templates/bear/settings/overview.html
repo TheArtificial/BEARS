@@ -81,18 +81,33 @@
             <h4><a href="/bear/{{ bear.slug }}/memory">Memory</a></h4>
             <p class="form-hint">SQLite cognition store inspector.</p>
             {% if memory_stats %}
-            <p>{{ memory_stats.record_count }} records · {{ memory_stats.distinct_paths }} paths</p>
+            <p>
+                {{ memory_stats.record_count }} records · {{
+                memory_stats.distinct_paths }} paths
+            </p>
             {% else %}
             <p><em>Stats unavailable</em></p>
             {% endif %}
             <p>
                 {% if letta_import_locked %}
-                <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Not available once a Bear already has memory records.">Stage Letta bundle</a>
+                <a
+                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
+                    title="Not available once a Bear already has memory records."
+                    >Stage Letta bundle</a
+                >
                 <span class="form-hint">(disabled)</span>
                 {% elif can_manage_bear %}
-                <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Upload a Letta git bundle for the initial empty-store backfill.">Stage Letta bundle</a>
+                <a
+                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
+                    title="Upload a Letta git bundle for the initial empty-store backfill."
+                    >Stage Letta bundle</a
+                >
                 {% else %}
-                <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Requires Bear admin access.">Stage Letta bundle</a>
+                <a
+                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
+                    title="Requires Bear admin access."
+                    >Stage Letta bundle</a
+                >
                 <span class="form-hint">(Bear admin required)</span>
                 {% endif %}
             </p>
@@ -108,13 +123,16 @@
 
         <section class="box" style="margin: 0">
             <h4>Bear bundle</h4>
-            <p class="form-hint"><code>.bear</code> export/import includes <code>bear.yaml</code> and <code>memory.sqlite</code>.</p>
+            <p class="form-hint">
+                <code>.bear</code> export includes <code>bear.yaml</code> and
+                <code>memory.sqlite</code>.
+            </p>
             {% if can_manage_bear %}
-            <p><a href="/bear/{{ bear.slug | e }}/export.bear">Download {{ bear.slug | e }}.bear</a></p>
-            <form method="post" action="/bears/import" enctype="multipart/form-data">
-                <input type="file" name="bundle" accept=".bear,application/zip" required>
-                <button type="submit">Import as new Bear</button>
-            </form>
+            <p>
+                <a href="/bear/{{ bear.slug | e }}/export.bear"
+                    >Download {{ bear.slug | e }}.bear</a
+                >
+            </p>
             {% else %}
             <p class="form-hint">Bear admin access required.</p>
             {% endif %}

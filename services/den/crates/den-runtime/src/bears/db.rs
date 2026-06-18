@@ -27,7 +27,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
         r"
         SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
-               memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
+               memfs_repo_path, provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
         ORDER BY slug
         ",
@@ -42,7 +42,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
         r"
         SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
-               memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
+               memfs_repo_path, provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
         WHERE id = $1
         ",
@@ -75,11 +75,7 @@ pub async fn bear_slug_exists_excluding(
     Ok(n.0 > 0)
 }
 
-pub async fn update_bear(
-    pool: &PgPool,
-    id: Uuid,
-    params: BearParams<'_>,
-) -> Result<(), DenError> {
+pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Result<(), DenError> {
     let r = sqlx::query(
         r"
         UPDATE bears
@@ -205,11 +201,7 @@ pub async fn grant_membership(
     Ok(())
 }
 
-pub async fn revoke_membership(
-    pool: &PgPool,
-    user_id: i32,
-    bear_id: Uuid,
-) -> Result<(), DenError> {
+pub async fn revoke_membership(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<(), DenError> {
     let r = sqlx::query("DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2")
         .bind(user_id)
         .bind(bear_id)
@@ -736,4 +728,3 @@ pub async fn ensure_default_runtime_plan(
     .await?;
     Ok(())
 }
-

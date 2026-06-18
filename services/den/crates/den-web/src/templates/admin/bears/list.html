@@ -1,23 +1,53 @@
-{% extends "admin/base.html" %}
-
-{% block title %}Bears{% endblock %}
-
-{% block admin_content %}
+{% extends "admin/base.html" %} {% block title %}Bears{% endblock %} {% block
+admin_content %}
 <h3>Bears</h3>
-<p>Native runtime bears use Den in-process profile runtimes with SQLite memory.</p>
+<p>
+    Native runtime bears use Den in-process profile runtimes with SQLite memory.
+</p>
 
 <table>
-  <thead><tr><th>Slug</th><th>Name</th><th>Model</th><th></th></tr></thead>
-  <tbody>
-  {% for b in bears %}
-    <tr>
-      <td><a href="/bear/{{ b.slug | e }}/overview"><code>{{ b.slug | e }}</code></a></td>
-      <td>{{ b.name | e }}</td>
-      <td>{% if b.default_model %}{{ b.default_model | e }}{% else %}<em>none</em>{% endif %}</td>
-      <td><a href="/bear/{{ b.slug | e }}/edit/overview">Edit</a></td>
-    </tr>
-  {% endfor %}
-  </tbody>
+    <thead>
+        <tr>
+            <th>Slug</th>
+            <th>Name</th>
+            <th>Model</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for b in bears %}
+        <tr>
+            <td>
+                <a href="/bear/{{ b.slug | e }}/overview"
+                    ><code>{{ b.slug | e }}</code></a
+                >
+            </td>
+            <td>{{ b.name | e }}</td>
+            <td>
+                {% if b.default_model %}{{ b.default_model | e }}{% else
+                %}<em>none</em>{% endif %}
+            </td>
+            <td><a href="/bear/{{ b.slug | e }}/edit/overview">Edit</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
 </table>
 <p><a class="action" href="./new">New bear</a></p>
+
+<div class="box">
+    <h3>Import Bear bundle</h3>
+    <p class="form-hint">
+        <code>.bear</code> bundles are ZIP archives containing
+        <code>bear.yaml</code> and <code>memory.sqlite</code>.
+    </p>
+    <form method="post" action="/bears/import" enctype="multipart/form-data">
+        <input
+            type="file"
+            name="bundle"
+            accept=".bear,.zip,application/zip"
+            required
+        />
+        <button type="submit">Import as new Bear</button>
+    </form>
+</div>
 {% endblock %}

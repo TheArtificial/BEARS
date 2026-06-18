@@ -616,6 +616,7 @@ mod tests {
             memfs_repo_path: None,
             provisioning_version: 1,
             system_prompt: String::new(),
+            birthday: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
         }
