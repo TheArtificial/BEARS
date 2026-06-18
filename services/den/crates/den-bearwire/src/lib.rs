@@ -763,6 +763,120 @@ async fn client_tool_result_result(
     }
 }
 
+async fn client_permission_result_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let run_id = required_param_string(params, "run_id")?;
+    let session_id = required_param_string(params, "session_id")?;
+    let permission_id = required_param_string(params, "permission_id")?;
+    let decision = param_string(params, "decision").unwrap_or_else(|| "denied".to_string());
+    let Some(run) = bearwire_runs::get_run(&state.sqlx_pool, &run_id).await? else {
+        return Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "reason": "run_not_found",
+        }));
+    };
+    if run.bear_id != bear.id || run.user_id != user_id || run.session_id != session_id {
+        return Err(CustomError::Authorization(
+            "run does not belong to authenticated Bear/session".to_string(),
+        ));
+    }
+    if !matches!(run.state.as_str(), "waiting_for_permission") {
+        return Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "run_state": run.state,
+        }));
+    }
+    if run.active_permission_id.as_deref() != Some(permission_id.as_str()) {
+        return Err(CustomError::ValidationError(
+            "permission_id does not match active BearWire run obligation".to_string(),
+        ));
+    }
+
+    let normalized_decision = match decision.as_str() {
+        "approved" | "approve" | "granted" | "allow" => "granted",
+        "denied" | "deny" | "rejected" | "reject" => "denied",
+        "timeout" | "timed_out" => "expired",
+        other => {
+            return Err(CustomError::ValidationError(format!(
+                "unsupported permission decision: {other}"
+            )));
+        }
+    };
+    let payload = json!({
+        "permission_id": permission_id,
+        "decision": normalized_decision,
+        "reason": params.get("reason").cloned().unwrap_or(Value::Null),
+    });
+    let record = bearwire_runs::record_client_result(
+        &state.sqlx_pool,
+        &run_id,
+        "permission",
+        &permission_id,
+        payload.clone(),
+    )
+    .await?;
+    match record {
+        bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
+            return Err(CustomError::ValidationError(format!(
+                "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
+            )));
+        }
+        bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
+            return Ok(json!({
+                "ok": true,
+                "duplicate": true,
+                "result_id": row.id,
+                "run_state": run.state,
+            }));
+        }
+        bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
+            let event_type = match normalized_decision {
+                "granted" => "permission.granted",
+                "expired" => "permission.expired",
+                _ => "permission.denied",
+            };
+            let mut event = BearWireEvent::ephemeral(event_type, payload);
+            event.bear_id = Some(bear.id.to_string());
+            event.human_id = Some(user_id.to_string());
+            event.session_id = Some(session_id.clone());
+            event.run_id = Some(run_id.clone());
+            event.subject = Some(format!("resource/permission_request/{permission_id}"));
+            let persisted = bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                &session_id,
+                Some(bear.id),
+                Some(user_id),
+                event,
+            )
+            .await?;
+            let transitioned = bearwire_runs::transition_run(
+                &state.sqlx_pool,
+                &run_id,
+                bearwire_runs::BearWireRunState::Continuing,
+                None,
+                None,
+                run.active_request_id,
+                None,
+            )
+            .await?;
+            return Ok(json!({
+                "ok": true,
+                "duplicate": false,
+                "result_id": row.id,
+                "event_sequence": persisted.sequence_no,
+                "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                "continuation": "not_started",
+            }));
+        }
+    }
+}
+
 async fn resource_update_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -959,16 +1073,15 @@ async fn rpc(
                 Some(json!({ "error": err.to_string() })),
             ),
         },
-        "client.permission.result" => JsonRpcResponse::error(
-            request.id,
-            -32004,
-            format!("BearWire method not implemented yet: {}", request.method),
-            Some(json!({
-                "method": request.method,
-                "params": request.params,
-                "legacy": "Use /acp/** during the BearWire parallel-operation period."
-            })),
-        ),
+        "client.permission.result" => match client_permission_result_result(&state, &headers, &request.params).await {
+            Ok(result) => JsonRpcResponse::ok(request.id, result),
+            Err(err) => JsonRpcResponse::error(
+                request.id,
+                -32001,
+                "BearWire client.permission.result failed",
+                Some(json!({ "error": err.to_string() })),
+            ),
+        },
         other => JsonRpcResponse::error(
             request.id,
             -32601,
@@ -1271,6 +1384,42 @@ mod tests {
                     "run_id": "run-test",
                     "tool_call_id": "call-test",
                     "status": "ok"
+                }),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32001);
+        assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    }
+
+    #[tokio::test]
+    async fn client_permission_result_with_bear_slug_requires_bearer_token() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            HeaderMap::new(),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-permission-result")),
+                method: "client.permission.result".to_string(),
+                params: json!({
+                    "bear_slug": "meta",
+                    "session_id": "session-test",
+                    "run_id": "run-test",
+                    "permission_id": "perm-test",
+                    "decision": "approved"
                 }),
             }),
         )
