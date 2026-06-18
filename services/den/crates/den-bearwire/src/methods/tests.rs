@@ -1,3 +1,10 @@
+use std::{
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    thread,
+    time::Duration,
+};
+
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -20,7 +27,11 @@ use crate::{
 };
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
-    let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+    test_state_with_config(pool, den_core::config::Config::test_stub())
+}
+
+fn test_state_with_config(pool: sqlx::PgPool, config: den_core::config::Config) -> DenState {
+    let config = std::sync::Arc::new(config);
     DenState::new(
         pool,
         config.clone(),
@@ -69,6 +80,9 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
     )
     .await
     .expect("create Bear");
+    bears_db::ensure_bear_profile_binding_rows(pool, bear_id)
+        .await
+        .expect("ensure Bear profile bindings");
     (bear_id, slug)
 }
 
@@ -162,6 +176,149 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
         .unwrap();
     let replay_after_text = std::str::from_utf8(&replay_after_body).unwrap();
     assert!(!replay_after_text.contains("session.opened"), "{replay_after_text}");
+}
+
+fn start_mock_openai_sse_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock LLM server");
+    let addr = listener.local_addr().expect("mock LLM local addr");
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let request = read_http_request(&mut stream);
+            assert!(
+                request.starts_with("POST /chat/completions "),
+                "unexpected LLM request: {request}"
+            );
+            let body = concat!(
+                "data: {\"id\":\"chatcmpl-bearwire-test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello from bearwire\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"id\":\"chatcmpl-bearwire-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write mock LLM response");
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn read_http_request(stream: &mut TcpStream) -> String {
+    let mut buffer = Vec::new();
+    let mut temp = [0_u8; 1024];
+    let mut header_end = None;
+    while header_end.is_none() {
+        let read = stream.read(&mut temp).expect("read mock LLM request");
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&temp[..read]);
+        header_end = buffer.windows(4).position(|window| window == b"\r\n\r\n");
+    }
+
+    let Some(header_end) = header_end else {
+        return String::from_utf8_lossy(&buffer).into_owned();
+    };
+    let header_text = String::from_utf8_lossy(&buffer[..header_end + 4]);
+    let content_length = header_text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())?
+        })
+        .unwrap_or(0);
+    let already_read_body = buffer.len().saturating_sub(header_end + 4);
+    let remaining = content_length.saturating_sub(already_read_body);
+    if remaining > 0 {
+        let mut body = vec![0_u8; remaining];
+        stream
+            .read_exact(&mut body)
+            .expect("read mock LLM request body");
+        buffer.extend_from_slice(&body);
+    }
+    String::from_utf8_lossy(&buffer).into_owned()
+}
+
+async fn replay_events_text(
+    state: DenState,
+    token: &str,
+    bear_slug: &str,
+    session_id: &str,
+) -> String {
+    let replay = events(
+        State(state),
+        bearer_headers(token),
+        Path(session_id.to_string()),
+        Query(EventStreamQuery {
+            bear_slug: bear_slug.to_string(),
+            after: None,
+        }),
+    )
+    .await
+    .expect("events response");
+    let replay_body = axum::body::to_bytes(replay.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    std::str::from_utf8(&replay_body).unwrap().to_string()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+
+    let response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-run-start")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "conversation_id": conversation_id,
+                "client": "bearwire-test",
+                "prompt": "Say hello."
+            }),
+        }),
+    )
+    .await
+    .expect("run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["result"]["ok"], true, "{value}");
+    assert_eq!(value["result"]["accepted"], true, "{value}");
+
+    let mut last_replay = String::new();
+    for _ in 0..40 {
+        last_replay = replay_events_text(state.clone(), &token, &bear_slug, &session_id).await;
+        if last_replay.contains("\"type\":\"message.delta\"")
+            && last_replay.contains("\"type\":\"run.completed\"")
+        {
+            assert!(last_replay.contains("hello from bearwire"), "{last_replay}");
+            assert!(last_replay.contains("\"type\":\"run.accepted\""), "{last_replay}");
+            assert!(last_replay.contains("\"type\":\"run.started\""), "{last_replay}");
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    panic!("BearWire run.start did not persist message.delta and run.completed events: {last_replay}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
