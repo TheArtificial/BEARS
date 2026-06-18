@@ -304,6 +304,50 @@ async fn run_cancel_result(
     }))
 }
 
+async fn resource_update_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    let resource = params
+        .get("resource")
+        .cloned()
+        .or_else(|| params.get("payload").cloned())
+        .unwrap_or_else(|| json!({}));
+    let resource_kind = resource
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let mut event = BearWireEvent::ephemeral(
+        "resource.updated",
+        json!({
+            "session_id": session_id,
+            "resource": resource,
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    event.subject = Some(format!("resource/{resource_kind}"));
+    let persisted = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+
+    Ok(json!({
+        "ok": true,
+        "event_sequence": persisted.sequence_no,
+    }))
+}
+
 async fn session_state_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -429,10 +473,18 @@ async fn rpc(
                 Some(json!({ "error": err.to_string() })),
             ),
         },
+        "resource.update" => match resource_update_result(&state, &headers, &request.params).await {
+            Ok(result) => JsonRpcResponse::ok(request.id, result),
+            Err(err) => JsonRpcResponse::error(
+                request.id,
+                -32001,
+                "BearWire resource.update failed",
+                Some(json!({ "error": err.to_string() })),
+            ),
+        },
         "run.start"
         | "client.tool.result"
-        | "client.permission.result"
-        | "resource.update" => JsonRpcResponse::error(
+        | "client.permission.result" => JsonRpcResponse::error(
             request.id,
             -32004,
             format!("BearWire method not implemented yet: {}", request.method),
@@ -679,6 +731,40 @@ mod tests {
                 id: Some(json!("req-cancel")),
                 method: "run.cancel".to_string(),
                 params: json!({ "bear_slug": "meta", "session_id": "session-test" }),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32001);
+        assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    }
+
+    #[tokio::test]
+    async fn resource_update_with_bear_slug_requires_bearer_token() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            HeaderMap::new(),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-resource")),
+                method: "resource.update".to_string(),
+                params: json!({
+                    "bear_slug": "meta",
+                    "session_id": "session-test",
+                    "resource": { "kind": "acp_adapter", "id": "armature-test" }
+                }),
             }),
         )
         .await
