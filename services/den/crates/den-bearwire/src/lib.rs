@@ -243,6 +243,67 @@ async fn session_close_result(
     }))
 }
 
+async fn run_cancel_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    let Some(session) = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await? else {
+        return Ok(json!({
+            "ok": true,
+            "cancelled": false,
+            "session_id": session_id,
+            "reason": "session_not_found",
+        }));
+    };
+
+    let stream_cancel = state.acp_turn_cancellations.cancel_session(&session.acp_session_id);
+    let active_turn = state.tool_turns.cancel_active_turn(&session.acp_session_id);
+    let cancelled = stream_cancel.is_some() || active_turn.is_some();
+    let run_ids = stream_cancel
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
+
+    let mut event = BearWireEvent::ephemeral(
+        "run.cancelled",
+        json!({
+            "session_id": session_id,
+            "cancelled": cancelled,
+            "run_ids": run_ids,
+            "reason": if cancelled { "client_requested" } else { "no_active_run" },
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    let persisted = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+
+    Ok(json!({
+        "ok": true,
+        "cancelled": cancelled,
+        "session_id": session_id,
+        "run_ids": run_ids,
+        "active_turn": active_turn.map(|turn| turn.diagnostic()),
+        "event_sequence": persisted.sequence_no,
+    }))
+}
+
 async fn session_state_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -359,8 +420,16 @@ async fn rpc(
                 Some(json!({ "error": err.to_string() })),
             ),
         },
+        "run.cancel" => match run_cancel_result(&state, &headers, &request.params).await {
+            Ok(result) => JsonRpcResponse::ok(request.id, result),
+            Err(err) => JsonRpcResponse::error(
+                request.id,
+                -32001,
+                "BearWire run.cancel failed",
+                Some(json!({ "error": err.to_string() })),
+            ),
+        },
         "run.start"
-        | "run.cancel"
         | "client.tool.result"
         | "client.permission.result"
         | "resource.update" => JsonRpcResponse::error(
@@ -580,6 +649,36 @@ mod tests {
                 id: Some(json!("req-state")),
                 method: "session.state".to_string(),
                 params: json!({ "bear_slug": "meta" }),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32001);
+        assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    }
+
+    #[tokio::test]
+    async fn run_cancel_with_bear_slug_requires_bearer_token() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            HeaderMap::new(),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-cancel")),
+                method: "run.cancel".to_string(),
+                params: json!({ "bear_slug": "meta", "session_id": "session-test" }),
             }),
         )
         .await
