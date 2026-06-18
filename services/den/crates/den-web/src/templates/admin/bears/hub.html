@@ -1,74 +1,89 @@
-{% extends "admin/base.html" %}
-
-{% block title %}Bear · {{ bear.slug }}{% endblock %}
-
-{% block admin_content %}
-{% include "admin/bears/_bear_nav.html" %}
+{% extends "admin/base.html" %} {% block title %}Bear · {{ bear.slug }}{%
+endblock %} {% block admin_content %} {% include "admin/bears/_bear_nav.html" %}
 <div class="box">
-<h2>{{ bear.name }}</h2>
-<p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>
+    <h2>{{ bear.name }}</h2>
+    <p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>
 
-{% if message %}
-<p><strong>{{ message | e }}</strong></p>
-{% endif %}
-
-<h3>Readiness</h3>
-<ul>
-  <li>Runtime: {% if native_runtime %}<strong>Native</strong>{% else %}Letta-backed{% endif %}</li>
-  <li>Roles: {{ roles_ready }} ready{% if roles_error %}, <span class="form-errors">{{ roles_error }} need attention</span>{% endif %} ({{ agent_health_rows | length }} total)</li>
-  <li>Members: {{ member_count }}</li>
-  <li>Conversations: {{ conversation_count }}</li>
-  <li>Memory: {% if memory_stats %}{{ memory_stats.record_count }} records{% if memory_stats.pending_proposals %}, {{ memory_stats.pending_proposals }} pending proposals{% endif %}{% else %}<em>unavailable</em>{% endif %}</li>
-</ul>
-
-<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; margin-top: 1.5rem;">
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/edit">Identity</a></h4>
-    <p class="form-hint">Slug, name, description, default model.</p>
-    <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description</em>{% endif %}</p>
-    <p>Model: {% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</p>
-  </section>
-
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/access">Access</a></h4>
-    <p class="form-hint">Who can use and manage this bear.</p>
-    <p><strong>{{ member_count }}</strong> member(s)</p>
-  </section>
-
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/persona">Persona</a></h4>
-    <p class="form-hint">Prompts and profile bindings.</p>
-    <p>{% if context_profile_enabled %}Role-aware prompts{% else %}Legacy system prompt{% endif %}</p>
-    <p><a href="/admin/bears/{{ bear.id }}/edit/prompt">Edit prompts</a></p>
-  </section>
-
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/roles">Roles</a></h4>
-    <p class="form-hint">Per-profile runtime bindings and health.</p>
-    <p>{{ roles_ready }}/{{ agent_health_rows | length }} ready</p>
-  </section>
-
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/memory">Memory</a></h4>
-    <p class="form-hint">SQLite cognition store inspector.</p>
-    {% if memory_stats %}
-    <p>{{ memory_stats.record_count }} records · {{ memory_stats.distinct_paths }} paths</p>
-    {% else %}
-    <p><em>Stats unavailable</em></p>
+    {% if message %}
+    <p><strong>{{ message | e }}</strong></p>
     {% endif %}
-  </section>
 
-  <section class="box" style="margin:0;">
-    <h4><a href="/admin/bears/{{ bear.id }}/conversations">Conversations</a></h4>
-    <p class="form-hint">Persisted chat and ACP transcripts.</p>
-    <p>{{ conversation_count }} conversation(s)</p>
-  </section>
-</div>
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+        "
+    >
+        <section class="box" style="margin: 0">
+            <h4><a href="/admin/bears/{{ bear.id }}/edit">Identity</a></h4>
+            <p class="form-hint">Slug, name, description, default model.</p>
+            <p>
+                {% if bear.description %}{{ bear.description | e }}{% else %}<em
+                    >No description</em
+                >{% endif %}
+            </p>
+            <p>
+                Model: {% if bear.default_model %}{{ bear.default_model | e }}{%
+                else %}<em>none</em>{% endif %}
+            </p>
+        </section>
 
-<p style="margin-top: 1.5rem;" class="form-hint">
-  <a href="/admin/bears/{{ bear.id }}/context">Context blocks</a> ·
-  <a href="/admin/bears/{{ bear.id }}/policy">Web policy</a> ·
-  <a href="/admin/bears/{{ bear.id }}/advanced">Advanced diagnostics</a>
-</p>
+        <section class="box" style="margin: 0">
+            <h4><a href="/admin/bears/{{ bear.id }}/access">User Access</a></h4>
+            <p class="form-hint">Who can use and manage this bear.</p>
+            <p><strong>{{ member_count }}</strong> member(s)</p>
+        </section>
+
+        <section class="box" style="margin: 0">
+            <h4><a href="/admin/bears/{{ bear.id }}/persona">Persona</a></h4>
+            <p class="form-hint">Prompts and profile bindings.</p>
+            <p>
+                {% if context_profile_enabled %}Role-aware prompts{% else
+                %}Legacy system prompt{% endif %}
+            </p>
+            <p>
+                <a href="/admin/bears/{{ bear.id }}/edit/prompt"
+                    >Edit prompts</a
+                >
+            </p>
+        </section>
+
+        <section class="box" style="margin: 0">
+            <h4><a href="/admin/bears/{{ bear.id }}/roles">Roles</a></h4>
+            <p class="form-hint">Per-profile runtime bindings and health.</p>
+            <p>{{ roles_ready }}/{{ agent_health_rows | length }} ready</p>
+        </section>
+
+        <section class="box" style="margin: 0">
+            <h4><a href="/admin/bears/{{ bear.id }}/memory">Memory</a></h4>
+            <p class="form-hint">SQLite cognition store inspector.</p>
+            {% if memory_stats %}
+            <p>
+                {{ memory_stats.record_count }} records · {{
+                memory_stats.distinct_paths }} paths
+            </p>
+            {% else %}
+            <p><em>Stats unavailable</em></p>
+            {% endif %}
+        </section>
+
+        <section class="box" style="margin: 0">
+            <h4>
+                <a href="/admin/bears/{{ bear.id }}/conversations"
+                    >Conversations</a
+                >
+            </h4>
+            <p class="form-hint">Persisted chat and ACP transcripts.</p>
+            <p>{{ conversation_count }} conversation(s)</p>
+        </section>
+    </div>
+
+    <p style="margin-top: 1.5rem" class="form-hint">
+        <a href="/admin/bears/{{ bear.id }}/context">Context blocks</a> ·
+        <a href="/admin/bears/{{ bear.id }}/policy">Web policy</a> ·
+        <a href="/admin/bears/{{ bear.id }}/advanced">Advanced diagnostics</a>
+    </p>
 </div>
 {% endblock %}
