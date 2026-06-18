@@ -1,148 +1,112 @@
-{% extends "base.html" %} {% block title %}Bear · {{ bear.slug }}{% endblock %}
-{% block content %} {% include "bear/settings/_bear_nav.html" %}
+{% extends "base.html" %}
+{% block title %}Bear · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
 <div class="box">
-    <h2>{{ bear.name }}</h2>
-    <p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>
+  <h2>{{ bear.name }}</h2>
+  <p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>
 
-    {% if message %}
-    <p><strong>{{ message | e }}</strong></p>
-    {% endif %}
+  {% if message %}
+  <p><strong>{{ message | e }}</strong></p>
+  {% endif %}
 
-    <h3>Readiness</h3>
-    <ul>
-        <li>
-            Runtime: {% if native_runtime %}<strong>Native</strong>{% else
-            %}Letta-backed{% endif %}
-        </li>
-        <li>
-            Profiles: {{ roles_ready }} ready{% if roles_error %},
-            <span class="form-errors">{{ roles_error }} need attention</span>{%
-            endif %} ({{ agent_health_rows | length }} total)
-        </li>
-        <li>Members: {{ member_count }}</li>
-        <li>Conversations: {{ conversation_count }}</li>
-        <li>
-            Memory: {% if memory_stats %}{{ memory_stats.record_count }}
-            records{% if memory_stats.pending_proposals %}, {{
-            memory_stats.pending_proposals }} pending proposals{% endif %}{%
-            else %}<em>unavailable</em>{% endif %}
-        </li>
-    </ul>
+  <p class="form-hint">
+    A Bear is a persistent agent identity. Den stores its identity, prompt architecture,
+    profile runtimes, access policy, conversations, and canonical SQLite memory.
+  </p>
 
-    <div
-        style="
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-            gap: 1rem;
-            margin-top: 1.5rem;
-        "
-    >
-        <section class="box" style="margin: 0">
-            <h4>
-                <a href="/bear/{{ bear.slug | e }}/edit/overview">Identity</a>
-            </h4>
-            <p class="form-hint">Slug, name, description, default model.</p>
-            <p>
-                {% if bear.description %}{{ bear.description | e }}{% else %}<em
-                    >No description</em
-                >{% endif %}
-            </p>
-            <p>
-                Model: {% if bear.default_model %}{{ bear.default_model | e }}{%
-                else %}<em>none</em>{% endif %}
-            </p>
-        </section>
+  {% if can_manage_bear %}
+  <p class="button-row">
+    <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/overview">Edit basic details</a>
+    <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt">Edit prompts</a>
+    <a class="button-link" href="/bear/{{ bear.slug | e }}/access">Manage access</a>
+  </p>
+  {% endif %}
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/access">Access</a></h4>
-            <p class="form-hint">Who can use and manage this bear.</p>
-            <p><strong>{{ member_count }}</strong> member(s)</p>
-        </section>
+  <h3>Readiness</h3>
+  <ul>
+    <li>Runtime: {% if native_runtime %}<strong>Native</strong>{% else %}Letta-backed{% endif %}</li>
+    <li>Runtime profiles: {{ roles_ready }} ready{% if roles_error %}, <span class="form-errors">{{ roles_error }} need attention</span>{% endif %} ({{ agent_health_rows | length }} total)</li>
+    <li>Members: {{ member_count }}</li>
+    <li>Conversations: {{ conversation_count }}</li>
+    <li>Memory: {% if memory_stats %}{{ memory_stats.record_count }} records{% if memory_stats.pending_proposals %}, {{ memory_stats.pending_proposals }} pending proposals{% endif %}{% else %}<em>unavailable</em>{% endif %}</li>
+  </ul>
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/persona">Persona</a></h4>
-            <p class="form-hint">Prompts and profile bindings.</p>
-            <p>
-                {% if context_profile_enabled %}Role-aware prompts{% else
-                %}Legacy system prompt{% endif %}
-            </p>
-            <p>
-                <a href="/bear/{{ bear.slug | e }}/edit/prompt">Edit prompts</a>
-            </p>
-        </section>
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug | e }}/edit/overview">Identity</a></h4>
+      <p class="form-hint">Human-facing Bear identity and default model.</p>
+      <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description</em>{% endif %}</p>
+      <p>Model: {% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</p>
+    </section>
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/profiles">Profiles</a></h4>
-            <p class="form-hint">Per-profile runtime bindings and health.</p>
-            <p>{{ roles_ready }}/{{ agent_health_rows | length }} ready</p>
-        </section>
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/persona">Prompts</a></h4>
+      <p class="form-hint">Baseline system prompt plus profile-specific composed prompts.</p>
+      <p>{% if context_profile_enabled %}Profile-aware prompt composition{% else %}Single legacy system prompt{% endif %}</p>
+      {% if can_manage_bear %}<p><a href="/bear/{{ bear.slug | e }}/edit/prompt">Edit prompts</a></p>{% endif %}
+    </section>
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/memory">Memory</a></h4>
-            <p class="form-hint">SQLite cognition store inspector.</p>
-            {% if memory_stats %}
-            <p>
-                {{ memory_stats.record_count }} records · {{
-                memory_stats.distinct_paths }} paths
-            </p>
-            {% else %}
-            <p><em>Stats unavailable</em></p>
-            {% endif %}
-            <p>
-                {% if letta_import_locked %}
-                <a
-                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
-                    title="Not available once a Bear already has memory records."
-                    >Stage Letta bundle</a
-                >
-                <span class="form-hint">(disabled)</span>
-                {% elif can_manage_bear %}
-                <a
-                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
-                    title="Upload a Letta git bundle for the initial empty-store backfill."
-                    >Stage Letta bundle</a
-                >
-                {% else %}
-                <a
-                    href="/bear/{{ bear.slug | e }}/memory#letta-import"
-                    title="Requires Bear admin access."
-                    >Stage Letta bundle</a
-                >
-                <span class="form-hint">(Bear admin required)</span>
-                {% endif %}
-            </p>
-        </section>
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/profiles">Runtime profiles</a></h4>
+      <p class="form-hint">Chat, pair, curate, work, and watch runtime surfaces.</p>
+      <p>{{ roles_ready }}/{{ agent_health_rows | length }} ready</p>
+    </section>
 
-        <section class="box" style="margin: 0">
-            <h4>
-                <a href="/bear/{{ bear.slug }}/conversations">Conversations</a>
-            </h4>
-            <p class="form-hint">Persisted chat and ACP transcripts.</p>
-            <p>{{ conversation_count }} conversation(s)</p>
-        </section>
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/memory">Memory</a></h4>
+      <p class="form-hint">Canonical SQLite memory, profile-local memory, derived entities, and recall.</p>
+      {% if memory_stats %}
+      <p>{{ memory_stats.record_count }} records · {{ memory_stats.distinct_paths }} paths</p>
+      {% else %}
+      <p><em>Stats unavailable</em></p>
+      {% endif %}
+      <p>
+        {% if letta_import_locked %}
+        <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Not available once a Bear already has memory records.">Stage Letta bundle</a>
+        <span class="form-hint">(disabled)</span>
+        {% elif can_manage_bear %}
+        <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Upload a Letta git bundle for the initial empty-store backfill.">Stage Letta bundle</a>
+        {% else %}
+        <a href="/bear/{{ bear.slug | e }}/memory#letta-import" title="Requires Bear admin access.">Stage Letta bundle</a>
+        <span class="form-hint">(Bear admin required)</span>
+        {% endif %}
+      </p>
+    </section>
 
-        <section class="box" style="margin: 0">
-            <h4>Bear bundle</h4>
-            <p class="form-hint">
-                <code>.bear</code> export includes <code>bear.yaml</code> and
-                <code>memory.sqlite</code>.
-            </p>
-            {% if can_manage_bear %}
-            <p>
-                <a href="/bear/{{ bear.slug | e }}/export.bear"
-                    >Download {{ bear.slug | e }}.bear</a
-                >
-            </p>
-            {% else %}
-            <p class="form-hint">Bear admin access required.</p>
-            {% endif %}
-        </section>
-    </div>
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/access">Access</a></h4>
+      <p class="form-hint">Who can use and administer this Bear.</p>
+      <p><strong>{{ member_count }}</strong> member(s)</p>
+    </section>
 
-    <p style="margin-top: 1.5rem" class="form-hint">
-        <a href="/bear/{{ bear.slug }}/context">Context blocks</a> ·
-        <a href="/bear/{{ bear.slug }}/policy">Web policy</a> ·
-        <a href="/bear/{{ bear.slug }}/advanced">Advanced diagnostics</a>
-    </p>
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/conversations">Conversations</a></h4>
+      <p class="form-hint">Persisted web chat and ACP transcripts.</p>
+      <p>{{ conversation_count }} conversation(s)</p>
+    </section>
+
+    <section class="box" style="margin: 0">
+      <h4><a href="/bear/{{ bear.slug }}/context">Context</a></h4>
+      <p class="form-hint">Prompt memory blocks and context inputs assembled into runtime prompts.</p>
+    </section>
+
+    <section class="box" style="margin: 0">
+      <h4>Bear bundle</h4>
+      <p class="form-hint"><code>.bear</code> export includes <code>bear.yaml</code> and <code>memory.sqlite</code>.</p>
+      {% if can_manage_bear %}
+      <p><a href="/bear/{{ bear.slug | e }}/export.bear">Download {{ bear.slug | e }}.bear</a></p>
+      {% else %}
+      <p class="form-hint">Bear admin access required.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <p style="margin-top: 1.5rem" class="form-hint">
+    <a href="/bear/{{ bear.slug }}/policy">Web policy</a> ·
+    <a href="/bear/{{ bear.slug }}/advanced">Advanced diagnostics</a> ·
+    <a href="/bear/{{ bear.slug | e }}">Chat</a>
+  </p>
 </div>
 {% endblock %}

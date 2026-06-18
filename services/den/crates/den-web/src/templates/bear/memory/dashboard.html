@@ -37,7 +37,7 @@
         <div class="box" style="margin: 0">
             <strong style="font-size: 1.6rem"
                 >{{ stats.profile_local_count }}</strong
-            ><br />role-local
+            ><br />profile-local
         </div>
         <div class="box" style="margin: 0">
             <strong style="font-size: 1.6rem">{{ stats.distinct_paths }}</strong
@@ -91,7 +91,7 @@
     </div>
 
     <div class="box">
-        <h3>By role / scope</h3>
+        <h3>By profile / scope</h3>
         {% if by_profile %}
         <table>
             <thead>
@@ -183,7 +183,7 @@
     <p class="form-hint">
         This import requires Bear admin access. Ask a Bear admin to grant you
         the
-        <code>admin</code> role from the Access page.
+        <code>admin</code> Bear access level from the Access page.
     </p>
     {% endif %} {% if letta_import_locked %}
     <p class="form-hint">

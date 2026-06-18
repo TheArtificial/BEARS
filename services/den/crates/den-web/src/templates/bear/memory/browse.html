@@ -47,13 +47,13 @@
 {% if can_manage_bear %}
 <div class="box">
   <h3>Manage selected paths</h3>
-  <p class="form-hint">Select one or more paths above, then delete them or request a curate review. Deletion removes <strong>all versions</strong> at the selected role-local paths and cannot be undone.</p>
+  <p class="form-hint">Select one or more paths above, then delete them or request a curate review. Deletion removes <strong>all versions</strong> at the selected profile-local paths and cannot be undone.</p>
   <form id="memory-delete-form" method="post" action="/bear/{{ bear.slug | e }}/memory/browse">
     <div class="fields-grid">
-      <label>Role (scope_profile)
+      <label>Profile (scope_profile)
         <input type="text" name="role" placeholder="pair" required>
       </label>
-      <label>Confirm (type the role name or Bear slug)
+      <label>Confirm (type the profile name or Bear slug)
         <input type="text" name="confirm" placeholder="{{ bear.slug | e }}">
       </label>
     </div>
