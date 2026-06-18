@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -10,9 +10,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-
-use den_runtime::DenState;
-use den_http::errors::CustomError;
+use den_http::{acp_tokens, errors::CustomError};
+use den_runtime::{acp_sessions, DenState};
 use den_runtime::runtime::bearwire_projection::wire::{
     bearwire_event_to_json_rpc_notification, BearWireEvent,
 };
@@ -75,8 +74,99 @@ impl JsonRpcResponse {
     }
 }
 
+fn bearer_token(headers: &HeaderMap) -> Result<&str, CustomError> {
+    let value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| CustomError::Authentication("missing Authorization bearer token".to_string()))?;
+    value
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| CustomError::Authentication("expected Authorization: Bearer <token>".to_string()))
+}
+
+async fn authenticate_for_bear_slug(
+    state: &DenState,
+    headers: &HeaderMap,
+    bear_slug: &str,
+) -> Result<i32, CustomError> {
+    let token = bearer_token(headers)?;
+    if !acp_tokens::is_acp_token(token) {
+        return Err(CustomError::Authentication(
+            "expected a bear-scoped BEARS ACP token".to_string(),
+        ));
+    }
+    acp_tokens::authenticate_for_bear_slug(
+        &state.sqlx_pool,
+        token,
+        bear_slug,
+        acp_tokens::acp_chat_scope(),
+    )
+    .await?
+    .ok_or_else(|| CustomError::Authorization("token is not valid for this Bear".to_string()))
+}
+
+async fn session_state_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let Some(bear_slug) = params.get("bear_slug").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(json!({
+            "status": "available",
+            "note": "Provide bear_slug and optional session_id for authenticated BearWire session state.",
+            "params": params,
+        }));
+    };
+    let user_id = authenticate_for_bear_slug(state, headers, bear_slug).await?;
+    if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+        let session = acp_sessions::find_for_user_bear_session(
+            &state.sqlx_pool,
+            user_id,
+            bear_slug,
+            session_id,
+        )
+        .await?;
+        return Ok(json!({
+            "kind": "single",
+            "bear_slug": bear_slug,
+            "session": session,
+        }));
+    }
+
+    let include_closed = params
+        .get("include_closed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .clamp(1, 100);
+    let sessions = acp_sessions::list_for_user_bear(
+        &state.sqlx_pool,
+        acp_sessions::SessionListParams {
+            user_id,
+            bear_slug,
+            include_closed,
+            cwd_filter: None,
+            limit,
+            cursor_updated_at: None,
+            cursor_id: None,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "kind": "list",
+        "bear_slug": bear_slug,
+        "sessions": sessions,
+    }))
+}
+
 async fn rpc(
     State(state): State<DenState>,
+    headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Result<impl IntoResponse, CustomError> {
     if request.jsonrpc.as_deref().unwrap_or("2.0") != "2.0" {
@@ -106,14 +196,15 @@ async fn rpc(
                 "legacy_acp_enabled": state.config.acp_gateway_enabled,
             }),
         ),
-        "session.state" => JsonRpcResponse::ok(
-            request.id,
-            json!({
-                "status": "available",
-                "note": "BearWire session.state is a v1 shim in progress; legacy /acp session state remains authoritative during migration.",
-                "params": request.params,
-            }),
-        ),
+        "session.state" => match session_state_result(&state, &headers, &request.params).await {
+            Ok(result) => JsonRpcResponse::ok(request.id, result),
+            Err(err) => JsonRpcResponse::error(
+                request.id,
+                -32001,
+                "BearWire session.state failed",
+                Some(json!({ "error": err.to_string() })),
+            ),
+        },
         "session.open"
         | "session.resume"
         | "session.close"
@@ -179,6 +270,7 @@ mod tests {
         );
         let response = rpc(
             State(state),
+            HeaderMap::new(),
             Json(JsonRpcRequest {
                 jsonrpc: Some("2.0".to_string()),
                 id: Some(json!("req-1")),
@@ -214,6 +306,7 @@ mod tests {
         ] {
             let response = rpc(
                 State(state.clone()),
+                HeaderMap::new(),
                 Json(JsonRpcRequest {
                     jsonrpc: Some("2.0".to_string()),
                     id: Some(json!(method)),
@@ -243,6 +336,7 @@ mod tests {
         );
         let response = rpc(
             State(state),
+            HeaderMap::new(),
             Json(JsonRpcRequest {
                 jsonrpc: Some("2.0".to_string()),
                 id: Some(json!("req-unknown")),
@@ -258,6 +352,36 @@ mod tests {
             .unwrap();
         let value: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn session_state_with_bear_slug_requires_bearer_token() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            HeaderMap::new(),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-state")),
+                method: "session.state".to_string(),
+                params: json!({ "bear_slug": "meta" }),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32001);
+        assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
     }
 
     #[tokio::test]
