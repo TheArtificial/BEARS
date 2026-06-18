@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -33,6 +33,12 @@ pub fn router() -> Router<DenState> {
     Router::new()
         .route("/v1/rpc", post(rpc))
         .route("/v1/sessions/{session_id}/events", get(events))
+}
+
+#[derive(Debug, Deserialize)]
+struct EventStreamQuery {
+    bear_slug: String,
+    after: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1316,18 +1322,39 @@ fn events_sse_body(
     Ok(frame)
 }
 
+fn last_event_id(headers: &HeaderMap) -> Option<i64> {
+    headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
 async fn events(
     State(state): State<DenState>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
+    Query(query): Query<EventStreamQuery>,
 ) -> Result<Response, CustomError> {
+    let user_id = authenticate_for_bear_slug(&state, &headers, &query.bear_slug).await?;
+    let session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &query.bear_slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let after = query.after.or_else(|| last_event_id(&headers));
     let events = bearwire_events::list_bearwire_events_after(
         &state.sqlx_pool,
-        &session_id,
-        None,
+        &session.acp_session_id,
+        after,
         100,
     )
     .await?;
-    let frame = events_sse_body(&session_id, events)?;
+    let frame = events_sse_body(&session.acp_session_id, events)?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1660,6 +1687,36 @@ mod tests {
         let value: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"]["code"], -32001);
         assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    }
+
+    #[test]
+    fn last_event_id_header_is_parsed_as_sequence_cursor() {
+        let mut headers = HeaderMap::new();
+        headers.insert("last-event-id", "42".parse().unwrap());
+        assert_eq!(last_event_id(&headers), Some(42));
+    }
+
+    #[tokio::test]
+    async fn events_endpoint_requires_bearer_token_for_bear_session() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let err = events(
+            State(state),
+            HeaderMap::new(),
+            Path("session-test".to_string()),
+            Query(EventStreamQuery {
+                bear_slug: "meta".to_string(),
+                after: None,
+            }),
+        )
+        .await
+        .expect_err("missing auth should error");
+        assert!(err.to_string().contains("missing Authorization"));
     }
 
     #[tokio::test]

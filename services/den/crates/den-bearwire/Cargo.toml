@@ -17,7 +17,7 @@ production = ["den-core/production", "den-runtime/production", "den-http/product
 den-core = { path = "../den-core" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
-axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros"] }
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query"] }
 bytes = "1"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
