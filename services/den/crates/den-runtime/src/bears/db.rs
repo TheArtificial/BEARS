@@ -315,7 +315,7 @@ pub async fn list_bears_for_user(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
-               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at,
+               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -339,7 +339,7 @@ pub async fn bear_for_user_by_slug(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
-               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at
+               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
