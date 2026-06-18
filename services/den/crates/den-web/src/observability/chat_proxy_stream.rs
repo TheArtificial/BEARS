@@ -600,6 +600,7 @@ pub struct BearChannelSseProxyStream {
     flush_started: bool,
     flush_task: Option<tokio::task::JoinHandle<()>>,
     empty_terminal_error_emitted: bool,
+    browser_visible_assistant_emitted: bool,
 }
 
 impl BearChannelSseProxyStream {
@@ -628,11 +629,14 @@ impl BearChannelSseProxyStream {
             flush_started: false,
             flush_task: None,
             empty_terminal_error_emitted: false,
+            browser_visible_assistant_emitted: false,
         }
     }
 
     fn queue_terminal_error_if_needed(&mut self) -> bool {
-        if self.empty_terminal_error_emitted || persistence_has_substantive_reply(&self.persistence)
+        if self.empty_terminal_error_emitted
+            || self.browser_visible_assistant_emitted
+            || persistence_has_substantive_reply(&self.persistence)
         {
             return false;
         }
@@ -825,6 +829,12 @@ impl Stream for BearChannelSseProxyStream {
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                                 this.persistence.ingest(&value);
                                 if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
+                                    if matches!(
+                                        stream_event_kind(&value),
+                                        "assistant_delta" | "assistant_message"
+                                    ) {
+                                        this.browser_visible_assistant_emitted = true;
+                                    }
                                     this.pending.push_back(bytes);
                                 }
                             }
@@ -864,6 +874,12 @@ impl Stream for BearChannelSseProxyStream {
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                                 this.persistence.ingest(&value);
                                 if let Some(bytes) = bear_channel_event_to_deep_chat_sse(&value) {
+                                    if matches!(
+                                        stream_event_kind(&value),
+                                        "assistant_delta" | "assistant_message"
+                                    ) {
+                                        this.browser_visible_assistant_emitted = true;
+                                    }
                                     this.pending.push_back(bytes);
                                 }
                             }
@@ -968,6 +984,33 @@ impl Stream for ChatSseProxyStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
+
+    fn noop_pg_pool() -> PgPool {
+        PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").expect("lazy pg pool")
+    }
+
+    async fn collect_bear_channel_proxy_output(frames: Vec<&'static str>) -> String {
+        let upstream = futures::stream::iter(
+            frames
+                .into_iter()
+                .map(|frame| Ok::<Bytes, reqwest::Error>(Bytes::from_static(frame.as_bytes()))),
+        );
+        let mut stream = BearChannelSseProxyStream::new(
+            upstream,
+            Uuid::parse_str("f42114ea-99bd-48a7-818a-78d4e3d914be").unwrap(),
+            1,
+            Uuid::parse_str("b4b3413e-2e5c-4230-baf0-53bfe4725d4c").unwrap(),
+            "test-conversation".to_string(),
+            noop_pg_pool(),
+        );
+        let mut out = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("proxy chunk");
+            out.push_str(std::str::from_utf8(&chunk).expect("utf8"));
+        }
+        out
+    }
 
     fn mapped_text(frame: &str) -> String {
         let mut out = String::new();
@@ -1126,6 +1169,35 @@ mod tests {
     fn maps_ephemeral_assistant_delta_suffix_to_empty() {
         let out = mapped_text("data: {\"type\":\"assistant_delta\",\"text\":\"Thinking…\"}\n\n");
         assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bear_channel_proxy_assistant_text_then_done_does_not_emit_incomplete_terminal() {
+        let out = collect_bear_channel_proxy_output(vec![
+            "data: {\"type\":\"assistant_delta\",\"text\":\"Hello from Bear\"}\n\n",
+            "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n",
+        ])
+        .await;
+        assert!(out.contains("Hello from Bear"), "output was {out}");
+        assert!(
+            !out.contains("stream_incomplete_terminal"),
+            "output was {out}"
+        );
+        assert!(!out.contains("Reply incomplete"), "output was {out}");
+    }
+
+    #[tokio::test]
+    async fn bear_channel_proxy_status_only_then_done_emits_incomplete_terminal() {
+        let out = collect_bear_channel_proxy_output(vec![
+            "data: {\"type\":\"status_progress\",\"text\":\"Thinking…\"}\n\n",
+            "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n",
+        ])
+        .await;
+        assert!(out.contains("Thinking…"), "output was {out}");
+        assert!(
+            out.contains("stream_incomplete_terminal") || out.contains("Reply incomplete"),
+            "output was {out}"
+        );
     }
 
     #[test]
