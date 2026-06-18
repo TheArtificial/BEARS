@@ -30,8 +30,8 @@ use den_runtime::{
 
 use crate::web::bear_create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
-    ensure_stored_model_in_options_for_handle, model_catalog_select_context,
-    validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
+    model_catalog_select_context, validate_default_model_for_catalog, AdminBearPromptForm,
+    AdminNewBearForm, NewBearForm,
 };
 
 async fn redirect_bear_slug(
@@ -602,9 +602,7 @@ pub async fn new_action(
         if !configured {
             None
         } else {
-            let model_trim = form.default_model.trim();
-            let h = (!model_trim.is_empty()).then_some(model_trim);
-            Some(Ok(ensure_stored_model_in_options_for_handle(h, options)))
+            Some(Ok(options))
         }
     };
 
@@ -745,9 +743,7 @@ async fn edit_action(
         if !configured {
             None
         } else {
-            let model_trim = form.default_model.trim();
-            let h = (!model_trim.is_empty()).then_some(model_trim);
-            Some(Ok(ensure_stored_model_in_options_for_handle(h, options)))
+            Some(Ok(options))
         }
     };
 

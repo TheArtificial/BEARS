@@ -26,8 +26,7 @@ use crate::{
     web::{
         bear_create_support::{
             bear_configuration_page_context, bear_new_form_context, canonical_default_model_handle,
-            ensure_stored_model_in_options_for_handle, insert_new_bear_row,
-            model_catalog_select_context, validate_default_model_for_catalog,
+            insert_new_bear_row, model_catalog_select_context, validate_default_model_for_catalog,
             BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
@@ -858,11 +857,7 @@ async fn new_bear_post(
 
     let (catalog_configured, catalog_models, _catalog_error) =
         model_catalog_select_context(&state).await;
-    let letta_fetch = catalog_configured.then(|| {
-        let model_trim = form.default_model.trim();
-        let h = (!model_trim.is_empty()).then_some(model_trim);
-        Ok::<_, CustomError>(ensure_stored_model_in_options_for_handle(h, catalog_models))
-    });
+    let letta_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
@@ -1289,11 +1284,7 @@ async fn bear_edit_configuration_post(
 
     let (catalog_configured, catalog_models, _catalog_error) =
         model_catalog_select_context(&state).await;
-    let catalog_fetch = catalog_configured.then(|| {
-        let model_trim = form.default_model.trim();
-        let h = (!model_trim.is_empty()).then_some(model_trim);
-        Ok::<_, CustomError>(ensure_stored_model_in_options_for_handle(h, catalog_models))
-    });
+    let catalog_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {

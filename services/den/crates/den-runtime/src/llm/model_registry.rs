@@ -29,17 +29,22 @@ pub struct DenModelRegistryEntry {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelGatewayCompatibilityReport {
-    pub registry_selectable_count: usize,
+    pub metadata_model_count: usize,
     pub gateway_model_count: usize,
-    pub missing_from_gateway: Vec<String>,
-    pub unknown_gateway_models: Vec<String>,
+    pub available_with_metadata: Vec<String>,
+    pub available_without_metadata: Vec<String>,
+    pub metadata_not_available: Vec<String>,
     pub ok: bool,
 }
 
 impl DenModelRegistryEntry {
     pub fn to_model_option(self) -> ModelOption {
+        self.to_model_option_for_handle(self.key)
+    }
+
+    pub fn to_model_option_for_handle(self, handle: &str) -> ModelOption {
         ModelOption {
-            handle: self.key.to_string(),
+            handle: handle.to_string(),
             label: model_label(self),
             context_window: Some(self.context_window),
             max_output_tokens: self.max_output_tokens,
@@ -65,6 +70,10 @@ pub fn selectable_model_options() -> Vec<ModelOption> {
 }
 
 pub fn resolve_model_handle(handle: &str) -> Option<&'static str> {
+    entry_for_handle(handle).map(|entry| entry.key)
+}
+
+pub fn entry_for_handle(handle: &str) -> Option<DenModelRegistryEntry> {
     let trimmed = handle.trim();
     if trimmed.is_empty() {
         return None;
@@ -72,7 +81,43 @@ pub fn resolve_model_handle(handle: &str) -> Option<&'static str> {
     registry_entries()
         .into_iter()
         .find(|entry| entry.matches_handle(trimmed))
-        .map(|entry| entry.key)
+}
+
+pub fn model_option_for_available_handle(
+    handle: &str,
+    fallback_label: Option<&str>,
+    fallback_context_window: Option<u32>,
+    fallback_max_output_tokens: Option<u32>,
+) -> ModelOption {
+    if let Some(entry) = entry_for_handle(handle) {
+        return entry.to_model_option_for_handle(handle.trim());
+    }
+
+    let trimmed = handle.trim();
+    let label_base = fallback_label
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .unwrap_or(trimmed);
+    let label = match (fallback_context_window, fallback_max_output_tokens) {
+        (Some(ctx), Some(out)) => format!(
+            "{} ({} ctx / {} out) — metadata unknown",
+            label_base,
+            format_tokens(ctx),
+            format_tokens(out)
+        ),
+        (Some(ctx), None) => format!(
+            "{} ({} ctx) — metadata unknown",
+            label_base,
+            format_tokens(ctx)
+        ),
+        _ => format!("{label_base} — metadata unknown"),
+    };
+    ModelOption {
+        handle: trimmed.to_string(),
+        label,
+        context_window: fallback_context_window,
+        max_output_tokens: fallback_max_output_tokens,
+    }
 }
 
 pub fn gateway_compatibility_report<I, S>(gateway_handles: I) -> ModelGatewayCompatibilityReport
@@ -92,26 +137,35 @@ where
         .filter(|handle| !handle.is_empty())
         .collect::<BTreeSet<_>>();
 
-    let missing_from_gateway = selectable
+    let available_with_metadata = gateway
         .iter()
-        .filter(|entry| {
-            !gateway.contains(entry.key) && !gateway.contains(entry.provider_model_id)
-        })
-        .map(|entry| entry.key.to_string())
+        .filter(|handle| registry.iter().copied().any(|entry| entry.matches_handle(handle)))
+        .cloned()
         .collect::<Vec<_>>();
 
-    let unknown_gateway_models = gateway
+    let available_without_metadata = gateway
         .iter()
         .filter(|handle| registry.iter().copied().all(|entry| !entry.matches_handle(handle)))
         .cloned()
         .collect::<Vec<_>>();
 
+    let metadata_not_available = selectable
+        .iter()
+        .filter(|entry| {
+            !gateway.contains(entry.key)
+                && !gateway.contains(entry.provider_model_id)
+                && entry.aliases.iter().all(|alias| !gateway.contains(*alias))
+        })
+        .map(|entry| entry.key.to_string())
+        .collect::<Vec<_>>();
+
     ModelGatewayCompatibilityReport {
-        registry_selectable_count: selectable.len(),
+        metadata_model_count: selectable.len(),
         gateway_model_count: gateway.len(),
-        ok: missing_from_gateway.is_empty(),
-        missing_from_gateway,
-        unknown_gateway_models,
+        ok: available_without_metadata.is_empty(),
+        available_with_metadata,
+        available_without_metadata,
+        metadata_not_available,
     }
 }
 
@@ -208,9 +262,18 @@ mod tests {
 
     #[test]
     fn reports_gateway_compatibility() {
-        let report = gateway_compatibility_report(["openai/gpt-4.1", "gpt-5"]);
-        assert!(report.missing_from_gateway.iter().any(|h| h == "openai/gpt-4o"));
-        assert!(report.unknown_gateway_models.is_empty());
+        let report = gateway_compatibility_report(["openai/gpt-4.1", "gpt-5", "openai/new-model"]);
+        assert!(report.metadata_not_available.iter().any(|h| h == "openai/gpt-4o"));
+        assert!(report.available_without_metadata.iter().any(|h| h == "openai/new-model"));
+        assert!(report.available_with_metadata.iter().any(|h| h == "gpt-5"));
+    }
+
+    #[test]
+    fn enriches_available_handle_with_metadata() {
+        let option = model_option_for_available_handle("gpt-4.1", None, None, None);
+        assert_eq!(option.handle, "gpt-4.1");
+        assert!(option.label.contains("OpenAI GPT-4.1"));
+        assert_eq!(option.context_window, Some(1_047_576));
     }
 
     #[test]

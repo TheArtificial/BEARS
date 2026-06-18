@@ -45,24 +45,29 @@
   <table class="bears-health-table">
     <tbody>
       <tr>
-        <th scope="row">Selectable models</th>
-        <td><code>{{ model_registry.report.registry_selectable_count }}</code></td>
-        <td>Den-owned registry entries exposed in Bear Admin.</td>
+        <th scope="row">Den metadata models</th>
+        <td><code>{{ model_registry.report.metadata_model_count }}</code></td>
+        <td>Model metadata entries known to Den for labels, aliases, and context estimates.</td>
       </tr>
       <tr>
-        <th scope="row">Gateway metadata models</th>
+        <th scope="row">Bifrost available models</th>
         <td><code>{{ model_registry.report.gateway_model_count }}</code></td>
         <td>{% if model_registry.gateway_error %}<span class="form-errors">{{ model_registry.gateway_error | e }}</span>{% else %}Bifrost metadata reachable.{% endif %}</td>
       </tr>
       <tr>
-        <th scope="row">Missing from gateway</th>
-        <td><code>{{ model_registry.report.missing_from_gateway | length }}</code></td>
-        <td>{% if model_registry.report.missing_from_gateway %}{{ model_registry.report.missing_from_gateway | join(", ") }}{% else %}All selectable Den models are present in Bifrost metadata.{% endif %}</td>
+        <th scope="row">Available with Den metadata</th>
+        <td><code>{{ model_registry.report.available_with_metadata | length }}</code></td>
+        <td>{% if model_registry.report.available_with_metadata %}{{ model_registry.report.available_with_metadata | join(", ") }}{% else %}No Bifrost-available models matched Den metadata.{% endif %}</td>
       </tr>
       <tr>
-        <th scope="row">Unknown gateway models</th>
-        <td><code>{{ model_registry.report.unknown_gateway_models | length }}</code></td>
-        <td>{% if model_registry.report.unknown_gateway_models %}{{ model_registry.report.unknown_gateway_models | join(", ") }}{% else %}No extra gateway models outside the Den registry.{% endif %}</td>
+        <th scope="row">Available without Den metadata</th>
+        <td><code>{{ model_registry.report.available_without_metadata | length }}</code></td>
+        <td>{% if model_registry.report.available_without_metadata %}{{ model_registry.report.available_without_metadata | join(", ") }}{% else %}Every Bifrost-available model has Den metadata.{% endif %}</td>
+      </tr>
+      <tr>
+        <th scope="row">Den metadata not available in Bifrost</th>
+        <td><code>{{ model_registry.report.metadata_not_available | length }}</code></td>
+        <td>{% if model_registry.report.metadata_not_available %}{{ model_registry.report.metadata_not_available | join(", ") }}{% else %}Every Den metadata model is currently available in Bifrost.{% endif %}</td>
       </tr>
     </tbody>
   </table>

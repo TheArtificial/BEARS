@@ -184,7 +184,7 @@ impl From<&Bear> for BearConfigurationEditForm {
     }
 }
 
-/// Model select for `/bear/{slug}/edit/configuration` (Bifrost catalog only).
+/// Model select for `/bear/{slug}/edit/configuration` (Bifrost availability enriched by Den metadata).
 pub async fn bear_configuration_page_context(
     state: &AppState,
     _bear: &Bear,
@@ -242,7 +242,7 @@ impl From<&Bear> for NewBearForm {
     }
 }
 
-/// Operator admin new-bear form: Den model registry only (no Letta agent type or tools).
+/// Operator admin new-bear form: Bifrost availability enriched by Den metadata.
 pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
     let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
@@ -262,19 +262,40 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
     }
 }
 
-/// Den-owned model registry for bear create/edit flows.
+/// Bifrost availability list enriched by Den model metadata.
 pub async fn model_catalog_select_context(
-    _state: &AppState,
+    state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
-    let options = den_runtime::llm::model_registry::selectable_model_options();
-    if options.is_empty() {
-        (
+    if !state.bifrost.is_enabled() {
+        return (false, Vec::new(), None);
+    }
+
+    match state.bifrost.list_models().await {
+        Ok(models) if models.is_empty() => (
             true,
-            options,
-            Some("Den model registry has no selectable models.".into()),
-        )
-    } else {
-        (true, options, None)
+            Vec::new(),
+            Some("Bifrost returned no available models.".into()),
+        ),
+        Ok(models) => {
+            let mut options = models
+                .into_iter()
+                .map(|model| {
+                    den_runtime::llm::model_registry::model_option_for_available_handle(
+                        &model.handle,
+                        model.display_name.as_deref(),
+                        Some(model.context_window),
+                        model.max_output_tokens,
+                    )
+                })
+                .collect::<Vec<_>>();
+            options.sort_by(|a, b| a.label.cmp(&b.label));
+            (true, options, None)
+        }
+        Err(e) => (
+            true,
+            Vec::new(),
+            Some(format!("Could not load available models from Bifrost: {e}.")),
+        ),
     }
 }
 
@@ -283,9 +304,51 @@ pub fn validate_default_model_for_catalog(
     default_model_trim: &str,
     validation_errors: &mut ValidationErrors,
 ) {
-    let resolved = den_runtime::llm::model_registry::resolve_model_handle(default_model_trim);
-    let value = resolved.unwrap_or(default_model_trim);
-    validate_default_model_for_letta(catalog_fetch, value, validation_errors);
+    let Some(res) = catalog_fetch else {
+        return;
+    };
+
+    match res {
+        Err(_) => {
+            if default_model_trim.is_empty() {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new(
+                        "Model is required when Bifrost is configured. Enter a valid model handle.",
+                    ),
+                );
+            }
+        }
+        Ok(models) if models.is_empty() => {
+            validation_errors.add(
+                "default_model",
+                ValidationError::new("Bifrost has no available models."),
+            );
+        }
+        Ok(models) => {
+            if default_model_trim.is_empty() {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new("Choose a model from the list."),
+                );
+                return;
+            }
+            let requested = default_model_trim.trim();
+            let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+            let available = models.iter().any(|model| {
+                model.handle == requested
+                    || requested_resolved == Some(model.handle.as_str())
+                    || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+                        == requested_resolved
+            });
+            if !available {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new("Pick a model currently available in Bifrost."),
+                );
+            }
+        }
+    }
 }
 
 pub fn canonical_default_model_handle(raw: &str) -> Option<String> {
