@@ -17,30 +17,29 @@ use uuid::Uuid;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
+    core::{
+        docket::{DocketService, PgDocketService},
+        tools::{
+            arguments::DenToolChannelContext, constants::DEN_CONVERSATION_SET_TITLE,
+            session::DenToolInvocationContext,
+        },
+        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
+    },
     errors::CustomError,
     observability::{
         chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
         native_web_chat_stream::NativeWebChatUpstreamStream,
     },
     web::AppState,
-    core::{
-        tools::{
-            arguments::DenToolChannelContext,
-            constants::DEN_CONVERSATION_SET_TITLE,
-            session::DenToolInvocationContext,
-        },
-        docket::{DocketService, PgDocketService},
-        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
-    },
+    web_chat_runtime::WebChatRuntimeRequest,
 };
 use den_runtime::{
-    acp_sessions,
-    archived_conversations,
-    conversation_persistence,
+    acp_sessions, archived_conversations,
     bears::{
-            db::{self as bears_db, role_is_bear_admin},
-            BearProfile,
-        },
+        db::{self as bears_db, role_is_bear_admin},
+        BearProfile,
+    },
+    conversation_persistence,
 };
 
 pub fn router() -> Router<AppState> {
@@ -207,30 +206,35 @@ async fn chat_conversations(
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let mut conversations = conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 100)
-        .await?
-        .into_iter()
-        .filter_map(|row| {
-            let id = row.external_conversation_id?;
-            if id.starts_with("new-") || archived_ids.contains(&id) {
-                return None;
-            }
-            Some(ChatConversationRow {
-                id: id.clone(),
-                title: row
-                    .current_title
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        if id == "default" {
-                            "Main chat".to_string()
-                        } else {
-                            id.clone()
-                        }
-                    }),
-                last_message_at: Some(row.updated_at.format(&time::format_description::well_known::Rfc3339).ok()?),
+    let mut conversations =
+        conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 100)
+            .await?
+            .into_iter()
+            .filter_map(|row| {
+                let id = row.external_conversation_id?;
+                if id.starts_with("new-") || archived_ids.contains(&id) {
+                    return None;
+                }
+                Some(ChatConversationRow {
+                    id: id.clone(),
+                    title: row
+                        .current_title
+                        .filter(|title| !title.trim().is_empty())
+                        .unwrap_or_else(|| {
+                            if id == "default" {
+                                "Main chat".to_string()
+                            } else {
+                                id.clone()
+                            }
+                        }),
+                    last_message_at: Some(
+                        row.updated_at
+                            .format(&time::format_description::well_known::Rfc3339)
+                            .ok()?,
+                    ),
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
 
     if !conversations.iter().any(|row| row.id == "default") {
         conversations.insert(0, default_row());
@@ -383,7 +387,9 @@ async fn chat_history(
         .filter(|s| !s.is_empty())
         .map(str::parse::<i64>)
         .transpose()
-        .map_err(|_| CustomError::ValidationError("before must be a canonical sequence number".to_string()))?;
+        .map_err(|_| {
+            CustomError::ValidationError("before must be a canonical sequence number".to_string())
+        })?;
 
     let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
 
@@ -441,9 +447,10 @@ fn map_persisted_history_page(
                 )
             {
                 last.text.push_str(&row.content_text);
-                last.text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
-                    &last.text,
-                );
+                last.text =
+                    crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
+                        &last.text,
+                    );
                 continue;
             }
         }
@@ -463,7 +470,10 @@ fn map_persisted_history_page(
     }
 
     let has_more = coalesced_desc.len() >= page_limit;
-    let page = coalesced_desc.into_iter().take(page_limit).collect::<Vec<_>>();
+    let page = coalesced_desc
+        .into_iter()
+        .take(page_limit)
+        .collect::<Vec<_>>();
     let next_before = page.last().map(|(sequence_no, _)| sequence_no.to_string());
     let messages = page
         .into_iter()
@@ -831,38 +841,27 @@ async fn chat_send_native_inner(
 
     crate::observability::metrics::chat_send_runtime_native();
 
-    let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let deps = den_runtime::native_runtime::NativeRuntimeDeps {
-        pool: state.sqlx_pool(),
-        config: state.config.as_ref(),
-        stores: &stores,
-    };
-    let tool_invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
-        CustomError::System("builtin Den tool runtime is not initialized".to_string())
-    })?;
-    let runtime_stream = den_runtime::native_runtime::start_native_web_chat_turn_event_stream(
-        den_runtime::native_runtime::NativeWebChatTurnParams {
-            deps: &deps,
-            bear_id: bear.id,
-            bear_slug: &bear.slug,
-            chat_binding_id,
-            user_id,
-            username: Some(username),
-            membership_role: membership_role.as_deref(),
-            conversation_id: &conv_id,
-            session_id: &session_id,
-            prompt: &upstream_message,
-            request_id,
-            tool_invoker,
-        },
-    )
-    .await?;
+    let runtime_stream = state
+        .web_chat_runtime
+        .stream_chat(
+            &state,
+            WebChatRuntimeRequest {
+                bear_id: bear.id,
+                bear_slug: bear.slug.clone(),
+                chat_binding_id: chat_binding_id.to_string(),
+                user_id,
+                username: Some(username.to_string()),
+                membership_role: membership_role.clone(),
+                conversation_id: conv_id.clone(),
+                session_id: session_id.clone(),
+                prompt: upstream_message,
+                request_id,
+            },
+        )
+        .await?;
 
     crate::observability::metrics::chat_send_started();
 
-    let runtime_stream = futures::StreamExt::map(runtime_stream, |item| {
-        item.map_err(crate::errors::CustomError::from)
-    });
     let upstream = NativeWebChatUpstreamStream::new(runtime_stream, request_id);
     let stream = BearChannelSseProxyStream::new(
         upstream,
@@ -905,8 +904,7 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let chat_binding_id =
-        resolve_chat_profile_binding_id(state.sqlx_pool(), bear.id, true).await?;
+    let chat_binding_id = resolve_chat_profile_binding_id(state.sqlx_pool(), bear.id, true).await?;
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
 
     chat_send_native_inner(
@@ -982,7 +980,6 @@ mod chat_history_map_tests {
         assert_eq!(msgs[1].role, "ai");
         assert_eq!(msgs[1].text, "Hi there");
     }
-
 }
 
 #[cfg(test)]

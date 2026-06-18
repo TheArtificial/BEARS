@@ -36,6 +36,7 @@ pub mod stack_health;
 pub mod status;
 pub mod user;
 pub mod v1;
+pub mod web_chat_runtime;
 
 use indexmap::IndexMap;
 use std::sync::OnceLock;
@@ -107,6 +108,7 @@ pub struct AppState {
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
     pub bifrost: std::sync::Arc<den_runtime::bifrost::BifrostClient>,
+    pub web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
 
@@ -121,6 +123,21 @@ impl AppState {
         template_env: Environment<'static>,
         config: Arc<Config>,
     ) -> Self {
+        Self::test_with_template_env_and_chat_runtime(
+            sqlx_pool,
+            template_env,
+            config,
+            crate::web_chat_runtime::native_web_chat_runtime(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_with_template_env_and_chat_runtime(
+        sqlx_pool: PgPool,
+        template_env: Environment<'static>,
+        config: Arc<Config>,
+        web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
+    ) -> Self {
         let bifrost =
             std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
         Self {
@@ -129,6 +146,7 @@ impl AppState {
             asset_router: Arc::new(Router::new()),
             config,
             bifrost,
+            web_chat_runtime,
             media: None,
         }
     }
@@ -208,6 +226,7 @@ pub async fn server_with_state(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             bifrost,
+            web_chat_runtime: crate::web_chat_runtime::native_web_chat_runtime(),
             media,
         },
         session_store,
