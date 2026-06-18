@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [features]
-production = ["den-core/production", "den-runtime/production", "den-http/production", "den-api/production", "den-web/production"]
+production = ["den-core/production", "den-runtime/production", "den-http/production", "den-api/production", "den-web/production", "den-bearwire/production"]
 web-ui-fixtures = []
 
 # Cargo workspace root. The `den` binary stays the root package; extracted
@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-acp", "crates/den-api", "crates/den-web"]
+members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-acp", "crates/den-api", "crates/den-web", "crates/den-bearwire"]
 
 [workspace.package]
 version = "0.1.1"
@@ -145,6 +145,7 @@ den-runtime = { path = "crates/den-runtime" }
 den-http = { path = "crates/den-http" }
 den-acp = { path = "crates/den-acp" }
 den-api = { path = "crates/den-api" }
+den-bearwire = { path = "crates/den-bearwire" }
 den-web = { path = "crates/den-web" }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 anyhow = "1.0"

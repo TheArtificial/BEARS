@@ -535,6 +535,7 @@ dependencies = [
  "bytes",
  "den-acp",
  "den-api",
+ "den-bearwire",
  "den-core",
  "den-docket",
  "den-http",
@@ -655,6 +656,21 @@ dependencies = [
  "utoipa",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "den-bearwire"
+version = "0.1.1"
+dependencies = [
+ "axum",
+ "bytes",
+ "den-core",
+ "den-http",
+ "den-runtime",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

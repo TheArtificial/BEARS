@@ -10,7 +10,6 @@
 //! and above den-oauth / den-http / den-runtime / den-docket / den-core.
 
 pub mod acp;
-pub mod bearwire;
 pub mod core;
 pub mod internal;
 pub mod service;

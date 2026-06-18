@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 
-use crate::service::DenState;
+use den_runtime::DenState;
 use den_http::errors::CustomError;
 use den_runtime::runtime::bearwire_projection::wire::{
     bearwire_event_to_json_rpc_notification, BearWireEvent,
@@ -114,6 +114,23 @@ async fn rpc(
                 "params": request.params,
             }),
         ),
+        "session.open"
+        | "session.resume"
+        | "session.close"
+        | "run.start"
+        | "run.cancel"
+        | "client.tool.result"
+        | "client.permission.result"
+        | "resource.update" => JsonRpcResponse::error(
+            request.id,
+            -32004,
+            format!("BearWire method not implemented yet: {}", request.method),
+            Some(json!({
+                "method": request.method,
+                "params": request.params,
+                "legacy": "Use /acp/** during the BearWire parallel-operation period."
+            })),
+        ),
         other => JsonRpcResponse::error(
             request.id,
             -32601,
@@ -173,6 +190,74 @@ mod tests {
         .expect("initialize ok")
         .into_response();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn planned_v1_methods_are_recognized() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        for method in [
+            "session.open",
+            "session.resume",
+            "session.close",
+            "session.state",
+            "run.start",
+            "run.cancel",
+            "client.tool.result",
+            "client.permission.result",
+            "resource.update",
+        ] {
+            let response = rpc(
+                State(state.clone()),
+                Json(JsonRpcRequest {
+                    jsonrpc: Some("2.0".to_string()),
+                    id: Some(json!(method)),
+                    method: method.to_string(),
+                    params: json!({ "session_id": "session-test" }),
+                }),
+            )
+            .await
+            .expect("rpc ok")
+            .into_response();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let value: Value = serde_json::from_slice(&body).unwrap();
+            assert_ne!(value.pointer("/error/code"), Some(&json!(-32601)), "{method}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_method_returns_method_not_found() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-unknown")),
+                method: "not.real".to_string(),
+                params: json!({}),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32601);
     }
 
     #[tokio::test]
