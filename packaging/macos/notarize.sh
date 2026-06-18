@@ -3,9 +3,9 @@ set -eu
 
 usage() {
   cat <<'USAGE'
-Usage: notarize.sh --pkg <path>
+Usage: notarize.sh (--pkg <path> | --dmg <path>)
 
-Notarize and staple a signed macOS package with Apple's notary service.
+Notarize and staple a signed macOS package or DMG with Apple's notary service.
 
 Required environment:
   APP_STORE_CONNECT_API_KEY_ID
@@ -17,10 +17,15 @@ USAGE
 }
 
 pkg=""
+dmg=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --pkg)
       pkg="${2:-}"
+      shift 2
+      ;;
+    --dmg)
+      dmg="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -35,13 +40,27 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$pkg" ]; then
-  echo "notarize.sh: --pkg is required" >&2
+artifact=""
+artifact_kind=""
+
+if [ -n "$pkg" ] && [ -n "$dmg" ]; then
+  echo "notarize.sh: pass only one of --pkg or --dmg" >&2
   exit 2
 fi
 
-if [ ! -f "$pkg" ]; then
-  echo "notarize.sh: package not found: $pkg" >&2
+if [ -n "$pkg" ]; then
+  artifact="$pkg"
+  artifact_kind="package"
+elif [ -n "$dmg" ]; then
+  artifact="$dmg"
+  artifact_kind="dmg"
+else
+  echo "notarize.sh: one of --pkg or --dmg is required" >&2
+  exit 2
+fi
+
+if [ ! -f "$artifact" ]; then
+  echo "notarize.sh: $artifact_kind not found: $artifact" >&2
   exit 2
 fi
 
@@ -49,15 +68,19 @@ fi
 : "${APP_STORE_CONNECT_API_ISSUER_ID:?APP_STORE_CONNECT_API_ISSUER_ID is required}"
 : "${APP_STORE_CONNECT_API_KEY_PATH:?APP_STORE_CONNECT_API_KEY_PATH is required}"
 
-xcrun notarytool submit "$pkg" \
+xcrun notarytool submit "$artifact" \
   --key "$APP_STORE_CONNECT_API_KEY_PATH" \
   --key-id "$APP_STORE_CONNECT_API_KEY_ID" \
   --issuer "$APP_STORE_CONNECT_API_ISSUER_ID" \
   --wait
 
-xcrun stapler staple "$pkg"
-xcrun stapler validate "$pkg"
+xcrun stapler staple "$artifact"
+xcrun stapler validate "$artifact"
 
-spctl --assess --type install --verbose=4 "$pkg"
+if [ "$artifact_kind" = "package" ]; then
+  spctl --assess --type install --verbose=4 "$artifact"
+else
+  echo "notarize.sh: skipping spctl assessment for DMG; stapler validation succeeded"
+fi
 
-echo "notarize.sh: notarized and stapled $pkg"
+echo "notarize.sh: notarized and stapled $artifact_kind $artifact"
