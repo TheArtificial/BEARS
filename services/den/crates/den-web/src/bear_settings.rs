@@ -1,7 +1,9 @@
 //! Bear-scoped settings at `/bear/{slug}/…` for members (read) and bear admins (write).
 
 use axum::{
-    extract::{Path, Query, State},
+    body::Body,
+    extract::{Multipart, Path, Query, State},
+    http::{header, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -10,7 +12,12 @@ use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::io::{Cursor, Read, Write};
+use std::path::{Path as FsPath, PathBuf};
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     auth_backend::{AuthSession, SessionUser},
@@ -23,7 +30,8 @@ use den_runtime::{
     bears::{
         context_profile_from_json, db as bears_db,
         db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-        get_compiled_bear_config, list_bear_block_bindings, managed_blocks::BearCompiledConfigRow,
+        get_compiled_bear_config, list_bear_block_bindings,
+        managed_blocks::BearCompiledConfigRow,
         provision, BearProfile,
     },
     conversation_persistence::{self, list_messages_page},
@@ -58,6 +66,8 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/context", get(context_view))
         .route_with_tsr("/bear/{slug}/policy", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
+        .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
+        .route_with_tsr("/bears/import", post(import_bear_bundle))
         .route_with_tsr("/bear/{slug}/members/grant", post(grant_member_action))
         .route_with_tsr(
             "/bear/{slug}/members/{user_id}/revoke",
@@ -83,6 +93,41 @@ pub fn router() -> Router<AppState> {
 struct DomainQuery {
     #[serde(default)]
     message: Option<String>,
+}
+
+const BEAR_BUNDLE_FORMAT: &str = "bear";
+const BEAR_BUNDLE_VERSION: u32 = 1;
+const BEAR_BUNDLE_MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BearBundleManifest {
+    format: String,
+    version: u32,
+    bear: BearBundleIdentity,
+    prompts: BearBundlePrompts,
+    #[serde(default)]
+    profiles: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BearBundleIdentity {
+    slug: String,
+    name: String,
+    description: String,
+    birthdate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools_enabled: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    letta_agent_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BearBundlePrompts {
+    system_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_profile: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +220,326 @@ pub(crate) async fn load_session_bear_manage(
     Ok(Ok(bear))
 }
 
+fn memory_sqlite_path(config: &den_core::config::Config, bear_id: Uuid) -> PathBuf {
+    FsPath::new(&config.bear_sqlite_data_dir).join(format!("{bear_id}.sqlite"))
+}
+
+fn sqlite_string_literal(path: &FsPath) -> Result<String, CustomError> {
+    let raw = path
+        .to_str()
+        .ok_or_else(|| CustomError::System("sqlite path is not valid UTF-8".to_string()))?;
+    Ok(format!("'{}'", raw.replace('\'', "''")))
+}
+
+fn slug_base(raw: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() { ch } else { '-' };
+        if mapped == '-' {
+            if !last_dash && !out.is_empty() {
+                out.push('-');
+                last_dash = true;
+            }
+        } else {
+            out.push(mapped);
+            last_dash = false;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "imported-bear".to_string()
+    } else {
+        trimmed
+    }
+}
+
+async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<String, CustomError> {
+    let base = slug_base(requested);
+    if !bears_db::bear_slug_exists(pool, &base).await? {
+        return Ok(base);
+    }
+    for idx in 2..=999 {
+        let candidate = format!("{base}-{idx}");
+        if !bears_db::bear_slug_exists(pool, &candidate).await? {
+            return Ok(candidate);
+        }
+    }
+    Err(CustomError::ValidationError(
+        "could not find available slug for imported Bear".to_string(),
+    ))
+}
+
+fn manifest_for_bear(bear: &den_runtime::bears::Bear) -> Result<BearBundleManifest, CustomError> {
+    let exported_birthdate = bear
+        .created_at
+        .format(&Rfc3339)
+        .map_err(|err| CustomError::System(format!("format Bear birthdate failed: {err}")))?;
+    Ok(BearBundleManifest {
+        format: BEAR_BUNDLE_FORMAT.to_string(),
+        version: BEAR_BUNDLE_VERSION,
+        bear: BearBundleIdentity {
+            slug: bear.slug.clone(),
+            name: bear.name.clone(),
+            description: bear.description.clone(),
+            birthdate: exported_birthdate.chars().take(10).collect(),
+            default_model: bear.default_model.clone(),
+            tools_enabled: bear.tools_enabled.as_ref().map(|v| v.0.clone()),
+            letta_agent_type: bear.letta_agent_type.clone(),
+        },
+        prompts: BearBundlePrompts {
+            system_prompt: bear.system_prompt.clone(),
+            context_profile: bear.context_profile.as_ref().map(|v| v.0.clone()),
+        },
+        profiles: json!({}),
+    })
+}
+
+async fn snapshot_memory_sqlite(state: &AppState, bear_id: Uuid) -> Result<Vec<u8>, CustomError> {
+    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let store = manager.store_for_bear(bear_id).await?;
+    let snapshot_path =
+        std::env::temp_dir().join(format!("bear-export-{bear_id}-{}.sqlite", Uuid::new_v4()));
+    if snapshot_path.exists() {
+        let _ = std::fs::remove_file(&snapshot_path);
+    }
+    let literal = sqlite_string_literal(&snapshot_path)?;
+    sqlx::query(&format!("VACUUM INTO {literal}"))
+        .execute(store.pool())
+        .await
+        .map_err(|err| CustomError::System(format!("snapshot memory sqlite failed: {err}")))?;
+    let bytes = std::fs::read(&snapshot_path)
+        .map_err(|err| CustomError::System(format!("read memory sqlite snapshot failed: {err}")))?;
+    if let Err(err) = std::fs::remove_file(&snapshot_path) {
+        tracing::warn!(path = %snapshot_path.display(), error = %err, "failed to remove Bear export SQLite snapshot");
+    }
+    Ok(bytes)
+}
+
+fn build_bear_bundle(manifest_yaml: &str, memory_sqlite: &[u8]) -> Result<Vec<u8>, CustomError> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    writer
+        .start_file("bear.yaml", options)
+        .map_err(|err| CustomError::System(format!("start bear.yaml in bundle failed: {err}")))?;
+    writer
+        .write_all(manifest_yaml.as_bytes())
+        .map_err(|err| CustomError::System(format!("write bear.yaml to bundle failed: {err}")))?;
+    writer.start_file("memory.sqlite", options).map_err(|err| {
+        CustomError::System(format!("start memory.sqlite in bundle failed: {err}"))
+    })?;
+    writer.write_all(memory_sqlite).map_err(|err| {
+        CustomError::System(format!("write memory.sqlite to bundle failed: {err}"))
+    })?;
+    let cursor = writer
+        .finish()
+        .map_err(|err| CustomError::System(format!("finish Bear bundle failed: {err}")))?;
+    Ok(cursor.into_inner())
+}
+
+fn read_bear_bundle(bytes: &[u8]) -> Result<(BearBundleManifest, Vec<u8>), CustomError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|err| CustomError::ValidationError(format!("invalid .bear zip: {err}")))?;
+    let mut manifest_yaml = String::new();
+    archive
+        .by_name("bear.yaml")
+        .map_err(|_| CustomError::ValidationError(".bear bundle missing bear.yaml".to_string()))?
+        .read_to_string(&mut manifest_yaml)
+        .map_err(|err| CustomError::ValidationError(format!("read bear.yaml failed: {err}")))?;
+    let mut memory_sqlite = Vec::new();
+    archive
+        .by_name("memory.sqlite")
+        .map_err(|_| {
+            CustomError::ValidationError(".bear bundle missing memory.sqlite".to_string())
+        })?
+        .read_to_end(&mut memory_sqlite)
+        .map_err(|err| CustomError::ValidationError(format!("read memory.sqlite failed: {err}")))?;
+    let manifest: BearBundleManifest = serde_yml::from_str(&manifest_yaml)
+        .map_err(|err| CustomError::ValidationError(format!("parse bear.yaml failed: {err}")))?;
+    if manifest.format != BEAR_BUNDLE_FORMAT || manifest.version != BEAR_BUNDLE_VERSION {
+        return Err(CustomError::ValidationError(format!(
+            "unsupported .bear format {} version {}",
+            manifest.format, manifest.version
+        )));
+    }
+    if memory_sqlite.is_empty() {
+        return Err(CustomError::ValidationError(
+            "memory.sqlite is empty".to_string(),
+        ));
+    }
+    Ok((manifest, memory_sqlite))
+}
+
+async fn rewrite_imported_memory_bear_id(
+    state: &AppState,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let store = manager.store_for_bear(bear_id).await?;
+    let new_id = bear_id.to_string();
+    for table in [
+        "memory_records",
+        "entities",
+        "entity_handles",
+        "memory_relations",
+        "memory_access_rules",
+        "memory_promotions",
+        "memory_proposals",
+        "memory_observations",
+        "reflection_run_outcomes",
+    ] {
+        sqlx::query(&format!("UPDATE {table} SET bear_id = ?"))
+            .bind(&new_id)
+            .execute(store.pool())
+            .await
+            .map_err(|err| CustomError::System(format!("rewrite {table}.bear_id failed: {err}")))?;
+    }
+    let integrity: Vec<(String,)> = sqlx::query_as("PRAGMA integrity_check")
+        .fetch_all(store.pool())
+        .await
+        .map_err(|err| {
+            CustomError::System(format!("imported memory integrity check failed: {err}"))
+        })?;
+    if integrity.first().map(|row| row.0.as_str()) != Some("ok") {
+        return Err(CustomError::ValidationError(format!(
+            "imported memory.sqlite failed integrity check: {:?}",
+            integrity
+        )));
+    }
+    Ok(())
+}
+
+async fn export_bear_bundle(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let manifest = manifest_for_bear(&bear)?;
+    let manifest_yaml = serde_yml::to_string(&manifest)
+        .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
+    let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
+    let bundle = build_bear_bundle(&manifest_yaml, &memory_sqlite)?;
+    let filename = format!("{}.bear", slug_base(&bear.slug));
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/zip")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .body(Body::from(bundle))
+        .map_err(|err| CustomError::System(format!("build Bear export response failed: {err}")))
+}
+
+async fn import_bear_bundle(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    mut multipart: Multipart,
+) -> Result<Response, CustomError> {
+    let user = session_user(&auth_session).await?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+
+    let mut bundle_bytes: Option<Vec<u8>> = None;
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| CustomError::ValidationError(format!("invalid .bear upload: {err}")))?
+    {
+        if field.name() != Some("bundle") {
+            continue;
+        }
+        let mut data = Vec::new();
+        while let Some(chunk) = field.chunk().await.map_err(|err| {
+            CustomError::ValidationError(format!("read .bear upload failed: {err}"))
+        })? {
+            if data.len() + chunk.len() > BEAR_BUNDLE_MAX_UPLOAD_BYTES {
+                return Err(CustomError::ValidationError(
+                    ".bear bundle exceeds the 256 MiB upload limit".to_string(),
+                ));
+            }
+            data.extend_from_slice(&chunk);
+        }
+        bundle_bytes = Some(data);
+        break;
+    }
+
+    let bundle_bytes = bundle_bytes
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| CustomError::ValidationError("please select a .bear bundle".to_string()))?;
+    let (manifest, memory_sqlite) = read_bear_bundle(&bundle_bytes)?;
+    let slug = unique_import_slug(state.sqlx_pool(), &manifest.bear.slug).await?;
+
+    let bear_id = bears_db::create_bear_with_context_profile(
+        state.sqlx_pool(),
+        bears_db::BearParams {
+            slug: &slug,
+            name: &manifest.bear.name,
+            description: &manifest.bear.description,
+            system_prompt: &manifest.prompts.system_prompt,
+            default_model: manifest.bear.default_model.as_deref(),
+            tools_enabled: manifest.bear.tools_enabled.clone().map(sqlx::types::Json),
+            letta_agent_type: manifest.bear.letta_agent_type.as_deref(),
+            letta_tool_ids: sqlx::types::Json(Vec::new()),
+            context_profile: manifest
+                .prompts
+                .context_profile
+                .clone()
+                .map(sqlx::types::Json),
+        },
+    )
+    .await?;
+
+    let birthdate = manifest.bear.birthdate.trim();
+    if !birthdate.is_empty() {
+        sqlx::query("UPDATE bears SET created_at = $1::date, updated_at = NOW() WHERE id = $2")
+            .bind(birthdate)
+            .bind(bear_id)
+            .execute(state.sqlx_pool())
+            .await
+            .map_err(|err| {
+                CustomError::ValidationError(format!("invalid Bear birthdate: {err}"))
+            })?;
+    }
+
+    bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;
+
+    let memory_path = memory_sqlite_path(state.config.as_ref(), bear_id);
+    if let Some(parent) = memory_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            CustomError::System(format!("create Bear memory directory failed: {err}"))
+        })?;
+    }
+    std::fs::write(&memory_path, memory_sqlite).map_err(|err| {
+        CustomError::System(format!("write imported memory.sqlite failed: {err}"))
+    })?;
+    rewrite_imported_memory_bear_id(&state, bear_id).await?;
+
+    if let Err(err) =
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), bear_id)
+            .await
+    {
+        tracing::warn!(%bear_id, error = %err, "provision after Bear import failed");
+    }
+    if let Err(err) =
+        provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), bear_id).await
+    {
+        tracing::warn!(%bear_id, error = %err, "reconcile after Bear import failed");
+    }
+
+    Ok(Redirect::to(&format!(
+        "/bear/{slug}/overview?message={}",
+        urlencoding::encode("Bear imported.")
+    ))
+    .into_response())
+}
+
 async fn memory_stats_for_bear(
     state: &AppState,
     bear_id: Uuid,
@@ -221,13 +586,12 @@ async fn overview_view(
             }
         }
     };
-    let conversation_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1",
-    )
-    .bind(id)
-    .fetch_one(state.sqlx_pool())
-    .await
-    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let conversation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1")
+            .bind(id)
+            .fetch_one(state.sqlx_pool())
+            .await
+            .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
 
     web::render_template(
         &state,
@@ -263,17 +627,18 @@ async fn access_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let members: Vec<BearMemberAdminRow> = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id)
-        .await?
-        .into_iter()
-        .map(|m| BearMemberAdminRow {
-            role_label: membership_role_label(m.role.as_deref()),
-            user_id: m.user_id,
-            username: m.username,
-            display_name: m.display_name,
-            role: m.role,
-        })
-        .collect();
+    let members: Vec<BearMemberAdminRow> =
+        bears_db::list_members_for_bear(state.sqlx_pool(), bear.id)
+            .await?
+            .into_iter()
+            .map(|m| BearMemberAdminRow {
+                role_label: membership_role_label(m.role.as_deref()),
+                user_id: m.user_id,
+                username: m.username,
+                display_name: m.display_name,
+                role: m.role,
+            })
+            .collect();
     web::render_template(
         &state,
         "bear/settings/access.html",
@@ -300,8 +665,7 @@ async fn persona_view(
     };
     let id = bear.id;
     let context_profile_enabled = bear.context_profile.is_some();
-    let template_id = context_profile_from_json(&bear.context_profile)?
-        .and_then(|p| p.template_id);
+    let template_id = context_profile_from_json(&bear.context_profile)?.and_then(|p| p.template_id);
     let compiled: Option<BearCompiledConfigRow> =
         get_compiled_bear_config(state.sqlx_pool(), id).await?;
     let mut compiled_roles: Vec<CompiledRolePromptRow> = Vec::new();
@@ -404,8 +768,9 @@ async fn conversations_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let rows = conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 50)
-        .await?;
+    let rows =
+        conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 50)
+            .await?;
     let conversations: Vec<ConversationAdminRow> = rows
         .into_iter()
         .map(|c| ConversationAdminRow {
@@ -417,9 +782,7 @@ async fn conversations_view(
                 .current_title
                 .filter(|t| !t.is_empty())
                 .unwrap_or_else(|| "Untitled".to_string()),
-            source_session: c
-                .source_acp_session_id
-                .unwrap_or_else(|| "—".to_string()),
+            source_session: c.source_acp_session_id.unwrap_or_else(|| "—".to_string()),
             updated_at: c.updated_at.to_string(),
         })
         .collect();

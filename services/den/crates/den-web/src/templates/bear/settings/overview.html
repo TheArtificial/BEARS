@@ -105,6 +105,20 @@
             <p class="form-hint">Persisted chat and ACP transcripts.</p>
             <p>{{ conversation_count }} conversation(s)</p>
         </section>
+
+        <section class="box" style="margin: 0">
+            <h4>Bear bundle</h4>
+            <p class="form-hint"><code>.bear</code> export/import includes <code>bear.yaml</code> and <code>memory.sqlite</code>.</p>
+            {% if can_manage_bear %}
+            <p><a href="/bear/{{ bear.slug | e }}/export.bear">Download {{ bear.slug | e }}.bear</a></p>
+            <form method="post" action="/bears/import" enctype="multipart/form-data">
+                <input type="file" name="bundle" accept=".bear,application/zip" required>
+                <button type="submit">Import as new Bear</button>
+            </form>
+            {% else %}
+            <p class="form-hint">Bear admin access required.</p>
+            {% endif %}
+        </section>
     </div>
 
     <p style="margin-top: 1.5rem" class="form-hint">
