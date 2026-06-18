@@ -6,6 +6,7 @@ on:
         tags:
             - "v*"
             - "bear-armature/v*"
+            # Legacy release tag prefix kept so old reruns/manual releases still rebuild the armature.
             - "bears-acp-adapter/v*"
         paths:
             - "tools/bear-armature/**"
@@ -43,6 +44,7 @@ on:
 env:
     CARGO_TERM_COLOR: always
     BEAR_ARMATURE_MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_CERT_IDENTITY_PUBLIC }}
+    # Legacy env aliases are consumed by packaging/build scripts and should remain until old installers are retired.
     BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_CERT_IDENTITY_PUBLIC }}
     BEAR_ARMATURE_MACOS_INSTALLER_TEAM_ID: ${{ vars.MACOS_INSTALLER_TEAM_ID }}
     BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID: ${{ vars.MACOS_INSTALLER_TEAM_ID }}
@@ -52,7 +54,7 @@ permissions:
 
 jobs:
     prepare-release:
-        name: Resolve adapter release metadata
+        name: Resolve armature release metadata
         runs-on: ubuntu-24.04
         outputs:
             update_version: ${{ steps.resolve.outputs.update_version }}
@@ -122,7 +124,7 @@ jobs:
 
                   case "$version" in
                     [0-9]*.[0-9]*.[0-9]*) ;;
-                    *) echo "::error::Resolved adapter version '$version' is not semver-like"; exit 1 ;;
+                    *) echo "::error::Resolved armature version '$version' is not semver-like"; exit 1 ;;
                   esac
 
                   if [ "${{ github.event_name }}" = "release" ]; then
@@ -147,7 +149,7 @@ jobs:
                     if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
                       echo "Tag already exists: ${tag}"
                     else
-                      git tag -a "$tag" -m "BEARS ACP adapter ${version}"
+                      git tag -a "$tag" -m "BEARS armature ${version}"
                       git push origin "$tag"
                     fi
 
@@ -159,8 +161,8 @@ jobs:
                         beta) prerelease_flag="--prerelease" ;;
                       esac
                       gh release create "$tag" \
-                        --title "BEARS ACP adapter ${version}" \
-                        --notes "BEARS ACP adapter ${version}" \
+                        --title "BEARS armature ${version}" \
+                        --notes "BEARS armature ${version}" \
                         ${prerelease_flag}
                     fi
                   fi
@@ -175,7 +177,7 @@ jobs:
                   echo "release_notes_url=$release_notes_url" >> "$GITHUB_OUTPUT"
                   echo "publish_update_site=$publish_update_site" >> "$GITHUB_OUTPUT"
 
-                  echo "Resolved adapter version: $version"
+                  echo "Resolved armature version: $version"
                   echo "Resolved update channel: $channel"
                   echo "Resolved release tag: ${tag:-<none>}"
                   echo "Publish update site: $publish_update_site"
@@ -187,6 +189,7 @@ jobs:
         env:
             UPDATE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             BEAR_ARMATURE_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
+            # Legacy env alias consumed by tools/bear-armature/build.rs.
             BEARS_ACP_ADAPTER_RELEASE_VERSION: ${{ needs.prepare-release.outputs.update_version }}
             RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         strategy:
@@ -225,7 +228,7 @@ jobs:
                   restore-keys: |
                       cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
-            - name: Build adapter
+            - name: Build armature
               run: cargo build --release --target ${{ matrix.target }} --manifest-path tools/bear-armature/Cargo.toml
 
             - name: Stage artifact (Unix)
@@ -430,7 +433,7 @@ jobs:
                     --clobber
 
     publish-update-site:
-        name: Publish ACP adapter update site
+        name: Publish armature update site
         runs-on: ubuntu-24.04
         needs: [prepare-release, macos-pkg]
         if: needs.prepare-release.outputs.publish_update_site == 'true'
@@ -468,5 +471,5 @@ jobs:
                     echo "No update site changes to publish."
                     exit 0
                   fi
-                  git commit -m "Publish BEARS ACP adapter update site"
+                  git commit -m "Publish BEARS armature update site"
                   git push origin gh-pages
