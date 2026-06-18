@@ -18,20 +18,15 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     auth_backend::AuthSession,
+    core::{user::db as user_db, web_policy},
     errors::CustomError,
     web::{self, AppState},
-    core::{
-        user::db as user_db,
-        web_policy,
-    },
-};
-use den_runtime::{
-    bears::{db as bears_db, db::BearParams, provision, BearProfileBinding, BearProfile},
-    memory::{
-            admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
-        },
 };
 use den_core::DenError;
+use den_runtime::{
+    bears::{db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding},
+    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
+};
 
 use crate::web::bear_create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context,
@@ -46,7 +41,10 @@ async fn redirect_bear_slug(
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-    Ok(Redirect::permanent(&format!("/bear/{}/overview", bear.slug)))
+    Ok(Redirect::permanent(&format!(
+        "/bear/{}/overview",
+        bear.slug
+    )))
 }
 
 async fn redirect_bear_slug_path(
@@ -73,17 +71,17 @@ async fn redirect_bear_slug_path(
         "context" => format!("/bear/{}/context", bear.slug),
         "policy" => format!("/bear/{}/policy", bear.slug),
         "advanced" => format!("/bear/{}/advanced", bear.slug),
-        other => format!("/bear/{}/overview?legacy={}", bear.slug, urlencoding::encode(other)),
+        other => format!(
+            "/bear/{}/overview?legacy={}",
+            bear.slug,
+            urlencoding::encode(other)
+        ),
     };
     Ok(Redirect::permanent(&target))
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route_with_tsr("/bears/", get(list_view))
-        .route_with_tsr("/bears/new", get(new_view).post(new_action))
-        .route_with_tsr("/bears/{id}", get(redirect_bear_slug))
-        .route("/bears/{id}/{*rest}", get(redirect_bear_slug_path))
+    Router::new().route_with_tsr("/bears/", get(list_view))
 }
 
 #[derive(Debug, Serialize)]
@@ -215,11 +213,7 @@ impl BearProfileBindingHealthRow {
         let (health_status, health_label, health_detail) = match agent.provisioning_status.as_str()
         {
             "ready" => ("ok", "Ready", None),
-            "failed" => (
-                "error",
-                "Failed",
-                agent.last_provisioning_error.clone(),
-            ),
+            "failed" => ("error", "Failed", agent.last_provisioning_error.clone()),
             "drifted" => (
                 "error",
                 "Drifted",
@@ -250,7 +244,6 @@ impl BearProfileBindingHealthRow {
             memfs_view_diagnostic: None,
         }
     }
-
 }
 
 pub(crate) async fn bear_web_sources(
@@ -518,13 +511,12 @@ async fn bear_detail_response(
         }
     };
 
-    let conversation_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1",
-    )
-    .bind(id)
-    .fetch_one(state.sqlx_pool())
-    .await
-    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let conversation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1")
+            .bind(id)
+            .fetch_one(state.sqlx_pool())
+            .await
+            .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
 
     web::render_template(
         state,
@@ -660,12 +652,9 @@ pub async fn new_action(
         )
         .await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+                .await
         {
             tracing::warn!(%id, "Bear provision failed: {e}");
             let users = user_db::get_users(state.sqlx_pool()).await?;
@@ -812,12 +801,9 @@ async fn edit_action(
         )
         .await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+                .await
         {
             tracing::warn!(%id, "Native profile refresh after bear edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -944,12 +930,8 @@ async fn edit_prompt_action(
         )
         .await?;
 
-        provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await?;
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+            .await?;
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
