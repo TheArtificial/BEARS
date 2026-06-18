@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use den_http::{acp_tokens, errors::CustomError};
-use den_runtime::{acp_sessions, bears::db as bears_db, DenState};
+use den_runtime::{acp_sessions, bearwire_events, bears::db as bears_db, DenState};
 use den_runtime::runtime::bearwire_projection::wire::{
     bearwire_event_to_json_rpc_notification, BearWireEvent,
 };
@@ -175,9 +175,28 @@ async fn session_open_result(
         &session_id,
     )
     .await?;
+    let mut event = BearWireEvent::ephemeral(
+        "session.opened",
+        json!({
+            "session_id": session_id,
+            "bear_slug": bear.slug,
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    let persisted = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "session": session,
+        "event_sequence": persisted.sequence_no,
     }))
 }
 
@@ -198,10 +217,29 @@ async fn session_close_result(
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    let mut event = BearWireEvent::ephemeral(
+        "session.closed",
+        json!({
+            "session_id": session_id,
+            "bear_slug": bear.slug,
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    let persisted = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "closed": true,
         "session_id": session_id,
+        "event_sequence": persisted.sequence_no,
     }))
 }
 
@@ -346,19 +384,47 @@ async fn rpc(
     Ok(Json(response))
 }
 
-async fn events(Path(session_id): Path<String>) -> Result<Response, CustomError> {
-    let event = BearWireEvent::ephemeral(
-        "session.state",
-        json!({
-            "session_id": session_id,
-            "status": "connected",
-            "note": "BearWire HTTP+SSE endpoint is available; run events are not yet replayed from this stream."
-        }),
-    );
-    let notification = bearwire_event_to_json_rpc_notification(event);
-    let payload = serde_json::to_string(&notification)
-        .map_err(|err| CustomError::System(format!("serialize BearWire event failed: {err}")))?;
-    let frame = format!("data: {payload}\n\n");
+fn events_sse_body(
+    session_id: &str,
+    events: Vec<bearwire_events::BearWireEventRow>,
+) -> Result<String, CustomError> {
+    let mut frame = String::new();
+    if events.is_empty() {
+        let event = BearWireEvent::ephemeral(
+            "session.state",
+            json!({
+                "session_id": session_id,
+                "status": "connected",
+                "note": "No persisted BearWire events for this session yet."
+            }),
+        );
+        let notification = bearwire_event_to_json_rpc_notification(event);
+        let payload = serde_json::to_string(&notification)
+            .map_err(|err| CustomError::System(format!("serialize BearWire event failed: {err}")))?;
+        frame.push_str(&format!("data: {payload}\n\n"));
+    } else {
+        for row in events {
+            let notification = bearwire_event_to_json_rpc_notification(row.event);
+            let payload = serde_json::to_string(&notification)
+                .map_err(|err| CustomError::System(format!("serialize BearWire event failed: {err}")))?;
+            frame.push_str(&format!("id: {}\ndata: {payload}\n\n", row.sequence_no));
+        }
+    }
+    Ok(frame)
+}
+
+async fn events(
+    State(state): State<DenState>,
+    Path(session_id): Path<String>,
+) -> Result<Response, CustomError> {
+    let events = bearwire_events::list_bearwire_events_after(
+        &state.sqlx_pool,
+        &session_id,
+        None,
+        100,
+    )
+    .await?;
+    let frame = events_sse_body(&session_id, events)?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -529,11 +595,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_endpoint_emits_json_rpc_event_notification() {
-        let response = events(Path("session-test".to_string())).await.unwrap();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
+        let text = events_sse_body("session-test", Vec::new()).unwrap();
         assert!(text.starts_with("data: "));
         assert!(text.contains("\"method\":\"event\""));
         assert!(text.contains("\"type\":\"session.state\""));

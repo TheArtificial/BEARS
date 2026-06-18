@@ -44,6 +44,9 @@ pub mod conversation_ids;
 /// Bear provisioning, registry, managed blocks, runtime-plan, templates, and the `bears` DB.
 pub mod bears;
 
+/// Persisted BearWire event log for the Den ↔ armature wire.
+pub mod bearwire_events;
+
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
 pub mod memory;
