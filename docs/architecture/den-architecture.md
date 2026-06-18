@@ -1,10 +1,12 @@
 # Multi-User Architecture: Den (Axum) + Self-Hosted Letta
 
+> **Superseded (2026-06).** This document describes the removed Letta / Letta Code / Codepool / git-MemFS stack and predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](den-native-runtime.md) and its [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
 > Note: this document describes the current Letta-backed architecture. The migration target is a **Den-native runtime** with Letta confined to temporary compatibility boundaries and eventually removed, not a permanent multi-provider runtime abstraction.
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
-Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
+Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may chat to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
 
 ### Three layers (names)
 
@@ -41,7 +43,7 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Bears, users, and conversations
 
-- A **bear** is the durable assistant identity in Den’s registry (the assistant users talk to). During the Letta-backed era, Den tracks the Letta runtime handles that currently realize Bear roles, plus **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
+- A **bear** is the durable assistant identity in Den’s registry (the assistant users chat to). During the Letta-backed era, Den tracks the Letta runtime handles that currently realize Bear roles, plus **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
 - **Conversations** isolate threads (Slack thread, WhatsApp chat, Den web chat session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks
@@ -191,7 +193,7 @@ The namespace is flat at the skill-id level: Bear Den does **not** encode author
 
 **Beyond static catalog skills:** Bear Den targets **dynamic** skills—operators attach **catalog** skills per bear (above), and **bears** may **create or refine** skills over time using **Letta Code** capabilities (e.g. upstream **skills-creation** patterns) and Letta **subagent** mechanisms such as **`reflection`** for auto-discovery. **Den** does not run the skill runtime; it **extends bear provisioning** so each bear’s configuration includes **predefined subagents** and remains **GitOps-friendly**.
 
-**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — canonical decisions for Bear skill bundles (`SKILL.md` + `bear.yaml`), storage/sync rules, skill governance, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). Bear Den prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
+**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — canonical decisions for Bear skill bundles (`SKILL.md` + `bear.yaml`), storage/sync rules, skill curation, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). Bear Den prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
 
 ### Den-managed MCP servers (Phase 1)
 

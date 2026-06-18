@@ -4,6 +4,8 @@
 **Date:** 2026-05-17
 **Deciders:** Hans
 
+> **User-facing naming (2026-06):** "work surface" is the **architecture and model-facing** term decided here; it is **not** shown to human users. The UI presents externally-connected resources as typed cards (Repository, Design, Server, Document, …) under **Connections** (provider auth). See [ADR-0040](adr-0040-connections-and-work-surface-presentation.md).
+
 ## Context
 
 BEARS has several planning-related objects:
@@ -301,5 +303,5 @@ For near-term planning work:
 - [Planning in BEARS](../../concepts/PLANNING.md)
 - [Memory Model](../../concepts/MEMORY_MODEL.md)
 - [Bear Charter and Cabinet Missions](../../concepts/BEAR_CHARTER_AND_CABINET_MISSIONS.md)
-- [Task System Implementation Plan](../../planning/TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
-- [Role-Aware Tool Guidance Plan](../../planning/ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)
+- [Task System Implementation Plan](../roadmap/TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
+- [Role-Aware Tool Guidance Plan](../roadmap/archives/ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)

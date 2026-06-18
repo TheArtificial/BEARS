@@ -1,5 +1,8 @@
 # Pair Tool Discovery and Scope Policy
 
+> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` runtime is the Den-native loop with Den/Postgres transcript. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.
@@ -13,7 +16,7 @@ This policy complements:
 - `docs/planning/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
 - `docs/planning/PAIR_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`
 - `docs/planning/archives/CONTEXT_COMPOSITION_PLAN.md`
-- `docs/concepts/MEMORY_MODEL.md`
+- `docs/concepts/../architecture/memory-model.md`
 
 The central problem is that Bear conversations contain layered context: platform invariants, Bear identity, role/Workplace contract, work-surface grounding, thread state, turn-local runtime state, and execution/tool state. Tool discovery must respect those layers.
 
@@ -44,7 +47,7 @@ The central problem is that Bear conversations contain layered context: platform
 
 | Layer | Examples | Preferred placement | Not allowed |
 |---|---|---|---|
-| Den baseline | safety, privacy, attribution, memory governance | Den-managed baseline/system prompt | user message |
+| Den baseline | safety, privacy, attribution, memory curation | Den-managed baseline/system prompt | user message |
 | Bear identity | charter, durable purpose, broad boundaries | Bear managed context / system blocks | per-turn user suffix |
 | Role / Workplace contract | pair Collaboration Space, work Execution Space | role managed prompt block | user message |
 | Work surface | repo, service, deployment, Mission, project | memory anchors, `session_info`, work-surface tools | unscoped memory assumptions |
@@ -54,7 +57,7 @@ The central problem is that Bear conversations contain layered context: platform
 
 ## Scope model
 
-Use the scope hierarchy from `MEMORY_MODEL.md`:
+Use the scope hierarchy from `../architecture/memory-model.md`:
 
 ```text
 Bear

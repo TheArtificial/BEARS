@@ -1,5 +1,8 @@
 # Bear capability management in Den
 
+> **Archived / superseded (2026-06).** There is a single Den execution target per tool, not a Den + Letta Code + Letta capability matrix. Canonical target: [Den-Native Runtime](../../architecture/den-native-runtime.md) ([migration plan](../DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 This document defines the product and implementation plan for managing bear capabilities in Den.
 
 The goal is to give users a simple, consistent way to understand what a bear can do, while giving the runtime a precise model for built-in server tools, connected apps, local ACP client tools, and skills.

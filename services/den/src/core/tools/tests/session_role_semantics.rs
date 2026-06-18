@@ -1,0 +1,52 @@
+use serde_json::json;
+
+use crate::core::{
+    tools::{session::DenToolInvocationContext, work_surface::infer_work_surface_hint},
+};
+use den_runtime::bears::BearProfile;
+
+fn context_for(role: BearProfile) -> DenToolInvocationContext {
+    DenToolInvocationContext {
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test".to_string(),
+        binding_id: "agent".to_string(),
+        profile: Some(role),
+        user_id: 1,
+        username: Some("tester".to_string()),
+        membership_role: None,
+        conversation_id: "conv-test".to_string(),
+        session_id: "sess-test".to_string(),
+        acp_session_id: Some("acp-test".to_string()),
+        conversation_selection: Some("src/main.rs".to_string()),
+        runtime_target: Some("repo:builder-bear".to_string()),
+        workspace_roots: vec!["/workspace".to_string()],
+        session_policy: None,
+        activity: None,
+        runtime: None,
+        context_budget: None,
+        request_id: None,
+        channel: Default::default(),
+    }
+}
+
+#[test]
+fn infer_work_surface_hint_marks_pair_as_active_mode() {
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Pair), BearProfile::Pair);
+    assert_eq!(payload["work_surface"]["mode"], json!("active"));
+}
+
+#[test]
+fn infer_work_surface_hint_marks_work_as_active_mode() {
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Work), BearProfile::Work);
+    assert_eq!(payload["work_surface"]["mode"], json!("active"));
+}
+
+#[test]
+fn infer_work_surface_hint_marks_chat_as_reference_only_mode() {
+    let payload = infer_work_surface_hint(&context_for(BearProfile::Chat), BearProfile::Chat);
+    assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
+    assert!(payload["work_surface"]["note"]
+        .as_str()
+        .unwrap()
+        .contains("answer about relevant Bear work surfaces"));
+}

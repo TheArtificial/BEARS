@@ -247,5 +247,5 @@ Rejected because it weakens the core multi-agent memory invariants.
 
 - [BEARS Multi-Agent Architecture for Letta-Backed Coding Agents](multi-agent-architecture.md)
 - [BEARS Multi-Agent Bear Spec](../../../services/den/docs/bear-spec.md)
-- [Implementation Plan: BEARS Multi-Agent Architecture](../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md)
+- [Implementation Plan: BEARS Multi-Role Runtime](../roadmap/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md)
 - [MemFS sidecar operator runbook](../MEMFS_SIDECAR_RUNBOOK.md)

@@ -1,51 +1,33 @@
-pub mod acp_letta_events;
-pub mod acp_plan_mode;
-pub mod acp_runtime;
-pub mod acp_sessions;
-pub mod acp_tokens;
-pub mod acp_tool_turns;
-pub mod acp_tools;
-pub mod acp_turn_runner;
-pub mod acp_turn_controller;
-pub mod api_utils;
-pub mod archived_conversations;
-pub mod bears;
-pub mod bifrost;
-pub mod codepool;
-pub mod den_tools;
-#[cfg(test)]
-mod den_tools_descriptor_guidance_tests;
-#[cfg(test)]
-mod den_tools_memory_write_tests;
-#[cfg(test)]
-mod den_tools_session_info_tests;
-#[cfg(test)]
-mod den_tools_session_role_semantics_tests;
-#[cfg(test)]
-mod den_tools_work_surface_orientation_tests;
-#[cfg(test)]
-mod den_tools_work_surface_scaffold_tests;
-#[cfg(test)]
-mod den_tools_workflow_state_tests;
-pub mod email;
-pub mod letta;
-pub mod memory_manager_head;
-#[cfg(test)]
-mod memory_manager_head_append_markdown_tests;
-pub mod memory_proposals;
-pub mod pair_reflection;
-pub mod pair_turn;
-pub mod reflection_conductor;
-pub mod role_runtime;
-#[cfg(test)]
-mod role_runtime_tests;
-pub mod runtime_contracts;
-pub mod runtime_provider;
-#[cfg(test)]
-mod runtime_provider_tests;
-pub mod s3;
-pub mod tool_descriptor_guidance;
-pub mod turn_state;
-pub mod user;
-pub mod web_policy;
+// The native agent runtime moved to the `den-runtime` crate during the v1.4 split.
+// Modules below depend on it directly via `den_runtime::*` (the former flat
+// `pub use den_runtime::*` shims here were dropped in the final flip). What remains
+// in `core` are the den-binary-local subsystems.
+//
+// The ACP edge (`acp` + its runtime/tokens/turn_runner) lives in `den-acp` (v1.5
+// split); re-exported here so `crate::core::acp*` call sites (seeds, web) are
+// unchanged until those callers migrate off the binary-local path.
+pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
+// `api_utils`, `email`, and `user` moved to the shared edge foundation crate
+// `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
+// unchanged until the edges are extracted.
+pub use den_http::{api_utils, email, user};
+pub mod docket;
+pub mod sandbox;
+pub mod tools;
+pub use tools::tool_descriptor_guidance;
+pub use tools::web_policy;
 pub mod work_plans;
+
+// Cross-layer bridge tests: they exercise den_runtime modules together with
+// den-only modules (native_runtime / turn_controller), so they live here in the
+// `den` crate rather than in den-runtime. Relocated during the v1.4 runtime lift.
+#[cfg(test)]
+mod conversation_persistence_non_acp_bridge_tests;
+#[cfg(test)]
+mod reflection_conductor_bridge_tests;
+#[cfg(test)]
+mod reflection_conversations_bridge_tests;
+#[cfg(test)]
+mod runtime_bearwire_bridge_tests;
+#[cfg(test)]
+mod runtime_role_bridge_tests;

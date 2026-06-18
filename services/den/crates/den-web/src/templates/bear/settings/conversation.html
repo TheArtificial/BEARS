@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Conversation · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+<div class="box">
+<h2>Conversation</h2>
+<p><a href="/bear/{{ bear.slug }}/conversations">← Back to conversations</a></p>
+
+<dl>
+  <dt>Id</dt>
+  <dd><code>{{ conv.id }}</code></dd>
+  <dt>External id</dt>
+  <dd>{% if conv.external_conversation_id %}<code>{{ conv.external_conversation_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Title</dt>
+  <dd>{% if conv.current_title %}{{ conv.current_title | e }}{% else %}<em>Untitled</em>{% endif %}</dd>
+  <dt>ACP session</dt>
+  <dd>{% if conv.source_acp_session_id %}<code>{{ conv.source_acp_session_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Updated</dt>
+  <dd>{{ conv.updated_at }}</dd>
+</dl>
+
+<h3>Messages (latest 40)</h3>
+{% if message_rows and message_rows | length > 0 %}
+<table>
+  <thead><tr><th>#</th><th>Type</th><th>Role</th><th>Visibility</th><th>Preview</th></tr></thead>
+  <tbody>
+  {% for m in message_rows %}
+    <tr>
+      <td>{{ m.sequence_no }}</td>
+      <td>{{ m.message_type | e }}</td>
+      <td>{{ m.role | e }}</td>
+      <td>{{ m.visibility | e }}</td>
+      <td><pre style="white-space: pre-wrap; margin:0; max-height:6rem; overflow:auto;">{{ m.preview | e }}</pre></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No messages persisted.</em></p>
+{% endif %}
+</div>
+{% endblock %}

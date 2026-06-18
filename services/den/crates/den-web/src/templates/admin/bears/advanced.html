@@ -1,0 +1,56 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Advanced · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Advanced · {{ bear.name }}</h2>
+
+{% if message or letta_retry_message %}
+<p><strong>{{ (message or letta_retry_message) | e }}</strong></p>
+{% endif %}
+
+<h3>Diagnostics</h3>
+<dl>
+  <dt>Bear id</dt>
+  <dd><code>{{ bear.id }}</code></dd>
+  <dt>Runtime</dt>
+  <dd>{% if native_runtime %}Native (Den in-process){% else %}Letta-backed{% endif %}</dd>
+  <dt>Letta configured</dt>
+  <dd>{% if letta_configured %}yes{% else %}no{% endif %}</dd>
+  <dt>Created</dt>
+  <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
+  <dt>Updated</dt>
+  <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
+</dl>
+
+{% if stats %}
+<h3>SQLite memory file</h3>
+<dl>
+  <dt>Path</dt>
+  <dd><code>{{ stats.db_path | e }}</code></dd>
+  <dt>Exists</dt>
+  <dd>{% if stats.db_exists %}yes ({{ stats.db_size_bytes }} bytes){% else %}no{% endif %}</dd>
+  <dt>Records</dt>
+  <dd>{{ stats.record_count }}</dd>
+</dl>
+{% endif %}
+
+{% if not native_runtime and letta_configured %}
+<h3>Letta operations</h3>
+<form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="display:inline;">
+  <button type="submit">Retry Letta provisioning</button>
+</form>
+<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="display:inline; margin-left: 0.5rem;">
+  <button type="submit">Provision missing profiles</button>
+</form>
+{% elif not native_runtime %}
+<p><em>Letta is not configured.</em></p>
+{% endif %}
+
+{% if not native_runtime %}
+<p class="form-hint">Role and Letta details also appear on the <a href="/admin/bears/{{ bear.id }}/roles">Roles</a> page.</p>
+{% endif %}
+</div>
+{% endblock %}

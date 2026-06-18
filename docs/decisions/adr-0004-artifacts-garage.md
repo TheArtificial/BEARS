@@ -92,13 +92,13 @@ Deploy: create **both** buckets in Garage; scope keys to least privilege (Den se
 - **Den:** S3 client, presigned URLs, artifact registry table (optional) for query/GC, **GC job** (cron or queue worker).
 - **Letta Code / harness:** Tools that “save a file” **upload to artifacts bucket** via Den API or presigned URL; never persist large blobs in Letta DB.
 - **Routines:** Routine outputs that are files **land in artifacts bucket** with `routine_id` (and bear) in metadata — see [routines-automation.md](routines-automation.md).
-- **Phase 1:** Garage + artifacts bucket + metadata + GC may trail **first** chat path; document order in [PHASE1_BOOTSTRAP.md](../../planning/PHASE1_BOOTSTRAP.md).
+- **Phase 1:** Garage + artifacts bucket + metadata + GC may trail **first** chat path; document order in [PHASE1_BOOTSTRAP.md](../roadmap/PHASE1_BOOTSTRAP.md).
 
 ---
 
 ## References
 
 - [Garage Coolify deploy](../../../services/garage/COOLIFY_DEPLOY.md)
-- [PLAN.md — Artifacts and object storage](../../planning/PLAN.md#artifacts-and-object-storage-garage)
+- [PLAN.md — Artifacts and object storage](../roadmap/PLAN.md#artifacts-and-object-storage-garage)
 - [routines-automation.md](routines-automation.md)
 - [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md)

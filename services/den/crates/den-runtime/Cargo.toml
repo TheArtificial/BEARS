@@ -1,0 +1,49 @@
+[package]
+name = "den-runtime"
+version.workspace = true
+edition = "2021"
+
+# den-runtime: the native agent runtime (DEN_CRATE_SPLIT_PLAN.md v1.4). It owns the
+# agent loop, native provider/runtime, governance, bears provisioning, conversation
+# storage, reflection, and the runtime-side memory/llm glue. It consumes the tool
+# surface (`den_core::tools`) and the `den-docket`/`den-memory`/`den-llm` leaves, so
+# the edges (acp/api/web) and the thin `den` binary depend on it, not the reverse.
+# Modules are moved in incrementally; see the v1.4 extraction order in the roadmap.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production"]
+# Exposes runtime test helpers (e.g. record normalizers) to downstream crates' tests.
+test-util = []
+
+[dependencies]
+den-core = { path = "../den-core" }
+den-llm = { path = "../den-llm" }
+den-memory = { path = "../den-memory" }
+den-docket = { path = "../den-docket" }
+anyhow = "1.0"
+async-trait = "0.1.86"
+bytes = "1"
+futures = "0.3"
+indexmap = { version = "2.9.0", features = ["serde"] }
+rand = "0.9.1"
+regex = "1.11.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid"] }
+thiserror = "2.0.12"
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "^0.7", default-features = false }
+tracing = "0.1.41"
+url = "2.5.4"
+uuid = { version = "1", features = ["serde", "v4"] }
+base64 = "0.22"
+sha2 = "0.10"
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }
+serde_json = "1.0.138"

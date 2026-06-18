@@ -1,5 +1,7 @@
 # `bear_environment` Tool Contract
 
+> **Direction changed (2026-06).** The tool remains valid, but "harness-level / across harnesses" vocabulary is obsolete: there is one Den native loop. Read "harness" as the Den role runtime. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 This document defines the shared contract for the harness-level `bear_environment` tool.
 
 ## Summary

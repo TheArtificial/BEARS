@@ -808,6 +808,8 @@ Rejected for this boundary. GraphQL is useful for human UI queries and subscript
 
 ## Related documents
 
+- [ADR-0034: BearWire as the Den ↔ armature wire](adr-0034-bearwire-as-den-armature-wire.md) — decision to replace adapter-SSE with BearWire on the Den ↔ armature hop
+- [BearWire armature wire implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
 - [ACP Session Bindings](acp-session-bindings.md)
 - [ACP Conversation Resolver](acp-conversation-resolver.md)
 - [Tool Naming and Execution Strategy](tool-naming-and-execution-strategy.md)
@@ -816,8 +818,8 @@ Rejected for this boundary. GraphQL is useful for human UI queries and subscript
 - [Semantic Bear Memory](semantic-bear-memory.md)
 - [Reflection System](reflection-system.md)
 - [Bear MCP Services](mcp-services.md)
-- [ACP direct local tool runtime implementation plan](../../planning/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
-- [ACP Adapter Improvement Plan](../../planning/ACP_ADAPTER_IMPROVEMENT_PLAN.md)
+- [ACP direct local tool runtime implementation plan](../roadmap/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
+- [ACP Adapter Improvement Plan](../roadmap/ACP_ADAPTER_IMPROVEMENT_PLAN.md)
 - [BEARS and Den](../../concepts/BEARS_AND_DEN.md)
 - [Identity and Membership](../../concepts/IDENTITY_AND_MEMBERSHIP.md)
 - [Agent and Bear Environments](../../concepts/AGENT_AND_BEAR_ENVIRONMENTS.md)

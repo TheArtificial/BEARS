@@ -39,5 +39,6 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
 # a devcontainer launcher does not apply `containerEnv` at container-create time.
 ENV OPENCODE_AUTH_PATH=/root/.local/share/opencode/auth.json \
     DATABASE_URL=postgres://bears:bears@bears-postgres:5432/den?sslmode=disable \
-    LETTA_PG_URI=postgresql://bears:bears@bears-letta-postgres:5432/letta \
+    AGENT_RUNTIME=native \
+    LLM_API_URL=http://bears-bifrost:8080/v1 \
     MEMORY_SERVE_QUIET=1

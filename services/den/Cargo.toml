@@ -1,11 +1,96 @@
 [package]
 name = "den"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 [features]
-production = []
+production = ["den-core/production", "den-runtime/production", "den-http/production", "den-api/production", "den-web/production", "den-bearwire/production"]
 web-ui-fixtures = []
+
+# Cargo workspace root. The `den` binary stays the root package; extracted
+# member crates (den-core, den-llm, ...) land under `crates/` per
+# docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
+[workspace]
+resolver = "2"
+members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-acp", "crates/den-api", "crates/den-web", "crates/den-bearwire"]
+
+[workspace.package]
+version = "0.1.1"
+
+[lints]
+workspace = true
+
+# Gating clippy baseline (DEN_CRATE_SPLIT_PLAN.md v2): pedantic/nursery are
+# `deny`, enforced by the clippy gate (scripts/lint.sh, CI). The allow-list below
+# curates the opinionated/stylistic/false-positive-prone lints we intentionally
+# do not enforce; everything else in both groups now gates.
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# Noisy / low-signal pedantic lints.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+if_not_else = "allow"
+single_match_else = "allow"
+match_same_arms = "allow"
+unnested_or_patterns = "allow"
+redundant_closure_for_method_calls = "allow"
+map_unwrap_or = "allow"
+uninlined_format_args = "allow"
+struct_excessive_bools = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+# Context/builder functions legitimately take many params; de-stringify
+# (DEN_CRATE_SPLIT_PLAN v0 #4) bundles some into typed structs over time.
+too_many_arguments = "allow"
+# Noisy / false-positive-prone nursery lints.
+option_if_let_else = "allow"
+missing_const_for_fn = "allow"
+significant_drop_tightening = "allow"
+redundant_pub_crate = "allow"
+use_self = "allow"
+cognitive_complexity = "allow"
+branches_sharing_code = "allow"
+
+# v2 gating allow-list: opinionated/stylistic lints we deliberately do not
+# enforce. Each would otherwise churn signatures, restructure docs, or lose
+# forward-compat for marginal value; the remainder of pedantic/nursery gates.
+needless_pass_by_value = "allow"        # ownership-transfer APIs are intentional
+manual_let_else = "allow"               # `match` forms are fine and clearer in places
+default_trait_access = "allow"          # `Default::default()` is clear in context
+items_after_statements = "allow"        # local fn/item placement is a style choice
+unused_async = "allow"                  # async kept for trait/API shape consistency
+unreadable_literal = "allow"            # separators add noise to IDs/test constants
+unnecessary_wraps = "allow"             # uniform Result/Option signatures across a family
+trivially_copy_pass_by_ref = "allow"    # by-ref kept for signature consistency
+struct_field_names = "allow"            # field prefixes/suffixes aid readability
+match_wildcard_for_single_variants = "allow" # `_` arms are deliberate forward-compat
+ref_option = "allow"                    # `&Option<T>` is fine at these call sites
+unused_self = "allow"                   # method form kept for API consistency
+single_option_map = "allow"            # low-signal nursery style lint
+many_single_char_names = "allow"        # terse locals in metric aggregation
+case_sensitive_file_extension_comparisons = "allow"
+format_push_string = "allow"            # `push_str(&format!(..))` reads clearly
+used_underscore_binding = "allow"
+used_underscore_items = "allow"
+pub_underscore_fields = "allow"
+too_long_first_doc_paragraph = "allow"  # doc-prose shape is an author choice
+needless_for_each = "allow"             # macro-expansion false positive (utoipa)
+needless_pass_by_ref_mut = "allow"      # `&mut self` kept for API symmetry
+useless_let_if_seq = "allow"            # imperative let/if reads clearly in places
+needless_collect = "allow"              # explicit intermediates aid readability in tests
+# Native async fn in trait (see traits v2 change) intentionally yields non-Send
+# futures consumed in single-threaded contexts; real spawn-Send violations still
+# surface as hard compile errors at the spawn site.
+future_not_send = "allow"
 
 [profile.dev]
 # Optimize for faster linking in development
@@ -52,6 +137,16 @@ lto = "thin"
 codegen-units = 16
 
 [dependencies]
+den-core = { path = "crates/den-core" }
+den-llm = { path = "crates/den-llm" }
+den-memory = { path = "crates/den-memory" }
+den-docket = { path = "crates/den-docket" }
+den-runtime = { path = "crates/den-runtime" }
+den-http = { path = "crates/den-http" }
+den-acp = { path = "crates/den-acp" }
+den-api = { path = "crates/den-api" }
+den-bearwire = { path = "crates/den-bearwire" }
+den-web = { path = "crates/den-web" }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 anyhow = "1.0"
 async-trait = "0.1.86"
@@ -61,7 +156,7 @@ axum-login = "0.17.0"
 # tower-sessions-postgres-store = "0.1.1"
 # tower-sessions-moka-store = "0.15.0"
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid"] }
 futures = "0.3"
 minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
 # minijinja-autoreload = "2.5.0"  # Only needed in development
@@ -84,11 +179,9 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 # opentelemetry_sdk = "0.29.0"
 validator = { version = "0.20", features = ["derive"] }
 serde_json = "1.0.138"
-serde_yaml = "0.9"
 uuid = { version = "1", features = ["serde", "v4"] }
 dotenvy = "0.15.7"
 minijinja-embed = "2.7.0"
-axum-embed = "0.1.0"
 memory-serve = "1.2.2"
 url = "2.5.4"
 rand = "0.9.1"
@@ -102,17 +195,18 @@ jsonwebtoken = "9.3.0"
 sha2 = "0.10"
 base64 = "0.22"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
 rusty-s3 = "0.8"
 
 [dev-dependencies]
+den-core = { path = "crates/den-core", features = ["test-util"] }
+den-runtime = { path = "crates/den-runtime", features = ["test-util"] }
 serde_json = "1.0.138"
 http-body-util = "0.1"
 minijinja-autoreload = "2.5.0"  # Development-only template reloading
 tower = { version = "0.5.2", features = ["util"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 
 [build-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 minijinja-embed = "2.7.0"
 time = { version = "0.3.37", features = ["formatting"] }

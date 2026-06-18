@@ -77,7 +77,7 @@ done
 printf 'export PATH="%s/bin:$PATH"\n' "${CARGO_HOME}" > /etc/profile.d/cargo.sh
 chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
 
-install_bears_acp_adapter_binary() {
+install_bear_armature_binary() {
   local url="$1"
   local install_dir="$2"
   local expected_sha256="${3:-}"
@@ -85,7 +85,7 @@ install_bears_acp_adapter_binary() {
   local tmp actual_sha256 actual_size
 
   tmp="$(mktemp)"
-  echo "bears-acp-adapter: downloading ${url}"
+  echo "bear-armature: downloading ${url}"
   if ! curl -fsSL "${url}" -o "${tmp}"; then
     rm -f "${tmp}"
     return 1
@@ -95,7 +95,7 @@ install_bears_acp_adapter_binary() {
     actual_size="$(wc -c < "${tmp}" | tr -d '[:space:]')"
     if [ "${actual_size}" != "${expected_size}" ]; then
       rm -f "${tmp}"
-      echo "bears-acp-adapter: size mismatch for ${url}: expected ${expected_size}, got ${actual_size}" >&2
+      echo "bear-armature: size mismatch for ${url}: expected ${expected_size}, got ${actual_size}" >&2
       return 1
     fi
   fi
@@ -104,7 +104,7 @@ install_bears_acp_adapter_binary() {
     actual_sha256="$(sha256sum "${tmp}" | awk '{print $1}')"
     if [ "${actual_sha256}" != "${expected_sha256}" ]; then
       rm -f "${tmp}"
-      echo "bears-acp-adapter: SHA-256 mismatch for ${url}: expected ${expected_sha256}, got ${actual_sha256}" >&2
+      echo "bear-armature: SHA-256 mismatch for ${url}: expected ${expected_sha256}, got ${actual_sha256}" >&2
       return 1
     fi
   fi
@@ -112,54 +112,86 @@ install_bears_acp_adapter_binary() {
   chmod 0755 "${tmp}"
   if ! "${tmp}" --help >/dev/null; then
     rm -f "${tmp}"
-    echo "bears-acp-adapter: downloaded binary failed to run on this system; leaving any existing install untouched" >&2
+    echo "bear-armature: downloaded binary failed to run on this system; leaving any existing install untouched" >&2
     return 1
   fi
 
   mkdir -p "${install_dir}"
-  install -m 0755 "${tmp}" "${install_dir}/bears-acp-adapter"
+  install -m 0755 "${tmp}" "${install_dir}/bear-armature"
+  ln -sf "${install_dir}/bear-armature" "${install_dir}/bears-acp-adapter"
   rm -f "${tmp}"
-  echo "bears-acp-adapter: installed to ${install_dir}/bears-acp-adapter"
+  echo "bear-armature: installed to ${install_dir}/bear-armature (symlink: ${install_dir}/bears-acp-adapter)"
 }
 
-install_bears_acp_adapter_from_source() {
+install_bear_armature_from_source() {
   local install_dir="$1"
-  if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
-    echo "bears-acp-adapter: falling back to local source build" >&2
-    if ! cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml; then
-      echo "bears-acp-adapter: locked source build failed; retrying without --locked so Cargo.lock can be refreshed for this checkout" >&2
-      cargo build --release --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
+  if [ -f /workspace/tools/bear-armature/Cargo.toml ]; then
+    echo "bear-armature: falling back to local source build" >&2
+    if ! cargo build --release --locked --manifest-path /workspace/tools/bear-armature/Cargo.toml; then
+      echo "bear-armature: locked source build failed; retrying without --locked so Cargo.lock can be refreshed for this checkout" >&2
+      cargo build --release --manifest-path /workspace/tools/bear-armature/Cargo.toml
     fi
-    ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
+    ln -sf /workspace/tools/bear-armature/target/release/bear-armature "${install_dir}/bear-armature"
+    ln -sf "${install_dir}/bear-armature" "${install_dir}/bears-acp-adapter"
   else
-    echo "bears-acp-adapter: set DEN_ACP_ADAPTER_MANIFEST_URL or install manually" >&2
+    echo "bear-armature: set BEAR_ARMATURE_MANIFEST_URL or install manually" >&2
   fi
 }
 
-install_bears_acp_adapter() {
-  local version="${DEN_ACP_ADAPTER_VERSION:-}"
-  local channel="${DEN_ACP_ADAPTER_CHANNEL:-stable}"
-  local install_dir="${DEN_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
-  local arch triple asset manifest_url manifest_tmp url sha256 size parsed_version cargo_version
+manifest_url_for_channel() {
+  local channel="$1"
+  local triple="$2"
+  if [ -n "${BEAR_ARMATURE_MANIFEST_URL:-}" ]; then
+    printf '%s\n' "${BEAR_ARMATURE_MANIFEST_URL}"
+    return 0
+  fi
+  if [ -n "${DEN_ACP_ADAPTER_MANIFEST_URL:-}" ]; then
+    printf '%s\n' "${DEN_ACP_ADAPTER_MANIFEST_URL}"
+    return 0
+  fi
+  if [ -n "${BEARS_ACP_ADAPTER_MANIFEST_URL:-}" ]; then
+    printf '%s\n' "${BEARS_ACP_ADAPTER_MANIFEST_URL}"
+    return 0
+  fi
+  printf 'https://bears-ai.github.io/bear-den/bear-armature/%s/%s.json\n' "${channel}" "${triple}"
+}
+
+legacy_manifest_url_for_channel() {
+  local channel="$1"
+  local triple="$2"
+  printf 'https://bears-ai.github.io/bear-den/bears-acp-adapter/%s/%s.json\n' "${channel}" "${triple}"
+}
+
+install_bear_armature() {
+  local version="${BEAR_ARMATURE_VERSION:-${DEN_ACP_ADAPTER_VERSION:-${BEARS_ACP_ADAPTER_VERSION:-}}}"
+  local channel="${BEAR_ARMATURE_CHANNEL:-${DEN_ACP_ADAPTER_CHANNEL:-${BEARS_ACP_ADAPTER_CHANNEL:-stable}}}"
+  local install_dir="${BEAR_ARMATURE_INSTALL_DIR:-${DEN_ACP_ADAPTER_INSTALL_DIR:-${BEARS_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}}}"
+  local arch triple asset manifest_url manifest_tmp legacy_manifest_url url sha256 size parsed_version cargo_version
 
   arch="$(uname -m)"
   case "${arch}" in
     x86_64|amd64) triple="x86_64-unknown-linux-gnu" ;;
     aarch64|arm64) triple="aarch64-unknown-linux-gnu" ;;
-    *) echo "bears-acp-adapter: unsupported Linux architecture: ${arch}" >&2; return 0 ;;
+    *) echo "bear-armature: unsupported Linux architecture: ${arch}" >&2; return 0 ;;
   esac
 
-  asset="bears-acp-adapter-${triple}"
+  asset="bear-armature-${triple}"
+  legacy_asset="bears-acp-adapter-${triple}"
   cargo_version=""
-  if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
-    cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' /workspace/tools/bears-acp-adapter/Cargo.toml | head -n 1)"
+  if [ -f /workspace/tools/bear-armature/Cargo.toml ]; then
+    cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' /workspace/tools/bear-armature/Cargo.toml | head -n 1)"
   fi
 
   if [ -z "${version}" ]; then
-    manifest_url="${DEN_ACP_ADAPTER_MANIFEST_URL:-https://bears-ai.github.io/bear-den/bears-acp-adapter/${channel}/${triple}.json}"
+    manifest_url="$(manifest_url_for_channel "${channel}" "${triple}")"
     manifest_tmp="$(mktemp)"
-    echo "bears-acp-adapter: checking ${channel} manifest ${manifest_url}"
-    if curl -fsSL "${manifest_url}" -o "${manifest_tmp}"; then
+    echo "bear-armature: checking ${channel} manifest ${manifest_url}"
+    if ! curl -fsSL "${manifest_url}" -o "${manifest_tmp}"; then
+      legacy_manifest_url="$(legacy_manifest_url_for_channel "${channel}" "${triple}")"
+      echo "bear-armature: trying legacy manifest ${legacy_manifest_url}" >&2
+      curl -fsSL "${legacy_manifest_url}" -o "${manifest_tmp}" || true
+    fi
+    if [ -s "${manifest_tmp}" ]; then
       if mapfile -t manifest_values < <(python3 - "${manifest_tmp}" "${triple}" <<'PY'
 import json
 import sys
@@ -183,27 +215,50 @@ PY
         url="${manifest_values[1]:-}"
         sha256="${manifest_values[2]:-}"
         size="${manifest_values[3]:-}"
-        echo "bears-acp-adapter: installing ${asset} version ${parsed_version:-unknown} from update manifest"
-        if install_bears_acp_adapter_binary "${url}" "${install_dir}" "${sha256}" "${size}"; then
+        echo "bear-armature: installing ${asset} version ${parsed_version:-unknown} from update manifest"
+        if install_bear_armature_binary "${url}" "${install_dir}" "${sha256}" "${size}"; then
           rm -f "${manifest_tmp}"
           return 0
         fi
       else
-        echo "bears-acp-adapter: could not parse update manifest ${manifest_url}" >&2
+        echo "bear-armature: could not parse update manifest ${manifest_url}" >&2
       fi
     else
-      echo "bears-acp-adapter: update manifest download failed for ${manifest_url}" >&2
+      echo "bear-armature: update manifest download failed for ${manifest_url}" >&2
     fi
     rm -f "${manifest_tmp}"
     version="${cargo_version:-0.1.0}"
   fi
 
-  url="https://github.com/bears-ai/bear-den/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
-  echo "bears-acp-adapter: installing ${asset} from release fallback ${url}"
-  if ! install_bears_acp_adapter_binary "${url}" "${install_dir}"; then
-    echo "bears-acp-adapter: release download failed for ${url}" >&2
-    install_bears_acp_adapter_from_source "${install_dir}"
+  url="https://github.com/bears-ai/bear-den/releases/download/bear-armature%2Fv${version}/${asset}"
+  echo "bear-armature: installing ${asset} from release ${url}"
+  if ! install_bear_armature_binary "${url}" "${install_dir}"; then
+    legacy_url="https://github.com/bears-ai/bear-den/releases/download/bears-acp-adapter%2Fv${version}/${legacy_asset}"
+    echo "bear-armature: trying legacy release ${legacy_url}" >&2
+    if ! install_bear_armature_binary "${legacy_url}" "${install_dir}"; then
+      echo "bear-armature: release download failed" >&2
+      install_bear_armature_from_source "${install_dir}"
+    fi
   fi
 }
 
-install_bears_acp_adapter
+install_bear_armature
+
+if [ -x /workspace/scripts/ensure-dev-env.sh ]; then
+  /workspace/scripts/ensure-dev-env.sh
+fi
+
+if [ -x /workspace/scripts/install-git-hooks.sh ]; then
+  /workspace/scripts/install-git-hooks.sh
+fi
+
+if [ -f /workspace/scripts/load-env.sh ]; then
+  cat >/etc/profile.d/bears-workspace-env.sh <<'EOF'
+# Load /workspace/.env for interactive shells in the devcontainer.
+if [ -f /workspace/scripts/load-env.sh ]; then
+  # shellcheck source=/workspace/scripts/load-env.sh
+  . /workspace/scripts/load-env.sh
+fi
+EOF
+  chmod 0644 /etc/profile.d/bears-workspace-env.sh
+fi

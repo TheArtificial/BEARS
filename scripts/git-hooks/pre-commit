@@ -1,0 +1,37 @@
+#!/bin/bash
+# Repository pre-commit checks.
+set -euo pipefail
+
+MAX_DELETES="${MAX_COMMIT_DELETES:-10}"
+AUTO_BUMP_DEN_PATCH="${AUTO_BUMP_DEN_PATCH:-$(git config --bool hooks.autoBumpDenPatch 2>/dev/null || true)}"
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  exit 0
+fi
+
+staged_deletes="$(
+  git diff --cached --name-status 2>/dev/null | awk '/^D/ { c++ } END { print c + 0 }'
+)"
+
+if [ "${staged_deletes}" -gt "${MAX_DELETES}" ]; then
+  cat >&2 <<EOF
+pre-commit: refusing commit with ${staged_deletes} staged file deletions (limit ${MAX_DELETES}).
+
+This usually means an agent tried to "remove deprecated" files in bulk.
+Review with: git diff --cached --name-status | awk '/^D/'
+To override once: MAX_COMMIT_DELETES=${staged_deletes} git commit ...
+EOF
+  exit 1
+fi
+
+case "${AUTO_BUMP_DEN_PATCH}" in
+  true|1|yes|on)
+    den_manifest="services/den/Cargo.toml"
+    if git diff --cached --quiet -- "${den_manifest}" && git diff --quiet -- "${den_manifest}"; then
+      ./scripts/bump-den-version.sh patch >&2
+      git add "${den_manifest}"
+    else
+      echo "pre-commit: ${den_manifest} already changed; skipping automatic Den patch bump" >&2
+    fi
+    ;;
+esac

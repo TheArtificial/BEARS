@@ -1,0 +1,60 @@
+//! Native profile reconcile outcome types shared by provision and admin UI.
+
+use serde::Serialize;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BearProfileSyncOutcome {
+    pub profile: String,
+    pub runtime_binding_id: Option<String>,
+    pub status: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BearSyncSummary {
+    pub bear_id: Uuid,
+    pub outcomes: Vec<BearProfileSyncOutcome>,
+}
+
+impl BearSyncSummary {
+    pub fn failed_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+        self.outcomes
+            .iter()
+            .filter(|o| o.status == "failed")
+            .collect()
+    }
+
+    pub fn skipped_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+        self.outcomes
+            .iter()
+            .filter(|o| o.status == "skipped_missing_binding")
+            .collect()
+    }
+
+    pub fn synced_count(&self) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|o| o.status == "synced")
+            .count()
+    }
+
+    pub fn diagnostic_message(&self) -> Option<String> {
+        let failed = self.failed_profiles();
+        if failed.is_empty() {
+            return None;
+        }
+        let parts = failed
+            .into_iter()
+            .map(|o| {
+                format!(
+                    "{} ({})",
+                    o.profile,
+                    o.message.as_deref().unwrap_or("unknown error")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(format!("Profile reconcile failed for: {parts}"))
+    }
+}

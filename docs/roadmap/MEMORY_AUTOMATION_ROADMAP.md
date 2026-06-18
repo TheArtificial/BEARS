@@ -1,16 +1,19 @@
 # Memory Automation Roadmap
 
+> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 
-This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curate governance, `core/`, Cabinet, task context, and Letta Archives.
+This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**.
 
 Related docs:
 
 - [Pair Reflection and Work Memory Sharing Plan](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — focused pair→curate→work boundary design.
-- [Curate Memory Governance Plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
+- [Memory Curation Plan](MEMORY_CURATION_PLAN.md) — focused memory proposal and core-write curation design.
 - [Reflection System Shared Infrastructure Plan](REFLECTION_SYSTEM_PLAN.md) — queue, runner, scheduler, and shared control-plane design.
 - [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
-- [Memory Model](../concepts/MEMORY_MODEL.md)
+- [Memory Model](../concepts/../architecture/memory-model.md)
 
 ---
 
@@ -18,12 +21,13 @@ Related docs:
 
 ```text
 pair learns useful workplace knowledge
-→ pair writes role-local memory
+→ pair writes role-local memory (per-Bear SQLite)
 → pair reflection summarizes/consolidates pair memory
-→ pair reflection creates `bear_memory_proposals`
-→ queued `memory_curate` reflection run processes proposals
-→ curate updates core / indexes archives / prepares task context / creates Cabinet proposals
-→ work receives approved task context and can search permitted archives
+→ pair reflection creates memory proposals
+→ archive_harvest mines older closed sessions for more candidates
+→ queued `memory_curate` reflection run resolves proposals (dedup + supersession)
+→ curate updates core / requests recall indexing / prepares task context / creates Cabinet proposals
+→ work receives approved task context and can search permitted recall scopes
 ```
 
 `work` must never read raw `pair/`. It should benefit through curated channels only.
@@ -55,7 +59,7 @@ Pair reflection should immediately feed curation without waiting for manual huma
 
 ---
 
-## P1 — Automated curate conductor
+## P1 — Automated curation conductor
 
 ### Goal
 
@@ -129,7 +133,7 @@ A memory-review cycle should:
 
 1. Load pending proposals.
 2. Resolve or create the daily curate conversation.
-3. Prompt the curate role with bounded context.
+3. Prompt the `curate` role with bounded context.
 4. Allow only approved Den memory/proposal tools.
 5. Record cycle state and outputs.
 6. Surface cycle activity in UI.
@@ -202,70 +206,65 @@ May create memory proposals.
 
 ---
 
-## P3 — Letta Archive indexing
+## P2.5 — Proactive archive harvest (`archive_harvest`)
 
 ### Goal
 
-Use Letta Archives as semantic retrieval indexes over canonical BEARS sources without introducing a BEARS vector store.
+Turn closed session archives into durable memory candidates, not just the active session. This is the [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) `archive_harvest` Reflection lane.
 
-### Archive types
+### Behavior
 
-| Archive | Purpose |
-|---|---|
-| Bear curated archive | Semantic recall over selected `core/`, approved proposal outcomes, durable summaries. |
-| Cabinet Mission archive | Optional cross-Bear semantic recall for Cabinet Missions. |
-| Role-local archive | Optional later role-specific long-tail recall; not for duplicating `core/`. |
+- Scan **un-mined** conversations and compaction artifacts; run an **extraction-first** pass that distills durable facts/decisions/preferences/lessons and discards filler.
+- Emit memory proposals (candidate durable entries) with provenance back to source `conversation_messages`; do not write `core/` (that is `memory_curate`).
+- Apply a quality/confidence filter before a candidate becomes a proposal (guards against hallucination propagation).
+
+### Triggers
+
+- `session_archived`;
+- `cumulative_salience_threshold`;
+- throttled/adaptive heartbeat (never a fixed cron).
 
 ### Data model
 
-Add `bear_archives`:
+Add `memory_harvest_marks` (per-Bear SQLite) for idempotency: `source_kind` (`conversation` | `compaction_artifact` | `observation` | `pair_summary`), `source_ref`, `source_hash`, `harvested_at`, `run_id`, `proposal_ids_json`. Never re-harvest an unchanged source. See [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas.
 
-- `id`
-- `bear_id`
-- `archive_id`
-- `archive_kind`
-  - `bear_curated`
-  - `cabinet_mission`
-  - `role_local`
-- `mission_ref null`
-- `role null`
-- `created_at`
-- `updated_at`
+### Constraints
 
-Add `bear_archive_index_entries`:
-
-- `bear_id`
-- `archive_id`
-- `passage_id`
-- `canonical_kind`
-- `canonical_id`
-- `source_uri`
-- `source_path`
-- `source_role`
-- `source_version`
-- `source_hash`
-- `chunk_key`
-- `chunk_index`
-- `text_hash`
-- `metadata jsonb`
-- `tags text[]`
-- `indexed_at`
-- `deleted_at`
-
-### Sync behavior
-
-- unchanged source hash: no-op;
-- changed source hash: delete old passage, create new passage;
-- deleted canonical source: delete passage, mark index row deleted;
-- search results should point back to canonical sources.
-
-### Write boundary
-
-Shared archive writes go through Den/curate indexing workflows. Role agents should not collaboratively maintain shared archives.
+- transcripts are source material, never auto-promoted to memory;
+- bounded token budget per run;
+- feeds `memory_curate` for dedup, supersession, and promotion.
 
 ---
 
-## P4 — Semantic archive search for work
+## P3 — Derived recall indexing (`archive_index`)
+
+### Goal
+
+Maintain a **derived Qdrant recall index** over canonical SQLite (and Cabinet) sources ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). This replaces Letta Archives. Vectors are derived and rebuildable; SQLite remains canonical.
+
+### What is indexed
+
+Per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §4: `visibility=normal` shared records and role-local `note`/`decision`/`summary` (**latest head only**, respecting `supersedes_memory_id`); approved proposal outcomes; Cabinet material where approved. Excluded by default: `scratch`, raw `log` streams, pending proposals/observations, superseded bodies, and transcripts.
+
+### Data model (passage registry, not vectors)
+
+Vectors live in **Qdrant**; Den **Postgres** holds passage-registry metadata only ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §3): passage id, `embedding_standard`, `source_class`, canonical source ids, `content_hash`, chunk bounds, `indexed_at`, supersession/delete state. Detailed schema lives in the [Derived recall index implementation plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
+
+### Sync behavior
+
+- unchanged `content_hash`: no-op;
+- changed `content_hash`: re-embed and replace the passage;
+- superseded/deleted canonical source: delete passages by source id + hash;
+- bear package import rebuilds vectors from `memory.sqlite`; vectors are never shipped;
+- search results point back to canonical sources.
+
+### Write boundary
+
+Indexing runs through Den/curate workflows; role agents do not maintain the shared index. `archive_harvest` produces canonical records; `archive_index` indexes them — the two lanes stay separate.
+
+---
+
+## P4 — Semantic recall search for work
 
 ### Goal
 
@@ -273,43 +272,32 @@ Allow `work` to benefit from curated pair/curate learning without reading raw `p
 
 ### Tool
 
-Canonical:
-
-```text
-den.memory.semantic_search
-```
-
-Provider:
-
-```text
-memory_semantic_search
-```
+Upgrade `memory_search` to **hybrid** (vector recall over Qdrant when configured, else SQL `LIKE`), ranked by `recency × relevance × importance` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); degrade gracefully to anchors + `LIKE` when Qdrant is unavailable. An optional `den.memory.recall` / `memory_recall` may be added if a dedicated recall entry point is preferred over overloading `memory_search`.
 
 ### Work policy
 
 `work` may search:
 
-- Bear curated archive;
-- Cabinet Mission archives attached to the task/Bear;
-- task-permitted Cabinet/Archive scopes.
+- shared `core/` recall;
+- Cabinet Mission recall scopes attached to the task/Bear;
+- task-permitted Cabinet/recall scopes.
 
 `work` must not search:
 
-- raw pair-local archives unless explicitly curated/attached;
-- raw `pair/` MemFS;
-- unrelated Bear archives.
+- raw role-local memory of other roles unless explicitly curated/attached;
+- raw `pair/`;
+- unrelated Bears (ACL by membership + identity scope, [ADR-0015](../decisions/adr-0015-multi-user-memory.md)).
 
 ### Outputs
 
-Search results must include:
+Recall results must include:
 
 - passage snippet;
-- archive id/kind;
-- canonical id;
-- source URI/path;
-- source hash/version;
-- tags;
-- instruction to fetch canonical source when exact truth matters.
+- `source_class` and canonical id;
+- source path/ref;
+- `content_hash`/version;
+- relevance score;
+- instruction to fetch the canonical source when exact truth matters.
 
 ---
 
@@ -337,7 +325,7 @@ pair memory / pair reflection
    - curated summary;
    - source refs;
    - relevant `core/` paths;
-   - permitted archive refs;
+   - permitted recall scopes;
    - explicit scope and tools.
 4. UI shows which pair-derived memory informed a task.
 
@@ -358,11 +346,11 @@ Keep shared memory clean and searchable.
 
 ### Deliverables
 
-1. `memory_apply_core_update` supports bounded append/create/replace workflows.
-2. Curate can compact `core/` files/sections.
-3. Curate can index curated summaries into Bear Archive.
-4. UI shows source proposal → core path → archive passage mapping.
-5. Revert/rollback flow is designed for bad shared memory updates.
+1. `memory_apply_core_update` supports bounded append/create/replace workflows, writing new SQLite records and setting `supersedes_memory_id` on replace ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).
+2. Curate can compact `core/` records/sections via supersession (not destructive overwrite).
+3. Curate can request recall indexing of curated summaries (`archive_index`).
+4. UI shows source proposal → `core/` record → recall passage mapping.
+5. Revert/rollback flow is designed for bad shared memory updates (supersession chain is the audit trail).
 
 ---
 
@@ -385,11 +373,12 @@ Humans should see what the system is doing and override when necessary, without 
 
 ## Immediate next implementation sequence
 
-1. ✅ Pair reflection creates a `bear_memory_proposals` row and enqueues a `memory_curate` run.
+1. ✅ Pair reflection creates a memory proposal and enqueues a `memory_curate` run.
 2. ✅ Add lane-neutral `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations` storage.
-3. Next: add manual/queued conductor runner for the `memory_curate` lane.
-4. Next: surface generated proposals and queued reflection runs in UI.
-5. Later: add model-assisted pair reflection.
-6. Later: add Bear curated archive provisioning and index table.
-7. Add `memory_semantic_search` for curate/pair/work by policy.
-8. Add work task context bridge.
+3. Next: **tool exposure** — decide the per-profile memory roster so user-facing bears actually have memory tools (see [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)); align `session_info.memory.available_tools` with the real roster.
+4. Next: add manual/queued conductor runner for the `memory_curate` lane.
+5. Next: surface generated proposals and queued reflection runs in UI.
+6. Next: apply [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, begin writing `supersedes_memory_id`, `memory_harvest_marks`).
+7. Then: add model-assisted pair reflection (P2) and the `archive_harvest` lane (P2.5).
+8. Then: stand up the derived Qdrant recall index (P3, [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)) and hybrid scored `memory_search` (P4).
+9. Then: work task context bridge (P5).

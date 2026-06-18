@@ -1,17 +1,22 @@
 //! Library surface for integration tests and embedding. The binary entrypoint is [`run`].
 //!
-//! Clippy: broad suppressions live on the largest legacy modules (for example [`crate::api::oauth`]);
+//! Clippy: broad suppressions live on the largest legacy modules (for example `den_oauth::oauth`);
 //! prefer fixing warnings locally and shrinking those module allows over time.
-pub mod api;
-pub mod auth_backend;
-pub mod build_info;
-pub mod config;
+// The API + ACP edge moved to the `den-api` crate (v1.5 split). Re-exported as
+// `crate::api` so the remaining binary call sites (run/web/seeds) resolve unchanged.
+pub use den_api as api;
+pub use den_core::config;
+pub use den_http::auth_backend;
+pub use den_http::build_info;
 pub mod core;
-pub mod errors;
-pub mod observability;
+pub use den_http::errors;
+pub mod import_memfs;
+pub mod reindex;
 pub mod seeds;
 pub mod startup;
-pub mod web;
+// The web edge (server-rendered UI + /v1) moved to the `den-web` crate (v1.5
+// split). Re-exported as `crate::web` so the binary's `run()` resolves unchanged.
+pub use den_web as web;
 
 use crate::config::Config;
 use crate::startup::{
@@ -65,6 +70,14 @@ pub async fn run() -> Result<(), StartupError> {
         .with(tracing_subscriber::fmt::layer())
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))?;
+
+    // Inject the concrete builtin-Den-tool invoker into the api/ACP edge. The edge
+    // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
+    // composition lives here in the binary (`core::tools`), so we install it at the
+    // composition root before any request can execute a tool.
+    den_runtime::native_runtime::set_tool_invoker(Arc::new(
+        crate::core::tools::runtime_invoker::DenRuntimeToolInvoker,
+    ));
 
     let build = crate::build_info::snapshot();
     tracing::info!(
@@ -208,12 +221,26 @@ pub async fn run() -> Result<(), StartupError> {
         })?;
 
         let config_api = config.clone();
-        let api_app = api::create_api_app(sqlx_pool.clone(), session_store.clone(), config_api)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create API application: {}", e);
-                std::io::Error::other(e.to_string())
-            })?;
+        // Composition root: wire the peer HTTP edges together. den-api owns the
+        // JSON/REST + OAuth app; the ACP edge (den-acp) is injected here as peer
+        // routers so neither edge depends on the other (ADR-0043).
+        let mut peer_routers: Vec<(&'static str, axum::Router<den_acp::DenState>)> =
+            vec![("/internal", den_acp::internal::router())];
+        if config.acp_gateway_enabled {
+            peer_routers.push(("/acp", den_acp::acp::router()));
+            peer_routers.push(("/bearwire", den_bearwire::router()));
+        }
+        let api_app = api::create_api_app(
+            sqlx_pool.clone(),
+            session_store.clone(),
+            config_api,
+            peer_routers,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create API application: {}", e);
+            std::io::Error::other(e.to_string())
+        })?;
 
         task_set.spawn(async move {
             tracing::info!("API service started successfully");
@@ -238,16 +265,60 @@ pub async fn run() -> Result<(), StartupError> {
     };
 
     if let Some(token) = worker_token_opt.clone() {
-        let t = token.clone();
+        let t = token;
+        let worker_pool = sqlx_pool.clone();
+        let worker_config = config.clone();
         task_set.spawn(async move {
-            tracing::info!(
-                "Workers: idle until shutdown (this slim starter has no import/report jobs)"
-            );
-            t.cancelled().await;
-            Ok(())
+            tracing::info!("Workers: memory_curate runner loop enabled");
+            den_runtime::reflection_conductor::run_memory_curate_worker_loop(
+                worker_pool,
+                worker_config,
+                t,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .map_err(std::io::Error::other)
         });
     } else {
         tracing::info!("Workers disabled (RUN_WORKERS=false or not set)");
+    }
+
+    if let Some(token) = worker_token_opt.clone() {
+        if config.qdrant_url.is_some() {
+            let t = token;
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: recall_index runner loop enabled");
+                den_runtime::reflection_conductor::run_recall_index_worker_loop(
+                    worker_pool,
+                    worker_config,
+                    t,
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        } else {
+            tracing::info!("Workers: recall_index loop disabled (QDRANT_URL unset)");
+        }
+    }
+
+    if let Some(token) = worker_token_opt.clone() {
+        let t = token;
+        let worker_pool = sqlx_pool.clone();
+        let worker_config = config.clone();
+        task_set.spawn(async move {
+            tracing::info!("Workers: context_compact runner loop enabled");
+            den_runtime::reflection_conductor::run_context_compact_worker_loop(
+                worker_pool,
+                worker_config,
+                t,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .map_err(std::io::Error::other)
+        });
     }
 
     tracing::info!("All services started successfully. Waiting for shutdown signal...");
@@ -293,10 +364,10 @@ async fn shutdown_signal() {
         };
 
         tokio::select! {
-            _ = ctrl_c => {
+            () = ctrl_c => {
                 tracing::info!("Initiating graceful shutdown due to Ctrl+C");
             },
-            _ = terminate => {
+            () = terminate => {
                 tracing::info!("Initiating graceful shutdown due to SIGTERM");
             },
         }

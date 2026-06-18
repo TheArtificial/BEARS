@@ -1,0 +1,58 @@
+[package]
+name = "den-acp"
+version.workspace = true
+edition = "2021"
+
+# den-acp: the ACP (Agent Client Protocol) HTTP edge — the native ACP protocol
+# surface (`acp`), the residual session/token/runtime protocol modules under
+# `core::acp`, and `/internal/den-tools/invoke`. The shared `DenState` lives in
+# den-runtime (ADR-0043: state is protocol-neutral); `service` re-exports it for
+# path compatibility. It sits below den-api (which mounts the acp + internal
+# routers) and above den-oauth (bearer auth), den-http (errors/identity),
+# den-runtime (tool/runtime execution + DenState), den-docket (work plans), and
+# den-core.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production", "den-runtime/production", "den-http/production", "den-oauth/production"]
+
+[dependencies]
+den-core = { path = "../den-core" }
+den-docket = { path = "../den-docket" }
+den-http = { path = "../den-http" }
+den-oauth = { path = "../den-oauth" }
+den-runtime = { path = "../den-runtime" }
+anyhow = "1.0"
+async-trait = "0.1.86"
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum-extra = { version = "0.10.0", features = ["form", "query"] }
+axum-login = "0.17.0"
+base64 = "0.22"
+bytes = "1"
+futures = "0.3"
+jsonwebtoken = "9.3.0"
+password-auth = "1.0.0"
+rand = "0.9.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+thiserror = "2.0.12"
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+tracing = "0.1.41"
+url = "2.5.4"
+urlencoding = "2.1"
+utoipa = { version = "4.0", features = ["axum_extras"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+validator = { version = "0.20", features = ["derive"] }
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }
+den-runtime = { path = "../den-runtime", features = ["test-util"] }
+dotenvy = "0.15.7"
+serde_json = "1.0.138"

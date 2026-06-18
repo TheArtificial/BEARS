@@ -1,0 +1,310 @@
+use crate::runtime_contracts::{
+    RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
+    RuntimeStreamEvent,
+};
+use den_core::DenError;
+
+pub fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
+    match (lf, crlf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+pub fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
+    if frame.ends_with(b"\r\n\r\n") {
+        frame.truncate(frame.len().saturating_sub(4));
+    } else if frame.ends_with(b"\n\n") {
+        frame.truncate(frame.len().saturating_sub(2));
+    }
+    frame
+}
+
+pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, DenError> {
+    let text = std::str::from_utf8(body).map_err(|_| {
+        DenError::System(format!(
+            "invalid UTF-8 in continuation SSE event body ({} bytes)",
+            body.len()
+        ))
+    })?;
+    let mut chunks: Vec<&str> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let rest = rest.strip_prefix(' ').unwrap_or(rest);
+        chunks.push(rest);
+    }
+    let joined = chunks.join("\n");
+    let joined = joined.trim();
+    if joined.is_empty() || joined == "[DONE]" {
+        return Ok(None);
+    }
+    serde_json::from_str::<serde_json::Value>(joined)
+        .map(Some)
+        .map_err(|e| DenError::System(format!("invalid continuation SSE JSON: {e}")))
+}
+
+pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
+    let inner = match event.get("contents") {
+        Some(contents) if contents.get("message_type").is_some() => contents,
+        _ => event,
+    };
+    let message_type = inner
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    match message_type {
+        "ping" => None,
+        "assistant_message" => {
+            let text =
+                crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
+                    .or_else(|| {
+                        crate::gateway_events::provider_stream_text_preserving_whitespace(
+                            event,
+                        )
+                    })
+                    .unwrap_or_default();
+            Some(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::AssistantTextDelta { text },
+            ))
+        }
+        "reasoning_message" => {
+            let text = inner
+                .get("reasoning")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    event
+                        .get("reasoning")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
+                })
+                .or_else(|| {
+                    crate::gateway_events::provider_stream_text_preserving_whitespace(event)
+                })
+                .unwrap_or_default();
+            Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text,
+            }))
+        }
+        "error_message" => Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+            message: event
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Upstream error")
+                .to_string(),
+            detail: event
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            error_type: event
+                .get("error_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            request_id: event
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            context: event.get("context").cloned(),
+        })),
+        "stop_reason" => {
+            let stop_reason = inner
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
+                .unwrap_or("unknown");
+            if stop_reason == "end_turn" {
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                ))
+            } else if stop_reason == "requires_approval" {
+                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {
+                    reason: "awaiting_approval".to_string(),
+                    resume_token: None,
+                    expires_at: None,
+                }))
+            } else {
+                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+                    turn: None,
+                    category: crate::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
+                    message: format!(
+                        "Letta stopped before producing assistant output: {stop_reason}"
+                    ),
+                }))
+            }
+        }
+        "tool_call_message" | "approval_request_message" | "function_call" => Some(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                // The Letta tool-call SSE nests identity and arguments under `tool_call`
+                // (e.g. `{ "id": "approval-…", "tool_call": { "name", "tool_call_id",
+                // "arguments" } }`). Check the nested locations before top-level fallbacks,
+                // mirroring the legacy native mapper. Missing this dropped `tool_call_id`,
+                // which broke `/tool-results` delivery (every post was `late_result_ignored`).
+                tool_call_id: event
+                    .pointer("/tool_call/tool_call_id")
+                    .or_else(|| inner.pointer("/tool_call/tool_call_id"))
+                    .or_else(|| event.pointer("/tool_call/id"))
+                    .or_else(|| inner.pointer("/tool_call/id"))
+                    .or_else(|| event.pointer("/tool_call/function/tool_call_id"))
+                    .or_else(|| event.get("tool_call_id"))
+                    .or_else(|| inner.get("tool_call_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                tool_name: event
+                    .get("tool_name")
+                    .or_else(|| inner.get("tool_name"))
+                    .or_else(|| event.pointer("/tool_call/name"))
+                    .or_else(|| inner.pointer("/tool_call/name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                title: event
+                    .get("tool_title")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                kind: event
+                    .get("tool_kind")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                arguments: event
+                    .pointer("/tool_call/arguments")
+                    .or_else(|| inner.pointer("/tool_call/arguments"))
+                    .or_else(|| event.pointer("/tool_call/input"))
+                    .or_else(|| event.pointer("/tool_call/args"))
+                    .or_else(|| event.pointer("/tool_call/function/arguments"))
+                    .or_else(|| event.get("args"))
+                    .or_else(|| inner.get("args"))
+                    .or_else(|| event.get("arguments"))
+                    .or_else(|| inner.get("arguments"))
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+                approval_request_id: event
+                    .get("approval_request_id")
+                    .or_else(|| inner.get("approval_request_id"))
+                    .or_else(|| event.pointer("/tool_call/approval_request_id"))
+                    .or_else(|| event.get("id"))
+                    .or_else(|| inner.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                approval_required: message_type == "approval_request_message",
+                approval_reason: event
+                    .get("approval_reason")
+                    .or_else(|| inner.get("approval_reason"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                run_id: ["run_id", "message/run_id", "data/run_id", "run/id", "message/run/id", "data/run/id"]
+                    .into_iter()
+                    .find_map(|pointer| {
+                        event
+                            .pointer(&format!("/{pointer}"))
+                            .or_else(|| inner.pointer(&format!("/{pointer}")))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|run_id| !run_id.is_empty())
+                            .map(str::to_string)
+                    }),
+            }),
+        ),
+        _ => crate::gateway_events::conversation_resolved_gateway_event(event).map(
+            |evt| match evt {
+                crate::gateway_events::GatewayEvent::ConversationResolved {
+                    conversation_id,
+                } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
+                    conversation: crate::runtime_contracts::RuntimeConversationRef {
+                        id: conversation_id,
+                    },
+                }),
+                _ => unreachable!(),
+            },
+        ),
+    }
+}
+
+/// Adapt a provider SSE byte stream into Den semantic runtime events (used by native projection).
+pub fn runtime_byte_stream_to_event_stream(
+    mut parsed: RuntimeByteStream,
+    parser: RuntimeEventParser,
+) -> RuntimeEventStream {
+    let mut buffer = Vec::new();
+    let mut queued_events: std::collections::VecDeque<
+        Result<RuntimeStreamEvent, DenError>,
+    > = std::collections::VecDeque::new();
+    let mut finished = false;
+    let mut saw_terminal_or_pause = false;
+    let stream = futures::stream::poll_fn(move |cx| loop {
+        if let Some(item) = queued_events.pop_front() {
+            return std::task::Poll::Ready(Some(item));
+        }
+        if finished {
+            return std::task::Poll::Ready(None);
+        }
+        match parsed.as_mut().poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                buffer.extend_from_slice(&bytes);
+                while let Some(end) = find_sse_frame_end(&buffer) {
+                    let raw: Vec<u8> = buffer.drain(..end).collect();
+                    let frame_body = strip_trailing_sse_delimiter_owned(raw);
+                    match parse_sse_event_body_to_json(&frame_body) {
+                        Ok(Some(value)) => {
+                            if let Some(event) = (parser.parse_json_event)(&value) {
+                                if matches!(
+                                    &event,
+                                    RuntimeStreamEvent::Semantic(
+                                        RuntimeSemanticEvent::RunPaused { .. }
+                                            | RuntimeSemanticEvent::TurnCompleted { .. }
+                                            | RuntimeSemanticEvent::TurnFailed { .. }
+                                            | RuntimeSemanticEvent::TurnCancelled { .. }
+                                            | RuntimeSemanticEvent::Error { .. }
+                                    )
+                                ) {
+                                    saw_terminal_or_pause = true;
+                                }
+                                queued_events.push_back(Ok(event));
+                            } else {
+                                queued_events.push_back(Ok(
+                                    RuntimeStreamEvent::UntranslatedProviderEvent { value },
+                                ));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => queued_events.push_back(Err(err)),
+                    }
+                }
+            }
+            std::task::Poll::Ready(Some(Err(err))) => {
+                return std::task::Poll::Ready(Some(Err(err)));
+            }
+            std::task::Poll::Ready(None) => {
+                finished = true;
+                if buffer.is_empty() {
+                    if !saw_terminal_or_pause {
+                        queued_events.push_back(Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        )));
+                    }
+                } else {
+                    queued_events.push_back(Err(DenError::System(format!(
+                        "continuation SSE stream ended with incomplete frame ({} bytes)",
+                        buffer.len()
+                    ))));
+                }
+            }
+            std::task::Poll::Pending => return std::task::Poll::Pending,
+        }
+    });
+    Box::pin(stream)
+}

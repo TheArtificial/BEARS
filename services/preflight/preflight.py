@@ -114,23 +114,6 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     )
 
 
-def validate_letta_pg_uri(reachable: bool = True) -> None:
-    value = require_non_empty("LETTA_PG_URI")
-    parse_sql_uri("LETTA_PG_URI", value)
-    if urlparse(value).scheme == "postgres":
-        fail(
-            "LETTA_PG_URI uses postgres:// — use postgresql:// so Alembic registers "
-            "the SQLAlchemy driver (see services/letta/COOLIFY_DEPLOY.md)"
-        )
-    info("LETTA_PG_URI parses as PostgreSQL URI")
-    if reachable:
-        validate_sql_tcp_reachable(
-            "LETTA_PG_URI",
-            value,
-            "Deploy/attach Letta's Postgres/pgvector database and set LETTA_PG_URI to its reachable internal URL.",
-        )
-
-
 def validate_http_url(name: str, value: str) -> None:
     u = urlparse(value.strip())
     if u.scheme not in ("http", "https"):
@@ -247,45 +230,13 @@ def validate_config_shape() -> None:
     info("checking required secrets and URI-shaped environment variables")
 
     require_non_empty("JWT_SECRET")
-    require_non_empty("LETTA_SERVER_PASS")
-    info("JWT_SECRET and LETTA_SERVER_PASS are set")
+    info("JWT_SECRET is set")
 
     validate_database_url(reachable=False)
-    validate_letta_pg_uri(reachable=False)
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
-
-    letta_base = (
-        os.environ.get("LETTA_BASE_URL", "").strip() or "http://bears-letta:8283"
-    )
-    validate_http_url("LETTA_BASE_URL", letta_base)
-    info(f"LETTA_BASE_URL OK ({letta_base})")
-
-    memfs = (
-        os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip()
-        or "http://bears-memfs-manager:8285"
-    )
-    validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
-    info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
-
-    memfs_org = os.environ.get(
-        "MEMFS_DEFAULT_ORG", "org-00000000-0000-4000-8000-000000000000"
-    ).strip()
-    if memfs_org == "org-default":
-        fail(
-            "MEMFS_DEFAULT_ORG must not use the old placeholder 'org-default'; set it to Letta's org id or leave it unset for the default self-hosted org."
-        )
-    if not memfs_org.startswith("org-"):
-        fail("MEMFS_DEFAULT_ORG must look like a Letta org id (prefix 'org-')")
-    info(f"MEMFS_DEFAULT_ORG OK ({memfs_org})")
-
-    codepool_base = (
-        os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bears-codepool:3030"
-    )
-    validate_http_url("CODEPOOL_BASE_URL", codepool_base)
-    info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
 
     web = require_non_empty("WEB_SERVER_URL")
     validate_http_url("WEB_SERVER_URL", web)
@@ -306,17 +257,12 @@ def main() -> None:
         validate_config_shape()
     elif mode == "den-db":
         validate_database_url(reachable=True)
-    elif mode == "letta-pg":
-        validate_letta_pg_uri(reachable=True)
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        validate_letta_pg_uri(reachable=True)
         info("all preflight checks passed")
     else:
-        fail(
-            f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all"
-        )
+        fail(f"unknown preflight mode {mode!r}; expected config, den-db, or all")
 
 
 if __name__ == "__main__":

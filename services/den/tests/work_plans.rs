@@ -3,15 +3,19 @@
 use den::{
     config::Config,
     core::{
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
-        den_tools::{self, DenToolInvocationContext, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
+        docket::{DocketService, PgDocketService},
+        tools::{
+            constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
+            session::{invoke_den_tool, DenToolInvocationContext},
+        },
         work_plans::{
-            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,
-            WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
+            WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus, WorkPlanUpdate,
+            WorkPlanUpsert, WorkPlanVisibility,
         },
     },
     startup::run_sqlx_migrations,
 };
+use den_runtime::bears::{db as bears_db, db::BearParams, BearProfile};
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -27,11 +31,11 @@ async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{username}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name, passhash)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(&username)
@@ -63,37 +67,33 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create test bear")
 }
 
-async fn insert_role_agent(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    role: BearAgentRole,
-    agent_id: &str,
-) {
+async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
-        r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
+        r"
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
+        VALUES ($1, $2, $3, $4, 'ready', NOW())
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(role.as_str())
+    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await
     .expect("insert role agent");
 }
 
-fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvocationContext {
+fn den_context(bear_id: Uuid, user_id: i32, binding_id: &str) -> DenToolInvocationContext {
     serde_json::from_value(json!({
         "bear_id": bear_id,
         "bear_slug": "work-plan-test",
-        "role_agent_id": role_agent_id,
-        "agent_role": "pair",
+        "binding_id": binding_id,
+        "profile": "pair",
         "user_id": user_id,
         "username": "work-plan-user",
         "membership_role": bears_db::BEAR_ROLE_ADMIN,
@@ -153,11 +153,10 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
     let user_id = create_test_user(&pool).await;
     let bear_id = create_test_bear(&pool).await;
 
-    let created = work_plans::create_or_update_work_plan(
-        &pool,
-        WorkPlanUpsert {
+    let created = PgDocketService::from_pool(&pool)
+        .upsert_work_plan(WorkPlanUpsert {
             bear_id,
-            owner_role: BearAgentRole::Pair,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),
@@ -165,42 +164,40 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
             source_channel: json!({ "protocol": "acp" }),
             plan_id: None,
             expected_version: None,
-            update: update("Private pair plan", WorkPlanVisibility::PrivateToRole),
-        },
-    )
-    .await
-    .expect("create work plan");
+            update: update("Private pair plan", WorkPlanVisibility::PrivateToProfile),
+        })
+        .await
+        .expect("create work plan");
     assert_eq!(created.version, 1);
 
-    let pair_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearAgentRole::Pair,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list pair-visible plans");
+    let pair_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Pair,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list pair-visible plans");
     assert_eq!(pair_plans.len(), 1);
     assert_eq!(pair_plans[0].id, created.id);
     assert!(pair_plans[0].current_item.is_some());
 
-    let talk_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearAgentRole::Talk,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list talk-visible plans");
-    assert!(talk_plans.is_empty());
-
-    let updated = work_plans::create_or_update_work_plan(
-        &pool,
-        WorkPlanUpsert {
+    let chat_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
             bear_id,
-            owner_role: BearAgentRole::Pair,
+            BearProfile::Chat,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list chat-visible plans");
+    assert!(chat_plans.is_empty());
+
+    let updated = PgDocketService::from_pool(&pool)
+        .upsert_work_plan(WorkPlanUpsert {
+            bear_id,
+            owner_profile: BearProfile::Pair,
             owner_agent_id: Some("agent-pair-work-plan-test".to_string()),
             created_by_user_id: Some(user_id),
             source_conversation_id: Some("conv-work-plan-test".to_string()),
@@ -209,23 +206,22 @@ async fn work_plan_crud_writes_events_and_enforces_visibility() {
             plan_id: Some(created.id),
             expected_version: Some(created.version),
             update: update("Visible pair plan", WorkPlanVisibility::BearVisible),
-        },
-    )
-    .await
-    .expect("update work plan");
+        })
+        .await
+        .expect("update work plan");
     assert_eq!(updated.version, 2);
 
-    let talk_plans = work_plans::list_visible_work_plans(
-        &pool,
-        bear_id,
-        BearAgentRole::Talk,
-        user_id,
-        WorkPlanListFilter::default(),
-    )
-    .await
-    .expect("list talk-visible plans after visibility update");
-    assert_eq!(talk_plans.len(), 1);
-    assert_eq!(talk_plans[0].title, "Visible pair plan");
+    let chat_plans = PgDocketService::from_pool(&pool)
+        .list_visible_work_plans(
+            bear_id,
+            BearProfile::Chat,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await
+        .expect("list chat-visible plans after visibility update");
+    assert_eq!(chat_plans.len(), 1);
+    assert_eq!(chat_plans[0].title, "Visible pair plan");
 
     let event_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*)::bigint FROM bear_work_plan_events WHERE plan_id = $1")
@@ -252,18 +248,15 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     bears_db::grant_membership(&pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant bear membership");
-    insert_role_agent(
-        &pool,
-        bear_id,
-        BearAgentRole::Pair,
-        "agent-pair-den-tool-plan",
-    )
-    .await;
+    let agent_id = format!("agent-pair-den-tool-plan-{}", Uuid::new_v4().simple());
+    insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
     let config = Config::load();
-    let update_result = den_tools::invoke_den_tool(
+    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let update_result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         DEN_WORK_PLAN_UPDATE,
         json!({
             "title": "Pair implementation plan",
@@ -277,19 +270,20 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
             }],
             "workspace_context": { "redacted": true }
         }),
-        den_context(bear_id, user_id, "agent-pair-den-tool-plan"),
+        den_context(bear_id, user_id, &agent_id),
     )
     .await
     .expect("update work plan through Den tool");
     assert_eq!(update_result["plan"]["title"], "Pair implementation plan");
     assert_eq!(update_result["plan"]["version"], 1);
 
-    let list_result = den_tools::invoke_den_tool(
+    let list_result = invoke_den_tool(
         &pool,
         &config,
+        &stores,
         DEN_WORK_PLAN_LIST,
         json!({}),
-        den_context(bear_id, user_id, "agent-pair-den-tool-plan"),
+        den_context(bear_id, user_id, &agent_id),
     )
     .await
     .expect("list work plans through Den tool");

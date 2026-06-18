@@ -4,7 +4,11 @@ use den::seeds::SeedProfile;
 
 /// Den control-plane binary (BEARS Phase 1).
 ///
-/// Enable services with `RUN_WEB`, `RUN_API`, `RUN_WORKERS` (see `README.md` and [`den::config::Config`]).
+/// Enable services with `RUN_WEB`, `RUN_API`, and `RUN_WORKERS`.
+///
+/// Current `RUN_WORKERS=true` behavior starts the in-process memory-curate worker,
+/// which polls queued `memory_curate` reflection runs and processes them until shutdown.
+/// See `README.md`, `.env.example`, and [`den::config::Config`].
 #[tokio::main]
 async fn main() {
     if let Err(e) = run_main().await {
@@ -15,11 +19,20 @@ async fn main() {
 
 async fn run_main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("seed") {
-        den::run().await?;
-        return Ok(());
+    match args.first().map(String::as_str) {
+        Some("seed") => run_seed(&args).await,
+        Some("reindex") => den::reindex::run_reindex(den::reindex::parse_args(&args)?).await,
+        Some("import-memfs") => {
+            den::import_memfs::run_import_memfs(den::import_memfs::parse_args(&args)?).await
+        }
+        _ => {
+            den::run().await?;
+            Ok(())
+        }
     }
+}
 
+async fn run_seed(args: &[String]) -> anyhow::Result<()> {
     let mut profile = SeedProfile::Smoke;
     let mut i = 1;
     while i < args.len() {

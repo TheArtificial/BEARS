@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set memory_subnav = "entities" %}
+
+{% block title %}Entity · {{ entity.display_name }} · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>{{ entity.display_name | e }}</h2>
+  <p><a href="/bear/{{ bear.slug }}/entities">← Back to entities</a></p>
+
+  <dl>
+    <dt>Entity id</dt><dd><code>{{ entity.entity_id | e }}</code></dd>
+    <dt>Type</dt><dd>{{ entity.entity_type | e }}</dd>
+    <dt>Resolution</dt><dd>{{ entity.resolution | e }}</dd>
+    <dt>Trust</dt><dd>{{ entity.trust | e }}</dd>
+    <dt>Sequence</dt><dd>{{ entity.sequence_no }}</dd>
+    {% if entity.canonical_ref %}<dt>Canonical ref</dt><dd><code>{{ entity.canonical_ref | e }}</code></dd>{% endif %}
+    {% if entity.superseded_by_entity_id %}
+    <dt>Superseded by</dt><dd><a href="/bear/{{ bear.slug | e }}/entities/{{ entity.superseded_by_entity_id | e }}"><code>{{ entity.superseded_by_entity_id | e }}</code></a></dd>
+    {% endif %}
+    <dt>Created</dt><dd>{{ entity.created_at | e }}</dd>
+  </dl>
+</div>
+
+<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+  <div class="box">
+    <h3>Handles</h3>
+    {% if handles %}
+    <table>
+      <thead><tr><th>Type</th><th>Value</th><th>Trust</th><th>State</th></tr></thead>
+      <tbody>
+        {% for h in handles %}
+        <tr><td>{{ h.handle_type | e }}</td><td><code>{{ h.handle_value | e }}</code></td><td>{{ h.trust | e }}</td><td>{{ h.state | e }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No handles (aliases like emails, Slack ids, git remotes) attached.</p>
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h3>Linked memory records</h3>
+    {% if related %}
+    <ul>
+      {% for r in related %}
+      <li>
+        <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.src_memory_id | urlencode }}"><code>{{ r.src_memory_id | e }}</code></a>
+        <span class="form-hint">· {{ r.relation_label | e }} ({{ r.class_label }}) · {{ r.author_profile | e }} · {{ r.created_at | e }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="form-hint">No memory records reference this entity yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="box">
+  <h3>Metadata</h3>
+  <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ entity.metadata_json | tojson(indent=2) }}</pre>
+</div>
+{% endblock %}

@@ -2,15 +2,15 @@
 
 ## Stack
 
-Three application services run via `docker-compose.yaml`:
+Three application services run via `docker-compose.yaml` (native runtime):
 
-- `bears-memfs-manager` is the Python service on port `8285`.
+- `bears-bifrost` is the LLM gateway on port `8080`.
 - `bears-den` is the Rust service on port `3000`.
-- `bears-codepool` is the TypeScript service on port `3030`.
+- Optional `bears-postgres` (profile `bundled`) for local Den Postgres.
 
 The workspace container has access to the Docker socket and can manage the stack.
 
-Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`. The root devcontainer startup script attaches the workspace container to `bears-stack_default` and exports dev defaults for `DATABASE_URL` and `LETTA_PG_URI`, so Den tests can resolve `bears-postgres` and `bears-letta-postgres` from inside the devcontainer.
+Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`. The root devcontainer startup script attaches the workspace container to `bears-stack_default` and exports dev defaults for `DATABASE_URL` and `LLM_API_URL`, so Den tests can resolve `bears-postgres` and `bears-bifrost` from inside the devcontainer.
 
 ## Scripts
 
@@ -68,7 +68,26 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `pair` is API-direct and uses Den-hosted memory tools. `memory_write_entry` writes pair-local entries; `memory_request_review` asks Reflection/`curate` to review role-local memory.
 - `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
-- `curate` owns cross-role memory governance and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+- `curate` owns cross-role memory curation and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+
+## Worktree safety (mandatory)
+
+Mass file deletions have recurred when agent sessions repair a broken tree incorrectly.
+
+**Never do this when files are missing on disk:**
+- `git checkout <commit> -- <some/paths>` — partial restore leaves ~150+ tracked files deleted
+- `git checkout HEAD -- <a/few/paths>` — same problem
+- `git add -A` / `git commit` while `git status` shows many ` D` entries
+- Bulk "remove deprecated Letta/native files" commits without an explicit user file list
+
+**Always do this instead:**
+- If `git status` shows more than a handful of ` D` (deleted) entries: run **`git checkout -- .`** or **`git restore .`** first — full restore only
+- Stage only the files you intentionally changed; never `git add -A` after a mass-deletion glitch
+- Run `./scripts/guard-worktree.sh` at session start if unsure
+
+Repo guards (keep enabled):
+- `.cursor/hooks.json` — blocks partial `git checkout` when deletions are already present; auto-restores on session start
+- `scripts/git-hooks/pre-commit` — rejects commits deleting more than 10 files (install: `./scripts/install-git-hooks.sh`)
 
 ## Notes
 

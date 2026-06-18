@@ -1,0 +1,55 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Access · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Access · {{ bear.name }}</h2>
+
+{% if message %}
+<p><strong>{{ message | e }}</strong></p>
+{% endif %}
+
+<p class="form-hint"><strong>Admin</strong> can manage bear settings and members. <strong>Member</strong> can use the bear in chat and ACP.</p>
+
+{% if members and members | length > 0 %}
+<table>
+  <thead><tr><th>User</th><th>Access</th><th></th></tr></thead>
+  <tbody>
+  {% for m in members %}
+    <tr>
+      <td><strong>{{ m.username | e }}</strong>{% if m.display_name %} — {{ m.display_name | e }}{% endif %}</td>
+      <td>{{ m.role_label | e }}</td>
+      <td>
+        <form method="post" action="/admin/bears/{{ bear.id }}/members/{{ m.user_id }}/revoke" style="display:inline;">
+          <button type="submit" onclick="return confirm('Remove access for {{ m.username | e }}?');">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No users have access yet.</em></p>
+{% endif %}
+
+<h3>Grant access</h3>
+<form method="post" action="/admin/bears/{{ bear.id }}/members/grant" class="form-field" style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:end;">
+  <label>User<br>
+    <select name="user_id" required>
+      {% for u in users %}
+      <option value="{{ u.id }}">{{ u.username | e }} ({{ u.email | e }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Access<br>
+    <select name="role">
+      <option value="member" selected>Member</option>
+      <option value="admin">Admin</option>
+    </select>
+  </label>
+  <button type="submit">Grant access</button>
+</form>
+</div>
+{% endblock %}

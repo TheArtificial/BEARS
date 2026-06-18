@@ -18,16 +18,14 @@ FROM rust-base AS chef-base
 RUN cargo install cargo-chef --version 0.1.71 --locked
 
 FROM chef-base AS planner
-# Only copy inputs that affect `cargo metadata` / the dependency recipe. Omitting
-# docs, migrations, .sqlx, templates, assets, etc. keeps this layer (and thus the
-# cacher stage) stable when those files change — so CI reuses compiled deps.
-# Keep Cargo config in the chef stages too: rustflags/linker settings affect
-# Cargo fingerprints, so dependencies cooked without this config are considered
-# stale when the final build runs after `COPY . .`.
-COPY .cargo ./.cargo
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY src ./src
-COPY tests ./tests
+# Workspace-aware recipe: `cargo chef prepare` runs `cargo metadata`, which needs
+# every workspace member's Cargo.toml present, so copy the whole context (minus
+# .dockerignore'd target/.git/etc.). `prepare` is cheap and this layer is not
+# reused across source edits anyway; the expensive dependency compile lives in
+# the `cacher` stage and is gated only by recipe.json, so build-time caching is
+# unaffected. (Per docs/roadmap/DEN_CRATE_SPLIT_PLAN.md the crate split made the
+# previous single-crate selective COPY brittle.)
+COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef-base AS cacher
@@ -50,12 +48,12 @@ ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=di
 ARG SQLX_OFFLINE=false
 ARG CARGO_BUILD_JOBS=2
 ENV GIT_SHA=${GIT_SHA}
-COPY --from=cacher /app/target target
 COPY . .
-# Same registry/git cache mount IDs as cacher so this step does not re-download
-# crates.io sources that chef already populated in one build. The target dir is
-# copied from the dependency layer above, so dependencies should be `Fresh`; only
-# the Den crate itself should rebuild when source files or GIT_SHA change.
+# Keep only Cargo registry/git caches in the final application build. Do not
+# mount or seed /app/target here: target fingerprints/artifacts can survive
+# source-only Docker rebuilds and produce stale deployed binaries. This makes
+# the final Den build slower than a target-seeded build, but deterministic: the
+# release binary is compiled from the source copied in this Docker layer.
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
@@ -66,7 +64,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,s
 FROM alpine:3.18 AS final
 
 ARG UID=10001
-RUN adduser \
+RUN apk add --no-cache su-exec wget git \
+    && adduser \
     --disabled-password \
     --gecos "" \
     --home "/nonexistent" \
@@ -75,18 +74,19 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-
-USER appuser
-
 COPY --from=build /bin/server /bin/
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Runtime env (set in Coolify / compose — not baked into the image):
-# When RUN_WEB=true (default for production web):
-#   CODEPOOL_BASE_URL — optional in image; production builds default to http://bears-codepool:3030 when unset.
-#     (Letta Code SDK harness; bear chat streaming does not use the Letta server HTTP API directly).
-#   CODEPOOL_INTERNAL_TOKEN — optional; must match the Codepool container if set.
-# See ../../services/codepool/COOLIFY_DEPLOY.md and services/den/COOLIFY_DEPLOY.md.
+#   AGENT_RUNTIME — native (default) or letta (legacy external runtime).
+#   BEAR_SQLITE_DATA_DIR — per-Bear SQLite store for native runtime (default /var/lib/den/bear-sqlite).
+#     Mount a persistent volume at this path in production; entrypoint chowns it for appuser.
+#   LLM_API_URL — Bifrost OpenAI-compatible gateway (required for native runtime).
+# Legacy letta runtime only: LETTA_BASE_URL, CODEPOOL_BASE_URL, LETTA_MEMFS_SERVICE_URL, LETTA_PG_URI.
+# See services/den/COOLIFY_DEPLOY.md.
 
 EXPOSE 3000
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["/bin/server"]

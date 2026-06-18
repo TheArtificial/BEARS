@@ -1,5 +1,8 @@
 # Pair Letta Message Boundary Refactor Plan
 
+> **Direction changed (2026-06).** The message-boundary invariant may survive, but persistence is the Den/Postgres transcript, not the Letta messages API. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Phase 1 implemented. User testing confirms the agent can use tools naturally without runtime prompt suffix injection.

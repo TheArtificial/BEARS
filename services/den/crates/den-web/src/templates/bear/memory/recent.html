@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set memory_subnav = "recent" %}
+
+{% block title %}Recent memory · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>Recent additions</h2>
+  <p class="form-hint">Newest memory records first (across every profile and scope).</p>
+
+  {% if records %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Entry</th><th>Kind</th><th>Scope</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="form-hint">{{ r.sequence_no }}</td>
+        <td>
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
+          <div class="form-hint">{{ r.snippet | e }}</div>
+        </td>
+        <td>{{ r.kind | e }}</td>
+        <td><code>{{ r.scope_label | e }}</code></td>
+        <td class="form-hint">{{ r.created_at | e }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="form-hint">No memory recorded yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

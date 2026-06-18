@@ -51,7 +51,7 @@ async fn api_app() -> axum::Router {
         .migrate()
         .await
         .expect("tower-sessions postgres migrate");
-    api::create_api_app(pool, store, config)
+    api::create_api_app(pool, store, config, Vec::new())
         .await
         .expect("build api router")
 }

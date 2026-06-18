@@ -1,5 +1,7 @@
 # Reflection Run Taxonomy
 
+> **Direction changed (2026-06).** Lanes that assume Letta Archives, the MemFS view, or Letta/Codepool connectivity are superseded; reflection outcomes land in per-Bear SQLite. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Reflection runs are bounded background executions that help Bears learn, maintain memory, review work, and surface changes without blocking user turns.
 
 ## Summary
@@ -23,6 +25,7 @@ Reflection
 │
 ├── lanes
 │   ├── pair_reflect
+│   ├── archive_harvest
 │   ├── memory_curate
 │   ├── archive_index
 │   ├── watch_observation_review
@@ -43,8 +46,9 @@ Reflection
 | Lane | Run name | Primary owner | Purpose |
 |------|----------|---------------|---------|
 | `pair_reflect` | Pair reflection run | Den / pair reflection process | Maintain `pair/` memory and create review requests. |
-| `memory_curate` | Curate memory run | `curate` | Review role-local memory and maintain `core/`. |
-| `archive_index` | Archive indexing run | Den / indexer | Sync selected canonical sources into Letta Archives. |
+| `archive_harvest` | Archive harvest run | `curate` | Mine un-mined session archives/compaction artifacts for durable memory candidates (extraction-first) and emit proposals ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)). |
+| `memory_curate` | Memory curation run | `curate` | Curate role-local memory and maintain `core/`. |
+| `archive_index` | Archive indexing run | Den / indexer | Reconcile derived Qdrant recall index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) over selected canonical sources. |
 | `watch_observation_review` | Watch observation review run | `curate` | Review `watch` observations before memory/action. |
 | `work_result_review` | Work result review run | `curate` | Review `work` results and promote useful summaries. |
 | `skill_review` | Skill review run | `curate` or reviewer | Review proposed reusable skills/procedures. |
@@ -90,6 +94,36 @@ Constraints:
 - does not read other role branches;
 - is not a sixth Bear role.
 
+## `archive_harvest`
+
+Purpose:
+
+- proactively mine **closed session archives** and compaction artifacts for durable memory candidates ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md));
+- run an **extraction-first** pass (distill atomic facts/decisions/preferences/lessons), discarding conversational filler;
+- emit memory proposals for `memory_curate` to resolve, with provenance back to source `conversation_messages`.
+
+Inputs:
+
+- un-mined conversations and compaction artifacts (tracked via harvest marks for idempotency);
+- pair reflection summaries and `watch` observations not yet curated;
+- relevant `core/` orientation for dedup context;
+- sensitivity/identity scope ([ADR-0015](../decisions/adr-0015-multi-user-memory.md)).
+
+Outputs:
+
+- memory proposals (candidate durable entries);
+- harvest marks recording which sources were processed;
+- quality-filter rejections (low-confidence extractions dropped before storage).
+
+Constraints:
+
+- does not write `core/` (that is `memory_curate`);
+- transcripts are source material, never auto-promoted to memory;
+- bounded token budget; throttled/adaptive heartbeat plus session-close trigger, not a fixed cron;
+- every candidate carries provenance to its canonical source.
+
+This lane feeds `memory_curate`, which deduplicates, resolves contradictions by **supersession** (not overwrite), and promotes low-risk results to `core/`.
+
 ## `memory_curate`
 
 Purpose:
@@ -130,7 +164,7 @@ Constraints:
 
 Purpose:
 
-- maintain Letta Archives as derived semantic indexes over canonical Bear Den sources.
+- maintain **derived recall indexes** (Qdrant + platform embedding standard [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) over canonical Bear Den and Cabinet sources. Replaces Letta Archives.
 
 Inputs:
 
@@ -143,16 +177,15 @@ Inputs:
 
 Outputs:
 
-- Letta Archive passages;
-- updated source-to-passage mappings;
-- deleted/recreated stale passages;
-- archive indexing activity records.
+- Qdrant passage upserts/deletes;
+- updated passage registry rows;
+- indexing activity records.
 
 Constraints:
 
-- Letta Archives are not source of truth;
-- no Bear Den vector store;
-- changed source hashes use delete-and-create passage sync;
+- Qdrant vectors are not source of truth;
+- canonical SQLite/Cabinet sources remain authoritative;
+- changed source hashes trigger re-embed / passage replace;
 - search results must point back to canonical sources.
 
 ## `watch_observation_review`
@@ -348,7 +381,7 @@ Inputs:
 - proposals marked `needs_human_review`;
 - sensitive person data;
 - secret-risk detections;
-- failed curate decisions;
+- failed review decisions;
 - policy conflicts.
 
 Outputs:
@@ -385,6 +418,8 @@ manual
 heartbeat
 adaptive_heartbeat
 pair_reflection
+session_archived
+cumulative_salience_threshold
 memory_proposal_created
 watch_observation_created
 work_result_completed
@@ -409,10 +444,10 @@ Deterministic Den-only runs such as `archive_index` and `health_check` do not ne
 ## Immediate priority path
 
 ```text
-pair_reflect
+pair_reflect / archive_harvest
 → memory_curate
 → archive_index
 → work task context bridge
 ```
 
-This path turns `pair` learning into curated knowledge that `work` can safely consume without reading raw `pair/`.
+This path turns `pair` learning and harvested session knowledge into curated memory that `work` can safely consume without reading raw `pair/`. `pair_reflect` handles the active session; `archive_harvest` proactively mines older closed sessions; both converge on `memory_curate` for dedup, supersession, and promotion ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).

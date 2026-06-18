@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/guard-worktree.sh"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/block-risky-git.sh",
+        "matcher": "git checkout|git add -A|git add --all|git add \\.",
+        "failClosed": false
+      }
+    ]
+  }
+}

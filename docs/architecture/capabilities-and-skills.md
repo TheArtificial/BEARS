@@ -1,11 +1,15 @@
 # Capabilities and Skills
 
+> **Direction changed (2026-06).** Canonical skill state is no longer the Bear MemFS `skills/` namespace; git retains human-authored skills/prompts only, and Bear cognition is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 Capabilities describe what a Bear is allowed to do. Tools are the concrete actions available to agents. Skills are reusable procedures or knowledge packages that help a Bear use its tools and memory well.
+
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on capability, tool, and skill concepts.
 
 ## Summary
 
 - A capability is a product-level permission or ability.
-- A tool is an executable action exposed to one or more Bear agent roles.
+- A tool is an executable action exposed to one or more bear roles.
 - A skill is reusable know-how installed for selected roles.
 - In Bear Den, durable skills are a **special class of Bear memory artifact**.
 - Den owns the canonical capability and skill configuration.
@@ -39,7 +43,7 @@ Examples:
 - write an observation,
 - relay a client-side ACP tool call.
 
-Tools are role-scoped. A tool that is safe for `work` may be unsafe for `talk`; a tool that is appropriate for `curate` may be inappropriate for `watch`.
+Tools are role-scoped. A tool that is safe for `work` may be unsafe for `chat`; a tool that is appropriate for `review` may be inappropriate for `watch`.
 
 ## Skills
 
@@ -80,9 +84,9 @@ Not every role should receive every skill or tool.
 
 | Role | Typical capability shape |
 |------|--------------------------|
-| `talk` | Conversation, task-intent capture, general user help. |
+| `chat` | Conversation, task-intent capture, general user help. |
 | `pair` | Client-mediated collaboration and coding/design assistance. |
-| `curate` | Reflection, review, memory integration, skill approval. |
+| `review` | Reflection, review, memory integration, skill approval. |
 | `work` | Approved outbound execution with scoped integration tools. |
 | `watch` | Inbound event interpretation and observation writing. |
 
@@ -92,13 +96,13 @@ For skills, role applicability should be metadata-driven rather than path-driven
 
 ## Skill proposals
 
-Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill governance still overlaps strongly with memory governance because skills are a special memory artifact.
+Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill curation still overlaps strongly with memory curation because skills are a special memory artifact.
 
 The normal skill-learning flow is:
 
 1. A role or Reflection lane identifies a reusable procedure, convention, failure mode, or checklist.
 2. The role or lane submits a skill proposal through Den or a Bear Den-governed review path.
-3. `curate` or a future skill-review lane reviews the proposal.
+3. `review` or a future skill-review lane reviews the proposal.
 4. The reviewer chooses whether to approve it, which roles it applies to, and whether its dependency metadata is adequate.
 5. Den updates the Bear skill record only when policy allows.
 6. Den provisions or reconciles affected runtime views.
@@ -115,7 +119,7 @@ Den owns the canonical records for:
 - which tools each role may use,
 - which skills are installed,
 - which roles a skill applies to,
-- which dependency and governance metadata apply to a skill,
+- which dependency and curation metadata apply to a skill,
 - and whether runtime state matches the intended configuration.
 
 Agents may request capability changes. Den enforces and installs them.
@@ -125,7 +129,7 @@ Agents may request capability changes. Den enforces and installs them.
 Prefer:
 
 - “This Bear has the GitHub capability.”
-- “This skill applies to `talk` and `pair`.”
+- “This skill applies to `chat` and `pair`.”
 - “The Bear proposed a new skill for review.”
 - “Den provisions tools and skills according to policy.”
 - “This skill is stored in Bear memory and materialized into the runtime.”
@@ -139,12 +143,12 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
+- [Memory model](memory-model.md)
 - [Reflection system](REFLECTION_SYSTEM.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
 - [Dynamic skills, reflection subagents, and bear configuration ADR](../architecture/adr/dynamic-skills-subagents.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Reflection System ADR](../architecture/adr/reflection-system.md)

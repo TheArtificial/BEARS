@@ -1,5 +1,8 @@
 # Role Environment Prompt Compiler Schema
 
+> **Direction changed (2026-06).** Reframe "role harness configuration" as the Den role-runtime profile (one native loop). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Purpose
 This document defines the concrete schema for the first implementation of BEARS role-environment prompt construction.
 
@@ -275,7 +278,7 @@ The following schema types are intended as explicit enums in Rust implementation
 
 ### `BearRole`
 ```text
-BearRole = Talk | Pair | Curate | Work | Watch
+BearRole = Chat | Pair | Review | Work | Watch
 ```
 
 ### `PermissionMode`

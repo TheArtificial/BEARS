@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/workspace/scripts/load-env.sh
+. "${ROOT}/scripts/load-env.sh"
+
 profile="${1:-smoke}"
 
 case "${profile}" in
@@ -13,8 +17,15 @@ esac
 
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
+export LETTA_API_KEY="${LETTA_API_KEY:-${LETTA_SERVER_PASS}}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
+export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"
 export WEB_SERVER_URL="${WEB_SERVER_URL:-http://localhost:3000}"
+export LETTA_BASE_URL="${LETTA_BASE_URL:-http://bears-letta:8283}"
+export BIFROST_BASE_URL="${BIFROST_BASE_URL:-http://bears-bifrost:8080}"
+export LETTA_MEMFS_SERVICE_URL="${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}"
+export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
+export BEAR_SQLITE_DATA_DIR="${BEAR_SQLITE_DATA_DIR:-${ROOT}/services/den/data/bear-sqlite}"
 database_url="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
 export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgres:5432/letta}"
 

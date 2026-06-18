@@ -1,5 +1,8 @@
 # ACP Discovery Prompt
 
+> **Superseded (2026-06).** The Den <-> adapter <-> Letta / Codepool `bear_channel` path described here is removed; the `pair` runtime is the in-process Den loop. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: historical discovery checklist kept for reference.
 
 Use this checklist as historical background from the period before the direct ACP runtime was implemented.

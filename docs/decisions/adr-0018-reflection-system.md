@@ -8,7 +8,7 @@
 
 ## Context
 
-BEARS is adding durable memory governance and future learning loops around Bear operation. The immediate memory plan gives Den and the `curate` role the ability to review role-local memories, maintain `core/`, and coordinate archive indexing. That work sits inside a broader need: Bears should be able to periodically review what happened, extract durable lessons, maintain their own state, and propose bounded improvements.
+BEARS is adding durable memory curation and future learning loops around Bear operation. The immediate memory plan gives Den and the `curate` role the ability to review role-local memories, maintain `core/`, and coordinate archive indexing. That work sits inside a broader need: Bears should be able to periodically review what happened, extract durable lessons, maintain their own state, and propose bounded improvements.
 
 The design needs a name and architecture that are understandable, inspectable, and safe. Candidate names included "subconscious", "introspection", "reflection", and "adaptation".
 
@@ -320,5 +320,5 @@ Tradeoffs:
 - [Dynamic skills, reflection subagents, and bear configuration ADR](dynamic-skills-subagents.md)
 - [Routines automation ADR](routines-automation.md)
 - [Reflection system concept](../../concepts/REFLECTION_SYSTEM.md)
-- [Reflection system implementation plan](../../planning/REFLECTION_SYSTEM_PLAN.md)
-- [Curate memory governance plan](../../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Reflection system implementation plan](../roadmap/REFLECTION_SYSTEM_PLAN.md)
+- [Memory curation plan](../roadmap/MEMORY_CURATION_PLAN.md)

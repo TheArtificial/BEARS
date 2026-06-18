@@ -2,6 +2,12 @@
 
 Human-oriented documentation, operational notes, contributor guides, troubleshooting, deployment instructions, and roadmap materials.
 
+## Architecture
+
+- [den-native runtime](../architecture/den-native-runtime.md)
+- [memory model](../architecture/memory-model.md)
+- [Den native runtime plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+
 ## Guides
 
 - [acp troubleshooting](acp-troubleshooting.md)
@@ -18,15 +24,20 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [minijinja context patterns](minijinja-context-patterns.md)
 - [minijinja template limitations](minijinja-template-limitations.md)
 - [deep chat styling](deep-chat-styling.md)
-- [memfs sidecar runbook](memfs-sidecar-runbook.md)
-- [memfs and memory ui](memfs-and-memory-ui.md)
-- [letta bear ui exposure](letta-bear-ui-exposure.md)
-- [letta migration plan](letta-migration-plan.md)
+- [bear memory](bear-memory.md)
+- [bear package format](bear-package.md)
+- [work surfaces and conversations](work-surfaces-and-conversations.md)
+- [context compaction guide](context-compaction-guide.md)
 - [rename from starter](rename-from-starter.md)
+- [context compaction comparative report](../research/context-compaction-comparative-report.md)
+- [model tasks strategy](../research/model-tasks-strategy.md)
+
+Legacy Letta/MemFS notes are archived under [`../archive/letta/`](../archive/letta/).
 
 ## Deployment
 
 - [deployment/deployment.md](deployment/deployment.md)
+- [operations plan](operations-plan.md) — data classification, backup/restore, DR, monitoring
 
 ## Planning and roadmap
 

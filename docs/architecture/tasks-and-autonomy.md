@@ -1,11 +1,17 @@
 # Tasks and Autonomy
 
+> **Direction changed (2026-06).** Human-initiated work is Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS task pipeline (`chat/tasks` -> `core/tasks` -> `work/results`) is superseded for that path. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
+> **Scope:** This document describes the unattended, `review`-gated autonomy pipeline (intent → approved task → result). Human-initiated, goal-directed work is modeled separately as **jobs and tasks** in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface.
+
 Tasks are how a Bear turns a user's request or an external observation into reviewed background work. Autonomy flows through intent, review, policy, execution, and result promotion.
+
+For the canonical role model and role names, see [bear roles](bear-roles.md). This document focuses on task and autonomy flow rather than restating the full role architecture.
 
 ## Summary
 
-- `talk` and `pair` capture requests for external or background work as task intents or handoff requests.
-- `curate` reviews task intents before they become approved tasks.
+- `chat` and `pair` capture requests for external or background work as task intents or handoff requests.
+- `review` reviews task intents before they become approved tasks.
 - Den enforces policy, generates durable artifact paths, stores task state, schedules runs, and dispatches work.
 - `work` executes approved tasks within a scoped run context.
 - Future Docket functionality may own the richer task/project lifecycle, while Den remains the Bear control plane.
@@ -28,7 +34,7 @@ These requests imply background work, external effects, recurrence, or delayed e
 
 A task intent is a proposed task.
 
-It captures what the user or system wants, but it is not yet approved for execution. `talk` and `pair` write task intents, or request handoff from a workboard plan into a task intent, when a synchronous interaction produces a request for background or external work.
+It captures what the user or system wants, but it is not yet approved for execution. `chat` and `pair` write task intents, or request handoff from a workboard plan into a task intent, when a synchronous interaction produces a request for background or external work.
 
 A task intent should describe:
 
@@ -46,7 +52,7 @@ For schema-owned durable artifacts such as task intents, agents provide semantic
 
 An approved task is a task intent that has passed review.
 
-`curate` reviews task intents and decides whether to approve, reject, or refine them. Den performs the controlled state transition and stores the approved task in the canonical task area.
+`review` reviews task intents and decides whether to approve, reject, or refine them. Den performs the controlled state transition and stores the approved task in the canonical task area.
 
 Approval does not mean unlimited authority. Approved tasks still run under policy, scope, allowed tools, and audit requirements.
 
@@ -73,9 +79,9 @@ For checkout-oriented work, the run may materialize a fresh checkout in a new ru
 
 | Role/System | Responsibility |
 |-------------|----------------|
-| `talk` | Capture chat-originated task intents. |
+| `chat` | Capture chat-originated task intents. |
 | `pair` | Capture client/tool-originated task intents. |
-| `curate` | Review intents, approve or reject work, and later review results. |
+| `review` | Review intents, approve or reject work, and later review results. |
 | Den | Enforce policy, generate durable artifact paths, schedule tasks, dispatch runs, audit transitions. |
 | `work` | Execute approved runs within the Den-issued scope. |
 | `watch` | Produce observations that may lead to derived task intents. |
@@ -95,7 +101,7 @@ A Bear's autonomous work should be:
 
 ## Results
 
-`work` writes results for each run. `curate` reviews those results and promotes durable learnings or summaries into `core/` when appropriate.
+`work` writes results for each run. `review` reviews those results and promotes durable learnings or summaries into `core/` when appropriate.
 
 This lets users later ask what happened without giving conversational roles raw access to every execution detail.
 
@@ -115,7 +121,7 @@ Prefer:
 
 - “The Bear can perform approved background work.”
 - “Requests for external action become task intents or reviewed handoffs.”
-- “`curate` reviews work before Den dispatches it.”
+- “`review` reviews work before Den dispatches it.”
 - “`work` executes within an approved scope.”
 
 Avoid:
@@ -127,13 +133,13 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
-- [Planning in Bear Den](PLANNING.md)
+- [bear roles](bear-roles.md)
+- [Bear Den and Den](bears-and-den.md)
+- [Memory model](memory-model.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
+- [Capabilities and skills](capabilities-and-skills.md)
+- [Planning in Bear Den](planning.md)
 - [Schema-first path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
 - [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
-- [Den Bear spec](../../services/den/docs/bear-spec.md)
+- [Den Bear spec](den-bear-spec.md)

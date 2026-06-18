@@ -32,7 +32,7 @@ Note that the name "newapp" is used in a few places. You or our agent should see
 
 ## Quickstart
 
-Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `DATABASE_URL`, set `RUN_WEB=true` (and optionally `RUN_API`, `RUN_WORKERS`), then `cargo run`. Migrations apply automatically on startup; use `sqlx migrate add` / `sqlx migrate run` when authoring new SQL migrations. Set **`JWT_SECRET`** when `RUN_API=true` or when using **`--features production`** (Docker release builds).
+Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `DATABASE_URL`, set `RUN_WEB=true` (and optionally `RUN_API`, `RUN_WORKERS`), then `cargo run`. `RUN_WORKERS=true` now starts the in-process memory-curate background worker. Migrations apply automatically on startup; use `sqlx migrate add` / `sqlx migrate run` when authoring new SQL migrations. Set **`JWT_SECRET`** when `RUN_API=true` or when using **`--features production`** (Docker release builds).
 
 **Development-only link prefix:** Without `--features production`, [`src/config.rs`](src/config.rs) sets `URL_PREFIX` to `https://redirectmeto.com/http://localhost:3000/`. Generated absolute links (email verification, telemetry) therefore go through the third-party redirect service [redirectmeto.com](https://redirectmeto.com) before hitting your local app. Edit `URL_PREFIX` in that file if you prefer plain `http://localhost:…`, a tunnel URL, or another approach.
 
@@ -43,6 +43,8 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 **Mail:** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` default to empty; set them (or swap the mail implementation) before relying on outbound email.
 
 **Letta + Deep Chat (BEARS Phase 1):** set `LETTA_BASE_URL` (and `LETTA_API_KEY` if your Letta instance requires it) so creating bears in the operator console can provision Letta agents and so signed-in users can chat via **`GET /bear/{slug}`** using `POST /v1/chat/send` with session cookies. Deep Chat is vendored under `src/web/assets/deep-chat/` (see [`docs/frontend-development.md`](docs/frontend-development.md#bear-chat-deep-chat)). See [`.env.example`](.env.example).
+
+**ACP prompt memory status (June 2026):** persisted prompt-memory blocks are now Den-owned for ACP runtime prompt assembly, mutation/admin surfaces, and status inspection. Normal ACP runtime assembly uses persisted prompt-memory selection rather than synthetic fallback blocks; ACP inspection is available through session/status surfaces and `GET /bears/{slug}/sessions/{session_id}/prompt-memory`.
 
 **Shutdown:** **Ctrl+C** is honored on all platforms; **SIGTERM** triggers graceful shutdown on **Unix** only.
 

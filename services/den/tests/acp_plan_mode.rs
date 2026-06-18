@@ -1,11 +1,9 @@
 //! Integration coverage for ACP pair plan mode. Requires `DATABASE_URL`.
 
-use den::{
-    core::{
-        acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
-        bears::{db as bears_db, db::BearParams, BearAgentRole},
-    },
-    startup::run_sqlx_migrations,
+use den::startup::run_sqlx_migrations;
+use den_runtime::{
+    bears::{db as bears_db, db::BearParams, BearProfile},
+    plan_mode::{self, EnterPlanModeParams, PlanModeRequestedBy, SubmitPlanModeParams},
 };
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -21,11 +19,11 @@ async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
     let username = format!("pm{}", &suffix[..18]);
     let email = format!("{username}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name, passhash)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(&username)
@@ -57,25 +55,21 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create test bear")
 }
 
-async fn insert_role_agent(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    role: BearAgentRole,
-    agent_id: &str,
-) {
+async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
-        r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
+        r"
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
+        VALUES ($1, $2, $3, $4, 'ready', NOW())
+        ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
                       last_synced_at = NOW(),
                       updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(role.as_str())
+    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await
@@ -98,23 +92,20 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     bears_db::grant_membership(&pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant bear membership");
-    insert_role_agent(
-        &pool,
-        bear_id,
-        BearAgentRole::Pair,
-        "agent-pair-plan-mode-test",
-    )
-    .await;
+    let test_suffix = Uuid::new_v4().simple().to_string();
+    let agent_id = format!("agent-pair-plan-mode-test-{test_suffix}");
+    let acp_session_id = format!("acp-plan-mode-session-{test_suffix}");
+    insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
-    let entered = acp_plan_mode::enter_plan_mode(
+    let entered = plan_mode::enter_plan_mode(
         &pool,
         EnterPlanModeParams {
             user_id,
             bear_id,
             bear_slug: "plan-mode-test".to_string(),
-            acp_session_id: "acp-plan-mode-session".to_string(),
+            acp_session_id: acp_session_id.clone(),
             reason: "Need to inspect before editing".to_string(),
-            requested_by: AcpPlanModeRequestedBy::Pair,
+            requested_by: PlanModeRequestedBy::Pair,
             previous_permission_mode: Some("default".to_string()),
         },
     )
@@ -122,12 +113,12 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     .expect("enter plan mode");
     assert_eq!(entered.state, "active");
 
-    let submitted = acp_plan_mode::submit_plan_artifact(
+    let submitted = plan_mode::submit_plan_artifact(
         &pool,
         SubmitPlanModeParams {
             user_id,
             bear_id,
-            acp_session_id: "acp-plan-mode-session".to_string(),
+            acp_session_id: acp_session_id.clone(),
             plan_mode_id: Some(entered.id),
             title: "Implementation plan".to_string(),
             body: "1. Read files\n2. Edit code\n3. Test".to_string(),
@@ -143,22 +134,16 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         Some("pair/plans/mem_test.md")
     );
 
-    let approved = acp_plan_mode::approve_plan_mode(
-        &pool,
-        user_id,
-        bear_id,
-        "acp-plan-mode-session",
-        entered.id,
-    )
-    .await
-    .expect("approve plan mode");
+    let approved =
+        plan_mode::approve_plan_mode(&pool, user_id, bear_id, &acp_session_id, entered.id)
+            .await
+            .expect("approve plan mode");
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 
-    let active =
-        acp_plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
-            .await
-            .expect("query active plan mode");
+    let active = plan_mode::active_for_session(&pool, user_id, bear_id, &acp_session_id)
+        .await
+        .expect("query active plan mode");
     assert!(active.is_none());
 
     let event_count: i64 = sqlx::query_scalar(

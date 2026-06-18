@@ -26,7 +26,7 @@ if git -C "$talk_work" push origin HEAD:talk >/tmp/talk-push.out 2>&1; then
   cat /tmp/talk-push.out >&2
   exit 1
 fi
-if ! grep -q "branch 'talk' attempted to write to 'core/nope.txt'" /tmp/talk-push.out; then
+if ! grep -q "branch 'chat' attempted to write to 'core/nope.txt'" /tmp/chat-push.out; then
   echo "expected clear pre-receive error" >&2
   cat /tmp/talk-push.out >&2
   exit 1

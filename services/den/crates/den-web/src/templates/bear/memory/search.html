@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set memory_subnav = "search" %}
+
+{% block title %}Search memory · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>Search memory</h2>
+  <form method="get" action="/bear/{{ bear.slug | e }}/memory/search">
+    <input type="search" name="q" value="{{ q | e }}" placeholder="Search memory content…" style="min-width: 20rem;" autofocus>
+    {% if semantic_available %}
+    <label style="margin-left: 0.5rem;"><input type="radio" name="mode" value="keyword"{% if mode_used != "semantic" %} checked{% endif %}> Keyword</label>
+    <label><input type="radio" name="mode" value="semantic"{% if mode_used == "semantic" %} checked{% endif %}> Semantic</label>
+    {% else %}
+    <input type="hidden" name="mode" value="keyword">
+    {% endif %}
+    <button type="submit">Search</button>
+  </form>
+  {% if not semantic_available %}
+  <p class="form-hint">Semantic search needs the recall index (Qdrant + embeddings). Keyword search is always available.</p>
+  {% endif %}
+  {% if notice %}<p class="form-hint">{{ notice | e }}</p>{% endif %}
+</div>
+
+{% if q %}
+<div class="box">
+  <h3>{{ result_count }} result{{ result_count == 1 and "" or "s" }} for &ldquo;{{ q | e }}&rdquo; <span class="form-hint">({{ mode_used }})</span></h3>
+  {% if results %}
+  <ul>
+    {% for r in results %}
+    <li style="margin-bottom: 0.6rem;">
+      <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
+      <span class="form-hint">· {{ r.kind | e }}{% if r.score is not none %} · score {{ r.score | round(2) }}{% endif %}</span>
+      <div class="form-hint">{{ r.snippet | e }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="form-hint">No matches.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

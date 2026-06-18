@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Edit configuration · {{ bear.name | e }}{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Configuration</h2>
+    <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
+    {% if provision_error %}
+    <p class="form-errors"><strong>Profile reconcile failed</strong>: {{ provision_error | e }}</p>
+    {% endif %}
+    <form method="post" class="box full-width">
+        {% if model_catalog_configured and model_options and model_options | length > 0 %}
+        <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Default model</label>
+        {% if models_fetch_error %}
+        <p class="form-errors">{{ models_fetch_error | e }}</p>
+        {% endif %}
+        <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
+            <select id="default_model_field" name="default_model" required>
+                <option value="" disabled{% if not form or not form.default_model %} selected{% endif %}>— Choose a model —</option>
+                {% for m in model_options %}
+                <option value="{{ m.handle | e }}"{% if form and form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — <code>{{ m.handle | e }}</code></option>
+                {% endfor %}
+            </select>
+            <span class="form-hint">Loaded from Den model registry.</span>
+            {% if errors and errors.default_model %}
+            <span class="form-hint form-errors">Submission error: {{ errors.default_model | map(attribute="message", default="unknown error") | join(", ") }}</span>
+            {% endif %}
+        </div>
+        {% else %}
+        {{ forms.input("default_model", "Default model (required)", "text", 'required maxlength="255" placeholder="provider/model-handle"', form) }}
+        {% if models_fetch_error %}
+        <p class="form-errors">{{ models_fetch_error | e }}</p>
+        {% endif %}
+        {% endif %}
+        <p><button type="submit">Save</button></p>
+    </form>
+</section>
+{% endblock %}

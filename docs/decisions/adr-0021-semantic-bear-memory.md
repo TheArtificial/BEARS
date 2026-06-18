@@ -151,7 +151,7 @@ Letta Code reflection should remain the preferred role-local memory maintenance 
 - `watch` writes observations/logs;
 - `curate` performs autonomous cross-role review, consolidation, `core/` cleanup, and archive indexing policy.
 
-Letta conversation compaction remains Letta's responsibility. BEARS curation is durable memory governance, not context-window management.
+Letta conversation compaction remains Letta's responsibility. BEARS memory curation is durable memory maintenance, not context-window management.
 
 Letta API sleep-time / memory-block management should not be enabled by default for BEARS role agents because BEARS is moving away from memory blocks as the long-term shared-memory mechanism.
 
@@ -165,7 +165,7 @@ Cabinet will use these top-level semantic spaces as the canonical shared knowled
 | `Missions` | Shared work/knowledge containers that may contain multiple projects and involve multiple Bears. |
 | `Knowledge` | General reusable knowledge, policies, procedures, decisions, concepts, and references. |
 
-Bear memory may reference Cabinet spaces, but Bear memory does not mirror Cabinet one-to-one. Cabinet is the library. Bear memory is each role's working notebook, operational history, orientation map, and governance trail.
+Bear memory may reference Cabinet spaces, but Bear memory does not mirror Cabinet one-to-one. Cabinet is the library. Bear memory is each role's working notebook, operational history, orientation map, and curation trail.
 
 A Bear's **charter** is its durable purpose and responsibility boundary. It is a characteristic of the Bear, not a Cabinet Mission. Bear-specific knowledge lives under the Bear and is organized with Domains where useful. Cabinet Missions are many-to-many with Bears: a Bear can participate in many Missions, and a Mission can involve many Bears.
 
@@ -288,7 +288,7 @@ Recommended follow-up review capability:
 
 ### `curate`
 
-`curate` is the semantic librarian and governance role. It should inspect all role memories, decide what is worth promoting, and record why some memories remain local or are rejected.
+`curate` is the semantic librarian and curation role. It should inspect all role memories, decide what is worth promoting, and record why some memories remain local or are rejected.
 
 `curate` should distinguish:
 

@@ -66,7 +66,7 @@ create_branch() {
 
   case "$branch" in
     talk)
-      write_keep "$work/talk/tasks"
+      write_keep "$work/chat/tasks"
       ;;
     pair)
       write_keep "$work/pair/tasks"
@@ -112,7 +112,7 @@ zero="0000000000000000000000000000000000000000"
 
 allowed_for_branch() {
   case "$1" in
-    refs/heads/talk) printf '%s\n' "talk/" ;;
+    refs/heads/chat) printf '%s\n' "chat/" ;;
     refs/heads/pair) printf '%s\n' "pair/" ;;
     refs/heads/curate) printf '%s\n' "curate/" "core/" ;;
     refs/heads/work) printf '%s\n' "work/" ;;
@@ -146,7 +146,7 @@ while read old new ref; do
   printf '%s\n' "$paths" | while IFS= read -r path; do
     [ -z "$path" ] && continue
     case "$ref:$path" in
-      refs/heads/talk:talk/*) ;;
+      refs/heads/chat:chat/*) ;;
       refs/heads/pair:pair/*) ;;
       refs/heads/curate:curate/*|refs/heads/curate:core/*) ;;
       refs/heads/work:work/*) ;;

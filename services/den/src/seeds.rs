@@ -11,15 +11,16 @@ use crate::{
     config::Config,
     core::{
         acp_tokens,
-        bears::{
-            db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
-            provision::provision_missing_bear_roles, runtime_plan::default_runtime_plan,
-        },
-        bifrost::BifrostClient,
-        letta::LettaClient,
         user::{self, db as user_db, email_settings},
     },
     startup::run_sqlx_migrations,
+};
+use den_runtime::bears::{
+    db as bears_db,
+    db::BearParams,
+    db::BEAR_ROLE_ADMIN,
+    provision::{self},
+    runtime_plan::default_runtime_plan,
 };
 
 pub const SMOKE_USERNAME: &str = "alice";
@@ -91,10 +92,11 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
         .await
         .context("verify smoke user email")?;
 
-    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG)
+    let config = Config::load();
+    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG, &config)
         .await
         .context("ensure smoke bear")?;
-    ensure_smoke_bear_model(pool, bear_id)
+    ensure_smoke_bear_model(pool, bear_id, &config)
         .await
         .context("ensure smoke bear model")?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan())
@@ -106,8 +108,8 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     ensure_smoke_acp_token(pool, user_id, bear_id)
         .await
         .context("ensure smoke ACP token")?;
-    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id).await {
-        tracing::warn!(error = %err, "smoke seed could not provision role runtimes; continuing with database fixtures only");
+    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id, &config).await {
+        tracing::warn!(error = %err, "smoke seed could not provision profile runtimes; continuing with database fixtures only");
     }
 
     Ok(SeedReport {
@@ -133,7 +135,16 @@ async fn ensure_user(pool: &PgPool, username: &str, password: &str) -> Result<i3
         .map_err(Into::into)
 }
 
-async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
+fn smoke_default_model(config: &Config) -> &str {
+    let trimmed = config.default_llm_model.trim();
+    if trimmed.is_empty() {
+        "openai/gpt-4o-mini"
+    } else {
+        trimmed
+    }
+}
+
+async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid::Uuid> {
     if let Some(id) = bear_id_by_slug(pool, slug).await? {
         return Ok(id);
     }
@@ -147,7 +158,7 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
             system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
             default_model: None,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: Some("letta_v1_agent"),
+            letta_agent_type: None,
             letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
@@ -156,38 +167,47 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
     .map_err(Into::into)
 }
 
-async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
+async fn ensure_smoke_bear_model(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    config: &Config,
+) -> Result<()> {
+    let model = smoke_default_model(config);
     sqlx::query(
-        r#"
+        r"
         UPDATE bears
-        SET default_model = COALESCE(NULLIF(default_model, ''), 'letta/letta-free')
+        SET default_model = $2
         WHERE id = $1
-        "#,
+          AND (
+            default_model IS NULL
+            OR btrim(default_model) = ''
+            OR default_model LIKE 'letta/%'
+            OR strpos(default_model, '/') = 0
+          )
+        ",
     )
     .bind(bear_id)
+    .bind(model)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-async fn ensure_smoke_role_runtimes(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
-    let config = Config::load();
-    let letta = LettaClient::new(&config);
-    if !letta.is_enabled() {
-        return Ok(());
-    }
-    let bifrost = BifrostClient::new(&config);
-    provision_missing_bear_roles(pool, &letta, &bifrost, bear_id)
+async fn ensure_smoke_role_runtimes(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    config: &Config,
+) -> Result<()> {
+    provision::provision_bear_if_configured(pool, config, bear_id)
         .await
-        .context("provision missing smoke bear role runtimes")?;
-    Ok(())
+        .context("provision smoke bear native runtimes")
 }
 
 async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {
     let token_hash = acp_tokens::hash_raw_token_for_seed(SMOKE_ACP_TOKEN);
     let mut tx = pool.begin().await?;
     let row: (uuid::Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO acp_tokens (user_id, name, token_hash, scopes, revoked_at, expires_at)
         VALUES ($1, 'Smoke ACP token', $2, $3, NULL, NULL)
         ON CONFLICT (token_hash) DO UPDATE
@@ -197,7 +217,7 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
             revoked_at = NULL,
             expires_at = NULL
         RETURNING id
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(token_hash)
@@ -209,11 +229,11 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
     .await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO acp_token_bears (token_id, bear_id)
         VALUES ($1, $2)
         ON CONFLICT DO NOTHING
-        "#,
+        ",
     )
     .bind(row.0)
     .bind(bear_id)

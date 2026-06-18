@@ -1,12 +1,15 @@
 # Den Model Registry Schema and Sync Spec
 
+> **Direction changed (2026-06).** Drop Letta-facing model option types (`LettaModelOption`); the Den registry feeds Bifrost only, called directly by the Den-native runtime. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation spec.
 
 ## Objective
 
-Define the first concrete implementation contract for a Den-owned model registry that becomes the canonical source of truth for model capabilities, aliases, and execution metadata, while continuing to materialize a Bifrost-compatible configuration artifact for gateway routing.
+Define the first concrete implementation contract for a Den-owned model metadata registry used for validation, display, context-window estimates, and reconciliation with Bifrost. Bifrost remains the source of truth for live model availability, provider keys, execution aliases, and routing.
 
-This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md`. That planning document explains the project shape and migration strategy. This spec defines the data model, source hierarchy, sync behavior, and the Den→Bifrost materialization boundary.
+This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md`. That planning document explains the project shape and migration strategy. This spec defines the metadata model, source hierarchy, validation behavior, and Den↔Bifrost reconciliation boundary.
 
 ## Related docs
 
@@ -47,18 +50,18 @@ So the current architecture is effectively:
 3. Den reads Bifrost’s metadata projection.
 4. Den presents a simplified model list to clients.
 
-The desired architecture in this spec inverts that ownership:
-1. Den owns the canonical registry.
-2. Den resolves aliases, metadata, and execution selection.
-3. Den materializes Bifrost config input from that registry.
-4. Bifrost serves as execution gateway, not metadata authority.
+The desired architecture in this spec clarifies that ownership:
+1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, and routing.
+2. Den owns metadata estimates and validation context.
+3. Den reconciles configured Bear models against Bifrost availability.
+4. Den reports drift or unknown metadata, but does not have to generate Bifrost configuration as the default path.
 
 ---
 
 ## Design goals
 
-1. Make Den the canonical authority for model identity and capability metadata.
-2. Separate canonical model identity from deployment-specific gateway configuration.
+1. Give Den a stable metadata registry for model identity, capability estimates, and validation.
+2. Separate Den metadata identity from deployment-specific Bifrost availability and routing.
 3. Preserve enough provenance to distinguish observed, documented, inferred, and manually curated values.
 4. Support multiple naming layers:
    - canonical provider-qualified key
@@ -66,8 +69,8 @@ The desired architecture in this spec inverts that ownership:
    - human-friendly display label
    - local aliases
    - legacy handles
-5. Allow Den to expose stable user-facing model options even when Bifrost provider config changes.
-6. Allow Bifrost config generation to remain deterministic and auditable.
+5. Allow Den to enrich Bifrost-available model options with stable metadata and warnings.
+6. Allow reconciliation reports, and optionally future sync/export tooling, to remain deterministic and auditable.
 7. Support future providers beyond OpenAI without changing the schema shape.
 8. Keep the first implementation simple enough to ship incrementally.
 
@@ -84,7 +87,7 @@ Each model registry entry should have a canonical provider-qualified key:
 - `openai/gpt-4o`
 - `openai/gpt-4o-mini`
 
-This key is the stable Den-side identifier for the conceptual model entry.
+This key is the stable Den-side metadata identifier for the conceptual model entry. Bifrost may expose the same model through provider-native or gateway aliases.
 
 ### Identity layers
 
@@ -108,7 +111,7 @@ In the current repo state, `handle` and `model` are usually the same string. Thi
 
 ## `DenModelRegistryEntry`
 
-This is the canonical persisted registry record.
+This is the Den metadata registry record. It is canonical for Den's metadata estimates, not for live provider availability.
 
 ```json
 {
@@ -154,9 +157,7 @@ This is the canonical persisted registry record.
     }
   },
   "status": {
-    "enabled": true,
-    "selectable": true,
-    "deprecated": false
+    "selectable": true
   },
   "sources": [
     {
@@ -181,11 +182,11 @@ This is the canonical persisted registry record.
 - `provider_model_id: string`
 - `display_name: string`
 - `capabilities: object`
-- `status: object`
+- `status.selectable: boolean`
 
 ### Recommended optional fields
 
-- `gateway.bifrost.handle: string`
+- `gateway.bifrost.handle: string` (observed/reconciled, not Den-owned authority)
 - `family: string`
 - `release_channel: string`
 - `aliases: string[]`
@@ -197,7 +198,7 @@ This is the canonical persisted registry record.
 
 ## Capability value envelope
 
-Capability values should not be stored as naked scalars in the canonical registry when they are sourced from outside Den. Instead, each tracked capability should use a small envelope.
+Capability values may be stored as direct scalars in the first implementation. When sourced from provider docs or observed APIs, Den may later wrap tracked capabilities in a small provenance envelope.
 
 ## `CapabilityValue<T>`
 
@@ -315,9 +316,9 @@ Execution code should not need to reason about provenance on the hot path. Prove
 
 ---
 
-## Bifrost materialization shape
+## Bifrost availability shape
 
-Den should not persist raw Bifrost config as its canonical model state. Instead, it should derive a Bifrost-specific projection.
+Den should not persist raw Bifrost config as its model metadata state. Instead, it should observe Bifrost availability and compare it with Den metadata.
 
 ## `BifrostExecutionRequest`
 
@@ -333,28 +334,20 @@ This is the minimal runtime request Den effectively needs in order to call Bifro
 
 In practice, chat/completions payloads will include many additional fields, but for model-resolution purposes the important point is that Bifrost receives a Bifrost-visible model handle, not the full canonical Den registry entry.
 
-## `BifrostMaterializedModelConfig`
+## `BifrostAvailabilitySnapshot`
 
-This is the generated config fragment Den would emit into `services/bifrost/config.json` or an equivalent generated artifact.
+This is the observed Bifrost model surface Den compares against its metadata registry.
 
 ```json
 {
-  "handle": "gpt-4.1",
+  "handle": "openai/gpt-4.1",
   "provider": "openai",
   "model": "gpt-4.1",
-  "display_name": "OpenAI GPT-4.1",
-  "context_window": 1047576,
-  "max_output_tokens": 32768,
-  "supports_tools": true,
-  "supports_responses_api": true,
-  "supports_vision": true,
-  "enabled": true
+  "display_name": "OpenAI GPT-4.1"
 }
 ```
 
-This shape is intentionally close to the current `bears.models[]` entries already consumed by Den and served via Bifrost metadata.
-
-That reduces migration cost while still shifting authority upstream into Den.
+The exact shape can come from Bifrost `/bears/models`, `/v1/models`, or management APIs. Den should treat it as availability evidence, not as authoritative capability metadata.
 
 ---
 
@@ -377,13 +370,13 @@ Den should resolve model requests using a deterministic precedence order.
 
 - Alias collisions must be rejected at registry validation time.
 - A canonical key cannot also be a different entry’s alias.
-- Deprecated aliases may continue to resolve, but the resolution result should record that a deprecated identifier was used.
+- Keep lifecycle simple for now: aliases either resolve or they do not. If richer deprecation semantics are needed later, add them deliberately.
 
 ---
 
 ## Data sourcing hierarchy
 
-The canonical registry may combine several sources, but their trust ranking should be explicit.
+The Den metadata registry may combine several sources, but their trust ranking should be explicit.
 
 ### Preferred precedence for capability values
 
@@ -414,13 +407,13 @@ Allowed only for soft assumptions and should not silently override better source
 
 Bootstrap from the repo’s existing `services/bifrost/config.json` values as `manual_curated`, then selectively upgrade fields as better evidence is gathered.
 
-That is the fastest path to invert source-of-truth ownership without blocking on a perfect discovery pipeline.
+That is the fastest path to give Den useful metadata without claiming ownership of live Bifrost availability.
 
 ---
 
 ## Validation rules
 
-The registry compiler should reject invalid state before materializing any Bifrost config.
+The registry validator should reject invalid metadata before it is used for Bear configuration validation or operator status.
 
 ### Entry validation
 
@@ -439,54 +432,56 @@ Across the whole registry:
 - canonical keys are unique
 - aliases are globally unique
 - legacy handles are globally unique unless explicitly tombstoned
-- no generated Bifrost handle collisions
-- provider references used by generated models exist in the Bifrost provider section
+- no ambiguous Den aliases
+- provider references are known namespaces
 
-### Materialization validation
+### Availability reconciliation
 
-Before emitting Bifrost config:
-- every enabled generated model has a Bifrost handle
-- every generated model maps to a provider declared in the generated or static provider config
-- provider secret references are available by name, even if their values live only in environment configuration
+When Bifrost is reachable:
+- every configured Bear model should resolve to a Bifrost-available handle
+- Bifrost-available handles without Den metadata should be surfaced as metadata gaps, not hard failures
+- Den metadata entries not currently available in Bifrost should be surfaced as unavailable, not as Bifrost drift by default
 
 ---
 
-## Sync and materialization pipeline
+## Reconciliation pipeline
 
 The intended pipeline is:
 
-1. Read canonical Den registry source.
+1. Read Den metadata registry source.
 2. Merge data-source overlays if configured.
-3. Validate canonical entries and alias uniqueness.
-4. Produce runtime index for Den resolution.
-5. Materialize Bifrost-facing model config.
-6. Write generated artifact or expose generated payload for deployment tooling.
+3. Validate metadata entries and alias uniqueness.
+4. Fetch or observe Bifrost-available model handles.
+5. Produce runtime index for Den validation and UI enrichment.
+6. Surface reconciliation differences in status/admin views.
 7. Optionally expose Den-native registry read APIs.
 
 ### Phase 1 recommended implementation split
 
-#### Den-owned source artifact
-A checked-in Den-side registry file, for example:
+#### Den-owned metadata artifact
+A checked-in Den-side metadata file or Rust bootstrap, for example:
 - `services/den/model_registry.json`
-- or `services/den/config/model_registry.json`
+- `services/den/config/model_registry.json`
+- or `den-runtime::llm::model_registry` while the shape is still small.
 
-#### Generated Bifrost artifact
-A generated file, for example:
-- `services/bifrost/config.generated.json`
-- or regeneration of `services/bifrost/config.json` with a documented ownership boundary
+#### Bifrost availability source
+Use one or more Bifrost surfaces:
+- `/bears/models` compatibility metadata sidecar
+- `/v1/models` where sufficient
+- management APIs when `config_store` and management auth are enabled
 
-#### Compiler step
-A small Den-side tool or script that:
-- reads canonical registry JSON
-- reads static provider-secret mapping configuration
-- emits Bifrost-compatible model metadata projection
+#### Reconciliation step
+A small Den-side tool or status helper that:
+- reads Den metadata
+- reads Bifrost-available handles
+- reports available-with-metadata, available-without-metadata, and metadata-not-available entries
 
 ### Recommended ownership split
 
 The cleanest medium-term split is:
-- Den owns model metadata and selection policy.
-- Bifrost config owns provider credentials, provider routing config, and gateway-local operational flags.
-- Generated output bridges the two.
+- Den owns model metadata and validation policy.
+- Bifrost owns provider credentials, provider routing config, gateway-local operational flags, and live availability.
+- Optional sync/export tooling is an audited executor, not the architectural source of truth.
 
 ---
 
@@ -503,40 +498,41 @@ The current `services/bifrost/config.json` mixes at least three concerns:
 
 This spec proposes that only the third concern moves under Den canonical ownership first.
 
-That means phase 1 does not need to redesign all Bifrost config generation.
-It only needs to make `bears.models[]` derived from the canonical Den registry.
+That means phase 1 does not need to redesign Bifrost configuration.
+It only needs to let Den compare Bifrost availability with Den metadata and validate Bear model choices.
 
-A later phase may also generate more of the provider mapping layer, but that is not required to establish the new architecture.
+A later phase may add a file patcher or Bifrost management-API sync executor, but that is not required to establish the new architecture.
 
 ---
 
 ## Den API behavior
 
-Once the registry exists, Den should stop treating Bifrost metadata as authoritative for model-selection UX.
+Once the metadata registry exists, Den should stop treating Bifrost metadata as authoritative for capability estimates, but it should continue treating Bifrost as authoritative for live availability.
 
 ### Desired behavior
 
 Den should be able to:
-- list canonical/selectable models from its own registry
-- resolve aliases locally without making a Bifrost metadata request
-- optionally compare local registry state with Bifrost-exposed metadata for drift detection
+- list Bifrost-available models enriched with Den metadata where known
+- resolve aliases locally for validation/canonicalization
+- compare local metadata with Bifrost-exposed availability for operator diagnostics
 
 ### Compatibility path
 
-During migration, Den may continue supporting the existing Bifrost metadata fetch path as a fallback or validation mechanism, but canonical model selection should move toward local registry reads.
+During migration, Den should keep using Bifrost metadata or management APIs as the availability signal, while capability/display metadata moves toward local registry reads.
 
 ---
 
-## Drift detection
+## Availability reconciliation
 
-Once Den owns the registry, Bifrost metadata can still be useful as a verification surface.
+Bifrost metadata is useful as the live availability surface.
 
-Examples of drift checks:
-- generated Bifrost handle missing from `/bears/models`
-- context window mismatch between generated artifact and Bifrost-served metadata
-- enabled model missing from gateway-visible list
+Examples of reconciliation checks:
+- configured Bear model missing from Bifrost availability
+- Bifrost-available model has no Den metadata
+- Den metadata entry is not currently available in Bifrost
+- Den context-window estimate differs from Bifrost metadata when both are available
 
-This is especially useful because `services/bifrost/COOLIFY_DEPLOY.md` documents a file-based GitOps deployment model where config files are mounted into the Bifrost container. Generated artifacts can drift from deployed state if deploys are partial or stale.
+This is especially useful because `services/bifrost/COOLIFY_DEPLOY.md` documents a file-based GitOps deployment model where config files are mounted into the Bifrost container. Den should surface what is actually deployed rather than assuming local metadata matches gateway state.
 
 ---
 
@@ -544,8 +540,8 @@ This is especially useful because `services/bifrost/COOLIFY_DEPLOY.md` documents
 
 ### Phase 1: schema introduction
 
-- Add canonical Den registry file.
-- Mirror the existing four OpenAI entries from `services/bifrost/config.json`.
+- Add Den metadata registry file or Rust bootstrap.
+- Seed from the existing OpenAI entries in `services/bifrost/config.json` plus manual/provider-doc updates.
 - Mark imported values primarily as `manual_curated` with repo-source references.
 
 ### Phase 2: compiler and generated projection

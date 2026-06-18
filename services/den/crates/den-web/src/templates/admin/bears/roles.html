@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Roles · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Roles · {{ bear.name }}</h2>
+
+{% if message %}
+<p><strong>{{ message | e }}</strong></p>
+{% endif %}
+
+{% if native_runtime %}
+<p class="form-hint">Den-native bindings with SQLite-backed memory. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
+<table>
+  <thead><tr><th>Role</th><th>Branch</th><th>Binding</th><th>Status</th><th>Last sync</th></tr></thead>
+  <tbody>
+  {% for agent in agent_health_rows %}
+    <tr>
+      <td><strong>{{ agent.profile | e }}</strong></td>
+      <td><code>{{ agent.branch | e }}</code></td>
+      <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>
+        {% if agent.health_status == "ok" %}<strong>{{ agent.health_label | e }}</strong>
+        {% elif agent.health_status == "error" %}<span class="form-errors">{{ agent.health_label | e }}</span>
+        {% else %}<em>{{ agent.health_label | e }}</em>{% endif %}
+        {% if agent.health_detail %}<br><span class="form-hint">{{ agent.health_detail | e }}</span>{% endif %}
+      </td>
+      <td>{% if agent.last_synced_at %}{{ agent.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="form-hint">Role rows from <code>bear_profile_bindings</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
+{% if letta_configured %}
+<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="margin: 0 0 1rem 0;">
+  <button type="submit">Provision missing profiles</button>
+</form>
+{% elif not letta_configured %}
+<p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>
+{% endif %}
+<table>
+  <thead><tr><th>Role</th><th>Letta id</th><th>Provisioning</th><th>Health</th><th>MemFS</th><th>Last sync</th></tr></thead>
+  <tbody>
+  {% for agent in agent_health_rows %}
+    <tr>
+      <td><strong>{{ agent.profile | e }}</strong></td>
+      <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td><code>{{ agent.provisioning_status | e }}</code></td>
+      <td>
+        {% if agent.health_status == "ok" %}<strong>{{ agent.health_label | e }}</strong>
+        {% elif agent.health_status == "error" %}<span class="form-errors">{{ agent.health_label | e }}</span>
+        {% else %}<em>{{ agent.health_label | e }}</em>{% endif %}
+      </td>
+      <td>{% if agent.memfs_view_state %}<code>{{ agent.memfs_view_state | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{% if agent.last_synced_at %}{{ agent.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+</div>
+{% endblock %}

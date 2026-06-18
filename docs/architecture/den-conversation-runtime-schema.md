@@ -1,5 +1,7 @@
 # Den-Owned Conversation and Runtime Schema
 
+> **Direction changed (2026-06).** Den-owned transcript/runtime state is the right direction, but the `letta_api`/`letta_code`/`codepool_native` runtime families and "canonical memory in MemFS/git" are superseded — there is one native runtime and per-Bear SQLite memory ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 ## Purpose
 
 This document proposes the Phase 1 schema for moving Bear Den conversation and runtime state out of Letta and into Den-owned persistence.
@@ -42,8 +44,8 @@ rather than as core business identity.
 
 The schema should work for:
 
-- `pair`, `curate`, `watch` (API-direct)
-- `talk`, `work` (currently harness-backed)
+- `pair`, `review`, `watch` (API-direct)
+- `chat`, `work` (currently harness-backed)
 
 That means the tables must not assume one transport or runtime family.
 
@@ -179,7 +181,7 @@ Short term, this can coexist with `bear_agents`.
 |---|---|---|
 | `id` | UUID PK | Den-owned identity |
 | `bear_id` | UUID FK -> `bears(id)` | owning Bear |
-| `role` | TEXT | `talk`, `pair`, `curate`, `work`, `watch` |
+| `role` | TEXT | `chat`, `pair`, `review`, `work`, `watch` |
 | `runtime_family` | TEXT | e.g. `letta_api`, `letta_code`, `den_native`, `codepool_native` |
 | `runtime_provider` | TEXT | vendor/service label, e.g. `letta`, `den`, `codepool` |
 | `runtime_handle` | TEXT | opaque provider handle; may mirror Letta agent id initially |
@@ -363,7 +365,7 @@ First-class record of tool invocation lifecycle.
 This should support both:
 
 - API-direct tool continuation (`pair`)
-- harness-backed tool execution visibility (`talk`, `work`)
+- harness-backed tool execution visibility (`chat`, `work`)
 
 ### Suggested columns
 
@@ -818,5 +820,5 @@ That structure should make it possible to:
 
 - dual-write during Letta-backed execution
 - migrate UI/admin reads off Letta
-- replace `watch`, then `curate`, then `pair`
+- replace `watch`, then `review`, then `pair`
 - later replace Codepool/Letta Code without another schema reset

@@ -1,35 +1,45 @@
 #!/bin/sh
-set -eux
+set -eu
 
-BIN="/Library/Application Support/Bears/adapter/bears-acp-adapter"
+MANAGED_DIR="/Library/Application Support/Bears/adapter"
+MANAGED_BIN="$MANAGED_DIR/bear-armature"
+MANAGED_LEGACY_BIN="$MANAGED_DIR/bears-acp-adapter"
+USR_LOCAL_DIR="/usr/local/bin"
+USR_LOCAL_BIN="$USR_LOCAL_DIR/bear-armature"
+USR_LOCAL_LEGACY_BIN="$USR_LOCAL_DIR/bears-acp-adapter"
 
-echo "[postinstall] validating installed adapter at: $BIN" >&2
-ls -ld "/Library/Application Support" "/Library/Application Support/Bears" "/Library/Application Support/Bears/adapter" >&2 || true
-ls -l "$BIN" >&2 || true
-
-if [ ! -e "$BIN" ]; then
-  echo "BEARS ACP adapter package completed, but $BIN does not exist." >&2
+if [ ! -x "$MANAGED_BIN" ]; then
+  echo "BEARS armature was installed, but $MANAGED_BIN is not executable." >&2
   exit 1
 fi
 
-if [ ! -x "$BIN" ]; then
-  echo "BEARS ACP adapter was installed, but $BIN is not executable." >&2
-  exit 1
+if [ ! -L "$MANAGED_LEGACY_BIN" ] && [ ! -e "$MANAGED_LEGACY_BIN" ]; then
+  ln -sf bear-armature "$MANAGED_LEGACY_BIN"
+fi
+
+mkdir -p "$USR_LOCAL_DIR"
+if [ ! -L "$USR_LOCAL_BIN" ] && [ ! -e "$USR_LOCAL_BIN" ]; then
+  ln -sf "$MANAGED_BIN" "$USR_LOCAL_BIN"
+fi
+if [ ! -L "$USR_LOCAL_LEGACY_BIN" ] && [ ! -e "$USR_LOCAL_LEGACY_BIN" ]; then
+  ln -sf "$MANAGED_BIN" "$USR_LOCAL_LEGACY_BIN"
 fi
 
 # Avoid running network/config checks here; installs should succeed before the user has credentials.
-"$BIN" --version >&2 || {
-  echo "BEARS ACP adapter was installed, but --version failed." >&2
+"$MANAGED_BIN" --version >/dev/null 2>&1 || {
+  echo "BEARS armature was installed, but --version failed." >&2
   exit 1
 }
 
 cat <<'MESSAGE'
-BEARS ACP adapter installed successfully.
+BEARS armature installed successfully.
 
 Next steps:
-  1. Configure your ACP client to run /Library/Application Support/Bears/adapter/bears-acp-adapter.
+  1. Configure your ACP client to run /Library/Application Support/Bears/adapter/bears-acp-adapter acp.
+     New path /Library/Application Support/Bears/adapter/bear-armature also works.
+     Convenience path /usr/local/bin/bear-armature is created when possible.
   2. Provide DEN_API_URL, BEAR_SLUG, and DEN_TOKEN in the client environment.
-  3. Run /Library/Application Support/Bears/adapter/bears-acp-adapter doctor from the same environment to validate setup.
+  3. Run bear-armature doctor from the same environment to validate setup.
 MESSAGE
 
 exit 0

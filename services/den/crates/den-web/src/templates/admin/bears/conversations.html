@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Conversations · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+{% include "admin/bears/_bear_nav.html" %}
+<div class="box">
+<h2>Conversations · {{ bear.name }}</h2>
+
+{% if conversations and conversations | length > 0 %}
+<table>
+  <thead><tr><th>Title</th><th>External id</th><th>ACP session</th><th>Updated</th><th></th></tr></thead>
+  <tbody>
+  {% for c in conversations %}
+    <tr>
+      <td>{{ c.title | e }}</td>
+      <td><code>{{ c.external_id | e }}</code></td>
+      <td>{% if c.source_session != "—" %}<code>{{ c.source_session | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{{ c.updated_at }}</td>
+      <td><a href="/admin/bears/{{ bear.id }}/conversations/{{ c.id }}">Open</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No persisted conversations yet.</em></p>
+{% endif %}
+</div>
+{% endblock %}

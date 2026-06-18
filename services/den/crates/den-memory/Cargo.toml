@@ -1,0 +1,23 @@
+[package]
+name = "den-memory"
+version.workspace = true
+edition = "2021"
+
+# Per-Bear canonical memory store (per-Bear SQLite), per ADR-0031.
+# Service-layer leaf in the den workspace (DEN_CRATE_SPLIT_PLAN.md): depends
+# only on den-core. Higher-level memory curation/tools (which reach into bears
+# and reflection) stay in the den crate for now.
+
+[lints]
+workspace = true
+
+[dependencies]
+den-core = { path = "../den-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.138"
+serde_yml = "0.0.12"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "time", "json", "uuid"] }
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+tokio = { version = "1", default-features = false, features = ["sync", "rt-multi-thread", "macros", "time"] }
+tracing = "0.1.41"

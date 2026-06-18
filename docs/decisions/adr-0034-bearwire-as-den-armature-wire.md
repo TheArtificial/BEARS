@@ -1,0 +1,176 @@
+# ADR: BearWire as the Den ↔ armature wire
+
+**Status:** Proposed  
+**Date:** 2026-06-16  
+**Deciders:** Hans
+
+**Related:**
+
+- [ADR-0007](adr-0007-bearwire-protocol.md) — BearWire protocol scope and trust boundary
+- [ADR-0029](adr-0029-den-structured-runtime-events.md) — Den structured runtime (semantic) events
+- [ADR-0030](adr-0030-bearwire-resource-oriented-event-model.md) — BearWire resource-oriented event taxonomy
+- [ADR-0003](adr-0003-acp-session-bindings.md) — ACP session bindings (edge-fed into Den session store)
+- [BearWire JSON specification](../architecture/bearwire-json-spec.md)
+- [BearWire Rust design](../architecture/bearwire-rust-design.md)
+- [BearWire armature wire implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
+
+## Context
+
+BEARS has three protocol layers that are easy to conflate:
+
+```text
+Editor (Zed, Cursor, …)
+  ⇄ ACP JSON-RPC on stdio
+bears-acp-adapter  (client armature)
+  ⇄ Den HTTP + bespoke adapter-SSE today
+Den ACP gateway edge (den-acp / `/acp/**`)
+  ⇄ protocol-neutral agent loop (den-runtime)
+```
+
+ADR-0007 and ADR-0030 already decided that **BearWire** is the trusted runtime/control protocol **between Den and BEARS-controlled edge runtimes** (ACP adapters, desktop companions, CI sidecars, reflection workers). ADR-0029 says that boundary should carry **semantic runtime facts**, and that **ACP should be a channel adapter toward the editor**, not Den's internal parser.
+
+In code, the internal seam is partly built:
+
+- `RuntimeSemanticEvent` / `RuntimeStreamEvent` in `den-runtime` (semantic facts)
+- `bearwire_projection` maps semantic events toward `GatewayEvent`
+- `gateway_event_to_adapter_sse` projects `GatewayEvent` into **adapter-SSE JSON** (`assistant_text_delta`, `tool_request`, …)
+
+That last hop is a **private, expedient wire** grown for `bears-acp-adapter`. It is **not** BearWire (no `message.delta`, no resource subjects, no JSON-RPC `event` envelope) and **not** ACP (ACP is stdio toward the editor). The Den gateway edge therefore owns two jobs that should split:
+
+1. **Server control plane** — auth, session bindings, Postgres-backed session state, bear-scoped policy, server-executed Den tools, history/compaction APIs. Something on Den must always own this.
+2. **Armature wire** — stable event stream + control methods between Den and trusted armatures.
+
+Today both jobs live behind `/acp/**` and adapter-SSE, which names the edge after the wrong protocol and forces every future armature to learn a bespoke HTTP dialect.
+
+`GatewayEvent` is also not wire-safe: it carries in-process concerns (e.g. `oneshot` channels for tool settlement). BearWire needs a separate, serializable wire projection layer as described in [BearWire Rust design](../architecture/bearwire-rust-design.md).
+
+## Decision
+
+### 1. BearWire is the Den ↔ armature wire
+
+Trusted armatures (`bears-acp-adapter` first; later desktop companion, CI runner, reflection worker) speak **BearWire** to Den — not adapter-SSE, not ACP-shaped HTTP.
+
+ACP translation (stdio framing, editor permission UX, local tool execution) stays entirely in the **client armature**. Den never parses ACP.
+
+### 2. Evolve the gateway edge into the BearWire edge — do not delete it
+
+The crate/module that today serves `/acp/**` (typically `den-acp`, composed by the binary) **evolves** into the **BearWire HTTP edge** (`den-bearwire` is an acceptable rename when the migration completes). It remains responsible for:
+
+- transport termination (auth, TLS, rate limits at the HTTP boundary)
+- mapping BearWire control methods to den-runtime operations
+- emitting BearWire `event` notifications on the run stream
+- session binding persistence and multi-tenant authorization
+
+It is **not** responsible for ACP stdio or editor UX.
+
+### 3. v1 transport binding: HTTP control + SSE events (BearWire envelopes)
+
+The [BearWire JSON specification](../architecture/bearwire-json-spec.md) prefers WebSocket JSON-RPC at `wss://<den>/bearwire/v1`. **v1 implementation** uses a pragmatic binding that reuses existing Axum patterns and allows incremental migration:
+
+| Concern | v1 binding |
+| --- | --- |
+| Control methods | `POST /bearwire/v1/rpc` — single JSON-RPC 2.0 request/response endpoint (or method-scoped REST aliases during transition) |
+| Event stream | `GET /bearwire/v1/sessions/{session_id}/events` — SSE stream of JSON-RPC **`event` notifications** per the JSON spec |
+| Auth | Same bearer/OAuth machinery as today; `Authorization: Bearer`, `BearWire-Version: 1` |
+| Capability negotiation | `connection.capabilities` event + `initialize` method on connect |
+
+WebSocket JSON-RPC at `/bearwire/v1` is **v2** (same semantic model, different transport). Adapter-SSE and `/acp/**` are **deprecated** once parity is proven.
+
+### 4. Canonical projection path
+
+```text
+RuntimeSemanticEvent  (den-runtime, in-process)
+  → BearWire wire event (serializable, versioned)
+  → JSON-RPC `event` notification (SSE or WebSocket)
+  → armature projects to client protocol (ACP stdio, etc.)
+```
+
+`GatewayEvent` may remain an **in-process orchestration** type during transition, but it must not be the armature wire. New code projects `RuntimeSemanticEvent` → BearWire wire types directly.
+
+### 5. Control-method inventory replaces `/acp/**` routes
+
+Existing HTTP routes map to BearWire methods (see implementation plan for the full table). Examples:
+
+| Today (`/acp/...`) | BearWire method |
+| --- | --- |
+| `POST …/prompt` | `run.start` |
+| `POST …/tool-results/{id}` | `client.tool.result` (or `run.resume` with tool payload) |
+| `POST …/permissions/{id}` | `client.permission.result` |
+| `POST …/cancel` | `run.cancel` |
+| `POST …/close` | `session.close` |
+| `POST …/adapter-environment` | `resource.update` (adapter capability resource) |
+| `POST …/mode` | `session.state` / plan-mode side effect |
+| `GET …/sessions`, `GET …/history` | `session.state`, history read methods |
+
+Server-only paths such as `/internal/den-tools/invoke` remain **internal Den RPC**, not BearWire surface (armatures call them only via Den-mediated tool execution, not as a second public wire).
+
+### 6. Event rename: adapter-SSE → BearWire
+
+| Adapter-SSE `type` (today) | BearWire `type` (target) |
+| --- | --- |
+| `assistant_text_delta` | `message.delta` |
+| `status_text` | `run.progress` (`kind: "status_text"`) |
+| `tool_request` | `tool_call.requested` or `tool_call.blocked` (`reason: "permission_required"`) |
+| `permission_request` | `permission.requested` |
+| `turn_complete` / `turn_result` (success) | `run.completed` |
+| `turn_result` (failure) / `error` (terminal) | `run.failed` |
+| `error` (recoverable) | `run.warning` or `diagnostic.reported` |
+| `conversation_resolved` | `session.bound` |
+| `mode_update` | `session.state` |
+| `plan_update` | `resource.updated` (plan artifact resource) |
+| `session_info_update` | `session.state` |
+
+Exact payload schemas follow [BearWire JSON specification](../architecture/bearwire-json-spec.md) and ADR-0030 semantic mapping guidance.
+
+### 7. Versioning and compatibility
+
+- BearWire wire version **`1`** for the first shipped armature binding.
+- Den serves **`/acp/**` + adapter-SSE in parallel** during migration (minimum one release cycle; gated by adapter version negotiation).
+- Golden traces assert **semantic parity**: same user-visible outcomes for `adapter-SSE` and BearWire projections from the same `RuntimeSemanticEvent` fixtures.
+- `bears-acp-adapter` negotiates `bearwire_version` via `initialize`; falls back to legacy HTTP when Den does not advertise BearWire.
+
+## Rationale
+
+### Why not eliminate the server edge crate?
+
+Armatures are **client processes** on user machines. Den must still own Postgres session bindings, OAuth, multi-tenant authorization, server-side tool execution, and audit. That edge is real; only its **wire shape** was wrong.
+
+### Why not expose `GatewayEvent` directly?
+
+It mixes orchestration (channels, in-process state) with semantics. BearWire wire types must be serializable, versioned, and stable across processes.
+
+### Why HTTP+SSE before WebSocket?
+
+Matches today's Axum deployment, allows route-by-route migration, and keeps one semantic model ([BearWire JSON spec](../architecture/bearwire-json-spec.md)) with a simpler first transport. WebSocket is an upgrade, not a redesign.
+
+### Alignment with prior ADRs
+
+This ADR **implements** ADR-0007/0030/0029 together — it does not replace them. It closes the gap between "BearWire is the boundary" (decided) and "adapter-SSE is the boundary" (accidental).
+
+## Consequences
+
+### Positive
+
+- One stable contract for all armatures; ACP knowledge quarantined in `bears-acp-adapter`.
+- Removes the extra projection hop (core → GatewayEvent → adapter-SSE → armature → ACP).
+- Enables desktop companion / CI runner without copying `/acp/**` dialect.
+- Makes golden-trace tests assert BearWire envelopes directly.
+
+### Costs
+
+- `bears-acp-adapter` must implement BearWire client + ACP server (larger armature, clearer boundary).
+- Parallel `/acp` and `/bearwire` maintenance during migration.
+- BearWire v1 schemas must be pinned and reviewed (public contract).
+
+## Non-goals
+
+- Replacing ACP toward editors — armature still speaks ACP stdio.
+- Exposing BearWire to untrusted third parties — remains Den-authorized armatures only.
+- Changing the protocol-neutral agent loop (ADR-0035) — only the edge wire changes.
+- WebSocket transport in v1 — deferred to v2 per §Decision 3.
+
+## Follow-on
+
+Implementation sequencing, file-level tasks, and test gates: [BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md).
+
+Update [BearWire JSON specification](../architecture/bearwire-json-spec.md) with the HTTP+SSE v1 binding section when Phase 1 starts.

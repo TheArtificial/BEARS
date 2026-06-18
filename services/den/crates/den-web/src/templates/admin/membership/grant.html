@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Grant access{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h3>Grant bear access</h3>
+<form method="post">
+  <label for="user_id_select">User</label>
+  <div class="form-field">
+    <select id="user_id_select" name="user_id" required>
+      {% for u in users %}
+      <option value="{{ u.id }}">{{ u.username | e }} ({{ u.email | e }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <label for="bear_id_select">Bear</label>
+  <div class="form-field">
+    <select id="bear_id_select" name="bear_id" required>
+      {% for b in bears %}
+      <option value="{{ b.id }}"><code>{{ b.slug | e }}</code> — {{ b.name | e }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <label for="role_select">Access</label>
+  <div class="form-field">
+    <select id="role_select" name="role">
+      <option value="member" selected>Member</option>
+      <option value="admin">Admin</option>
+    </select>
+  </div>
+  <button type="submit">Grant access</button>
+</form>
+<p><a href="/admin/membership/">All access grants</a></p>
+</div>
+{% endblock %}

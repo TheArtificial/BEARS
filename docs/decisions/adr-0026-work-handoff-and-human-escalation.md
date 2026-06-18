@@ -107,7 +107,7 @@ Use `pair` when:
 
 ### `curate`
 
-`curate` may review durable results, memory promotion, and cross-role governance, but routine `work` blockers should not depend on `curate` unless they concern memory/core/Cabinet cleanliness or policy review.
+`curate` may review durable results, memory promotion, and cross-role curation, but routine `work` blockers should not depend on `curate` unless they concern memory/core/Cabinet cleanliness or policy review.
 
 ## Approval authority
 

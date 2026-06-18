@@ -52,6 +52,8 @@ Open **Build Arguments** / **Docker Build Args** (wording varies by Coolify vers
 | `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The image build copies `.sqlx/` from the Git checkout into the build context. Regenerate metadata with `cargo sqlx prepare` when queries change. |
 | `SOURCE_DATE_EPOCH` (optional) | Unix timestamp (seconds) used as **`GET /version`** → `built_at_utc` when set at image build time; otherwise the build uses the real clock when `build.rs` runs. Useful for reproducible builds. |
 
+If you want `/version` and `/status.json` to report deploy metadata **without** changing Docker build args on every push, prefer **runtime** environment variables instead of build args. Den checks `DEN_GIT_SHA_OVERRIDE` first, then `GIT_SHA`, then `SOURCE_COMMIT`, and falls back to the compile-time `GIT_SHA` baked by `build.rs`. It also checks `DEN_BUILT_AT_OVERRIDE` first and otherwise falls back to the compile-time `DEN_BUILT_AT_UTC` from `build.rs`.
+
 If you omit `SQLX_OFFLINE=true`, the build needs a reachable Postgres so SQLx can verify queries against a database that has applied the current migrations (same as before). Offline builds are the usual **CI / air-gapped** approach (see [`docs/deploy.md`](docs/deploy.md)).
 
 At **container start**, Den connects using the **runtime** `DATABASE_URL` and applies any pending migrations there automatically.
@@ -75,6 +77,8 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
 | `PORT` | Web listen port inside the container (default **3000**). |
 | `API_PORT` | API listen port when `RUN_API=true` (default **3001**). |
+| `AGENT_RUNTIME` | `native` (in-process loop + per-Bear SQLite) or `letta` (legacy). Root compose defaults to **`native`**. |
+| `BEAR_SQLITE_DATA_DIR` | **Required for native runtime persistence.** Absolute path inside the container where Den stores per-Bear SQLite files (default **`/var/lib/den/bear-sqlite`**). Mount a **persistent volume** at this path so Bear memory survives image upgrades and container recreation. Den does **not** run backups for this store — use volume snapshots or the optional `bears-den-sqlite-data-backup` sidecar in root [`docker-compose.yaml`](../../docker-compose.yaml) (`volume-backup` profile). |
 
 Strongly recommended for production:
 
@@ -83,6 +87,8 @@ Strongly recommended for production:
 | `WEB_SERVER_URL` | Public origin of the web app (**no** trailing slash), for example `https://den.example.com`. |
 | `API_SERVER_URL` | Public origin of the API when `RUN_API=true`; for BEARS ACP this can be a subdomain such as `https://api.bears.[domain]`, another hostname, or a published port such as `https://bears.[domain]:3001`. |
 | `SESSION_COOKIE_DOMAIN` | Cookie `Domain` when sessions must span subdomains; omit for host-only cookies. |
+| `DEN_GIT_SHA_OVERRIDE` | Optional runtime-only commit identifier for `/version` and `/status.json`. Recommended when your Coolify build omits `GIT_SHA` build args to preserve Docker cache reuse. If your Coolify setup exposes a commit variable at container runtime, map it here. |
+| `DEN_BUILT_AT_OVERRIDE` | Optional runtime-only timestamp for `/version` and `/status.json` (for example an RFC 3339 deploy timestamp). Use this if you want the status page to show deploy-time metadata instead of the compile-time timestamp from the crate build script. |
 
 Integrations (set when you wire the rest of the stack):
 
@@ -122,15 +128,23 @@ Use **readiness** on `/health/ready` if you want Coolify to wait for database co
 
 Suggested intervals match your other BEARS services (for example 30s interval, generous start period on cold Rust startup).
 
-### 8. Restart policy
+### 8. Persistent storage (native runtime)
+
+When `AGENT_RUNTIME=native`, Den keeps **bear-canonical memory** (role-local notes, proposals, promotions, curation) in one SQLite file per Bear under `BEAR_SQLITE_DATA_DIR`. This is **separate from** `DATABASE_URL` (Den Postgres control-plane).
+
+- **Docker Compose (repo root):** `bears-den` mounts the named volume `bears-den-sqlite-data` at `/var/lib/den/bear-sqlite` and sets `BEAR_SQLITE_DATA_DIR` accordingly.
+- **Coolify Docker Image resource:** add a **persistent storage** volume mounted at `/var/lib/den/bear-sqlite` and set `BEAR_SQLITE_DATA_DIR=/var/lib/den/bear-sqlite`. The image entrypoint (`docker-entrypoint.sh`) creates the directory and assigns ownership to the `appuser` runtime user before starting `/bin/server`.
+- **Backups:** Den has no built-in SQLite backup job. Enable operator backups (volume snapshots, or `bears-den-sqlite-data-backup` with `COMPOSE_PROFILES=volume-backup` and `SCALEWAY_*` credentials). SQLite uses WAL mode — prefer quiesced copies or full-volume archives over copying a single `.sqlite` file while Den is writing.
+
+### 9. Restart policy
 
 Set restart policy to **unless stopped** (or your platform equivalent) so Den recovers after host reboots.
 
-### 9. Deploy
+### 10. Deploy
 
 Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures and **Application logs** for runtime config errors (missing `DATABASE_URL`, unreachable Letta, etc.).
 
-### 10. Networking with Letta and Bifrost
+### 11. Networking with Letta and Bifrost
 
 - If Den and Letta are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
 - Set `LETTA_BASE_URL` to Letta’s **internal** URL (scheme + host + port, no path suffix).
@@ -138,32 +152,23 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 
 ---
 
-## Option B (recommended): Pre-built image from CI — “Docker Image” resource
+## Option B: Versioned image publish from CI
 
-A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../../.github/workflows/den-image.yml)) builds the Docker image on every push to `main` that touches `services/den/` and pushes it to GHCR. This avoids compiling Rust on the Coolify host (which can OOM on small servers).
+The normal compose deployment builds Den from source on the deploy host. GitHub Actions only publishes a Den image when `services/den/Cargo.toml` changes and the Den crate `package.version` is different from the previous commit.
 
 The workflow:
 
 - Builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata (no database needed at build time).
-- Tags images as **`ghcr.io/theartificial/den:latest`** and **`ghcr.io/theartificial/den:<short-sha>`**.
+- Tags images as **`ghcr.io/<owner>/den:<version>`**, **`ghcr.io/<owner>/den:v<version>`**, and the commit SHA. The default branch also gets `latest`.
 - Uses GitHub Actions layer cache (`type=gha`) so unchanged layers are reused across builds.
 
-### Coolify setup
+Use this path for pinned releases or external consumers. The root `docker-compose.yaml` does not depend on these images for normal deployment.
 
-1. **Add New Resource** → **Docker Image**.
-2. Set **Image** to `ghcr.io/theartificial/den:latest` (or pin a SHA tag for reproducibility).
-3. If the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
+If you do deploy one of these images directly and the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
    ```
    echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USER> --password-stdin
    ```
-   The PAT needs the `read:packages` scope. This must be run as root (Coolify's Docker daemon uses `/root/.docker/config.json`).
-4. Configure **environment variables**, **ports**, **health checks**, and **restart policy** exactly as in **Option A §5–§8**.
-5. The CI workflow triggers a Coolify redeploy automatically via webhook after a successful image push. Set two **GitHub repository secrets** (**Settings → Secrets → Actions**):
-
-   | Secret | Where to find it |
-   | ------ | ---------------- |
-   | `COOLIFY_WEBHOOK` | Coolify dashboard → your Den resource → **Webhooks** → copy the deploy URL. |
-   | `COOLIFY_TOKEN` | Coolify dashboard → **Keys & Tokens** (or **API Tokens**) → create a token with **deploy** permission. |
+The PAT needs the `read:packages` scope. This must be run as root (Coolify's Docker daemon uses `/root/.docker/config.json`).
 
 ### Keeping `.sqlx/` up to date
 
@@ -189,7 +194,7 @@ After deploy:
 | Symptom | What to check in Coolify |
 | ------- | ------------------------ |
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
-| **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Switch to **Option B** (CI-built image) or add swap / RAM to the build host. |
+| **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Lower `CARGO_BUILD_JOBS`, add swap/RAM to the deploy host, or temporarily deploy a pinned versioned image from CI. |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |

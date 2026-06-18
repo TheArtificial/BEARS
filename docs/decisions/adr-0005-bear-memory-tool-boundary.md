@@ -198,7 +198,7 @@ If semantic tools such as `remember` are introduced later, they should be docume
 
 - Use read-only MemFS Manager and Letta diagnostics for Den memory UI and health views.
 - Prefer asynchronous observation for native memory changes where full synchronous mediation is unnecessary.
-- Introduce Den-mediated memory proposal/approval tools only for workflows that actually require governance.
+- Introduce Den-mediated memory proposal/approval tools only for workflows that actually require curation.
 - Keep Cabinet separate from per-bear MemFS for shared, human-editable knowledge.
 - Document whether a tool is **native memory editing**, **Den product metadata**, **Cabinet shared knowledge**, or **governed memory workflow**.
 
@@ -223,4 +223,4 @@ This ADR does not decide:
 - [dynamic-skills-subagents.md](dynamic-skills-subagents.md) — dynamic skills, reflection subagents, and bear-authored capability growth.
 - [routines-automation.md](routines-automation.md) — Den-managed routines and learning constraints.
 - [../MEMFS_AND_MEMORY_UI.md](../MEMFS_AND_MEMORY_UI.md) — MemFS Manager responsibilities and Den read-only memory UI behavior.
-- [../../planning/PLAN.md](../../planning/PLAN.md) — overall roadmap and Phase 1 memory model.
+- [../roadmap/PLAN.md](../roadmap/PLAN.md) — overall roadmap and Phase 1 memory model.

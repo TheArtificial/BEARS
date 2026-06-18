@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% set memory_subnav = "browse" %}
+
+{% block title %}Memory entry · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>Memory entry
+    {% if is_head %}<span class="form-hint">(current head)</span>{% else %}<span class="form-hint">(superseded version)</span>{% endif %}
+  </h2>
+  <p><a href="/bear/{{ bear.slug }}/memory/browse">← Back to library</a></p>
+
+  <dl>
+    <dt>Memory id</dt><dd><code>{{ record.memory_id | e }}</code></dd>
+    <dt>Sequence</dt><dd>{{ record.sequence_no }}</dd>
+    <dt>Scope</dt><dd>{{ record.scope_type | e }}{% if record.scope_profile %} / {{ record.scope_profile | e }}{% endif %}</dd>
+    <dt>Kind</dt><dd>{{ record.kind | e }}</dd>
+    <dt>Visibility</dt><dd>{{ record.visibility | e }}</dd>
+    <dt>Author</dt><dd>{{ record.author_profile | e }}{% if record.author_agent_id %} <span class="form-hint">({{ record.author_agent_id | e }})</span>{% endif %}</dd>
+    <dt>Logical path</dt><dd>{% if record.logical_path %}<code>{{ record.logical_path | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+    <dt>Work surface</dt><dd>{% if record.work_surface_ref %}<code>{{ record.work_surface_ref | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+    {% if record.supersedes_memory_id %}
+    <dt>Supersedes</dt><dd><a href="/bear/{{ bear.slug | e }}/memory/records/{{ record.supersedes_memory_id | urlencode }}"><code>{{ record.supersedes_memory_id | e }}</code></a></dd>
+    {% endif %}
+    <dt>Created</dt><dd>{{ record.created_at | e }}</dd>
+  </dl>
+</div>
+
+<div class="box">
+  <h3>Content</h3>
+  <pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{{ record.content_text | e }}</pre>
+</div>
+
+<section class="two-columns" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+  <div class="box">
+    <h3>History at this path</h3>
+    {% if history %}
+    <p class="form-hint">All versions at this logical path, newest first. The newest is the current head (supersession is by recency today).</p>
+    <ul>
+      {% for h in history %}
+      <li>
+        {% if h.memory_id == record.memory_id %}
+          <strong>#{{ h.sequence_no }}</strong> (this version)
+        {% else %}
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ h.memory_id | urlencode }}">#{{ h.sequence_no }}</a>
+        {% endif %}
+        {% if h.is_current %}<span class="form-hint">· current</span>{% endif %}
+        <span class="form-hint">· {{ h.kind | e }} · {{ h.created_at | e }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="form-hint">No path history (this record has no logical path).</p>
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h3>Referenced entities</h3>
+    {% if entities %}
+    <ul>
+      {% for ent in entities %}
+      <li>
+        <a href="/bear/{{ bear.slug | e }}/entities/{{ ent.entity_id | e }}">{{ ent.display_name | e }}</a>
+        <span class="form-hint">· {{ ent.entity_type | e }} · {{ ent.relation_label | e }} ({{ ent.class_label }})</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="form-hint">No entities linked to this record yet.</p>
+    {% endif %}
+
+    <h3>Recall index</h3>
+    {% if recall %}
+    <p>{{ recall.passages }} passage{{ recall.passages == 1 and "" or "s" }} indexed for semantic recall.</p>
+    {% else %}
+    <p class="form-hint">Recall index not configured.</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="box">
+  <h3>Metadata</h3>
+  <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ record.metadata_json | tojson(indent=2) }}</pre>
+</div>
+{% endblock %}

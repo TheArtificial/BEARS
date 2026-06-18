@@ -1,6 +1,6 @@
 # Notes on ACP
 
-These notes capture lessons from implementing and testing Bear Den's ACP adapter path. The current `pair` role ACP implementation is direct: local adapter ⇄ Den ⇄ Letta conversation API. Earlier Codepool/Letta Code relay lessons remain useful where noted, but new ACP work should not route pair-role tools through Codepool.
+These notes capture lessons from implementing and testing Bear Den's ACP adapter path. The current `pair` profile ACP implementation is direct: local adapter ⇄ Den ACP gateway ⇄ Den native agent loop ⇄ Bifrost. Earlier multi-hop relay lessons (for example §19) remain useful as cautionary context, but new ACP work should stay on the in-process native path.
 
 ## 1. Keep ACP sessions separate from canonical conversations
 
@@ -12,9 +12,9 @@ Use ACP session records only as bindings between:
 - client name, such as `zed`;
 - local workspace context, such as `cwd`;
 - authenticated Bear Den user/bear;
-- canonical Bear Den/Letta `conv-*` id, when one exists.
+- canonical Den `conv-*` conversation id, when one exists.
 
-For the direct ACP `pair` role, new ACP sessions should create distinct Letta conversations with `POST /v1/conversations/?agent_id=...`, then send prompts to `POST /v1/conversations/{conv_id}/messages` with `streaming=true` and `stream_tokens=false`. Do not route new ACP sessions through agent-default endpoints; those can share conversation state.
+For the direct ACP `pair` profile, new ACP sessions should create or resolve distinct Den conversations in Postgres, then run turns through the in-process native agent loop. Each session binding should map to its own conversation row so threads do not share transcript state accidentally.
 
 Conversation history, archive semantics, search, memory, and title generation should operate on canonical Bear Den conversations, not on ACP session rows directly.
 
@@ -117,7 +117,7 @@ If the backend runtime also has local filesystem tools, the model may choose tho
 
 An ACP mode should disable or strongly deprioritize backend-local filesystem tools and steer the model toward ACP client tools:
 
-- provider-safe Letta tool name: `fs_read_text_file`;
+- provider-safe tool name: `fs_read_text_file`;
 - canonical Den tool identity: `acp.fs.read_text_file`;
 - ACP client method: `fs/read_text_file`;
 - adapter-local fallback method: `bears/read_text_file`.
@@ -126,16 +126,13 @@ This was a recurring source of confusion when the model reported only seeing bac
 
 Current read-file flow:
 
-1. Den advertises Letta `client_tools[].name = "fs_read_text_file"`.
-2. Letta emits native `approval_request_message` / `tool_call_message` for that tool.
-3. Den maps it to private adapter event `tool_request`.
-4. Adapter requests ACP permission with `session/request_permission`.
-5. Adapter prefers ACP client method `fs/read_text_file` when advertised by the client.
-6. Adapter falls back to `bears/read_text_file` only when the client does not advertise `fs.readTextFile`.
-7. Adapter posts the result to Den.
-8. Den sends a Letta approval/tool return back to the same `conv-*` conversation.
-
-Use `stream_tokens=false` on the conversation-scoped Letta messages endpoint so Letta emits step-level native tool/message events rather than OpenAI token/tool-call deltas where possible.
+1. Den exposes the tool in the `pair` profile roster with provider-safe naming.
+2. The native agent loop emits a tool call; Den maps it to private adapter event `tool_request`.
+3. Adapter requests ACP permission with `session/request_permission`.
+4. Adapter prefers ACP client method `fs/read_text_file` when advertised by the client.
+5. Adapter falls back to `bears/read_text_file` only when the client does not advertise `fs.readTextFile`.
+6. Adapter posts the result to Den.
+7. Den continues the same in-process turn with the tool result and streams assistant text to the adapter.
 
 ## 9. Match ACP tool-call update schemas exactly
 
@@ -215,7 +212,7 @@ Referenced resource: file:///workspace/README.md (...)
 
 That makes it look as though the user typed content they did not type.
 
-For Letta, do not use message/content `type` as a provenance channel; `type` is the schema discriminator (`message`, `text`, `image`, `tool_return`, etc.). Prefer reference-plus-tool semantics for files: send the user's actual message plus the file id/path as referenced host context, then let file contents enter Letta history as a tool return when the agent calls the file-read tool. BEARS uses bounded `<host_context kind="referenced_resources" delivery="reference_only">` metadata for reference-only resources and keeps embedded resource bodies out of human-authored text. Inline small non-fetchable snippets only with explicit `<host_context>` provenance delimiters, and do not use `role: system` for arbitrary file contents.
+Do not use message/content `type` as a provenance channel; `type` is the schema discriminator (`message`, `text`, `image`, `tool_return`, etc.). Prefer reference-plus-tool semantics for files: send the user's actual message plus the file id/path as referenced host context, then let file contents enter conversation history as a tool return when the agent calls the file-read tool. BEARS uses bounded `<host_context kind="referenced_resources" delivery="reference_only">` metadata for reference-only resources and keeps embedded resource bodies out of human-authored text. Inline small non-fetchable snippets only with explicit `<host_context>` provenance delimiters, and do not use `role: system` for arbitrary file contents.
 
 ## 12. Implement a real JSON-RPC dispatcher
 
@@ -283,19 +280,19 @@ This keeps the model from confidently concluding that a file is missing when the
 
 ## 16. Log approval requests with tool names
 
-Letta Code produced many `approval_request_message` events. These were often noisy and sometimes streamed argument fragments. Logging extracted tool names helped distinguish:
+The native agent loop can emit many approval-related events during a turn. These are often noisy and sometimes stream argument fragments. Logging extracted tool names helped distinguish:
 
-- approval for ACP tools;
+- approval for ACP client tools;
 - approval for backend-local tools;
 - unrelated approval/planning events.
 
-For a new non-Letta-Code ACP implementation, still keep this lesson: when a runtime has an approval model, log the tool name and call id at approval boundaries.
+Keep this lesson on the native path: when a runtime has an approval model, log the tool name and call id at approval boundaries.
 
 ## 17. Keep diagnostic metadata structured but non-sensitive
 
 Healthy ACP logs should look like ordinary ACP.
 
-Bear Den internals such as Den, Codepool, bearer scopes, and internal request ids should not pollute normal protocol content. But when something fails, structured diagnostic metadata is useful:
+Bear Den internals such as Den, bear-armature, bearer scopes, and internal request ids should not pollute normal protocol content. But when something fails, structured diagnostic metadata is useful:
 
 - `request_id`;
 - `call_id`;
@@ -320,16 +317,16 @@ This makes stale binary problems obvious in Zed agent logs.
 
 ## 19. Prefer direct ACP implementation over multi-hop tool relays
 
-The Den → Codepool → Letta Code → Codepool → Den → adapter → Zed loop was difficult to reason about. Failures could occur at many async boundaries.
+An earlier multi-hop path (Den → harness → secondary tool runtime → Den → adapter → editor) was difficult to reason about. Failures could occur at many async boundaries. The native `pair` profile now runs **in-process** in Den (see [den-native-runtime.md](../architecture/den-native-runtime.md)).
 
-A future implementation without Letta Code should strongly consider:
+When extending ACP, keep:
 
-- treating ACP as the primary runtime interface;
-- directly managing model tool calls and ACP client tool execution;
-- avoiding a second tool-calling runtime that has its own approval model and local filesystem semantics;
-- reducing the number of independent stream protocols involved in one prompt turn.
+- ACP as the primary runtime interface to the editor;
+- Den directly managing model tool calls and ACP client tool execution;
+- no second tool-calling runtime with its own approval model and local filesystem semantics;
+- as few independent stream protocols as possible in one prompt turn.
 
-The fewer translation layers between the model's tool call and the ACP client method, the easier it will be to make Zed behavior predictable.
+The fewer translation layers between the model's tool call and the ACP client method, the easier it is to make editor behavior predictable.
 
 ## 20. Keep live waiter ownership boring and single-owner
 
@@ -344,7 +341,7 @@ For Bear Den, the most reliable shape is:
 A split-brain waiter design is tempting because it improves observability, but it introduces hard questions:
 
 - Which registry is authoritative?
-- What happens if Den accepts a result that Codepool cannot deliver?
+- What happens if Den accepts a result that the adapter cannot deliver?
 - What happens after a runtime restart?
 - What happens if the result arrives before the live waiter exists?
 
@@ -430,8 +427,8 @@ These metrics make it possible to distinguish model/tool behavior from protocol 
 
 ## 26. Recovery approval denials must not read like durable policy
 
-Letta stale-approval recovery may require Bear Den to submit an explicit approval denial for an expired/orphaned tool call. That denial becomes part of the model-visible conversation state, so its reason must be phrased as runtime recovery, not as a current user or web policy decision.
+Stale-approval recovery in Den may require submitting an explicit approval denial for an expired/orphaned tool call. That denial becomes part of the model-visible conversation state, so its reason must be phrased as runtime recovery, not as a current user or web policy decision.
 
 Avoid reason strings like “Denied by Bear Den manual ACP recovery command”. Models can reasonably interpret those as durable tool policy and refuse future `web_fetch` attempts even when Den `/status` reports no pending permissions and no active turn.
 
-Use wording that says the denial applies only to the stale request, is not a user/web policy block, and that the model should retry the tool if it is still needed. If an existing session already contains the old wording, Den may be idle and healthy while the Letta transcript remains semantically poisoned; a fresh ACP session or explicit retry instruction may be needed for that historical conversation.
+Use wording that says the denial applies only to the stale request, is not a user/web policy block, and that the model should retry the tool if it is still needed. If an existing session already contains the old wording, Den may be idle and healthy while the conversation transcript remains semantically poisoned; a fresh ACP session or explicit retry instruction may be needed for that historical conversation.

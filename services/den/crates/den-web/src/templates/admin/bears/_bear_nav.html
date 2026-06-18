@@ -1,0 +1,13 @@
+<nav class="bear-admin-nav" style="margin-bottom: 1rem;">
+  <a href="/admin/bears/{{ bear.id }}"{% if bear_nav_active == "hub" %} aria-current="page"{% endif %}>Hub</a> |
+  <a href="/admin/bears/{{ bear.id }}/access"{% if bear_nav_active == "access" %} aria-current="page"{% endif %}>Access</a> |
+  <a href="/admin/bears/{{ bear.id }}/persona"{% if bear_nav_active == "persona" %} aria-current="page"{% endif %}>Persona</a> |
+  <a href="/admin/bears/{{ bear.id }}/roles"{% if bear_nav_active == "roles" %} aria-current="page"{% endif %}>Roles</a> |
+  <a href="/admin/bears/{{ bear.id }}/memory"{% if bear_nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a> |
+  <a href="/admin/bears/{{ bear.id }}/conversations"{% if bear_nav_active == "conversations" %} aria-current="page"{% endif %}>Conversations</a> |
+  <a href="/admin/bears/{{ bear.id }}/context"{% if bear_nav_active == "context" %} aria-current="page"{% endif %}>Context</a> |
+  <a href="/admin/bears/{{ bear.id }}/policy"{% if bear_nav_active == "policy" %} aria-current="page"{% endif %}>Policy</a> |
+  <a href="/admin/bears/{{ bear.id }}/advanced"{% if bear_nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a>
+  · <a href="/admin/bears/{{ bear.id }}/edit">Settings</a>
+  · <a href="/admin/bears/">All bears</a>
+</nav>

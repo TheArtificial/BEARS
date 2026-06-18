@@ -1,0 +1,17 @@
+//! Shared HTTP/identity foundation for the den edge crates (den-web / den-api / den-acp).
+//!
+//! See the crate-level rationale in `Cargo.toml`. Contents:
+//! - [`errors`] — `CustomError`, the web-boundary adapter over `den_core::DenError`.
+//! - [`auth_backend`] — the axum-login authentication/authorization backend.
+//! - [`api_utils`] — small serde (de)serialization helpers for request payloads.
+//! - [`user`] / [`email`] — the identity layer the auth backend depends on.
+//! - [`web_policy`] — bear web-fetch approval/source policy (shared by the api edge
+//!   and the web admin/settings handlers); kept here because it returns `CustomError`.
+pub mod acp_tokens;
+pub mod api_utils;
+pub mod auth_backend;
+pub mod build_info;
+pub mod email;
+pub mod errors;
+pub mod user;
+pub mod web_policy;

@@ -1,6 +1,10 @@
 # Bears and Den
 
+> **Direction changed (2026-06).** Letta is no longer a transitional implementation layer beneath Bear roles. Treat "Letta agents underneath a role" and Letta-backed provisioning/drift as historical; roles are Den-native runtime profiles. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+
 A **Bear** is the durable assistant identity users interact with. **Den** is the control plane that makes Bears real: it provisions them, routes traffic to them, governs access, schedules work, and keeps their underlying role runtimes reconciled.
+
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on the Bear/Den relationship rather than re-explaining the full role model.
 
 ## Summary
 
@@ -16,7 +20,7 @@ A Bear is one coherent assistant from the user's perspective.
 A Bear can:
 
 - remember durable knowledge,
-- talk with users,
+- chat with users,
 - pair inside tools,
 - learn skills through review,
 - watch external events,
@@ -34,12 +38,12 @@ Den is responsible for:
 - tracking Bear membership and access,
 - routing each surface to the correct internal role,
 - enforcing policy around tasks, tools, skills, and memory,
-- scheduling curate runs and background work,
+- scheduling review runs and background work,
 - receiving inbound events,
 - maintaining canonical configuration,
 - and reconciling runtime state against that configuration.
 
-Den does not replace the Bear's assistant identity. Users talk to Bears; Den manages Bears.
+Den does not replace the Bear's assistant identity. Users chat to Bears; Den manages Bears.
 
 ## What a Bear is not
 
@@ -83,11 +87,11 @@ Different surfaces reach different internal Bear roles:
 
 | Surface | Typical role |
 |---------|--------------|
-| Slack, web chat, Discord | `talk` |
+| Slack, web chat, Discord | `chat` |
 | IDEs and ACP clients | `pair` |
 | Scheduled or approved background work | `work` |
 | Webhooks, polling, queues, subscriptions | `watch` |
-| Memory integration and review | `curate` |
+| Memory integration and review | `review` |
 
 The surface changes, but the user-facing identity remains the Bear.
 
@@ -97,7 +101,7 @@ Prefer:
 
 - “your Bear” for the assistant identity,
 - “Den manages Bears” for the control plane,
-- “Bear roles” for `talk`, `pair`, `curate`, `work`, and `watch`,
+- “Bear roles” for `chat`, `pair`, `review`, `work`, and `watch`,
 - “membership roles” or “access roles” for human permissions.
 
 Avoid:
@@ -109,11 +113,11 @@ Avoid:
 
 ## Related docs
 
-- [Bear roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
+- [Bear roles](bear-roles.md)
+- [Memory model](memory-model.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Capabilities and skills](capabilities-and-skills.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
 - [Identity and membership](IDENTITY_AND_MEMBERSHIP.md)
 - [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

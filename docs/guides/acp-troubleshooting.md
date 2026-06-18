@@ -1,12 +1,12 @@
 # ACP Troubleshooting Runbook
 
-This runbook covers the current Bear Den ACP direct path:
+This runbook covers the Bear Den ACP direct path:
 
 ```text
-Zed/OpenCode ⇄ bears-acp-adapter ⇄ Den ACP gateway ⇄ Letta conversation API
+Editor ⇄ bear-armature ⇄ Den ACP gateway ⇄ Den native agent loop ⇄ Bifrost
 ```
 
-ACP `pair` role traffic should not route through Codepool.
+ACP `pair` profile traffic runs in-process when `AGENT_RUNTIME=native` (default). It does not route through an external harness.
 
 ---
 
@@ -21,14 +21,14 @@ curl -s "$DEN_API_URL/version"
 Check adapter startup in the editor logs:
 
 ```text
-bears-acp-adapter: starting version=... build_git_sha=... local_head_sha=...
+bear-armature: starting version=... build_git_sha=... local_head_sha=...
 ```
 
 If Den and adapter are not both current, fix that first. Many ACP failures are version skew.
 
 ## 1a. Inspect bear environment and status
 
-The ACP adapter now exposes a single read-only diagnostic tool, `bear_environment`, plus `/status` as a compact human rendering of the same underlying environment snapshot.
+The ACP adapter exposes a single read-only diagnostic tool, `bear_environment`, plus `/status` as a compact human rendering of the same underlying environment snapshot.
 
 Use these when you need to distinguish between:
 
@@ -67,7 +67,7 @@ Reply with exactly: hello from bear
 Expected adapter log:
 
 ```text
-bears-acp-adapter: Den stream summary ... event_types={"assistant_text_delta": ..., "turn_complete": 1} ... saw_assistant_output=true
+bear-armature: Den stream summary ... event_types={"assistant_text_delta": ..., "turn_complete": 1} ... saw_assistant_output=true
 ```
 
 Expected Den log:
@@ -75,6 +75,8 @@ Expected Den log:
 ```text
 ACP Letta stream summary ... mapped_events>0 ... adapter_event_types={"assistant_text_delta": ...}
 ```
+
+(Log line name is historical; with native runtime the upstream is the in-process agent loop, not Letta HTTP.)
 
 If basic chat fails, do not debug file tools yet.
 
@@ -90,22 +92,21 @@ Read /absolute/path/to/small-file.txt and summarize it.
 
 Expected flow:
 
-1. Letta emits `approval_request_message` or `tool_call_message`.
-2. Den maps it to `tool_request`.
-3. Adapter logs `requesting permission` if approval is required.
-4. Adapter calls ACP client `fs/read_text_file` if the client advertises it.
-5. Adapter logs fallback only if client does not advertise `fs.readTextFile`.
-6. Adapter posts result to Den.
-7. Den posts Letta approval/tool return to the same `conv-*`.
-8. Letta emits assistant text.
+1. Native loop emits a tool request mapped to adapter event `tool_request`.
+2. Adapter logs `requesting permission` if approval is required.
+3. Adapter calls ACP client `fs/read_text_file` if the client advertises it.
+4. Adapter logs fallback only if client does not advertise `fs.readTextFile`.
+5. Adapter posts result to Den.
+6. Den continues the same in-process turn with the tool result.
+7. Den streams assistant text deltas to the adapter.
 
 Useful adapter log snippets:
 
 ```text
-bears-acp-adapter: requesting permission session_id=... tool_call_id=... tool_name=... path=...
-bears-acp-adapter: client fs/read_text_file path=... bytes=... duration_ms=...
-bears-acp-adapter: posted tool result session_id=... tool_call_id=... response=...
-bears-acp-adapter: Den stream summary ...
+bear-armature: requesting permission session_id=... tool_call_id=... tool_name=... path=...
+bear-armature: client fs/read_text_file path=... bytes=... duration_ms=...
+bear-armature: posted tool result session_id=... tool_call_id=... response=...
+bear-armature: Den stream summary ...
 ```
 
 Useful Den log snippets:
@@ -152,17 +153,16 @@ fs/read_text_file
 
 See `docs/architecture/adr/provider-safe-tool-naming.md`.
 
-### Empty turn with approval requests
+### Empty turn with tool requests
 
 Symptom:
 
 ```text
-Letta completed the turn without producing displayable ACP output
-message_types={"approval_request_message": ...}
+completed the turn without producing displayable ACP output
 mapped_events=0
 ```
 
-Cause: Den did not parse Letta's tool-call stream shape.
+Cause: Den did not map native runtime tool events to adapter `tool_request` events.
 
 Actions:
 
@@ -174,9 +174,9 @@ ACP_DEBUG_EVENT_SAMPLE_CHARS=8000
 
 2. Restart Den.
 3. Reproduce once.
-4. Copy one full `approval_request_message` sample, keeping `tool_call` / `tool_calls` / `arguments` / `input` intact.
+4. Copy one full unmapped event sample from Den logs, keeping `tool_call_id`, `tool_name`, and argument fields intact.
 
-### Tool return 409 conflict
+### Tool return while turn still active
 
 Symptom:
 
@@ -184,9 +184,9 @@ Symptom:
 Cannot send a new message: Another request is currently being processed
 ```
 
-Cause: Den sent a Letta tool return before draining the original Letta stream.
+Cause: Adapter or Den posted a continuation before the active turn accepted it, or a duplicate prompt raced the in-flight turn.
 
-Expected behavior: Den stores the tool result and posts the Letta continuation only after original stream EOF.
+Expected behavior: tool results settle against the registered `tool_call_id` for the active turn; new prompts should queue or reject per active-turn policy.
 
 ### Invalid tool call IDs
 
@@ -196,11 +196,11 @@ Symptom:
 Invalid tool call IDs. Expected '[call_...]', but received '[fs_read_text_file]'
 ```
 
-Cause: Den sent the provider tool name instead of Letta's `tool_call_id` in the tool return.
+Cause: Den or the adapter sent the provider tool name instead of the runtime `tool_call_id` in the tool return.
 
-Expected: `tool_return.tool_call_id` is the original `call_...` id.
+Expected: tool result payloads reference the original `tool_call_id` from the `tool_request` event.
 
-### Letta approval shape 422
+### Approval JSON shape rejected
 
 Symptom:
 
@@ -208,37 +208,21 @@ Symptom:
 Unable to extract tag using discriminator 'type'
 ```
 
-Cause: Den sent an approval return without inner `type: "tool"`.
+Cause: Den sent an approval return without the expected structured approval payload.
 
-Expected:
-
-```json
-{
-  "type": "approval",
-  "approval_request_id": "message-...",
-  "approve": true,
-  "approvals": [
-    {
-      "type": "tool",
-      "status": "success",
-      "tool_call_id": "call_...",
-      "tool_return": "..."
-    }
-  ]
-}
-```
+Verify the adapter posts tool results in the shape Den's ACP gateway expects (see gateway tests under `services/den/src/api/acp/`).
 
 ### Missing file path
 
 Symptom:
 
 ```text
-Letta requested fs_read_text_file without a path argument
+requested fs_read_text_file without a path argument
 ```
 
-Cause: Letta emitted a complete non-empty argument object without a string `path`, or Den parsed the wrong field.
+Cause: Model emitted a tool call without a string `path`, or Den parsed the wrong field.
 
-If the raw sample shows argument fragments, Den should accumulate until valid JSON appears.
+If debug samples show argument fragments, Den should accumulate until valid JSON appears.
 
 ---
 
@@ -259,17 +243,11 @@ unmapped_event_samples=[...]
 
 Redact secrets and local usernames if desired, but preserve:
 
-- `message_type`
+- event/message type
 - `id`
-- `run_id`
-- `step_id`
-- `tool_call`
-- `tool_calls`
-- `name`
 - `tool_call_id`
-- `arguments`
-- `input`
-- `args`
+- `tool_name`
+- `arguments` / `input` / `args`
 
 ---
 
@@ -280,7 +258,7 @@ Do not confuse these layers:
 ```text
 Editor ⇄ adapter: ACP JSON-RPC over stdio
 Adapter ⇄ Den: Den-private HTTPS/SSE transport
-Den ⇄ Letta: Letta REST/SSE
+Den: in-process native agent loop + Bifrost /v1 streaming
 ```
 
 Den ⇄ adapter event names include:

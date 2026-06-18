@@ -66,7 +66,7 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
 
     private func manifestURL() throws -> URL {
         let manifestURLString = environment.environment["BEARS_ADAPTER_MANIFEST_URL"]
-            ?? "https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/macos.json"
+            ?? "https://bears-ai.github.io/bear-den/bear-armature/stable/macos.json"
 
         guard let manifestURL = URL(string: manifestURLString) else {
             throw GitHubReleaseAdapterSourceError.invalidURL(manifestURLString)
@@ -83,7 +83,7 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         return AdapterArtifactSource(
             downloadURL: downloadURL,
             versionHint: versionHint,
-            assetName: downloadURL.lastPathComponent.isEmpty ? "bears-acp-adapter-aarch64-apple-darwin.pkg" : downloadURL.lastPathComponent,
+            assetName: downloadURL.lastPathComponent.isEmpty ? "bear-armature-aarch64-apple-darwin.pkg" : downloadURL.lastPathComponent,
             isInstallerPackage: downloadURL.pathExtension == "pkg"
         )
     }

@@ -1,5 +1,8 @@
 # ACP Adapter Improvement Plan
 
+> **Direction changed (2026-06).** Adapter hardening targets Den-native turn events, not Letta streams / Letta Code SDK / Codepool flows. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: active follow-up plan after initial ACP direct local tool rollout.
 
 This plan captures the current state, known caveats, and next steps for hardening the BEARS ACP adapter / Den direct local tool runtime. It intentionally focuses on adapter resilience and continuation behavior, not expanding the toolset.

@@ -24,7 +24,7 @@ For BEARS, skills are best understood not merely as arbitrary local files but as
 
 **Concept model change:** A **Bear** remains the primary user-facing assistant identity, but in BEARS that identity is implemented through coordinated role agents rather than a single all-purpose runtime. Bear configuration must therefore evolve to include both the Bear’s role-agent topology and any **predefined subagents**—for example **reflection** agents or other Letta subagent types the operator enables per Bear—so provisioning and GitOps remain reproducible.
 
-**Relationship to other ADRs and concepts:** [multi-user-memory.md](multi-user-memory.md) covers **blocks and conversations**; this ADR covers **skills lifecycle**, **storage/sync**, and **subagent** topology. It should be read alongside [semantic-bear-memory.md](semantic-bear-memory.md), [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md), and the concepts docs for [Capabilities and Skills](../../concepts/CAPABILITIES_AND_SKILLS.md) and [Memory model](../../concepts/MEMORY_MODEL.md). Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](../../planning/PLAN.md)).
+**Relationship to other ADRs and concepts:** [multi-user-memory.md](multi-user-memory.md) covers **blocks and conversations**; this ADR covers **skills lifecycle**, **storage/sync**, and **subagent** topology. It should be read alongside [semantic-bear-memory.md](semantic-bear-memory.md), [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md), and the concepts docs for [Capabilities and Skills](../../concepts/CAPABILITIES_AND_SKILLS.md) and [Memory model](../../concepts/MEMORY_MODEL.md). Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](../roadmap/PLAN.md)).
 
 ---
 
@@ -32,23 +32,23 @@ For BEARS, skills are best understood not merely as arbitrary local files but as
 
 1. **Runtime ownership:** **Letta Code** remains the harness that loads skills, runs tool loops, and brokers subagent execution; **Letta** persists agent state. Den does **not** implement skill execution or reflection logic in Rust.
 
-2. **Skills are special memory:** BEARS treats durable skills as a **special class of Bear memory artifact** rather than as anonymous host-local files. Skills remain filesystem-compatible for Letta Code, but their canonical identity, governance, and lifecycle belong to the Bear memory model.
+2. **Skills are special memory:** BEARS treats durable skills as a **special class of Bear memory artifact** rather than as anonymous host-local files. Skills remain filesystem-compatible for Letta Code, but their canonical identity, curation, and lifecycle belong to the Bear memory model.
 
 3. **Canonical durable storage:** The canonical durable storage location for Bear skills is the Bear’s MemFS **`skills/`** namespace.
 
 4. **Canonical bundle shape:** Each canonical Bear skill is a flat skill bundle under `skills/<skill-slug>/` containing:
    - **`SKILL.md`** — portable skill content, kept as close as practical to ecosystem conventions
-   - **`bears.yaml`** — BEARS-specific metadata for governance, readiness, applicability, provenance, dependencies, sharing, and sync state
+   - **`bears.yaml`** — BEARS-specific metadata for curation, readiness, applicability, provenance, dependencies, sharing, and sync state
 
 5. **No semantic path hierarchy:** The `skills/` namespace is flat at the skill-id level. BEARS must not encode authoritative role assignment, lifecycle state, provenance, or sharing semantics in directory trees such as role-based, topic-based, or status-based subdirectories. Per-skill directories are packaging containers, not semantic hierarchy.
 
-6. **`SKILL.md` stays portable:** BEARS should avoid putting substantial BEARS-specific governance metadata into `SKILL.md` when a sidecar can express it cleanly. This preserves compatibility with external skill ecosystems and lets imported skills remain close to upstream form.
+6. **`SKILL.md` stays portable:** BEARS should avoid putting substantial BEARS-specific curation metadata into `SKILL.md` when a sidecar can express it cleanly. This preserves compatibility with external skill ecosystems and lets imported skills remain close to upstream form.
 
 7. **`bears.yaml` is authoritative for BEARS metadata:** The authoritative BEARS-specific metadata for a skill lives in `bears.yaml`, not in the directory path and not primarily in `SKILL.md`.
 
 8. **Sync/materialization model:** Letta-compatible skill trees under `.letta/` or agent-scoped runtime paths are **materialized views**, not canonical storage. Den and the harness may sync canonical Bear MemFS skills into the runtime layout Letta Code expects, but the runtime filesystem copy is a projection of canonical Bear skill memory.
 
-9. **Catalog vs dynamic skills:** **Den** stays the **system of record** for which catalog skills are attached to which bear and for policy/governance metadata. Catalog, imported, and Bear-authored skills all converge on the same Bear skill model once adopted. Workspace-local or runtime-local skill files may exist as overlays or staging inputs, but they are not the canonical durable store unless explicitly imported into Bear memory.
+9. **Catalog vs dynamic skills:** **Den** stays the **system of record** for which catalog skills are attached to which bear and for policy/curation metadata. Catalog, imported, and Bear-authored skills all converge on the same Bear skill model once adopted. Workspace-local or runtime-local skill files may exist as overlays or staging inputs, but they are not the canonical durable store unless explicitly imported into Bear memory.
 
 10. **Role assignment is metadata-driven:** Skills may apply to one, many, or all roles. BEARS will not encode authoritative role assignment in directory structure. Role applicability, restrictions, and presentation are metadata and Den policy concerns.
 
@@ -87,7 +87,7 @@ This ADR does **not** require directory names alone to determine full skill sema
 
 ### Why a sidecar
 
-BEARS needs metadata that is important for governance and runtime selection but is not necessarily portable across external skill ecosystems. Using a visible sidecar keeps:
+BEARS needs metadata that is important for curation and runtime selection but is not necessarily portable across external skill ecosystems. Using a visible sidecar keeps:
 - `SKILL.md` close to ecosystem conventions,
 - BEARS-specific metadata explicit and inspectable,
 - imported skills easier to preserve in near-upstream form,
@@ -101,7 +101,7 @@ BEARS needs metadata that is important for governance and runtime selection but 
 
 A canonical Bear skill bundle contains:
 - `SKILL.md` — portable skill content
-- `bears.yaml` — BEARS-specific metadata for governance, applicability, provenance, dependencies, sharing, and sync
+- `bears.yaml` — BEARS-specific metadata for curation, applicability, provenance, dependencies, sharing, and sync
 
 ### Required fields
 
@@ -256,7 +256,7 @@ Recommended `review.status` values:
 - `approved`
 - `rejected`
 
-`review` is distinct from `lifecycle`: lifecycle is the product state of the skill, while review is the governance state of its evaluation.
+`review` is distinct from `lifecycle`: lifecycle is the product state of the skill, while review is the curation state of its evaluation.
 
 #### Provenance
 ```yaml
@@ -378,7 +378,7 @@ The expected sync directions are:
 2. **Workspace/runtime/local draft → Bear skill memory** when an external or temporary skill is explicitly imported or promoted.
 3. **Bear skill memory → Letta runtime layout** when Den or the harness materializes skills for Letta Code execution.
 
-The runtime copy may be regenerated. The canonical Bear MemFS bundle should be the source used for governance, review, sharing, and long-term retention.
+The runtime copy may be regenerated. The canonical Bear MemFS bundle should be the source used for curation, review, sharing, and long-term retention.
 
 ### Drift handling
 
@@ -409,7 +409,7 @@ Sharing should be first-class at the metadata/policy level, while actual transfe
 
 ## Curate responsibilities for skills
 
-`curate` should have primary responsibility for durable skill governance, including:
+`curate` should have primary responsibility for durable skill curation, including:
 
 - reviewing proposed skills and revisions,
 - checking whether the behavior is truly reusable,
@@ -421,7 +421,7 @@ Sharing should be first-class at the metadata/policy level, while actual transfe
 - deciding whether a Bear-local skill is eligible for inter-Bear sharing,
 - marking skills as approved, provisional, deprecated, superseded, or archived.
 
-This extends the broader memory-governance role of `curate` into the skill domain.
+This extends the broader memory-curation role of `curate` into the skill domain.
 
 ---
 
@@ -558,7 +558,7 @@ Do NOT invoke during active debugging or mid-task. Do NOT invoke on casual conve
 
 - **Runtime integration:** Harness materialization (`letta-code.yaml` or equivalent) should treat Letta-visible skill trees as synchronized projections of canonical Bear skill memory.
 
-- **Documentation:** [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md), [PLAN.md](../../planning/PLAN.md), and concepts docs should reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents** and **canonical skill memory** from **runtime skill trees**.
+- **Documentation:** [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md), [PLAN.md](../roadmap/PLAN.md), and concepts docs should reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents** and **canonical skill memory** from **runtime skill trees**.
 
 - **Remaining follow-up:** confirm exact self-hosted Letta subagent API fields and verify whether `SubagentStop` + `matcher: reflection` behaves as expected in the deployed build. These are implementation validation tasks, not unresolved architectural direction.
 

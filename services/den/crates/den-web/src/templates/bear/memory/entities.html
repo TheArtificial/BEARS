@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% set memory_subnav = "entities" %}
+
+{% block title %}Entities · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+  <h2>Entities</h2>
+  <p class="form-hint">People, organizations, work surfaces, missions, and other entities this Bear has resolved from its memory (ADR-0042). The Bear builds this layer as it recognizes entities; it may be empty until entity ingestion is active.</p>
+
+  {% if types %}
+  <p>
+    Filter:
+    <a href="/bear/{{ bear.slug | e }}/entities"{% if not type_filter %} aria-current="page"{% endif %}>all</a>
+    {% for t in types %} · <a href="/bear/{{ bear.slug | e }}/entities?type={{ t | e }}"{% if type_filter == t %} aria-current="page"{% endif %}>{{ t | e }}</a>{% endfor %}
+  </p>
+  {% endif %}
+
+  {% if entities %}
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Type</th><th>Resolution</th><th>Trust</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+      {% for e in entities %}
+      <tr>
+        <td><a href="/bear/{{ bear.slug | e }}/entities/{{ e.entity_id | e }}">{{ e.display_name | e }}</a></td>
+        <td>{{ e.entity_type | e }}</td>
+        <td>{{ e.resolution | e }}</td>
+        <td>{{ e.trust | e }}</td>
+        <td class="form-hint">{{ e.created_at | e }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="form-hint">No entities{% if type_filter %} of type <code>{{ type_filter | e }}</code>{% endif %} yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -5,11 +5,11 @@ usage() {
   cat <<'USAGE'
 Usage: generate-update-manifest.sh (--pkg <path> | --binary <path>) --output <path> --base-url <url> [options]
 
-Generate a public update manifest for `bears-acp-adapter`.
+Generate a public update manifest for `bear-armature`.
 
-macOS manifests use `pkg_url` and are consumed by `bears-acp-adapter update-check` and
-`bears-acp-adapter update`. Linux manifests use `binary_url` and are consumed by
-`.devcontainer/install-workspace-tools.sh`.
+macOS manifests include both top-level `pkg_url` fields for the Bears macOS app
+and nested `platforms` metadata for newer update clients. Linux manifests use
+`binary_url` and are consumed by `.devcontainer/install-workspace-tools.sh`.
 
 Options:
   --pkg <path>                  Path to the signed/notarized .pkg
@@ -130,7 +130,7 @@ if [ -z "$base_url" ]; then
 fi
 
 if [ -z "$version" ]; then
-  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bears-acp-adapter/Cargo.toml" | head -n 1)"
+  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bear-armature/Cargo.toml" | head -n 1)"
 fi
 
 if [ -z "$version" ]; then
@@ -159,6 +159,11 @@ if [ "$url_field" = "pkg_url" ]; then
 {
   "channel": "$channel",
   "version": "$version",
+  "pkg_url": "$asset_url",
+  "sha256": "$sha256",
+  "min_macos": "$min_macos",
+  "size": $size,
+  "package_identifier": "$package_identifier",
   "platforms": {
     "$target": {
       "pkg_url": "$asset_url",

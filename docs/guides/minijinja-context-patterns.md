@@ -501,6 +501,6 @@ let ctx = context! {
 ## Related Documentation
 
 - [minijinja-template-limitations.md](minijinja-template-limitations.md) — what works in templates vs full Jinja2
-- [concepts-overview.md](concepts-overview.md) — repository layout (`src/web/` vs `src/api/`)
+- [den-concepts-overview.md](../architecture/den-concepts-overview.md) — repository layout (`src/web/` vs `src/api/`)
 - Template examples: `src/web/templates/`
 

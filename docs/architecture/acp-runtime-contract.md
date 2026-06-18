@@ -1,5 +1,9 @@
 # ACP Runtime Contract
 
+> **Direction changed (2026-06).** This contract remains the stable seam, but its only implementation is now the Den-native loop — Letta is removed rather than retained behind a provider switch. Treat Letta-backed adapter phases and runtime-provider selection as historical. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+>
+> **Boundary target ([ADR-0043](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)).** This is the *ACP edge* contract. The turn/session/tool-turn/event machinery it leans on is protocol-agnostic **core** (ADR-0035) and is to be renamed off its `acp_*` prefixes into `den-runtime`/`den-core`; ACP keeps only the wire concerns (framing, SSE mapping, plan entries, permission prompts, session bindings, and the BearWire→ACP projection).
+
 ## Purpose
 
 This document defines the Phase 0 contract for Den's ACP runtime boundary.
@@ -33,7 +37,7 @@ The ACP runtime contract is therefore the first major containment seam. It shoul
 
 ## Scope
 
-This contract is for the ACP-facing role runtime used by the Bear `code` role (legacy `pair`) and any future ACP-capable role runtime with the same interaction model.
+This contract is for the ACP-facing role runtime used by the Bear `pair` role and any future ACP-capable role runtime with the same interaction model.
 
 It covers:
 
@@ -118,7 +122,7 @@ Purpose:
 
 Examples of what this may return:
 
-- the currently configured compatibility binding handle for the `code` role
+- the currently configured compatibility binding handle for the `pair` role
 - enough binding metadata for the runtime adapter to route turns correctly
 
 This belongs near the role profile / runtime registry boundary, not inside ACP orchestration.
@@ -467,12 +471,168 @@ Deliverables:
 - the same contract tests pass for the new implementation
 - Letta cutover becomes an implementation swap rather than a new orchestration rewrite
 
+## Phase 0 status update
+
+As of the current Phase 0 checkpoint, the first live seam is in place and shipping in the active ACP path.
+
+### Implemented now
+
+The codebase now includes a Den-owned ACP turn-runner contract and a Letta-backed adapter:
+
+- `services/den/src/core/runtime_contracts.rs`
+  - `AcpTurnRunner`
+  - `StartTurnRequest`
+  - `StartTurnResult`
+  - `CancelTurnRequest`
+  - `CancelTurnResult`
+- `services/den/src/core/acp_turn_runner.rs`
+  - `LettaAcpTurnRunner`
+  - `start_acp_turn_with_retries`
+  - `acp_cleanup_stale_runtime_state`
+  - targeted Letta cleanup helpers
+- `services/den/src/core/runtime_provider.rs`
+  - runtime-facing re-exports for ACP callers
+- `services/den/src/api/acp.rs`
+  - updated to depend on the seam for turn start / retry / cleanup behavior rather than directly embedding all Letta-specific logic inline
+
+There is also implementability coverage in:
+
+- `services/den/src/core/runtime_provider_tests.rs`
+
+using a no-op `AcpTurnRunner` to prove the seam is mockable and not hard-wired to Letta types.
+
+### What this seam currently owns
+
+Today the seam meaningfully owns:
+
+- ACP turn start
+- explicit Den-owned turn continuation request/result types
+- approval-decision and tool-result continuation semantics
+- Letta-backed continuation payload translation behind the adapter
+- stale-approval retry behavior used during turn start
+- targeted stale runtime cleanup before retry / recovery
+- contract-level request/result types for turn start, continuation, and cancellation-oriented cleanup paths
+- Den-owned continuation stream handles and stream error types
+
+### What still remains adapter-specific or outside the seam
+
+The migration is still incomplete. The following concerns remain partially Letta-shaped or still coordinated outside a fuller runtime boundary:
+
+- runtime conversation lifecycle and conversation resolution
+- history loading / transcript normalization as a first-class contract surface
+- continuation stream parsing still remains transitional: the runtime seam now exposes a Den-owned event stream type, but continuation events are currently carried as `RuntimeStreamEvent::RawBytes` rather than fully semantic runtime events
+- broader cancellation semantics for active runtime work beyond the currently extracted targeted cleanup path
+- normalized Den-owned runtime error categories used consistently across all ACP runtime operations
+- runtime health/capability reporting for a future non-Letta implementation
+- ACP still owns the final bridge from continuation stream events into ACP wire events, which should eventually be driven by structured runtime events rather than raw backend SSE payloads
+- prompt-memory lifecycle is now Den-owned for persisted ACP runtime guidance selection, admin/status inspection, and diagnostics, but it is not yet part of a broader backend-agnostic runtime contract surface alongside conversation/history abstractions
+
+### Prompt-memory checkpoint
+
+Prompt-memory extraction has advanced to a meaningful Den-owned checkpoint:
+
+- persisted prompt-memory blocks are stored and selected by Den rather than synthesized in normal ACP runtime assembly
+- live ACP prompt assembly now uses persisted prompt-memory selection as the normal path
+- synthetic prompt-memory selection is isolated to test/helper behavior rather than production runtime fallback
+- ACP admin/status visibility exists through session HTTP, memory status, compaction/history diagnostics, and a dedicated ACP prompt-memory inspection endpoint
+- mutation/admin operations exist through Den tool surfaces (`den.prompt_memory.upsert`, `den.prompt_memory.patch`, `den.prompt_memory.list`)
+- same-scope active block conflicts are archived on upsert so runtime prompt slots converge on a single active block per scope/type tuple
+
+What remains is mostly documentation, broader contract placement, and eventual alignment with future backend-independent runtime abstractions.
+
+### Transitional entrypoints
+
+The following helpers are intentionally transitional and should be treated as compatibility wrappers, not the final contract shape:
+
+- `start_acp_turn_with_retries`
+- `acp_cleanup_stale_runtime_state`
+
+They exist to:
+
+- preserve the current ACP behavior while the seam is being extracted incrementally
+- keep Letta-specific stale approval and cancel behavior inside adapter-oriented code
+- avoid a flag-day rewrite of `api/acp.rs`
+
+The long-term direction is to either:
+
+- absorb these behaviors into a fuller `AcpTurnRunner` trait surface, or
+- move them into a slightly broader ACP runtime orchestration/provider layer that remains Den-owned and backend-agnostic
+
+## Forward plan after this checkpoint
+
+The next work should focus on expanding the seam from "turn start + stale recovery" into a backend-complete ACP runtime boundary.
+
+### Next milestone 1: Structured continuation event stream
+
+Advance the Den-owned continuation surface from transport wrapping into semantic runtime streaming.
+
+Target outcomes:
+
+- preserve `ContinueTurnRequest` / `ContinueTurnResult` as the continuation contract
+- replace continuation `RuntimeStreamEvent::RawBytes` payloads with structured runtime events where practical
+- move continuation SSE parsing / normalization behind the runtime adapter seam
+- make ACP consume Den-owned continuation events rather than Letta-shaped SSE frame bytes
+- keep stale blocked-state recovery part of continuation behavior rather than ad hoc ACP orchestration logic
+
+### Next milestone 2: Conversation lifecycle contract
+
+Extract ACP conversation lifecycle behind a Den-owned boundary.
+
+Target outcomes:
+
+- explicit `ensure_session_conversation` contract
+- opaque `RuntimeConversationRef` used consistently by ACP
+- backend-specific conversation-id validation removed from ACP orchestration logic
+- Den-normalized history loading for ACP UI APIs
+
+### Next milestone 3: Cancellation and hygiene contract
+
+Generalize the current cleanup path into a fuller runtime hygiene surface.
+
+Target outcomes:
+
+- explicit cancel / cleanup semantics for active turns
+- idempotent targeted cleanup where possible
+- no ACP branching on Letta-specific cancel endpoints or stale-approval heuristics
+- safe session-scoped cancellation semantics preserved across backends
+
+### Next milestone 4: Error normalization
+
+Introduce stable Den-owned ACP runtime error categories and make ACP branch only on those.
+
+Target outcomes:
+
+- adapters translate backend-specific HTTP / protocol / conflict errors into Den-owned categories
+- ACP stops matching on Letta-flavored error strings
+- contract tests verify behavior using normalized categories rather than backend text fragments
+
+### Next milestone 5: Den-native implementation path
+
+Once the contract surface is broad enough, add a second implementation path that is not Letta-backed.
+
+Target outcomes:
+
+- runtime-provider selection can resolve either Letta-backed or Den-native ACP runtime implementations
+- shared contract tests run against both implementations
+- Letta becomes a compatibility adapter rather than an architectural requirement
+
+## Recommended planning sequence
+
+A practical near-term sequence is:
+
+1. add explicit turn continuation types and adapter methods
+2. extract conversation ensure/history behavior into a sibling runtime contract
+3. normalize runtime error categories used by ACP
+4. add a Den-native skeleton implementation behind provider selection
+5. expand contract tests so behavior is specified backend-independently before deeper cutover
+
 ## Immediate next step
 
-The next implementation step should be:
+The most valuable immediate next step is:
 
-1. add narrow ACP runtime contract trait/type skeletons to `services/den/src/core/`
-2. wire the Letta-backed path to an adapter that implements those traits
-3. begin extracting the highest-value ACP behaviors in `api/acp.rs` behind the new contract
+1. keep the explicit continuation contract (`ContinueTurnRequest` / `ContinueTurnResult`) as the stable Den-owned surface
+2. replace continuation `RuntimeStreamEvent::RawBytes` bridging with structured runtime stream events
+3. move continuation SSE parsing / normalization fully behind the adapter seam
+4. pin those behaviors with backend-agnostic contract tests
 
-The first extraction target should be **conversation resolution + turn start/continuation**, because that is where Letta execution semantics currently leak most heavily into ACP orchestration.
+That is the next highest-leverage extraction because continuation, approval settlement, and stale blocked-state recovery are still where backend-specific runtime semantics leak most strongly into ACP orchestration.

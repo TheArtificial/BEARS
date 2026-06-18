@@ -1,0 +1,296 @@
+use crate::auth_backend;
+use axum::{
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
+};
+
+use std::fmt;
+
+/// Minimal HTML escaping for the self-contained error page.
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+pub use den_core::DenError;
+
+/// Web-boundary error adapter for the `den` binary.
+///
+/// `CustomError` is the HTTP-facing error: it adds `axum::IntoResponse`
+/// (rendering the `error.html` page) and the auth-layer conversions on top of
+/// the shared, web-free [`DenError`] from `den-core`. Service-layer code should
+/// prefer `DenError`; it converts here for free via [`From<DenError>`] when it
+/// bubbles up through `?` in an HTTP handler.
+#[derive(Debug)]
+pub enum CustomError {
+    Anyhow(anyhow::Error),
+    System(String),
+    Database(String),
+    /// Pool exhaustion or closed — semantically distinct from a query-level Database error.
+    DatabaseUnavailable(String),
+    Session(String),
+    Authentication(String),
+    Authorization(String),
+    Render(String),
+    Parsing(String),
+    Email(String),
+    NotFound(String),
+    ValidationError(String),
+}
+
+impl CustomError {
+    /// Lossless conversion to the web-free [`DenError`] (variants mirror 1:1).
+    ///
+    /// Used at den-crate boundaries that implement service-layer traits returning
+    /// `DenError` (e.g. the `den-tools` capability seams) while still delegating
+    /// to existing `CustomError`-returning `core::*` functions. The orphan rule
+    /// forbids `impl From<CustomError> for DenError` (both are foreign to the
+    /// trait), so this inherent method fills that gap.
+    pub fn into_den(self) -> DenError {
+        match self {
+            CustomError::Anyhow(cause) => DenError::Anyhow(cause),
+            CustomError::System(cause) => DenError::System(cause),
+            CustomError::Database(cause) => DenError::Database(cause),
+            CustomError::DatabaseUnavailable(cause) => DenError::DatabaseUnavailable(cause),
+            CustomError::Session(cause) => DenError::Session(cause),
+            CustomError::Authentication(cause) => DenError::Authentication(cause),
+            CustomError::Authorization(cause) => DenError::Authorization(cause),
+            CustomError::Render(cause) => DenError::Render(cause),
+            CustomError::Parsing(cause) => DenError::Parsing(cause),
+            CustomError::Email(cause) => DenError::Email(cause),
+            CustomError::NotFound(cause) => DenError::NotFound(cause),
+            CustomError::ValidationError(cause) => DenError::ValidationError(cause),
+        }
+    }
+}
+
+impl std::error::Error for CustomError {}
+
+// Allow the use of "{}" format specifier
+impl fmt::Display for CustomError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CustomError::Anyhow(ref cause) => {
+                write!(f, "{cause:?}")
+            }
+            CustomError::System(ref cause) => {
+                write!(f, "Server Error: {cause}")
+            }
+            CustomError::Database(ref cause) => {
+                write!(f, "Database Error: {cause}")
+            }
+            CustomError::DatabaseUnavailable(ref cause) => {
+                write!(f, "Database Unavailable: {cause}")
+            }
+            CustomError::Session(ref cause) => {
+                write!(f, "Session Error: {cause}")
+            }
+            CustomError::Authentication(ref cause) => {
+                write!(f, "Authentication Error: {cause}")
+            }
+            CustomError::Authorization(ref cause) => {
+                write!(f, "Authorization Error: {cause}")
+            }
+            CustomError::Render(ref cause) => {
+                write!(f, "Rendering Error: {cause}")
+            }
+            CustomError::Parsing(ref cause) => {
+                write!(f, "Parsing Error: {cause}")
+            }
+            CustomError::Email(ref cause) => {
+                write!(f, "Email Error: {cause}")
+            }
+            CustomError::NotFound(ref cause) => write!(f, "Not Found: {cause}"),
+            CustomError::ValidationError(ref cause) => {
+                write!(f, "Validation Error: {cause}")
+            }
+        }
+    }
+}
+
+impl IntoResponse for CustomError {
+    fn into_response(self) -> Response {
+        let error_string = self.to_string();
+        let (error_name, error_message, status_code) = match self {
+            CustomError::Anyhow(cause) => (
+                "Server",
+                format!("{cause:#}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            CustomError::System(message) => {
+                ("Web server", message, StatusCode::UNPROCESSABLE_ENTITY)
+            }
+            CustomError::Database(message) => {
+                ("Database", message, StatusCode::UNPROCESSABLE_ENTITY)
+            }
+            CustomError::DatabaseUnavailable(message) => (
+                "Database Unavailable",
+                message,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            CustomError::Session(message) => {
+                ("Session", message, StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            CustomError::Authentication(message) => {
+                ("Authentication", message, StatusCode::UNAUTHORIZED)
+            }
+            CustomError::Authorization(message) => {
+                ("Authorization", message, StatusCode::FORBIDDEN)
+            }
+            CustomError::Parsing(message) => ("Parsing", message, StatusCode::UNPROCESSABLE_ENTITY),
+            CustomError::Render(message) => {
+                ("Rendering", message, StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            CustomError::Email(message) => ("Email", message, StatusCode::FAILED_DEPENDENCY),
+            CustomError::NotFound(message) => ("Not Found", message, StatusCode::NOT_FOUND),
+            CustomError::ValidationError(message) => {
+                ("Validation", message, StatusCode::BAD_REQUEST)
+            }
+        };
+
+        tracing::error!("{}: {:#}", error_name, error_string);
+        // Self-contained error page: `den-http` is the shared edge foundation and
+        // deliberately carries no web template tree (that lives in `den-web`), so the
+        // boundary error renders standalone HTML rather than the styled `error.html`.
+        let code = status_code.as_u16();
+        let name = html_escape(error_name);
+        let message = html_escape(&error_message);
+        let body = format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+             <title>{name} Error</title>\
+             <style>body{{font-family:system-ui,sans-serif;margin:3rem auto;max-width:40rem;\
+             padding:0 1rem;color:#222}}h1{{font-size:1.25rem}}code{{display:block;white-space:pre-wrap;\
+             background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:1rem;margin-top:1rem}}</style>\
+             </head><body><h1>{code} — {name} error</h1>\
+             <p>Something has gone awry. Please report this.</p>\
+             <code>{message}</code></body></html>"
+        );
+        (status_code, Html(body)).into_response()
+    }
+}
+
+// `From<CustomError> for DenError` IS permitted by the orphan rule here: the impl
+// lives in the `den` crate where `CustomError` is local, and a local type appearing
+// as the trait's type argument satisfies RFC 2451 even though `DenError`/`From` are
+// foreign. This lets runtime/service code that returns the web-free `DenError`
+// propagate the few remaining `CustomError`-returning callees via `?`.
+impl From<CustomError> for DenError {
+    fn from(err: CustomError) -> DenError {
+        err.into_den()
+    }
+}
+
+impl From<DenError> for CustomError {
+    fn from(err: DenError) -> CustomError {
+        match err {
+            DenError::Anyhow(cause) => CustomError::Anyhow(cause),
+            DenError::System(cause) => CustomError::System(cause),
+            DenError::Database(cause) => CustomError::Database(cause),
+            DenError::DatabaseUnavailable(cause) => CustomError::DatabaseUnavailable(cause),
+            DenError::Session(cause) => CustomError::Session(cause),
+            DenError::Authentication(cause) => CustomError::Authentication(cause),
+            DenError::Authorization(cause) => CustomError::Authorization(cause),
+            DenError::Render(cause) => CustomError::Render(cause),
+            DenError::Parsing(cause) => CustomError::Parsing(cause),
+            DenError::Email(cause) => CustomError::Email(cause),
+            DenError::NotFound(cause) => CustomError::NotFound(cause),
+            DenError::ValidationError(cause) => CustomError::ValidationError(cause),
+        }
+    }
+}
+
+impl From<anyhow::Error> for CustomError {
+    fn from(err: anyhow::Error) -> CustomError {
+        CustomError::Anyhow(err)
+    }
+}
+
+impl From<std::io::Error> for CustomError {
+    fn from(err: std::io::Error) -> CustomError {
+        CustomError::System(err.to_string())
+    }
+}
+
+impl From<axum::http::uri::InvalidUri> for CustomError {
+    fn from(err: axum::http::uri::InvalidUri) -> CustomError {
+        CustomError::System(err.to_string())
+    }
+}
+
+impl From<sqlx::Error> for CustomError {
+    fn from(err: sqlx::Error) -> CustomError {
+        match &err {
+            sqlx::Error::PoolTimedOut => {
+                tracing::error!(
+                    "Connection pool exhausted — all connections are busy or broken. \
+                     Consider raising DB_MAX_CONNECTIONS (currently hardcoded at build time \
+                     or via env) or DB_ACQUIRE_TIMEOUT_SECS. If this repeats, check for \
+                     long-running queries or Postgres availability."
+                );
+                CustomError::DatabaseUnavailable(
+                    "pool exhausted: all database connections are busy (pool timed out). \
+                     The server cannot handle this request right now."
+                        .into(),
+                )
+            }
+            sqlx::Error::PoolClosed => {
+                tracing::error!("Database connection pool is closed — the server is shutting down or the pool was dropped.");
+                CustomError::DatabaseUnavailable(
+                    "database pool closed — the server may be shutting down".into(),
+                )
+            }
+            _ => CustomError::Database(err.to_string()),
+        }
+    }
+}
+
+impl From<axum_login::tower_sessions::session::Error> for CustomError {
+    fn from(err: axum_login::tower_sessions::session::Error) -> CustomError {
+        CustomError::Session(err.to_string())
+    }
+}
+
+impl From<auth_backend::Error> for CustomError {
+    fn from(err: auth_backend::Error) -> CustomError {
+        CustomError::Authentication(err.to_string())
+    }
+}
+
+impl From<axum_login::Error<auth_backend::Backend>> for CustomError {
+    fn from(err: axum_login::Error<auth_backend::Backend>) -> CustomError {
+        CustomError::Authentication(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for CustomError {
+    fn from(err: serde_json::Error) -> CustomError {
+        CustomError::Parsing(err.to_string())
+    }
+}
+
+impl From<sqlx::types::uuid::Error> for CustomError {
+    fn from(err: sqlx::types::uuid::Error) -> CustomError {
+        CustomError::Parsing(err.to_string())
+    }
+}
+
+impl From<mailgun_rs::SendError> for CustomError {
+    fn from(err: mailgun_rs::SendError) -> CustomError {
+        CustomError::Email(err.to_string())
+    }
+}
+
+impl From<validator::ValidationErrors> for CustomError {
+    fn from(err: validator::ValidationErrors) -> CustomError {
+        CustomError::ValidationError(format!("{:?}", err))
+    }
+}
+
+impl From<reqwest::Error> for CustomError {
+    fn from(err: reqwest::Error) -> CustomError {
+        CustomError::System(err.to_string())
+    }
+}

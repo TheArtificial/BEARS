@@ -5,14 +5,14 @@ usage() {
   cat <<'USAGE'
 Usage: build-pkg.sh --binary <path> [options]
 
-Build a macOS installer package for the BEARS ACP adapter.
+Build a macOS installer package for the BEARS armature.
 
 Options:
-  --binary <path>                 Path to the compiled bears-acp-adapter binary (required)
+  --binary <path>                 Path to the compiled bear-armature binary (required)
   --version <version>             Package version (default: read from Cargo.toml)
   --identifier <id>               Package identifier (default: ai.bears.acp-adapter)
   --install-location <path>       Install prefix (default: /Library/Application Support/Bears/adapter)
-  --output <path>                 Output package path (default: dist/macos/bears-acp-adapter-<version>.pkg)
+  --output <path>                 Output package path (default: dist/macos/bear-armature-<version>.pkg)
   --application-identity <name>   Developer ID Application identity for codesign
   --installer-identity <name>     Developer ID Installer identity for productbuild signing
   --scripts-dir <path>            Package scripts directory (default: packaging/macos/scripts)
@@ -93,7 +93,7 @@ if [ ! -f "$binary" ]; then
 fi
 
 if [ -z "$version" ]; then
-  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bears-acp-adapter/Cargo.toml" | head -n 1)"
+  version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/tools/bear-armature/Cargo.toml" | head -n 1)"
 fi
 
 if [ -z "$version" ]; then
@@ -102,7 +102,7 @@ if [ -z "$version" ]; then
 fi
 
 if [ -z "$output" ]; then
-  output="$repo_root/dist/macos/bears-acp-adapter-$version.pkg"
+  output="$repo_root/dist/macos/bear-armature-$version.pkg"
 fi
 
 work_dir="$(mktemp -d)"
@@ -112,17 +112,18 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 pkg_root="$work_dir/root"
-component_pkg="$work_dir/bears-acp-adapter-component.pkg"
+component_pkg="$work_dir/bear-armature-component.pkg"
 install_dir="$pkg_root$install_location"
 
 mkdir -p "$install_dir" "$(dirname -- "$output")"
-cp "$binary" "$install_dir/bears-acp-adapter"
-chmod 755 "$install_dir/bears-acp-adapter"
+cp "$binary" "$install_dir/bear-armature"
+chmod 755 "$install_dir/bear-armature"
+ln -sf bear-armature "$install_dir/bears-acp-adapter"
 
 if [ -n "$application_identity" ]; then
   echo "build-pkg.sh: signing binary with $application_identity"
-  codesign --force --timestamp --options runtime --sign "$application_identity" "$install_dir/bears-acp-adapter"
-  codesign --verify --strict --verbose=2 "$install_dir/bears-acp-adapter"
+  codesign --force --timestamp --options runtime --sign "$application_identity" "$install_dir/bear-armature"
+  codesign --verify --strict --verbose=2 "$install_dir/bear-armature"
 else
   echo "build-pkg.sh: no application signing identity supplied; leaving binary unsigned" >&2
 fi

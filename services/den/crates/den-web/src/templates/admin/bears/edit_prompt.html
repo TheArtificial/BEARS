@@ -1,0 +1,64 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Edit prompts · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h3>Edit bear prompts</h3>
+<p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
+
+<form method="post">
+{% if context_profile_enabled %}
+<p class="form-hint">Profile-aware bear: edit shared context and per-profile instructions. Den composes the runtime prompt from these layers.</p>
+
+<label for="user_steering">User steering</label>
+<div class="form-field">
+  <textarea id="user_steering" name="user_steering" rows="4" cols="72">{{ form.user_steering if form else '' }}</textarea>
+  <span class="form-hint">How this user prefers the bear to behave (tone, priorities, constraints).</span>
+</div>
+
+<label for="bear_context">Bear context</label>
+<div class="form-field">
+  <textarea id="bear_context" name="bear_context" rows="4" cols="72">{{ form.bear_context if form else '' }}</textarea>
+  <span class="form-hint">Durable background about what this bear is for.</span>
+</div>
+
+<label for="role_chat">Chat role prompt</label>
+<div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
+  <textarea id="role_chat" name="role_chat" rows="6" cols="72" required>{{ form.role_chat if form else '' }}</textarea>
+</div>
+
+<label for="role_pair">Pair role prompt (ACP)</label>
+<div class="form-field">
+  <textarea id="role_pair" name="role_pair" rows="6" cols="72" required>{{ form.role_pair if form else '' }}</textarea>
+</div>
+
+<label for="role_curate">Curate role prompt</label>
+<div class="form-field">
+  <textarea id="role_curate" name="role_curate" rows="4" cols="72" required>{{ form.role_curate if form else '' }}</textarea>
+</div>
+
+<label for="role_work">Work role prompt</label>
+<div class="form-field">
+  <textarea id="role_work" name="role_work" rows="4" cols="72" required>{{ form.role_work if form else '' }}</textarea>
+</div>
+
+<label for="role_watch">Watch role prompt</label>
+<div class="form-field">
+  <textarea id="role_watch" name="role_watch" rows="4" cols="72" required>{{ form.role_watch if form else '' }}</textarea>
+</div>
+{% else %}
+<p class="form-hint">Legacy bear: a single system prompt is used for all roles.</p>
+<label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+<div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
+  <textarea id="system_prompt_textarea" name="system_prompt" rows="14" cols="72" required>{{ form.system_prompt if form else '' }}</textarea>
+  {% if errors and errors.system_prompt %}
+  <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
+  {% endif %}
+</div>
+{% endif %}
+
+<button type="submit">Save prompts</button>
+</form>
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+//! Memory review/curation tools (observations, proposals) — orchestration layer.
+
+pub mod memory_review;
+pub mod observations;
+pub mod store;
+
+pub use memory_review::{
+    apply_core_update, list_memory_proposals, read_memory_proposal, request_memory_review,
+    resolve_memory_proposal,
+};
+pub use observations::{write_observation, ObservationWriteArguments};
+pub use store::{
+    ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
+    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+};

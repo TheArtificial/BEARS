@@ -3,17 +3,18 @@
     "initializeCommand": "docker build -t bears-devcontainer:latest -f .devcontainer/Dockerfile .devcontainer",
     "image": "bears-devcontainer:latest",
     "workspaceFolder": "/workspace",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=consistent",
     "mounts": [
         "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=consistent",
         "source=bears-gh-auth,target=/root/.config/gh,type=volume"
     ],
     "containerEnv": {
         "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json",
         "DATABASE_URL": "postgres://bears:bears@bears-postgres:5432/den?sslmode=disable",
-        "LETTA_PG_URI": "postgresql://bears:bears@bears-letta-postgres:5432/letta",
-        "MEMORY_SERVE_QUIET": "1"
+        "AGENT_RUNTIME": "native",
+        "MEMORY_SERVE_QUIET": "1",
+        "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
     },
     "postCreateCommand": "/workspace/.devcontainer/install-workspace-tools.sh",
     "postStartCommand": "/workspace/scripts/devcontainer-start.sh"

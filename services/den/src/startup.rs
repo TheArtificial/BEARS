@@ -1,11 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use crate::core::codepool::CodePoolClient;
-use crate::core::letta::LettaClient;
-use crate::core::runtime_provider::{
-    acp_requires_letta_runtime, RuntimeHealthCheck, RuntimeStartupCapabilities,
-};
+use den_runtime::runtime_provider::{acp_requires_runtime, RuntimeStartupCapabilities};
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -58,28 +54,10 @@ pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::Mig
 }
 
 /// Whether [`validate_runtime_config`] requires a non-empty `JWT_SECRET` (production builds or `RUN_API`).
-pub fn requires_jwt_secret(config: &Config) -> bool {
-    #[cfg(feature = "production")]
-    {
-        let _ = config;
-        true
-    }
-    #[cfg(not(feature = "production"))]
-    {
-        config.run_api
-    }
-}
-
-fn allow_standalone_web_from_env() -> bool {
-    std::env::var("DEN_ALLOW_STANDALONE_WEB")
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
+///
+/// Canonical home is `den_core::config`; re-exported so the web edge (den-web) and
+/// the binary's startup validation share one definition.
+pub use den_core::config::requires_jwt_secret;
 
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
@@ -99,21 +77,9 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if acp_requires_letta_runtime(config) && config.letta_base_url.trim().is_empty() {
+    if acp_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
-                .into(),
-        ));
-    }
-    if config.run_web
-        && config.codepool_base_url.trim().is_empty()
-        && !allow_standalone_web_from_env()
-    {
-        return Err(StartupError::Message(
-            "CODEPOOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through \
-             Codepool (Letta Code SDK), not directly to the Letta HTTP API. Set \
-             DEN_ALLOW_STANDALONE_WEB=true only for local UI/dev runs without the rest of the stack. \
-             Example internal URL: http://bears-codepool:3030 — see services/codepool/COOLIFY_DEPLOY.md."
+            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true (Den-native agent loop)."
                 .into(),
         ));
     }
@@ -122,48 +88,45 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 
 /// Verify configured upstream HTTP services respond before accepting traffic.
 ///
-/// Checks **Codepool** (`GET /health`) when [`Config::codepool_base_url`] is non-empty,
-/// and **Letta** (`GET /v1/health`) when [`Config::letta_base_url`] is non-empty (same auth as runtime).
+/// The Den-native runtime relies only on the LLM inference substrate
+/// ([`Config::llm_api_url`], via Bifrost); there are no Letta/Codepool sidecars to probe.
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    if !config.codepool_base_url.trim().is_empty() {
+    let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
+    if !config.llm_api_url.trim().is_empty() {
         tracing::info!(
-            url = %config.codepool_base_url,
-            "Checking Codepool connectivity"
+            url = %config.llm_api_url,
+            compatibility_backend = "native",
+            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
+            "Native agent runtime configured (LLM inference substrate)"
         );
-        CodePoolClient::new(config)
-            .check_health()
-            .await
-            .map_err(|e| StartupError::Message(e.to_string()))?;
-        tracing::info!("Codepool health check passed");
     }
 
-    let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
-    if runtime_capabilities.letta_required_for_acp || !config.letta_base_url.trim().is_empty() {
-        tracing::info!(
-            url = %config.letta_base_url,
-            compatibility_backend = "letta",
-            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
-            "Checking runtime compatibility backend connectivity"
-        );
-        let letta = LettaClient::new(config);
-        let health = letta.compatibility_health_check();
-        if health.enabled() {
-            RuntimeHealthCheck::check_health(&health)
-                .await
-                .map_err(|e| StartupError::Message(e.to_string()))?;
-            tracing::info!(
-                compatibility_backend = RuntimeHealthCheck::compatibility_backend_name(&health),
-                "Runtime compatibility backend health check passed"
-            );
-        } else if runtime_capabilities.letta_required_for_acp {
-            return Err(StartupError::Message(
-                "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
-                    .into(),
-            ));
-        }
-    }
+    bootstrap_recall_index(config).await;
 
     Ok(())
+}
+
+/// Best-effort bootstrap of the derived recall index (Qdrant). Recall is optional and
+/// derived from the canonical SQLite store, so failures here are logged and swallowed —
+/// Den degrades to keyword fallback rather than failing startup (ADR-0038).
+async fn bootstrap_recall_index(config: &Config) {
+    let Some(recall) = den_runtime::recall::QdrantRecall::from_config(config) else {
+        return;
+    };
+    match recall.ensure_collection().await {
+        Ok(created) => tracing::info!(
+            collection = recall.collection_name(),
+            created,
+            url = recall.base_url(),
+            "Derived recall index (Qdrant) ready"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            collection = recall.collection_name(),
+            url = recall.base_url(),
+            "Qdrant recall index unavailable at startup; continuing with keyword fallback"
+        ),
+    }
 }
 
 #[cfg(all(test, not(feature = "production")))]
@@ -182,7 +145,7 @@ mod tests {
         let base = Config::test_stub();
         validate_runtime_config(&base).expect("web-only must not require JWT_SECRET");
 
-        let mut api_on = base.clone();
+        let mut api_on = base;
         api_on.run_api = true;
         assert!(
             validate_runtime_config(&api_on).is_err(),
@@ -201,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_api_and_letta_when_acp_enabled() {
+    fn validate_requires_api_and_llm_when_acp_enabled() {
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
@@ -209,13 +172,19 @@ mod tests {
 
         let mut acp_on = Config::test_stub();
         acp_on.acp_gateway_enabled = true;
-        assert!(validate_runtime_config(&acp_on).is_err());
+        assert!(
+            validate_runtime_config(&acp_on).is_err(),
+            "ACP_GATEWAY_ENABLED requires RUN_API"
+        );
 
         acp_on.run_api = true;
-        assert!(validate_runtime_config(&acp_on).is_err());
+        assert!(
+            validate_runtime_config(&acp_on).is_err(),
+            "ACP runtime requires LLM_API_URL"
+        );
 
-        acp_on.letta_base_url = "http://bears-letta:8283".into();
-        validate_runtime_config(&acp_on).expect("ACP with API and Letta should pass");
+        acp_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
+        validate_runtime_config(&acp_on).expect("ACP with API and LLM_API_URL should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },
@@ -224,33 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_codepool_when_run_web() {
+    fn validate_allows_run_web_without_legacy_runtime() {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
-        web_on.codepool_base_url = String::new();
-        assert!(
-            validate_runtime_config(&web_on).is_err(),
-            "RUN_WEB=true requires CODEPOOL_BASE_URL"
-        );
-        web_on.codepool_base_url = "http://localhost:3030".into();
-        validate_runtime_config(&web_on).expect("RUN_WEB with Codepool should pass");
-    }
-
-    #[test]
-    fn standalone_web_allows_missing_codepool() {
-        let prev = std::env::var("DEN_ALLOW_STANDALONE_WEB").ok();
-        unsafe {
-            std::env::set_var("DEN_ALLOW_STANDALONE_WEB", "true");
-        }
-
-        let mut web_on = Config::test_stub();
-        web_on.run_web = true;
-        web_on.codepool_base_url = String::new();
-        validate_runtime_config(&web_on).expect("standalone web skips Codepool requirement");
-
-        match prev {
-            Some(v) => unsafe { std::env::set_var("DEN_ALLOW_STANDALONE_WEB", v) },
-            None => unsafe { std::env::remove_var("DEN_ALLOW_STANDALONE_WEB") },
-        }
+        validate_runtime_config(&web_on).expect("RUN_WEB has no legacy runtime requirement");
     }
 }

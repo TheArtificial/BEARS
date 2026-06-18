@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Bear access{% endblock %}
+
+{% block admin_content %}
+<h3>Bear access</h3>
+<p class="form-hint"><strong>Admin</strong> manages settings; <strong>Member</strong> can use the bear.</p>
+<p><a class="action" href="./grant">Grant access</a></p>
+{% if memberships and memberships | length > 0 %}
+<table>
+  <thead><tr><th>User</th><th>Bear</th><th>Access</th></tr></thead>
+  <tbody>
+  {% for m in memberships %}
+    <tr>
+      <td><strong>{{ m.username | e }}</strong></td>
+      <td><a href="/bear/{{ m.bear_slug | e }}/overview"><code>{{ m.bear_slug | e }}</code></a> — {{ m.bear_name | e }}</td>
+      <td>{% if m.role == 'admin' %}Admin{% elif m.role == 'member' or not m.role %}Member{% else %}{{ m.role | e }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No access grants yet.</em></p>
+{% endif %}
+{% endblock %}
