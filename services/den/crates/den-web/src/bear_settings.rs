@@ -343,21 +343,68 @@ fn build_bear_bundle(manifest_yaml: &str, memory_sqlite: &[u8]) -> Result<Vec<u8
     Ok(cursor.into_inner())
 }
 
+fn bear_bundle_entry_name(entries: &[String], basename: &str) -> Result<String, CustomError> {
+    if entries.iter().any(|name| name == basename) {
+        return Ok(basename.to_string());
+    }
+
+    let candidates = entries
+        .iter()
+        .filter(|name| {
+            !name.ends_with('/')
+                && !name.starts_with("__MACOSX/")
+                && !name.split('/').any(|part| part == "..")
+                && name.rsplit('/').next() == Some(basename)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    match candidates.as_slice() {
+        [single] => Ok(single.clone()),
+        [] => {
+            let sample = entries
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(CustomError::ValidationError(format!(
+                ".bear bundle missing {basename}; entries include: {sample}"
+            )))
+        }
+        _ => Err(CustomError::ValidationError(format!(
+            ".bear bundle contains multiple {basename} entries: {}",
+            candidates.join(", ")
+        ))),
+    }
+}
+
 fn read_bear_bundle(bytes: &[u8]) -> Result<(BearBundleManifest, Vec<u8>), CustomError> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|err| CustomError::ValidationError(format!("invalid .bear zip: {err}")))?;
+    let entries = (0..archive.len())
+        .map(|idx| {
+            archive
+                .by_index(idx)
+                .map(|file| file.name().to_string())
+                .map_err(|err| {
+                    CustomError::ValidationError(format!("read .bear zip entry failed: {err}"))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifest_name = bear_bundle_entry_name(&entries, "bear.yaml")?;
+    let memory_name = bear_bundle_entry_name(&entries, "memory.sqlite")?;
+
     let mut manifest_yaml = String::new();
     archive
-        .by_name("bear.yaml")
-        .map_err(|_| CustomError::ValidationError(".bear bundle missing bear.yaml".to_string()))?
+        .by_name(&manifest_name)
+        .map_err(|err| CustomError::ValidationError(format!("open bear.yaml failed: {err}")))?
         .read_to_string(&mut manifest_yaml)
         .map_err(|err| CustomError::ValidationError(format!("read bear.yaml failed: {err}")))?;
     let mut memory_sqlite = Vec::new();
     archive
-        .by_name("memory.sqlite")
-        .map_err(|_| {
-            CustomError::ValidationError(".bear bundle missing memory.sqlite".to_string())
-        })?
+        .by_name(&memory_name)
+        .map_err(|err| CustomError::ValidationError(format!("open memory.sqlite failed: {err}")))?
         .read_to_end(&mut memory_sqlite)
         .map_err(|err| CustomError::ValidationError(format!("read memory.sqlite failed: {err}")))?;
     let manifest: BearBundleManifest = serde_yml::from_str(&manifest_yaml)
