@@ -5,7 +5,7 @@
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
-This document describes a target architecture in which **Den** owns the canonical model capability registry and **Bifrost** acts as the execution plane. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata approach.
+This document describes a target architecture in which **Bifrost** owns live model availability, provider keys, and routing, while **Den** maintains a model metadata registry for validation, display, context-window estimates, and operational reconciliation. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata projection.
 
 Related docs:
 
@@ -21,21 +21,21 @@ Related docs:
 
 ## Goal
 
-Make **Den** the control-plane owner of the model registry and capability metadata while keeping **Bifrost** as the execution gateway.
+Give **Den** enough model metadata to validate Bear configuration and plan runtime context, while leaving **Bifrost** as the owner of live model availability, provider keys, and routing.
 
 The desired steady state is:
 
 ```text
-Den registry/resolver -> generated Bifrost config -> Letta/runtime execution -> providers
+Bifrost available models/provider keys -> Den metadata reconciliation -> Bear/runtime validation and context budgeting
 ```
 
 More specifically:
 
-1. **Den** owns canonical model identity.
-2. **Den** owns model capability metadata such as context window and max output.
-3. **Den** owns aliases, lifecycle state, provenance, and confidence.
-4. **Bifrost** executes requests against providers using Den-materialized config.
-5. **Letta** and BEARS runtime components consume Den/Bifrost-resolved model choices rather than becoming the canonical metadata owner.
+1. **Bifrost** owns which models are callable in this deployment.
+2. **Bifrost** owns provider keys, allowlists, aliases used for execution, routing, failover, and gateway governance.
+3. **Den** owns metadata estimates such as context window, max output, display labels, and capability hints.
+4. **Den** validates Bear configuration by reconciling configured model handles against Bifrost availability plus Den metadata.
+5. **Den** may report or plan sync differences, but it should not assume it is the canonical source for Bifrost provider configuration.
 
 ---
 
@@ -59,47 +59,47 @@ The repository already contains a useful bootstrap of this idea, but ownership i
   - `supports_vision`
   - `enabled`
 
-That is a good bootstrap, but the long-term control-plane boundary should be the opposite:
+That is a good bootstrap, but the long-term boundary should be clearer:
 
-- **Den decides what models exist and what they mean.**
-- **Bifrost executes resolved requests against providers.**
+- **Bifrost decides what models are currently available and how they route to providers.**
+- **Den tracks what it knows about models and uses that metadata for validation, display, and runtime planning.**
 
 ### Why this matters
 
-If Bifrost remains the semantic owner of model metadata, then:
+If Den relies only on Bifrost's live model list, then:
 
-- Den cannot confidently treat model capabilities as control-plane state.
-- provenance and confidence become hard to track.
-- model aliases and lifecycle management live in the wrong layer.
-- migration to additional runtimes becomes harder.
-- token budgeting and planning logic must depend on execution-plane artifacts instead of Den-owned state.
+- Den lacks stable context-window and max-output estimates for planning.
+- Bear Admin cannot explain model tradeoffs consistently.
+- configured Bear models cannot be validated with useful diagnostics.
+- token budgeting and compaction policy must guess from strings instead of metadata.
+- Bifrost availability drift is hard to spot from Den's operator surfaces.
 
 ---
 
 ## Key architectural decision
 
-Treat **model capability metadata** as control-plane state owned by **Den**, and treat **Bifrost configuration** as a materialized execution artifact derived from that state.
+Treat **model capability metadata** as Den-owned validation/planning state, and treat **Bifrost availability/configuration** as the execution-plane source of truth.
 
 ### Ownership split
 
 #### Den owns
 
-- canonical model keys
-- aliases
-- display metadata
-- capability metadata
-- lifecycle state
-- provenance and confidence
-- model resolution logic
+- known model metadata (display names, context-window and max-output estimates)
+- Den-side aliases for validation and canonicalization
+- capability hints used by Bear Admin and runtime planning
+- a simple `selectable` flag for Den UI exposure when needed
+- provenance/confidence where metadata is manually curated or inferred
+- reconciliation reports comparing Den metadata with Bifrost availability
 - future token-budgeting logic
-- generation of Bifrost-facing config
 
 #### Bifrost owns
 
-- provider credentials
+- provider credentials and secrets
 - provider endpoint wiring
 - runtime request execution
+- provider key model allowlists and gateway aliases
 - provider routing / failover / weighting where used
+- live model availability for this deployment
 - OpenAI-compatible execution surface
 
 This preserves the repo's broader architecture:
@@ -112,7 +112,7 @@ This preserves the repo's broader architecture:
 
 ## Canonical naming
 
-Canonical model identifiers should be provider-qualified.
+Den metadata keys should be provider-qualified for clarity, but Bifrost remains the authority on which handles are actually routable.
 
 Recommended format:
 
@@ -151,7 +151,7 @@ Resolution guidance:
 1. exact canonical key match wins
 2. unique alias match resolves
 3. ambiguous alias match fails loudly
-4. deprecated or disabled entries may still resolve internally during migration, but UI exposure should be policy-controlled
+4. final persisted Bear configuration should prefer the Bifrost-routable/canonical handle after validation
 
 ---
 
@@ -159,14 +159,14 @@ Resolution guidance:
 
 **Context window** should be a first-class field in Den, not just display decoration.
 
-Den needs it for:
+Den needs metadata estimates for:
 
 1. **Model picker clarity**
    - users and operators need to understand long-context suitability
 2. **Token budgeting**
    - Den should be able to estimate prompt fit before execution
-3. **Fallback and routing**
-   - Den can avoid selecting a model that cannot fit the task
+3. **Validation against Bifrost availability**
+   - Den can warn when a configured Bear model is unavailable or lacks metadata
 4. **Planning and policy**
    - higher-level logic can intentionally choose between cheaper/smaller and larger-context models
 5. **User experience**
@@ -212,10 +212,8 @@ type DenModelRegistryEntry = {
     supports_streaming: boolean | null;
   };
 
-  lifecycle: {
-    enabled: boolean;
-    deprecated: boolean;
-    hidden: boolean;
+  status: {
+    selectable: boolean;              // Den UI exposure; Bifrost owns live availability
   };
 
   provenance: {
@@ -230,7 +228,7 @@ type DenModelRegistryEntry = {
 };
 ```
 
-This is the control-plane answer to:
+This is Den's metadata answer to:
 
 - what model is this?
 - what aliases resolve to it?
@@ -238,16 +236,16 @@ This is the control-plane answer to:
 - how certain are we?
 - should it be exposed?
 
-### `DenResolvedExecutionSpec`
+### `DenResolvedModelAwareness`
 
-A Den-side resolved execution object derived from registry state and policy.
+A Den-side awareness object derived from Bifrost availability plus Den metadata.
 
 Illustrative shape:
 
 ```ts
-type DenResolvedExecutionSpec = {
+type DenResolvedModelAwareness = {
   registry_key: string;            // "openai/gpt-4.1"
-  execution_backend: "bifrost";
+  available_in_bifrost: boolean;
   provider: "openai";
   provider_model_id: "gpt-4.1";
 
@@ -342,19 +340,23 @@ Guidance: prefer explicit unknowns (`null`) over invented certainty.
 
 ---
 
-## Den -> Bifrost materialization
+## Den ↔ Bifrost reconciliation
 
 ### Core principle
 
-Bifrost config should be a **materialized view** of Den-owned state, not the canonical origin.
+Bifrost configuration is **not** a materialized view of Den. Bifrost owns live provider configuration and availability; Den compares that surface with its metadata registry so operators can validate Bear configuration and spot gaps.
 
 Operational flow:
 
-1. operators or sync jobs update Den registry state
-2. Den validates identity, aliases, and capabilities
-3. Den resolves the active execution mapping
-4. Den generates Bifrost-facing config
-5. Bifrost loads that config and executes requests
+1. Bifrost exposes currently available/routable models through its metadata or management APIs.
+2. Den keeps model metadata estimates and aliases for validation/planning.
+3. Den compares Bifrost availability with Den metadata.
+4. Den surfaces:
+   - available Bifrost models with known Den metadata
+   - available Bifrost models missing Den metadata
+   - Den metadata entries not currently available in Bifrost
+   - configured Bear models that are unavailable or metadata-unknown
+5. Optional future tooling may either patch `services/bifrost/config.json` or call Bifrost management APIs, but that is an executor choice rather than the ownership boundary.
 
 ### Current repository fit
 
@@ -363,42 +365,23 @@ Today `services/bifrost/config.json` contains both:
 - provider execution config
 - a BEARS-specific `bears.models` metadata block
 
-In the target design, that `bears.models` block becomes generated output.
+In the revised design, Bifrost's provider config and live metadata remain availability signals. Den may keep a local metadata registry and compare against Bifrost; it should not require Bifrost config to be generated from Den for normal operation.
 
-Illustrative generated entry:
+### What Den should report
 
-```json
-{
-  "handle": "openai/gpt-4.1",
-  "provider": "openai",
-  "model": "gpt-4.1",
-  "display_name": "OpenAI GPT-4.1",
-  "context_window": 1047576,
-  "max_output_tokens": 32768,
-  "supports_tools": true,
-  "supports_responses_api": true,
-  "supports_vision": true,
-  "enabled": true
-}
-```
+Den should report, conceptually:
 
-Long-term guidance: the Bifrost-visible `handle` should match the Den canonical key.
+1. **availability-facing comparison**
+   - Bifrost model handles seen live
+   - Den metadata keys that match those handles/aliases
+   - Bifrost handles with no Den metadata
+   - Den metadata entries not currently Bifrost-available
+2. **configuration validation**
+   - Bear defaults using unavailable models
+   - Bear defaults using aliases that resolve to canonical/routable handles
+   - Bear defaults with unknown context-window estimates
 
-### What Den should generate
-
-Den should generate, conceptually:
-
-1. **execution-facing provider config**
-   - provider key mapping
-   - provider model ids
-   - routing/weights if used
-2. **metadata-facing model config**
-   - canonical handle
-   - display name
-   - capability fields
-   - enabled state
-
-This may still be emitted as one JSON artifact for Bifrost, but ownership remains Den-side.
+This may later drive a file patcher or a Bifrost management API sync, but status/reporting comes first.
 
 ---
 
@@ -457,7 +440,7 @@ Introduce a Den-side registry table or config source with:
 - canonical key
 - aliases
 - capabilities
-- lifecycle state
+- simple `selectable` state for Den UI exposure
 - provenance and confidence
 
 Seed it from:
@@ -480,17 +463,22 @@ To canonical handles like:
 
 Maintain temporary alias compatibility for older references.
 
-### Phase 3: generate Bifrost metadata from Den
+### Phase 3: reconcile with Bifrost availability
 
-Make the BEARS-specific `bears.models` section in Bifrost generated from Den-owned registry state.
+Compare Den metadata against live Bifrost availability and surface:
+
+- Bifrost-available models with Den metadata
+- Bifrost-available models missing Den metadata
+- Den metadata entries not currently available in Bifrost
+- configured Bear defaults that fail availability or metadata checks
 
 Possible operational forms:
 
-- generated file committed by workflow
-- generated artifact in deploy pipeline
-- admin export / config materialization job
+- `/status` model registry panel
+- CLI/API dry-run sync plan
+- optional future Bifrost API sync or config patcher
 
-### Phase 4: resolve through `DenResolvedExecutionSpec`
+### Phase 4: resolve through `DenResolvedModelAwareness`
 
 Introduce a Den resolver that transforms:
 
@@ -500,23 +488,24 @@ Introduce a Den resolver that transforms:
 
 Into:
 
-- `DenResolvedExecutionSpec`
+- `DenResolvedModelAwareness`
 
 Use that spec as the source for:
 
 - UI display
 - provisioning choices
 - execution references
-- Bifrost materialization
+- Bifrost availability validation
 - future token-budgeting logic
 
-### Phase 5: treat Den as authoritative
+### Phase 5: optional sync executor
 
-At this stage:
+If operators want Den-assisted Bifrost updates, add an explicit executor that can either:
 
-- Bifrost metadata is generated only
-- Den is the canonical registry source
-- mismatches between Den and Bifrost are treated as drift or deployment errors
+- produce a patch for `services/bifrost/config.json`, or
+- call Bifrost management APIs when Bifrost runs with `config_store` enabled.
+
+This executor should be opt-in and auditable; Bifrost remains the owner of provider keys and live availability.
 
 ---
 
@@ -540,19 +529,18 @@ Examples:
 - `max_output_tokens: null`
 - `supports_reasoning_controls: null`
 
-### Validate generated config before publish
+### Validate metadata and availability before accepting Bear config
 
-Before Den publishes Bifrost config, validate:
+Before Den accepts or updates Bear model configuration, validate:
 
-- unique canonical keys
-- no ambiguous aliases
-- required provider/model mappings exist
-- no disabled entries are selected as active defaults
-- generated handles are stable and deterministic
+- the requested handle resolves uniquely through Den aliases or Bifrost availability
+- the resolved model appears available in Bifrost when Bifrost is reachable
+- Den has enough metadata for display and budgeting, or can warn that metadata is unknown
+- no ambiguous aliases are accepted
 
-### Surface drift
+### Surface reconciliation differences
 
-If Bifrost exposes runtime metadata, Den should compare generated expectations with observed runtime state and surface drift in logs or operator views.
+Den should compare metadata expectations with observed Bifrost availability and surface differences in logs or operator views.
 
 ### Treat display labels as presentation only
 
@@ -570,9 +558,9 @@ Letta should not become the canonical owner of model capability metadata for BEA
 
 Instead:
 
-- Den owns the canonical registry and resolution logic
-- Letta and related runtime components consume the resolved model choice
-- Bifrost remains the execution gateway under the runtime path
+- Den owns metadata and validation logic
+- runtime components consume a Bifrost-available model choice plus Den metadata where known
+- Bifrost remains the execution gateway and availability source under the runtime path
 
 This keeps the control-plane / runtime / execution split consistent with the rest of the repository architecture.
 
@@ -580,28 +568,30 @@ This keeps the control-plane / runtime / execution split consistent with the res
 
 ## Open questions
 
-1. Should the Bifrost `handle` always equal the Den canonical key?
-   - recommended long-term answer: yes
+1. Should Den store canonical provider-qualified handles or Bifrost-routable handles on Bears?
+   - current recommendation: store the validated Bifrost-routable/canonical handle when available.
 2. Should pricing metadata live in the same registry?
-   - probably later, not required for the first milestone
-3. Should policy be attachable globally, per bear, and per role?
-   - likely yes over time
+   - probably later, not required for the first milestone.
+3. Should policy be attachable globally, per Bear, and per profile?
+   - likely yes over time.
 4. Should LiteLLM ingestion be scheduled automatically?
-   - useful later, not required for the first implementation
-5. Should provider APIs be polled for drift where available?
-   - valuable, but not necessary for the first cut
+   - useful later, not required for the first implementation.
+5. Should provider APIs be polled for availability/metadata drift where available?
+   - valuable, but not necessary for the first cut.
+6. Should Den ever push changes to Bifrost?
+   - only through an explicit audited sync executor; default remains compare/report.
 
 ---
 
 ## Recommended immediate next steps
 
-1. define a Den-side canonical registry schema
-2. seed it from `services/bifrost/config.json`
-3. normalize on canonical keys such as `openai/gpt-4.1`
-4. attach provenance and confidence to capability fields
-5. generate Bifrost metadata from Den-owned state
-6. introduce a resolver that emits `DenResolvedExecutionSpec`
-7. later, use the same resolver for token budgeting, defaults, and execution routing policy
+1. define a Den-side metadata registry shape
+2. seed metadata from `services/bifrost/config.json`, provider docs, and manual curation
+3. normalize aliases to provider-qualified Den metadata keys such as `openai/gpt-4.1`
+4. validate Bear model choices against Bifrost availability
+5. surface Bifrost/Den metadata reconciliation in status/admin views
+6. introduce a resolver that emits `DenResolvedModelAwareness`
+7. later, use the same metadata for token budgeting, defaults, and runtime diagnostics
 
 ---
 
@@ -609,20 +599,23 @@ This keeps the control-plane / runtime / execution split consistent with the res
 
 The recommended architecture is:
 
-- **Den owns the canonical model registry**
-  - context window
-  - max output
+- **Den owns model metadata for validation and planning**
+  - context window estimates
+  - max output estimates
   - capability flags
   - aliases
   - provenance
   - confidence
-  - lifecycle state
-- **Bifrost is the execution plane**
+  - simple UI selectability
+- **Bifrost owns availability and execution**
   - provider auth
   - provider routing
+  - provider key model allowlists and aliases
   - request execution
-- **Den materializes Bifrost configuration**
-  - including canonical handles such as `openai/gpt-4.1`
+- **Den reconciles with Bifrost**
+  - compares Den metadata with Bifrost-available models
+  - validates configured Bear defaults
+  - may optionally plan or execute audited sync later
 - **LiteLLM is a bootstrap source**
   - useful for broad initial coverage
   - not the final authority
