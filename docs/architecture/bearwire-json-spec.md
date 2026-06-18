@@ -31,7 +31,35 @@ It does not fully define:
 
 ## Transport binding
 
-Preferred BearWire binding:
+BearWire v1 supports an HTTP profile for parallel migration from legacy `/acp/**` routes and may later add the preferred WebSocket profile.
+
+### v1 HTTP profile
+
+Control methods use JSON-RPC 2.0 over HTTP:
+
+```text
+POST https://<den-host>/bearwire/v1/rpc
+Authorization: Bearer <token>
+BearWire-Version: 1
+Content-Type: application/json
+```
+
+Events stream as JSON-RPC notifications over SSE:
+
+```text
+GET https://<den-host>/bearwire/v1/sessions/{session_id}/events
+Authorization: Bearer <token>
+BearWire-Version: 1
+Accept: text/event-stream
+```
+
+Each SSE frame contains one JSON-RPC notification with `method: "event"`:
+
+```text
+data: {"jsonrpc":"2.0","method":"event","params":{...event envelope...}}
+```
+
+### WebSocket profile (preferred future binding)
 
 ```text
 JSON-RPC 2.0 over WebSocket

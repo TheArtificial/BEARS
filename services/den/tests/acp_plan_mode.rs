@@ -134,15 +134,10 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         Some("pair/plans/mem_test.md")
     );
 
-    let approved = plan_mode::approve_plan_mode(
-        &pool,
-        user_id,
-        bear_id,
-        &acp_session_id,
-        entered.id,
-    )
-    .await
-    .expect("approve plan mode");
+    let approved =
+        plan_mode::approve_plan_mode(&pool, user_id, bear_id, &acp_session_id, entered.id)
+            .await
+            .expect("approve plan mode");
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 

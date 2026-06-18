@@ -13,7 +13,10 @@ use futures::StreamExt;
 
 use crate::{
     native_runtime::openai_byte_stream_to_event_stream,
-    runtime::bearwire_projection::runtime_stream_event_to_bearwire_sse,
+    runtime::bearwire_projection::{
+        runtime_stream_event_to_bearwire_sse,
+        wire::{runtime_stream_event_to_bearwire_notifications, runtime_semantic_event_to_bearwire_events},
+    },
     runtime_contracts::{
         RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
         ToolCallFinishStatus,
@@ -61,6 +64,19 @@ fn types(payloads: &[serde_json::Value]) -> Vec<&str> {
         .iter()
         .map(|p| p["type"].as_str().expect("payload has type"))
         .collect()
+}
+
+fn bearwire_types(event: RuntimeSemanticEvent) -> Vec<String> {
+    runtime_semantic_event_to_bearwire_events(event)
+        .into_iter()
+        .map(|event| event.event_type)
+        .collect()
+}
+
+fn assert_type_mapping(event: RuntimeSemanticEvent, adapter_types: &[&str], bearwire_types_expected: &[&str]) {
+    let adapter_payloads = project_semantic(event.clone());
+    assert_eq!(types(&adapter_payloads), adapter_types);
+    assert_eq!(bearwire_types(event), bearwire_types_expected);
 }
 
 // --- End-to-end OpenAI SSE → adapter SSE ------------------------------------
@@ -124,6 +140,119 @@ async fn golden_trace_multi_text_delta_preserves_each_chunk() {
             serde_json::json!({"type": "turn_complete", "outcome": "ok"}),
         ]
     );
+}
+
+// --- Adapter-SSE → BearWire migration type parity ---------------------------
+
+#[test]
+fn migration_type_mapping_covers_core_semantic_events() {
+    assert_type_mapping(
+        RuntimeSemanticEvent::AssistantTextDelta {
+            text: "Hello".to_string(),
+        },
+        &["assistant_text_delta"],
+        &["message.delta"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::StatusText {
+            text: "Thinking".to_string(),
+        },
+        &["status_text"],
+        &["run.progress"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::ConversationResolved {
+            conversation: RuntimeConversationRef {
+                id: "conv-123".to_string(),
+            },
+        },
+        &["conversation_resolved"],
+        &["session.bound"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::TurnCompleted { turn: None },
+        &["turn_complete"],
+        &["run.completed"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "indexing".to_string(),
+            text: Some("Indexing".to_string()),
+            phase: None,
+            detail: None,
+        },
+        &["status_text"],
+        &["run.progress"],
+    );
+}
+
+#[test]
+fn migration_type_mapping_covers_tool_and_error_semantics() {
+    assert_type_mapping(
+        RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "memory_read".to_string(),
+            title: Some("Read memory".to_string()),
+            kind: Some("function".to_string()),
+            arguments: serde_json::json!({"path": "pair/notes/demo.md"}),
+            approval_request_id: None,
+            approval_required: false,
+            approval_reason: None,
+            run_id: Some("run-1".to_string()),
+        },
+        &["tool_request"],
+        &["tool_call.requested"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: "call-2".to_string(),
+            tool_name: "web_fetch".to_string(),
+            title: None,
+            kind: None,
+            arguments: serde_json::json!({"url": "https://example.com"}),
+            approval_request_id: Some("perm-1".to_string()),
+            approval_required: true,
+            approval_reason: Some("network".to_string()),
+            run_id: Some("run-2".to_string()),
+        },
+        &["tool_request"],
+        &["tool_call.blocked"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::ToolCallFinished {
+            tool_call_id: "call-3".to_string(),
+            tool_name: "memory_read".to_string(),
+            status: ToolCallFinishStatus::Ok,
+            summary: Some("done".to_string()),
+            error_message: None,
+        },
+        &["status_text"],
+        &["tool_call.completed"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::TurnFailed {
+            turn: None,
+            category: RuntimeErrorCategory::Timeout,
+            message: "timed out".to_string(),
+        },
+        &["error"],
+        &["run.failed"],
+    );
+}
+
+#[test]
+fn bearwire_projection_serializes_as_json_rpc_event_notification() {
+    let notifications = runtime_stream_event_to_bearwire_notifications(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::AssistantTextDelta {
+            text: "Hello".to_string(),
+        },
+    ));
+    assert_eq!(notifications.len(), 1);
+    let value = serde_json::to_value(&notifications[0]).expect("serialize notification");
+    assert_eq!(value["jsonrpc"], "2.0");
+    assert_eq!(value["method"], "event");
+    assert_eq!(value["params"]["type"], "message.delta");
+    assert_eq!(value["params"]["data"]["delta"], "Hello");
 }
 
 // --- Semantic event → adapter SSE (full payloads) ---------------------------
