@@ -7,13 +7,23 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use den_http::{acp_tokens, errors::CustomError};
-use den_runtime::{acp_sessions, bearwire_events, bears::db as bears_db, DenState};
-use den_runtime::runtime::bearwire_projection::wire::{
-    bearwire_event_to_json_rpc_notification, BearWireEvent,
+use den_runtime::{
+    acp_sessions, bearwire_events,
+    bears::{db as bears_db, BearProfile},
+    native_runtime::start_native_acp_turn_event_stream,
+    runtime::bearwire_projection::wire::{
+        bearwire_event_to_json_rpc_notification, runtime_stream_event_to_bearwire_events,
+        BearWireEvent,
+    },
+    runtime_contracts::RoleRuntimeBinding,
+    turn_runner::TurnStartRequest,
+    DenState,
 };
 
 pub fn router() -> Router<DenState> {
@@ -240,6 +250,178 @@ async fn session_close_result(
         "closed": true,
         "session_id": session_id,
         "event_sequence": persisted.sequence_no,
+    }))
+}
+
+async fn run_start_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    let prompt = required_param_string(params, "prompt")?;
+    let conversation_id = param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
+    let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
+    let cwd = param_string(params, "cwd");
+    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+    let binding = RoleRuntimeBinding {
+        binding_id,
+        compatibility_backend: Some("native".to_string()),
+    };
+    acp_sessions::upsert_session(
+        &state.sqlx_pool,
+        acp_sessions::UpsertAcpSession {
+            user_id,
+            bear_id: bear.id,
+            bear_slug: bear.slug.clone(),
+            acp_session_id: session_id.clone(),
+            runtime_session_id: format!("bearwire:{}:{}", bear.id, session_id),
+            conversation_id: conversation_id.clone(),
+            resolved_conversation_id: None,
+            client: client.clone(),
+            cwd: cwd.clone(),
+            current_mode: None,
+        },
+    )
+    .await?;
+
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let mut accepted = BearWireEvent::ephemeral(
+        "run.accepted",
+        json!({
+            "run_id": run_id.clone(),
+            "session_id": session_id.clone(),
+        }),
+    );
+    accepted.bear_id = Some(bear.id.to_string());
+    accepted.human_id = Some(user_id.to_string());
+    accepted.session_id = Some(session_id.clone());
+    accepted.run_id = Some(run_id.clone());
+    let accepted = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        accepted,
+    )
+    .await?;
+
+    let pool = state.sqlx_pool.clone();
+    let config = state.config.clone();
+    let memory_stores = state.memory_stores.clone();
+    let bear_slug = bear.slug.clone();
+    let bear_id = bear.id;
+    let session_for_task = session_id.clone();
+    let conversation_for_task = conversation_id.clone();
+    let prompt_for_task = prompt.clone();
+    let run_id_for_task = run_id.clone();
+    tokio::spawn(async move {
+        let request_id = Uuid::new_v4();
+        let stream_result = start_native_acp_turn_event_stream(TurnStartRequest {
+            sqlx_pool: &pool,
+            config: config.as_ref(),
+            memory_stores: &memory_stores,
+            request_id,
+            user_id,
+            session_id: &session_for_task,
+            bear_id,
+            bear_slug: &bear_slug,
+            client: &client,
+            cwd: cwd.as_deref(),
+            binding: &binding,
+            conversation_selection: &conversation_for_task,
+            upstream_target: &conversation_for_task,
+            prompt: &prompt_for_task,
+            client_tools: None,
+            runtime_context: None,
+            runtime_context_len: 0,
+            stream_tokens: true,
+        })
+        .await;
+
+        match stream_result {
+            Ok(mut stream) => {
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(runtime_event) => {
+                            for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
+                                event.bear_id = Some(bear_id.to_string());
+                                event.human_id = Some(user_id.to_string());
+                                event.session_id = Some(session_for_task.clone());
+                                if event.run_id.is_none() {
+                                    event.run_id = Some(run_id_for_task.clone());
+                                }
+                                if let Err(err) = bearwire_events::append_bearwire_event(
+                                    &pool,
+                                    &session_for_task,
+                                    Some(bear_id),
+                                    Some(user_id),
+                                    event,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(error = %err, session_id = %session_for_task, "failed to persist BearWire runtime event");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let mut event = BearWireEvent::ephemeral(
+                                "run.failed",
+                                json!({
+                                    "run_id": run_id_for_task.clone(),
+                                    "message": err.to_string(),
+                                }),
+                            );
+                            event.bear_id = Some(bear_id.to_string());
+                            event.human_id = Some(user_id.to_string());
+                            event.session_id = Some(session_for_task.clone());
+                            event.run_id = Some(run_id_for_task.clone());
+                            let _ = bearwire_events::append_bearwire_event(
+                                &pool,
+                                &session_for_task,
+                                Some(bear_id),
+                                Some(user_id),
+                                event,
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let mut event = BearWireEvent::ephemeral(
+                    "run.failed",
+                    json!({
+                        "run_id": run_id_for_task.clone(),
+                        "message": err.to_string(),
+                    }),
+                );
+                event.bear_id = Some(bear_id.to_string());
+                event.human_id = Some(user_id.to_string());
+                event.session_id = Some(session_for_task.clone());
+                event.run_id = Some(run_id_for_task.clone());
+                let _ = bearwire_events::append_bearwire_event(
+                    &pool,
+                    &session_for_task,
+                    Some(bear_id),
+                    Some(user_id),
+                    event,
+                )
+                .await;
+            }
+        }
+    });
+
+    Ok(json!({
+        "ok": true,
+        "accepted": true,
+        "run_id": run_id,
+        "session_id": session_id,
+        "event_sequence": accepted.sequence_no,
     }))
 }
 
@@ -482,9 +664,16 @@ async fn rpc(
                 Some(json!({ "error": err.to_string() })),
             ),
         },
-        "run.start"
-        | "client.tool.result"
-        | "client.permission.result" => JsonRpcResponse::error(
+        "run.start" => match run_start_result(&state, &headers, &request.params).await {
+            Ok(result) => JsonRpcResponse::ok(request.id, result),
+            Err(err) => JsonRpcResponse::error(
+                request.id,
+                -32001,
+                "BearWire run.start failed",
+                Some(json!({ "error": err.to_string() })),
+            ),
+        },
+        "client.tool.result" | "client.permission.result" => JsonRpcResponse::error(
             request.id,
             -32004,
             format!("BearWire method not implemented yet: {}", request.method),
@@ -701,6 +890,36 @@ mod tests {
                 id: Some(json!("req-state")),
                 method: "session.state".to_string(),
                 params: json!({ "bear_slug": "meta" }),
+            }),
+        )
+        .await
+        .expect("rpc ok")
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], -32001);
+        assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    }
+
+    #[tokio::test]
+    async fn run_start_with_bear_slug_requires_bearer_token() {
+        let config = std::sync::Arc::new(den_core::config::Config::test_stub());
+        let state = DenState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            config.clone(),
+            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        );
+        let response = rpc(
+            State(state),
+            HeaderMap::new(),
+            Json(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-run")),
+                method: "run.start".to_string(),
+                params: json!({ "bear_slug": "meta", "session_id": "session-test", "prompt": "hello" }),
             }),
         )
         .await

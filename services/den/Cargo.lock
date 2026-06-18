@@ -667,10 +667,13 @@ dependencies = [
  "den-core",
  "den-http",
  "den-runtime",
+ "futures",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
