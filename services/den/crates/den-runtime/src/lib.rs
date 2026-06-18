@@ -46,6 +46,8 @@ pub mod bears;
 
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
+/// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
+pub mod bearwire_runs;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
