@@ -1,0 +1,13 @@
+{
+  "channel": "stable",
+  "version": "0.1.6",
+  "platforms": {
+    "x86_64-unknown-linux-gnu": {
+      "binary_url": "https://bears-ai.github.io/bear-den/bear-armature/stable/bear-armature-x86_64-unknown-linux-gnu",
+      "sha256": "4b132747c5357f9eb0ebb501b0b744304dd6efb32630ae71dc5e46ad199e9536",
+      "size": 18567368
+    }
+  },
+  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bear-armature/v0.1.6",
+  "mandatory": false
+}
