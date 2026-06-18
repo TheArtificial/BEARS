@@ -29,7 +29,7 @@ use den_runtime::{
 };
 
 use crate::web::bear_create_support::{
-    admin_bear_edit_page_context, admin_bear_new_form_context,
+    admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
     ensure_stored_model_in_options_for_handle, model_catalog_select_context,
     validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
@@ -622,11 +622,7 @@ pub async fn new_action(
         );
     }
 
-    let default_model_opt = if default_model_trim.is_empty() {
-        None
-    } else {
-        Some(default_model_trim)
-    };
+    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -643,7 +639,7 @@ pub async fn new_action(
                 name: form.name.trim(),
                 description: form.description.trim(),
                 system_prompt: form.system_prompt.trim(),
-                default_model: default_model_opt,
+                default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
                 letta_agent_type: None,
                 letta_tool_ids: Json(Vec::new()),
@@ -765,11 +761,7 @@ async fn edit_action(
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
 
-    let default_model_opt = if default_model_trim.is_empty() {
-        None
-    } else {
-        Some(default_model_trim)
-    };
+    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists_excluding(state.sqlx_pool(), form.slug.trim(), id).await? {
         validation_errors.add(
@@ -792,7 +784,7 @@ async fn edit_action(
                 name: form.name.trim(),
                 description: form.description.trim(),
                 system_prompt,
-                default_model: default_model_opt,
+                default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
                 letta_agent_type: letta_agent_type_db.as_deref(),
                 letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),

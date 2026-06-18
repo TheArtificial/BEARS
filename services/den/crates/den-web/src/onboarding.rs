@@ -16,7 +16,7 @@ use crate::{
     web::{
         bear_create_support::{
             bear_new_form_context, build_context_profile_json_for_template,
-            insert_new_bear_row_with_context_profile, validate_default_model_for_letta,
+            insert_new_bear_row_with_context_profile, validate_default_model_for_catalog,
             NewBearForm,
         },
         render_template, AppState,
@@ -227,8 +227,8 @@ async fn first_bear_post(
         );
     }
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
-    let default_model_opt = (!default_model_trim.is_empty()).then_some(default_model_trim);
+    validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
+    let default_model_opt = crate::web::bear_create_support::canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -262,7 +262,7 @@ async fn first_bear_post(
         &new_bear_form,
         Vec::new(),
         Some("letta_v1_agent".to_string()),
-        default_model_opt,
+        default_model_opt.as_deref(),
         context_profile,
     )
     .await?;

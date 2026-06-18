@@ -283,7 +283,22 @@ pub fn validate_default_model_for_catalog(
     default_model_trim: &str,
     validation_errors: &mut ValidationErrors,
 ) {
-    validate_default_model_for_letta(catalog_fetch, default_model_trim, validation_errors);
+    let resolved = den_runtime::llm::model_registry::resolve_model_handle(default_model_trim);
+    let value = resolved.unwrap_or(default_model_trim);
+    validate_default_model_for_letta(catalog_fetch, value, validation_errors);
+}
+
+pub fn canonical_default_model_handle(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(
+            den_runtime::llm::model_registry::resolve_model_handle(trimmed)
+                .unwrap_or(trimmed)
+                .to_string(),
+        )
+    }
 }
 
 /// Native model list for the new-bear template, merging stored handles like the edit page.

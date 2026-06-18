@@ -39,6 +39,34 @@
     </tbody>
   </table>
 
+
+
+  <h3 class="status-section-heading">Model registry</h3>
+  <table class="bears-health-table">
+    <tbody>
+      <tr>
+        <th scope="row">Selectable models</th>
+        <td><code>{{ model_registry.report.registry_selectable_count }}</code></td>
+        <td>Den-owned registry entries exposed in Bear Admin.</td>
+      </tr>
+      <tr>
+        <th scope="row">Gateway metadata models</th>
+        <td><code>{{ model_registry.report.gateway_model_count }}</code></td>
+        <td>{% if model_registry.gateway_error %}<span class="form-errors">{{ model_registry.gateway_error | e }}</span>{% else %}Bifrost metadata reachable.{% endif %}</td>
+      </tr>
+      <tr>
+        <th scope="row">Missing from gateway</th>
+        <td><code>{{ model_registry.report.missing_from_gateway | length }}</code></td>
+        <td>{% if model_registry.report.missing_from_gateway %}{{ model_registry.report.missing_from_gateway | join(", ") }}{% else %}All selectable Den models are present in Bifrost metadata.{% endif %}</td>
+      </tr>
+      <tr>
+        <th scope="row">Unknown gateway models</th>
+        <td><code>{{ model_registry.report.unknown_gateway_models | length }}</code></td>
+        <td>{% if model_registry.report.unknown_gateway_models %}{{ model_registry.report.unknown_gateway_models | join(", ") }}{% else %}No extra gateway models outside the Den registry.{% endif %}</td>
+      </tr>
+    </tbody>
+  </table>
+
   <h3 class="status-section-heading">Deployed vs GHCR</h3>
   <table class="bears-health-table bears-health-table-deploy">
     <thead>

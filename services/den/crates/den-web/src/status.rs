@@ -11,6 +11,8 @@ use axum::{
 use reqwest::header::{HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::Deserialize;
 
+use den_runtime::llm::model_registry::{self, ModelGatewayCompatibilityReport};
+
 use crate::build_info;
 use crate::web::stack_health::{self, CheckState, StackHealthReport, StackHealthTemplateRow};
 use crate::web::AppState;
@@ -26,6 +28,13 @@ pub struct StatusPayload {
     pub ghcr_den: Option<GhcrPackageRow>,
     pub ghcr_codepool: Option<GhcrPackageRow>,
     pub ghcr_config_note: Option<String>,
+    pub model_registry: ModelRegistryStatus,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModelRegistryStatus {
+    pub report: ModelGatewayCompatibilityReport,
+    pub gateway_error: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -91,6 +100,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         json_path => "/status.json",
         deploy_rows => deploy_rows,
         ghcr_note => ghcr_note,
+        model_registry => payload.model_registry.clone(),
     };
     let template = state
         .template_env
@@ -231,6 +241,7 @@ async fn gather_status(state: &AppState) -> StatusPayload {
         (None, None);
 
     let cfg = state.config.as_ref();
+    let model_registry = gather_model_registry_status(state).await;
     let mut ghcr_config_note: Option<String> = None;
     let (ghcr_den, ghcr_codepool) = if cfg.github_packages_token.trim().is_empty()
         || cfg.ghcr_packages_owner.trim().is_empty()
@@ -279,6 +290,23 @@ async fn gather_status(state: &AppState) -> StatusPayload {
         ghcr_den,
         ghcr_codepool,
         ghcr_config_note,
+        model_registry,
+    }
+}
+
+async fn gather_model_registry_status(state: &AppState) -> ModelRegistryStatus {
+    match state.bifrost.list_models().await {
+        Ok(models) => {
+            let handles = models.into_iter().map(|model| model.handle).collect::<Vec<_>>();
+            ModelRegistryStatus {
+                report: model_registry::gateway_compatibility_report(handles),
+                gateway_error: None,
+            }
+        }
+        Err(error) => ModelRegistryStatus {
+            report: model_registry::gateway_compatibility_report(Vec::<String>::new()),
+            gateway_error: Some(error.to_string()),
+        },
     }
 }
 

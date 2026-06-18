@@ -25,10 +25,9 @@ use crate::{
     errors::CustomError,
     web::{
         bear_create_support::{
-            bear_configuration_page_context, bear_new_form_context,
+            bear_configuration_page_context, bear_new_form_context, canonical_default_model_handle,
             ensure_stored_model_in_options_for_handle, insert_new_bear_row,
             model_catalog_select_context, validate_default_model_for_catalog,
-            validate_default_model_for_letta,
             BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
@@ -887,13 +886,9 @@ async fn new_bear_post(
     };
 
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+    validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
 
-    let default_model_opt = if default_model_trim.is_empty() {
-        None
-    } else {
-        Some(default_model_trim)
-    };
+    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -908,7 +903,7 @@ async fn new_bear_post(
             &form,
             letta_tool_ids.clone(),
             letta_agent_type_db.clone(),
-            default_model_opt,
+            default_model_opt.as_deref(),
         )
         .await?;
 
@@ -1308,11 +1303,7 @@ async fn bear_edit_configuration_post(
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&catalog_fetch, default_model_trim, &mut validation_errors);
 
-    let default_model_opt = if default_model_trim.is_empty() {
-        None
-    } else {
-        Some(default_model_trim)
-    };
+    let default_model_opt = canonical_default_model_handle(default_model_trim);
 
     if validation_errors.is_empty() {
         bears_db::update_bear(
@@ -1323,7 +1314,7 @@ async fn bear_edit_configuration_post(
                 name: bear.name.as_str(),
                 description: bear.description.as_str(),
                 system_prompt: bear.system_prompt.as_str(),
-                default_model: default_model_opt,
+                default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
                 letta_agent_type: bear.letta_agent_type.as_deref(),
                 letta_tool_ids: bear.letta_tool_ids.clone(),
