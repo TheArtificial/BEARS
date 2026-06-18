@@ -23,7 +23,7 @@
                 <option value="{{ m.handle | e }}"{% if form and form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — <code>{{ m.handle | e }}</code></option>
                 {% endfor %}
             </select>
-            <span class="form-hint">Loaded from Bifrost model catalog.</span>
+            <span class="form-hint">Loaded from Den model registry.</span>
             {% if errors and errors.default_model %}
             <span class="form-hint form-errors">Submission error: {{ errors.default_model | map(attribute="message", default="unknown error") | join(", ") }}</span>
             {% endif %}

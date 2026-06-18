@@ -242,7 +242,7 @@ impl From<&Bear> for NewBearForm {
     }
 }
 
-/// Operator admin new-bear form: Bifrost model catalog only (no Letta agent type or tools).
+/// Operator admin new-bear form: Den model registry only (no Letta agent type or tools).
 pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
     let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
@@ -262,33 +262,19 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
     }
 }
 
-/// Bifrost-first model list for bear create flows that do not depend on Letta.
+/// Den-owned model registry for bear create/edit flows.
 pub async fn model_catalog_select_context(
-    state: &AppState,
+    _state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
-    if state.bifrost.is_enabled() {
-        match state.bifrost.list_models().await {
-            Ok(models) if models.is_empty() => (
-                true,
-                Vec::new(),
-                Some("Bifrost returned no enabled BEARS models.".into()),
-            ),
-            Ok(models) => (
-                true,
-                models
-                    .into_iter()
-                    .map(|m| m.to_letta_model_option())
-                    .collect(),
-                None,
-            ),
-            Err(e) => (
-                true,
-                Vec::new(),
-                Some(format!("Could not load models from Bifrost metadata: {e}.")),
-            ),
-        }
+    let options = den_runtime::llm::model_registry::selectable_model_options();
+    if options.is_empty() {
+        (
+            true,
+            options,
+            Some("Den model registry has no selectable models.".into()),
+        )
     } else {
-        (false, Vec::new(), None)
+        (true, options, None)
     }
 }
 
