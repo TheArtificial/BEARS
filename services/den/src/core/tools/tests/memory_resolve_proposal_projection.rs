@@ -12,7 +12,7 @@ use crate::core::{
 };
 use den_runtime::{
     bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    memory_proposals::{create, CreateMemoryProposal},
+    memory_proposals::CreateMemoryProposal,
 };
 
 async fn seed_curate_agent(
@@ -79,8 +79,12 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
     )
     .await?;
 
-    let proposal = create(
+    let config = crate::config::Config::test_stub();
+    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let proposal = den_runtime::memory::create_proposal(
         &pool,
+        &config,
+        &stores,
         CreateMemoryProposal {
             bear_id,
             source_profile: BearProfile::Pair,
@@ -127,8 +131,6 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         channel: DenToolChannelContext::default(),
     };
 
-    let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
         &config,

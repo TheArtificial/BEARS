@@ -71,7 +71,7 @@ async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, 'ready', NOW())
+        VALUES ($1, $2, $3, $4, 'ready', NOW())
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
@@ -81,6 +81,7 @@ async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile
     )
     .bind(bear_id)
     .bind(role.as_str())
+    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await
@@ -247,13 +248,8 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     bears_db::grant_membership(&pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant bear membership");
-    insert_role_agent(
-        &pool,
-        bear_id,
-        BearProfile::Pair,
-        "agent-pair-den-tool-plan",
-    )
-    .await;
+    let agent_id = format!("agent-pair-den-tool-plan-{}", Uuid::new_v4().simple());
+    insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
     let config = Config::load();
     let stores = den_runtime::memory::MemoryStoreManager::new(&config);
@@ -274,7 +270,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
             }],
             "workspace_context": { "redacted": true }
         }),
-        den_context(bear_id, user_id, "agent-pair-den-tool-plan"),
+        den_context(bear_id, user_id, &agent_id),
     )
     .await
     .expect("update work plan through Den tool");
@@ -287,7 +283,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
         &stores,
         DEN_WORK_PLAN_LIST,
         json!({}),
-        den_context(bear_id, user_id, "agent-pair-den-tool-plan"),
+        den_context(bear_id, user_id, &agent_id),
     )
     .await
     .expect("list work plans through Den tool");

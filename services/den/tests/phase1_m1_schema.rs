@@ -305,7 +305,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
             'lane',
             'trigger',
             'status',
-            'binding_id',
+            'role_agent_id',
             'conversation_id',
             'conversation_key',
             'conversation_date',
@@ -352,7 +352,7 @@ async fn reflection_conductor_tables_columns_and_constraints_exist() {
           AND column_name IN (
             'id',
             'bear_id',
-            'binding_id',
+            'role_agent_id',
             'lane',
             'conversation_date',
             'conversation_key',

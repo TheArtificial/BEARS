@@ -59,7 +59,7 @@ async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, 'ready', NOW())
+        VALUES ($1, $2, $3, $4, 'ready', NOW())
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
                       provisioning_status = 'ready',
@@ -69,6 +69,7 @@ async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile
     )
     .bind(bear_id)
     .bind(role.as_str())
+    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await
@@ -91,13 +92,10 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     bears_db::grant_membership(&pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant bear membership");
-    insert_role_agent(
-        &pool,
-        bear_id,
-        BearProfile::Pair,
-        "agent-pair-plan-mode-test",
-    )
-    .await;
+    let test_suffix = Uuid::new_v4().simple().to_string();
+    let agent_id = format!("agent-pair-plan-mode-test-{test_suffix}");
+    let acp_session_id = format!("acp-plan-mode-session-{test_suffix}");
+    insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
     let entered = plan_mode::enter_plan_mode(
         &pool,
@@ -105,7 +103,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
             user_id,
             bear_id,
             bear_slug: "plan-mode-test".to_string(),
-            acp_session_id: "acp-plan-mode-session".to_string(),
+            acp_session_id: acp_session_id.clone(),
             reason: "Need to inspect before editing".to_string(),
             requested_by: PlanModeRequestedBy::Pair,
             previous_permission_mode: Some("default".to_string()),
@@ -120,7 +118,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         SubmitPlanModeParams {
             user_id,
             bear_id,
-            acp_session_id: "acp-plan-mode-session".to_string(),
+            acp_session_id: acp_session_id.clone(),
             plan_mode_id: Some(entered.id),
             title: "Implementation plan".to_string(),
             body: "1. Read files\n2. Edit code\n3. Test".to_string(),
@@ -136,14 +134,19 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         Some("pair/plans/mem_test.md")
     );
 
-    let approved =
-        plan_mode::approve_plan_mode(&pool, user_id, bear_id, "acp-plan-mode-session", entered.id)
-            .await
-            .expect("approve plan mode");
+    let approved = plan_mode::approve_plan_mode(
+        &pool,
+        user_id,
+        bear_id,
+        &acp_session_id,
+        entered.id,
+    )
+    .await
+    .expect("approve plan mode");
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 
-    let active = plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
+    let active = plan_mode::active_for_session(&pool, user_id, bear_id, &acp_session_id)
         .await
         .expect("query active plan mode");
     assert!(active.is_none());
