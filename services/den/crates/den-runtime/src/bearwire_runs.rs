@@ -1,4 +1,6 @@
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -129,6 +131,96 @@ pub async fn active_run_for_session(
     .fetch_optional(pool)
     .await?;
     Ok(row.map(row_to_run))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BearWireClientResultRow {
+    pub id: Uuid,
+    pub run_id: String,
+    pub obligation_kind: String,
+    pub obligation_id: String,
+    pub result_hash: String,
+    pub payload_json: serde_json::Value,
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum BearWireClientResultRecord {
+    Inserted { row: BearWireClientResultRow },
+    DuplicateIdentical { row: BearWireClientResultRow },
+    DuplicateConflict { existing_hash: String },
+}
+
+fn result_hash(payload: &serde_json::Value) -> Result<String, DenError> {
+    let bytes = serde_json::to_vec(payload)
+        .map_err(|err| DenError::System(format!("serialize BearWire client result failed: {err}")))?;
+    let digest = Sha256::digest(&bytes);
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest))
+}
+
+fn row_to_client_result(row: sqlx::postgres::PgRow) -> BearWireClientResultRow {
+    BearWireClientResultRow {
+        id: row.get("id"),
+        run_id: row.get("run_id"),
+        obligation_kind: row.get("obligation_kind"),
+        obligation_id: row.get("obligation_id"),
+        result_hash: row.get("result_hash"),
+        payload_json: row.get("payload_json"),
+        created_at: row.get("created_at"),
+    }
+}
+
+pub async fn record_client_result(
+    pool: &PgPool,
+    run_id: &str,
+    obligation_kind: &str,
+    obligation_id: &str,
+    payload_json: serde_json::Value,
+) -> Result<BearWireClientResultRecord, DenError> {
+    let hash = result_hash(&payload_json)?;
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO bearwire_client_results (
+            run_id, obligation_kind, obligation_id, result_hash, payload_json
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        "#,
+    )
+    .bind(run_id)
+    .bind(obligation_kind)
+    .bind(obligation_id)
+    .bind(&hash)
+    .bind(&payload_json)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(row) = inserted {
+        return Ok(BearWireClientResultRecord::Inserted {
+            row: row_to_client_result(row),
+        });
+    }
+
+    let existing = sqlx::query(
+        r#"
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        FROM bearwire_client_results
+        WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
+        "#,
+    )
+    .bind(run_id)
+    .bind(obligation_kind)
+    .bind(obligation_id)
+    .fetch_one(pool)
+    .await?;
+    let row = row_to_client_result(existing);
+    if row.result_hash == hash {
+        Ok(BearWireClientResultRecord::DuplicateIdentical { row })
+    } else {
+        Ok(BearWireClientResultRecord::DuplicateConflict {
+            existing_hash: row.result_hash,
+        })
+    }
 }
 
 pub async fn transition_run(
