@@ -162,7 +162,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
 
         let source = try artifactSourceProvider.latestMacOSArtifactSource()
         return AdapterVersionInfo(
-            name: "bears-acp-adapter",
+            name: "bear-armature",
             version: source.versionHint ?? "latest",
             buildGitSha: "remote",
             builtAtUtc: "n/a",

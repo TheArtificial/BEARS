@@ -5,13 +5,13 @@ usage() {
   cat <<'USAGE'
 Usage: build-pkg.sh --binary <path> [options]
 
-Build a macOS installer package for the BEARS ACP adapter.
+Build a macOS installer package for the BEARS armature.
 
 Options:
   --binary <path>                 Path to the compiled bear-armature binary (required)
   --version <version>             Package version (default: read from Cargo.toml)
   --identifier <id>               Package identifier (default: ai.bears.acp-adapter)
-  --install-location <path>       Install prefix (default: /usr/local/bin)
+  --install-location <path>       Install prefix (default: /Library/Application Support/Bears/adapter)
   --output <path>                 Output package path (default: dist/macos/bear-armature-<version>.pkg)
   --application-identity <name>   Developer ID Application identity for codesign
   --installer-identity <name>     Developer ID Installer identity for productbuild signing
@@ -29,7 +29,7 @@ USAGE
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 version=""
 identifier="ai.bears.acp-adapter"
-install_location="/usr/local/bin"
+install_location="/Library/Application Support/Bears/adapter"
 output=""
 binary=""
 application_identity="${MACOS_APPLICATION_CERT_IDENTITY:-}"
@@ -118,6 +118,7 @@ install_dir="$pkg_root$install_location"
 mkdir -p "$install_dir" "$(dirname -- "$output")"
 cp "$binary" "$install_dir/bear-armature"
 chmod 755 "$install_dir/bear-armature"
+ln -sf bear-armature "$install_dir/bears-acp-adapter"
 
 if [ -n "$application_identity" ]; then
   echo "build-pkg.sh: signing binary with $application_identity"

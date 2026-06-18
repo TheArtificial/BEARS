@@ -7,9 +7,9 @@ Usage: generate-update-manifest.sh (--pkg <path> | --binary <path>) --output <pa
 
 Generate a public update manifest for `bear-armature`.
 
-macOS manifests use `pkg_url` and are consumed by `bear-armature update-check` and
-`bear-armature update`. Linux manifests use `binary_url` and are consumed by
-`.devcontainer/install-workspace-tools.sh`.
+macOS manifests include both top-level `pkg_url` fields for the Bears macOS app
+and nested `platforms` metadata for newer update clients. Linux manifests use
+`binary_url` and are consumed by `.devcontainer/install-workspace-tools.sh`.
 
 Options:
   --pkg <path>                  Path to the signed/notarized .pkg
@@ -159,6 +159,11 @@ if [ "$url_field" = "pkg_url" ]; then
 {
   "channel": "$channel",
   "version": "$version",
+  "pkg_url": "$asset_url",
+  "sha256": "$sha256",
+  "min_macos": "$min_macos",
+  "size": $size,
+  "package_identifier": "$package_identifier",
   "platforms": {
     "$target": {
       "pkg_url": "$asset_url",
