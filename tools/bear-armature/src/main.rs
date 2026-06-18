@@ -1,4 +1,5 @@
 mod approvals;
+mod bearwire;
 mod json_rpc;
 mod paths;
 mod tool_tasks;
@@ -1369,11 +1370,10 @@ async fn run() -> Result<()> {
 
 impl BrowserBridgeConfig {
     fn from_args(mut args: impl Iterator<Item = String>) -> Result<Self> {
-        let mut bind = env::var("DEN_HOST_BROWSER_MCP_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:3766".to_string());
+        let mut bind =
+            env::var("DEN_HOST_BROWSER_MCP_BIND").unwrap_or_else(|_| "127.0.0.1:3766".to_string());
         let mut token = env::var("DEN_HOST_BROWSER_MCP_TOKEN").unwrap_or_default();
-        let mut path =
-            env::var("DEN_HOST_BROWSER_MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
+        let mut path = env::var("DEN_HOST_BROWSER_MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
         let mut allowed_origins = env::var("DEN_HOST_BROWSER_MCP_ALLOWED_ORIGINS")
             .ok()
             .map(|value| {
@@ -1424,7 +1424,12 @@ fn args_look_like_legacy_acp(args: &[String]) -> bool {
     args.iter().any(|arg| {
         matches!(
             arg.as_str(),
-            "--api-url" | "--bear" | "--token" | "--token-env" | "--client" | "--check-config"
+            "--api-url"
+                | "--bear"
+                | "--token"
+                | "--token-env"
+                | "--client"
+                | "--check-config"
                 | "--check-server"
         )
     })
@@ -1436,11 +1441,7 @@ fn env_looks_like_acp_configured() -> bool {
     if api_url.trim().is_empty() || bear.trim().is_empty() {
         return false;
     }
-    if !env::var("DEN_TOKEN")
-        .unwrap_or_default()
-        .trim()
-        .is_empty()
-    {
+    if !env::var("DEN_TOKEN").unwrap_or_default().trim().is_empty() {
         return true;
     }
     let token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
@@ -2572,9 +2573,7 @@ async fn handle_request(
                         )
                         .await?;
                     } else {
-                        eprintln!(
-                            "bear-armature: session/close notification failed error={err:#}"
-                        );
+                        eprintln!("bear-armature: session/close notification failed error={err:#}");
                     }
                 }
             }
@@ -2950,6 +2949,16 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
 }
 
 async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
+    if bearwire::enabled() {
+        match bearwire::validate_code_token(http, config).await {
+            Ok(()) => return Ok(()),
+            Err(err) if bearwire::required() => return Err(err),
+            Err(err) => eprintln!(
+                "bear-armature: BearWire auth validation failed; falling back to legacy ACP auth-check error={err:#}"
+            ),
+        }
+    }
+
     let url = format!(
         "{}/acp/bears/{}/auth-check",
         config.api_url,
@@ -4582,6 +4591,27 @@ async fn handle_prompt_with_retry(
         den_payload["conversation_id"] = json!(conversation_id);
     }
 
+    if bearwire::try_handle_prompt(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        response_id.clone(),
+        session_id,
+        &den_prompt,
+        den_payload
+            .get("client_context")
+            .cloned()
+            .unwrap_or(Value::Null),
+        conversation_id.as_deref(),
+        requested_mode,
+        turn_token,
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
     let response = http
         .post(&url)
         .headers(headers)
@@ -5292,8 +5322,7 @@ async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>)
 
 fn debug_ui_report() -> String {
     let enabled = env_bool("DEN_ACP_DEBUG_UI");
-    let stream_tokens =
-        env::var("DEN_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
+    let stream_tokens = env::var("DEN_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
     let chunk_chars =
         env::var("DEN_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
     format!(
@@ -5499,7 +5528,10 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
 }
 
 fn installed_or_current_command_hint() -> String {
-    for candidate in ["/usr/local/bin/bear-armature", "/usr/local/bin/bears-acp-adapter"] {
+    for candidate in [
+        "/usr/local/bin/bear-armature",
+        "/usr/local/bin/bears-acp-adapter",
+    ] {
         let installed = Path::new(candidate);
         if installed.exists() {
             return format!("{candidate} acp");
