@@ -16,13 +16,16 @@ use den_http::{acp_tokens, errors::CustomError};
 use den_runtime::{
     acp_sessions, bearwire_events, bearwire_runs,
     bears::{db as bears_db, BearProfile},
-    native_runtime::start_native_acp_turn_event_stream,
+    native_runtime::{continue_native_acp_turn_event_stream, start_native_acp_turn_event_stream},
     runtime::bearwire_projection::wire::{
         bearwire_event_to_json_rpc_notification, runtime_stream_event_to_bearwire_events,
         BearWireEvent,
     },
-    runtime_contracts::RoleRuntimeBinding,
-    turn_runner::TurnStartRequest,
+    runtime_contracts::{
+        RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
+        RuntimeToolResultStatus,
+    },
+    turn_runner::{default_tool_continue_stream_context, TurnContinueRequest, TurnStartRequest},
     DenState,
 };
 
@@ -253,6 +256,79 @@ async fn session_close_result(
     }))
 }
 
+async fn persist_runtime_event_as_bearwire(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    runtime_event: den_runtime::runtime_contracts::RuntimeStreamEvent,
+    request_id: Uuid,
+) {
+    update_run_state_for_runtime_event(pool, run_id, &runtime_event, request_id).await;
+    for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
+        event.bear_id = Some(bear_id.to_string());
+        event.human_id = Some(user_id.to_string());
+        event.session_id = Some(session_id.to_string());
+        if event.run_id.is_none() {
+            event.run_id = Some(run_id.to_string());
+        }
+        if let Err(err) = bearwire_events::append_bearwire_event(
+            pool,
+            session_id,
+            Some(bear_id),
+            Some(user_id),
+            event,
+        )
+        .await
+        {
+            tracing::warn!(error = %err, session_id = %session_id, "failed to persist BearWire runtime event");
+        }
+    }
+}
+
+async fn persist_run_failed(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    request_id: Option<Uuid>,
+    reason: &str,
+    message: String,
+) {
+    let _ = bearwire_runs::transition_run(
+        pool,
+        run_id,
+        bearwire_runs::BearWireRunState::Failed,
+        None,
+        None,
+        request_id,
+        Some(reason),
+    )
+    .await;
+    let mut event = BearWireEvent::ephemeral(
+        "run.failed",
+        json!({
+            "run_id": run_id,
+            "message": message,
+            "reason": reason,
+        }),
+    );
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(run_id.to_string());
+    let _ = bearwire_events::append_bearwire_event(
+        pool,
+        session_id,
+        Some(bear_id),
+        Some(user_id),
+        event,
+    )
+    .await;
+}
+
 async fn update_run_state_for_runtime_event(
     pool: &sqlx::PgPool,
     run_id: &str,
@@ -475,61 +551,27 @@ async fn run_start_result(
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
-                            update_run_state_for_runtime_event(
+                            persist_runtime_event_as_bearwire(
                                 &pool,
+                                &session_for_task,
                                 &run_id_for_task,
-                                &runtime_event,
+                                bear_id,
+                                user_id,
+                                runtime_event,
                                 request_id,
                             )
                             .await;
-                            for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
-                                event.bear_id = Some(bear_id.to_string());
-                                event.human_id = Some(user_id.to_string());
-                                event.session_id = Some(session_for_task.clone());
-                                if event.run_id.is_none() {
-                                    event.run_id = Some(run_id_for_task.clone());
-                                }
-                                if let Err(err) = bearwire_events::append_bearwire_event(
-                                    &pool,
-                                    &session_for_task,
-                                    Some(bear_id),
-                                    Some(user_id),
-                                    event,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(error = %err, session_id = %session_for_task, "failed to persist BearWire runtime event");
-                                }
-                            }
                         }
                         Err(err) => {
-                            let _ = bearwire_runs::transition_run(
-                                &pool,
-                                &run_id_for_task,
-                                bearwire_runs::BearWireRunState::Failed,
-                                None,
-                                None,
-                                Some(request_id),
-                                Some("stream_error"),
-                            )
-                            .await;
-                            let mut event = BearWireEvent::ephemeral(
-                                "run.failed",
-                                json!({
-                                    "run_id": run_id_for_task.clone(),
-                                    "message": err.to_string(),
-                                }),
-                            );
-                            event.bear_id = Some(bear_id.to_string());
-                            event.human_id = Some(user_id.to_string());
-                            event.session_id = Some(session_for_task.clone());
-                            event.run_id = Some(run_id_for_task.clone());
-                            let _ = bearwire_events::append_bearwire_event(
+                            persist_run_failed(
                                 &pool,
                                 &session_for_task,
-                                Some(bear_id),
-                                Some(user_id),
-                                event,
+                                &run_id_for_task,
+                                bear_id,
+                                user_id,
+                                Some(request_id),
+                                "stream_error",
+                                err.to_string(),
                             )
                             .await;
                             break;
@@ -538,33 +580,15 @@ async fn run_start_result(
                 }
             }
             Err(err) => {
-                let _ = bearwire_runs::transition_run(
-                    &pool,
-                    &run_id_for_task,
-                    bearwire_runs::BearWireRunState::Failed,
-                    None,
-                    None,
-                    Some(request_id),
-                    Some("start_failed"),
-                )
-                .await;
-                let mut event = BearWireEvent::ephemeral(
-                    "run.failed",
-                    json!({
-                        "run_id": run_id_for_task.clone(),
-                        "message": err.to_string(),
-                    }),
-                );
-                event.bear_id = Some(bear_id.to_string());
-                event.human_id = Some(user_id.to_string());
-                event.session_id = Some(session_for_task.clone());
-                event.run_id = Some(run_id_for_task.clone());
-                let _ = bearwire_events::append_bearwire_event(
+                persist_run_failed(
                     &pool,
                     &session_for_task,
-                    Some(bear_id),
-                    Some(user_id),
-                    event,
+                    &run_id_for_task,
+                    bear_id,
+                    user_id,
+                    Some(request_id),
+                    "start_failed",
+                    err.to_string(),
                 )
                 .await;
             }
@@ -655,6 +679,99 @@ async fn run_cancel_result(
         "active_turn": active_turn.map(|turn| turn.diagnostic()),
         "event_sequence": persisted.sequence_no,
     }))
+}
+
+fn spawn_continuation_task(
+    state: &DenState,
+    run: bearwire_runs::BearWireRunRow,
+    binding_id: String,
+    conversation_id: String,
+    continuation: RuntimeContinuation,
+) {
+    let pool = state.sqlx_pool.clone();
+    let config = state.config.clone();
+    let memory_stores = state.memory_stores.clone();
+    tokio::spawn(async move {
+        let request_id = Uuid::new_v4();
+        let _ = bearwire_runs::transition_run(
+            &pool,
+            &run.run_id,
+            bearwire_runs::BearWireRunState::Continuing,
+            None,
+            None,
+            Some(request_id),
+            None,
+        )
+        .await;
+        let binding = RoleRuntimeBinding {
+            binding_id,
+            compatibility_backend: Some("native".to_string()),
+        };
+        let result = continue_native_acp_turn_event_stream(
+            TurnContinueRequest {
+                sqlx_pool: &pool,
+                config: config.as_ref(),
+                memory_stores: &memory_stores,
+                request_id,
+                acp_session_id: &run.session_id,
+                conversation: RuntimeConversationRef {
+                    id: conversation_id,
+                },
+                binding: &binding,
+                continuation,
+                stream_context: default_tool_continue_stream_context(),
+            },
+            BearProfile::Pair,
+        )
+        .await;
+        match result {
+            Ok((_continuation, mut stream)) => {
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(runtime_event) => {
+                            persist_runtime_event_as_bearwire(
+                                &pool,
+                                &run.session_id,
+                                &run.run_id,
+                                run.bear_id,
+                                run.user_id,
+                                runtime_event,
+                                request_id,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            persist_run_failed(
+                                &pool,
+                                &run.session_id,
+                                &run.run_id,
+                                run.bear_id,
+                                run.user_id,
+                                Some(request_id),
+                                "continuation_stream_error",
+                                err.to_string(),
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                persist_run_failed(
+                    &pool,
+                    &run.session_id,
+                    &run.run_id,
+                    run.bear_id,
+                    run.user_id,
+                    Some(request_id),
+                    "continuation_start_failed",
+                    err.to_string(),
+                )
+                .await;
+            }
+        }
+    });
 }
 
 async fn client_tool_result_result(
@@ -751,13 +868,55 @@ async fn client_tool_result_result(
                 None,
             )
             .await?;
+            let session = acp_sessions::find_for_user_bear_session(
+                &state.sqlx_pool,
+                user_id,
+                &bear.slug,
+                &session_id,
+            )
+            .await?
+            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+            let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+            let content = params
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    params
+                        .get("structured_content")
+                        .or_else(|| params.get("error"))
+                        .map(|v| v.to_string())
+                        .unwrap_or_default()
+                });
+            let continuation_status = match status.as_str() {
+                "ok" => RuntimeToolResultStatus::Ok,
+                "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
+                _ => RuntimeToolResultStatus::Error,
+            };
+            spawn_continuation_task(
+                state,
+                transitioned.clone().unwrap_or(run.clone()),
+                binding_id,
+                session
+                    .resolved_conversation_id
+                    .clone()
+                    .unwrap_or(session.conversation_id),
+                RuntimeContinuation::ToolResult {
+                    tool_call_id: tool_call_id.clone(),
+                    approval_request_id: run.active_permission_id.clone(),
+                    status: continuation_status,
+                    content,
+                },
+            );
             return Ok(json!({
                 "ok": true,
                 "duplicate": false,
                 "result_id": row.id,
                 "event_sequence": persisted.sequence_no,
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
-                "continuation": "not_started",
+                "continuation": "started",
             }));
         }
     }
@@ -865,13 +1024,48 @@ async fn client_permission_result_result(
                 None,
             )
             .await?;
+            let session = acp_sessions::find_for_user_bear_session(
+                &state.sqlx_pool,
+                user_id,
+                &bear.slug,
+                &session_id,
+            )
+            .await?
+            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+            let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+            let decision = if normalized_decision == "granted" {
+                RuntimeApprovalDecision::Approve
+            } else {
+                RuntimeApprovalDecision::Deny
+            };
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            spawn_continuation_task(
+                state,
+                transitioned.clone().unwrap_or(run.clone()),
+                binding_id,
+                session
+                    .resolved_conversation_id
+                    .clone()
+                    .unwrap_or(session.conversation_id),
+                RuntimeContinuation::ApprovalDecision {
+                    approval_request_id: permission_id.clone(),
+                    tool_call_id: run.active_tool_call_id.clone(),
+                    decision,
+                    reason,
+                },
+            );
             return Ok(json!({
                 "ok": true,
                 "duplicate": false,
                 "result_id": row.id,
                 "event_sequence": persisted.sequence_no,
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
-                "continuation": "not_started",
+                "continuation": "started",
             }));
         }
     }
