@@ -207,20 +207,21 @@ async fn import_memfs_source_inner(
                     branch_skipped += 1;
                     continue;
                 }
-                let content_text = match String::from_utf8(content_bytes) {
+                let raw_content_text = match String::from_utf8(content_bytes) {
                     Ok(value) => value,
                     Err(_) => {
                         branch_skipped += 1;
                         continue;
                     }
                 };
+                let (content_text, frontmatter) = strip_yaml_frontmatter(&raw_content_text);
                 if content_text.trim().is_empty() {
                     branch_skipped += 1;
                     continue;
                 }
 
                 let memory_id = deterministic_import_memory_id(&branch, &logical_path, &commit);
-                let metadata_json = json!({
+                let mut metadata_json = json!({
                     "memfs_import": {
                         "branch": branch,
                         "path": normalized_path,
@@ -231,6 +232,9 @@ async fn import_memfs_source_inner(
                         "inferred_kind": inferred_kind
                     }
                 });
+                if let Some(frontmatter) = frontmatter {
+                    metadata_json["memfs_import"]["frontmatter"] = frontmatter;
+                }
 
                 let draft = ImportDraft {
                     memory_id: memory_id.clone(),
@@ -445,6 +449,24 @@ fn deterministic_import_memory_id(branch: &str, logical_path: &str, commit: &str
     format!("memfs-import:{branch}:{commit}:{logical_path}")
 }
 
+fn strip_yaml_frontmatter(content: &str) -> (String, Option<Value>) {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return (content.to_string(), None);
+    };
+    let Some((frontmatter_raw, body)) = rest.split_once("\n---\n") else {
+        return (content.to_string(), None);
+    };
+
+    let frontmatter = match serde_yml::from_str::<Value>(frontmatter_raw) {
+        Ok(value) => value,
+        Err(err) => json!({
+            "_parse_error": err.to_string(),
+            "raw": frontmatter_raw,
+        }),
+    };
+    (body.to_string(), Some(frontmatter))
+}
+
 fn normalize_memfs_path(raw: &str) -> Option<String> {
     let trimmed = raw.trim().trim_start_matches('/');
     if trimmed.is_empty() || trimmed == ".gitkeep" {
@@ -579,6 +601,21 @@ mod tests {
     }
 
     #[test]
+    fn strips_yaml_frontmatter_from_import_content() {
+        let (body, frontmatter) = strip_yaml_frontmatter(
+            "---\ntitle: Session note\ntags:\n  - cache\n---\nActual memory body\n",
+        );
+        assert_eq!(body, "Actual memory body\n");
+        let frontmatter = frontmatter.expect("frontmatter parsed");
+        assert_eq!(frontmatter["title"], "Session note");
+        assert_eq!(frontmatter["tags"][0], "cache");
+
+        let (body, frontmatter) = strip_yaml_frontmatter("# Plain body\n");
+        assert_eq!(body, "# Plain body\n");
+        assert!(frontmatter.is_none());
+    }
+
+    #[test]
     fn infers_kind_from_directory_conventions() {
         let logical = LogicalMemoryPath::from_logical_path("pair/notes/incident.md");
         assert_eq!(
@@ -619,6 +656,16 @@ mod tests {
             .expect("head exists");
         assert_eq!(head.content_text, "# Bear v2\n");
         assert_eq!(head.scope_type, MemoryScopeType::Shared);
+
+        let pair = head_record_for_logical_path(&store, "pair/notes/session.md")
+            .await
+            .expect("lookup pair head")
+            .expect("pair head exists");
+        assert_eq!(pair.content_text, "pair note\n");
+        assert_eq!(
+            pair.metadata_json["memfs_import"]["frontmatter"]["title"],
+            "Pair note"
+        );
 
         let chat = head_record_for_logical_path(&store, "chat/logs/welcome.md")
             .await
@@ -706,7 +753,10 @@ mod tests {
             commit_all(&repo_dir, "curate update");
 
             run_git(&repo_dir, &["checkout", "-b", "pair"]);
-            write_file(repo_dir.join("pair/notes/session.md"), "pair note\n");
+            write_file(
+                repo_dir.join("pair/notes/session.md"),
+                "---\ntitle: Pair note\ntags:\n  - imported\n---\npair note\n",
+            );
             commit_all(&repo_dir, "pair note");
 
             run_git(&repo_dir, &["checkout", "-b", "talk", "curate"]);
