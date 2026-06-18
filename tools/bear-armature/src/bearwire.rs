@@ -189,6 +189,65 @@ pub(crate) async fn handle_prompt(
     crate::write_prompt_end_turn_response(response_id).await
 }
 
+pub(crate) async fn post_tool_result(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    payload: Value,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.tool.result",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "status": payload.get("status").and_then(Value::as_str).unwrap_or("ok"),
+            "content": payload.get("content").cloned().unwrap_or(Value::Null),
+            "structured_content": payload.get("structured_content").cloned().unwrap_or(Value::Null),
+            "error": payload.get("error").cloned().unwrap_or_else(|| payload.get("diagnostic").cloned().unwrap_or(Value::Null)),
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn post_permission_result(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    permission_id: &str,
+    payload: Value,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.permission.result",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "permission_id": permission_id,
+            "decision": normalize_permission_decision(payload.get("decision").and_then(Value::as_str).unwrap_or("denied")),
+            "reason": payload.get("reason").cloned().unwrap_or(Value::Null),
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+fn normalize_permission_decision(decision: &str) -> &'static str {
+    match decision {
+        "approve" | "approved" | "allow" | "allow_once" | "allow_url" | "allow_host"
+        | "granted" => "granted",
+        "timeout" | "timed_out" => "expired",
+        _ => "denied",
+    }
+}
+
 pub(crate) async fn try_handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -325,6 +384,74 @@ async fn fetch_events(
         frames.push(parse_event_frame(&buffer)?);
     }
     Ok(BearWireReplay { frames })
+}
+
+fn bearwire_tool_event_to_legacy_tool_request(event: &Value, approval_required: bool) -> Value {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    let tool_call_id = data
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let tool_name = data
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let approval_request_id = data
+        .get("approval_request_id")
+        .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "permission_request"));
+    json!({
+        "type": "tool_request",
+        "run_id": event.get("run_id").and_then(Value::as_str),
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "title": data.get("title").cloned().unwrap_or(Value::Null),
+        "args": data.get("arguments").cloned().unwrap_or_else(|| json!({})),
+        "approval_request_id": approval_request_id,
+        "approval": {
+            "required": approval_required,
+            "reason": data.get("reason").cloned().unwrap_or(Value::Null),
+        },
+    })
+}
+
+fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Value {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    let permission_id = data
+        .get("approval_request_id")
+        .or_else(|| data.get("permission_id"))
+        .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "permission_request"))
+        .unwrap_or("unknown");
+    let tool_call_id = data
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "tool_call"))
+        .unwrap_or(permission_id);
+    let tool_name = data
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    json!({
+        "type": "permission_request",
+        "run_id": event.get("run_id").and_then(Value::as_str),
+        "permission_id": permission_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "title": data.get("title").and_then(Value::as_str).unwrap_or("Permission request"),
+        "reason": data.get("reason").and_then(Value::as_str).unwrap_or("BEARS requests permission."),
+        "target": data.get("arguments").cloned().unwrap_or_else(|| json!({ "kind": "tool_call" })),
+    })
+}
+
+fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
+    event
+        .get("resource_refs")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|resource| resource.get("kind").and_then(Value::as_str) == Some(kind))?
+        .get("id")
+        .and_then(Value::as_str)
 }
 
 fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
@@ -479,19 +606,35 @@ async fn handle_bearwire_event(
             )
             .await?;
         }
-        // Tool/permission continuation is the next Phase 3 slice. Treat these as visible
-        // activity for now so a tool request does not look like an empty turn, but do not
-        // invent continuation semantics until client.* is wired end-to-end.
-        "tool_call.requested" | "tool_call.blocked" | "permission.requested" => {
+        "tool_call.requested" => {
+            outcome.saw_tool_activity = true;
+            diagnostics.saw_tool_activity = true;
+            let legacy = bearwire_tool_event_to_legacy_tool_request(event, false);
+            handle_den_event(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                &legacy,
+                turn_token,
+            )
+            .await?;
+        }
+        "tool_call.blocked" | "permission.requested" => {
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_visible_output = true;
-            eprintln!(
-                "bear-armature: BearWire event type {} received but tool/permission continuation is not wired yet event={}",
-                ty,
-                truncate_for_log(&event.to_string(), 400)
-            );
+            let legacy = bearwire_permission_event_to_legacy_permission_request(event);
+            handle_den_event(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                &legacy,
+                turn_token,
+            )
+            .await?;
         }
         "session.opened" | "session.state" | "run.accepted" | "run.started" => {}
         _ => {

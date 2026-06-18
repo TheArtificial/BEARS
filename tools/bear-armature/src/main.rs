@@ -6940,6 +6940,7 @@ async fn handle_tool_request_event(
             "turn_id": event.get("turn_id").and_then(Value::as_str),
             "request_id": event.get("request_id").and_then(Value::as_str),
             "tool_call_id": tool_call_id,
+            "run_id": event.get("run_id").and_then(Value::as_str),
             "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
             "tool_name": tool_name,
             "status": local_err.status_str(),
@@ -7017,6 +7018,7 @@ async fn handle_tool_request_event(
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
         "tool_call_id": tool_call_id,
+        "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
         "diagnostic": {
@@ -7337,6 +7339,7 @@ async fn post_local_tool_error_result(
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
         "tool_call_id": tool_call_id,
+        "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
         "status": local_err.status_str(),
@@ -7520,6 +7523,25 @@ async fn post_permission_result(
     permission_id: &str,
     payload: Value,
 ) -> Result<Value> {
+    if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
+        let result = bearwire::post_permission_result(
+            config,
+            session_id,
+            run_id,
+            permission_id,
+            payload.clone(),
+        )
+        .await?;
+        eprintln!(
+            "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
+            session_id,
+            run_id,
+            permission_id,
+            truncate_for_log(&result.to_string(), 360)
+        );
+        return Ok(result);
+    }
+
     let payload = with_adapter_contract(payload);
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/permissions/{}",
@@ -7596,6 +7618,20 @@ async fn post_tool_result(
     tool_call_id: &str,
     payload: Value,
 ) -> Result<()> {
+    if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
+        let result =
+            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone())
+                .await?;
+        eprintln!(
+            "bear-armature: posted BearWire tool result session_id={} run_id={} tool_call_id={} response={}",
+            session_id,
+            run_id,
+            tool_call_id,
+            truncate_for_log(&result.to_string(), 360)
+        );
+        return Ok(());
+    }
+
     let payload = with_adapter_contract(payload);
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/tool-results/{}",
@@ -7966,7 +8002,11 @@ async fn handle_permission_request_event(
                     config,
                     session_id,
                     permission_id,
-                    json!({ "decision": "timeout", "plan_mode_id": plan_mode_id }),
+                    json!({
+                        "decision": "timeout",
+                        "plan_mode_id": plan_mode_id,
+                        "run_id": event.get("run_id").and_then(Value::as_str),
+                    }),
                 )
                 .await;
                 if is_plan_mode {
@@ -8021,7 +8061,11 @@ async fn handle_permission_request_event(
         config,
         session_id,
         permission_id,
-        json!({ "decision": decision_str, "plan_mode_id": plan_mode_id }),
+        json!({
+            "decision": decision_str,
+            "plan_mode_id": plan_mode_id,
+            "run_id": event.get("run_id").and_then(Value::as_str),
+        }),
     )
     .await?;
     if is_plan_mode {
@@ -8091,6 +8135,7 @@ async fn handle_permission_request_event(
                 }
                 let payload = json!({
                     "tool_call_id": tool_call_id,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
                     "tool_name": result_tool_name,
                     "status": "ok",
                     "content": "",
@@ -8102,6 +8147,7 @@ async fn handle_permission_request_event(
             Err(err) => {
                 let payload = json!({
                     "tool_call_id": tool_call_id,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
                     "tool_name": result_tool_name,
                     "status": "error",
                     "content": format!("{err:#}"),
