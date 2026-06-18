@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,s
 FROM alpine:3.18 AS final
 
 ARG UID=10001
-RUN apk add --no-cache su-exec wget \
+RUN apk add --no-cache su-exec wget git \
     && adduser \
     --disabled-password \
     --gecos "" \
