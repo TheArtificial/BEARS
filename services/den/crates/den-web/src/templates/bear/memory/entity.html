@@ -48,7 +48,7 @@
     <ul>
       {% for r in related %}
       <li>
-        <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.src_memory_id | e }}"><code>{{ r.src_memory_id | e }}</code></a>
+        <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.src_memory_id | urlencode }}"><code>{{ r.src_memory_id | e }}</code></a>
         <span class="form-hint">· {{ r.relation_label | e }} ({{ r.class_label }}) · {{ r.author_profile | e }} · {{ r.created_at | e }}</span>
       </li>
       {% endfor %}

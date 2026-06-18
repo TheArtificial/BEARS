@@ -31,7 +31,7 @@
         <td><input type="checkbox" form="memory-delete-form" name="paths" value="{{ p.logical_path | e }}"></td>
         {% endif %}
         <td>
-          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | e }}"><code>{{ p.logical_path | e }}</code></a>
+          <a href="/bear/{{ bear.slug | e }}/memory/records/{{ p.head_memory_id | urlencode }}"><code>{{ p.logical_path | e }}</code></a>
           <span class="form-hint">({{ p.scope_type | e }}{% if p.scope_profile %} / {{ p.scope_profile | e }}{% endif %})</span>
         </td>
         <td>{{ p.kind | e }}</td>

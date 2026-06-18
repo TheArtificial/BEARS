@@ -4,12 +4,11 @@ use den_core::DenError;
 
 /// Upgrade per-Bear SQLite files created before profile vocabulary cleanup (ADR-0036).
 pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenError> {
-    let columns = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM pragma_table_info('memory_records')",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DenError::System(format!("bear sqlite pragma failed: {e}")))?;
+    let columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('memory_records')")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| DenError::System(format!("bear sqlite pragma failed: {e}")))?;
     let names = columns;
 
     if names.iter().any(|c| c == "scope_role") && !names.iter().any(|c| c == "scope_profile") {
@@ -47,6 +46,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     if needs_scope_vocab_rebuild {
         // The rebuild path already produces a table without `entity_ref`.
         rebuild_memory_records_scope_vocab(pool).await?;
+        normalize_memfs_import_hashed_kinds(pool).await?;
         return Ok(());
     }
 
@@ -60,6 +60,26 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // Retire the vestigial `entity_ref` column (never populated); relations carry aboutness now.
     drop_entity_ref_column_if_present(pool, &names).await?;
 
+    // Early MemFS imports used the hashed filename stem (`mem_...`) as `kind` for
+    // generic role-local entries. Normalize those to `note`; directory-specific
+    // imports such as `summaries/`, `logs/`, and `decisions/` keep their richer kind.
+    normalize_memfs_import_hashed_kinds(pool).await?;
+
+    Ok(())
+}
+
+async fn normalize_memfs_import_hashed_kinds(pool: &SqlitePool) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        UPDATE memory_records
+        SET kind = 'note'
+        WHERE memory_id LIKE 'memfs-import:%'
+          AND kind GLOB 'mem_[0-9a-fA-F]*'
+        ",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| DenError::System(format!("normalize memfs import hashed kinds failed: {e}")))?;
     Ok(())
 }
 
@@ -88,12 +108,11 @@ async fn add_bitemporal_columns_if_missing(
 /// Drop the legacy `memory_links` base table (record→record provenance, already captured in
 /// `memory_promotions`) and (re)create the descriptive ∪ access-bearing read view.
 async fn retire_legacy_memory_links_table(pool: &SqlitePool) -> Result<(), DenError> {
-    let object_type: Option<String> = sqlx::query_scalar(
-        "SELECT type FROM sqlite_master WHERE name = 'memory_links'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| DenError::System(format!("memory_links object lookup failed: {e}")))?;
+    let object_type: Option<String> =
+        sqlx::query_scalar("SELECT type FROM sqlite_master WHERE name = 'memory_links'")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| DenError::System(format!("memory_links object lookup failed: {e}")))?;
 
     if object_type.as_deref() == Some("table") {
         sqlx::query("DROP TABLE memory_links")
@@ -232,10 +251,9 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
 
     match migration {
         Ok(()) => {
-            sqlx::query("COMMIT")
-                .execute(pool)
-                .await
-                .map_err(|e| DenError::System(format!("bear sqlite migration commit failed: {e}")))?;
+            sqlx::query("COMMIT").execute(pool).await.map_err(|e| {
+                DenError::System(format!("bear sqlite migration commit failed: {e}"))
+            })?;
         }
         Err(err) => {
             let _ = sqlx::query("ROLLBACK").execute(pool).await;

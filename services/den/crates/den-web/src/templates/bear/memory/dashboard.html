@@ -244,7 +244,7 @@
         {% for r in recent %}
         <li>
             <a
-                href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | e }}"
+                href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"
                 ><code>{{ r.logical_path or r.memory_id | e }}</code></a
             >
             <span class="form-hint"

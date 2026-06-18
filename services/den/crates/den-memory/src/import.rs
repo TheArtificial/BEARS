@@ -514,6 +514,9 @@ fn infer_kind(path: &str, logical: &LogicalMemoryPath) -> (String, bool) {
         .map(|name| name.trim_end_matches(".md"))
         .filter(|name| !name.is_empty())
         .unwrap_or("note");
+    if fallback.starts_with("mem_") {
+        return ("note".to_string(), true);
+    }
     (fallback.to_string(), true)
 }
 
@@ -588,6 +591,12 @@ mod tests {
         assert_eq!(
             infer_kind("core/work_surfaces/app/architecture.md", &surface),
             ("architecture".to_string(), true)
+        );
+
+        let hashed_note = LogicalMemoryPath::from_logical_path("pair/mem_abc123.md");
+        assert_eq!(
+            infer_kind("pair/mem_abc123.md", &hashed_note),
+            ("note".to_string(), true)
         );
     }
 

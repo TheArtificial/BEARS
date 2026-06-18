@@ -32,7 +32,7 @@
   <ul>
     {% for r in results %}
     <li style="margin-bottom: 0.6rem;">
-      <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | e }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
+      <a href="/bear/{{ bear.slug | e }}/memory/records/{{ r.memory_id | urlencode }}"><code>{{ r.logical_path or r.memory_id | e }}</code></a>
       <span class="form-hint">· {{ r.kind | e }}{% if r.score is not none %} · score {{ r.score | round(2) }}{% endif %}</span>
       <div class="form-hint">{{ r.snippet | e }}</div>
     </li>
