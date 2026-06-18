@@ -149,14 +149,15 @@ services:
             - bears-den-sqlite-data:/backup:ro
 
     bears-den:
+        pull_policy: build
         build:
             context: ./services/den
             dockerfile: Dockerfile
             args:
                 SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                GIT_SHA: ${GIT_SHA:-${SOURCE_COMMIT:-}}
+                GIT_SHA: ${GIT_SHA:-}
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
-        image: ${DEN_IMAGE:-bears-den:local}
+        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
         restart: unless-stopped
         depends_on:
             bears-bifrost:
@@ -176,6 +177,7 @@ services:
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
+            DEN_GIT_SHA_OVERRIDE: ${DEN_GIT_SHA_OVERRIDE:-${SOURCE_COMMIT:-}}
             APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
             APP_SLUG: ${APP_SLUG:-bears-den}
             WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
