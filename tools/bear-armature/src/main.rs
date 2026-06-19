@@ -2042,7 +2042,6 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
-                send_available_commands_update(&session_id).await?;
                 if let Some(config) = runtime.config.as_ref() {
                     spawn_adapter_environment_publish(
                         config.clone(),
@@ -2064,6 +2063,7 @@ async fn handle_request(
                         }),
                     )])));
                 write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                send_available_commands_update(&session_id).await?;
                 notify_mode_state(&session_id, mode).await?;
             }
         }
@@ -2385,7 +2385,15 @@ async fn handle_request(
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
-                        write_response(id, Ok(serde_json::to_value(response)?)).await?
+                        write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                        let session_id = request
+                            .params
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !session_id.is_empty() {
+                            send_available_commands_update(session_id).await?;
+                        }
                     }
                     Err(err) => {
                         write_response(
@@ -4135,7 +4143,6 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    send_available_commands_update(session_id).await?;
     spawn_adapter_environment_publish(
         config.clone(),
         session_id.to_string(),
@@ -4208,7 +4215,6 @@ async fn handle_session_load(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    send_available_commands_update(session_id).await?;
     spawn_adapter_environment_publish(
         config.clone(),
         session_id.to_string(),
@@ -4225,6 +4231,7 @@ async fn handle_session_load(
         .map(infer_mode_from_den_session)
         .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
+    send_available_commands_update(session_id).await?;
     Ok(())
 }
 

@@ -201,6 +201,7 @@ pub(crate) async fn handle_prompt(
     let mut saw_error = false;
     let started = Instant::now();
     let mut last_poll_log = Instant::now();
+    let mut logged_initial_wait = false;
 
     while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
         let replay = fetch_events(http, config, session_id, after).await?;
@@ -240,6 +241,22 @@ pub(crate) async fn handle_prompt(
                 diagnostics.summary()
             );
             break;
+        }
+        if !logged_initial_wait
+            && started.elapsed() >= Duration::from_secs(5)
+            && !saw_visible_output
+            && !saw_tool_activity
+            && !saw_error
+        {
+            logged_initial_wait = true;
+            eprintln!(
+                "bear-armature: BearWire still waiting for first visible/tool event session_id={} run_id={} after={:?} elapsed_ms={} diagnostics={}",
+                session_id,
+                run_id,
+                after,
+                started.elapsed().as_millis(),
+                diagnostics.summary()
+            );
         }
         if crate::bear_debug_verbose() && last_poll_log.elapsed() >= Duration::from_secs(5) {
             eprintln!(
@@ -641,12 +658,19 @@ async fn handle_bearwire_event(
             }
         }
         "run.progress" => {
-            let text = event
-                .get("data")
-                .and_then(|data| data.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let data = event.get("data").unwrap_or(&Value::Null);
+            let text = data.get("text").and_then(Value::as_str).unwrap_or("");
+            let kind = data.get("kind").and_then(Value::as_str).unwrap_or("progress");
+            let elapsed_ms = data.get("elapsed_ms").and_then(Value::as_u64);
             outcome.saw_visible_output = !text.is_empty();
+            eprintln!(
+                "bear-armature: BearWire progress session_id={} run_id={} kind={} elapsed_ms={} text={}",
+                session_id,
+                event.get("run_id").and_then(Value::as_str).unwrap_or("<unknown>"),
+                kind,
+                elapsed_ms.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                if text.is_empty() { "<empty>" } else { text }
+            );
             if !text.is_empty() {
                 let legacy = json!({ "type": "status_text", "text": text });
                 handle_den_event(
