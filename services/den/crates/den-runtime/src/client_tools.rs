@@ -827,7 +827,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
     let parameters = match tool {
         ClientToolName::ReadTextFile => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file path under the user's workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file path under the user's workspace." },
                 "line": { "type": "integer", "minimum": 1, "description": "Optional 1-based starting line." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional maximum number of lines." }
             }),
@@ -835,7 +835,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::ListDirectory => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local directory path under the user's workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local directory path under the user's workspace." },
                 "recursive": { "type": "boolean", "default": false, "description": "Whether to list recursively. Defaults to false." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum entries to return." },
                 "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
@@ -844,7 +844,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::FindPaths => object_schema(
             json!({
-                "root": { "type": "string", "description": "Optional absolute directory path under the workspace. Defaults to the workspace root." },
+                "root": { "type": "string", "description": "Optional workspace-relative or absolute directory path under the workspace. Defaults to the workspace root." },
                 "glob": { "type": "string", "description": "Glob pattern to match against relative paths, such as **/*.rs or package.json." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum paths to return." },
                 "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
@@ -853,7 +853,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::SearchFiles => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file/directory path under the workspace." },
                 "query": { "type": "string", "description": "Optional literal text to search for inside files. If omitted or empty, pattern is used for filename/path discovery only." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum matches to return." },
                 "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "description": "Maximum total bytes to scan." },
@@ -866,13 +866,13 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::Stat => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." }
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file/directory path under the workspace." }
             }),
             vec!["path"],
         ),
         ClientToolName::EditFile => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file path under the workspace." },
                 "old_text": { "type": "string", "description": "Exact text to replace." },
                 "new_text": { "type": "string", "description": "Replacement text." },
                 "replace_all": { "type": "boolean", "default": false, "description": "Replace all occurrences when policy allows it. Defaults to false." }
@@ -881,7 +881,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::CreateTextFile => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file path under the workspace." },
                 "content": { "type": "string", "description": "File contents to write." },
                 "create_parent_dirs": { "type": "boolean", "default": false, "description": "Create missing parent directories when policy allows it." }
             }),
@@ -889,14 +889,14 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::CreateDirectory => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local directory path under the workspace." }
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local directory path under the workspace." }
             }),
             vec!["path"],
         ),
         ClientToolName::MovePath | ClientToolName::CopyPath => object_schema(
             json!({
-                "source_path": { "type": "string", "description": "Absolute local source path under the workspace." },
-                "destination_path": { "type": "string", "description": "Absolute local destination path under the workspace." },
+                "source_path": { "type": "string", "description": "Workspace-relative or absolute local source path under the workspace." },
+                "destination_path": { "type": "string", "description": "Workspace-relative or absolute local destination path under the workspace." },
                 "overwrite": { "type": "boolean", "default": false, "description": "Overwrite the destination when policy allows it." }
             }),
             vec!["source_path", "destination_path"],
@@ -910,20 +910,20 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::DeletePath => object_schema(
             json!({
-                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
+                "path": { "type": "string", "description": "Workspace-relative path or absolute local file/directory path under the workspace." },
                 "recursive": { "type": "boolean", "default": false, "description": "Required for non-empty directories." }
             }),
             vec!["path"],
         ),
         ClientToolName::GitStatus => object_schema(
             json!({
-                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." }
+                "path": { "type": "string", "description": "Optional workspace-relative or absolute path inside the git repository/workspace." }
             }),
             vec![],
         ),
         ClientToolName::GitDiff => object_schema(
             json!({
-                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "path": { "type": "string", "description": "Optional workspace-relative or absolute path inside the git repository/workspace." },
                 "staged": { "type": "boolean", "default": false, "description": "Show staged changes instead of unstaged changes." },
                 "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
             }),
@@ -931,7 +931,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::GitLog => object_schema(
             json!({
-                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "path": { "type": "string", "description": "Optional workspace-relative or absolute path inside the git repository/workspace." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
             }),
             vec![],
@@ -939,14 +939,14 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ClientToolName::GitShow => object_schema(
             json!({
                 "revision": { "type": "string", "description": "Commit/revision to show." },
-                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "path": { "type": "string", "description": "Optional workspace-relative or absolute path inside the git repository/workspace." },
                 "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
             }),
             vec!["revision"],
         ),
         ClientToolName::GitAdd | ClientToolName::GitRestore => object_schema(
             json!({
-                "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute workspace paths to stage or restore." }
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Workspace-relative or absolute workspace paths to stage or restore." }
             }),
             vec!["paths"],
         ),
@@ -1869,9 +1869,11 @@ mod tests {
         assert_eq!(descriptor["parameters"]["additionalProperties"], false);
         assert!(descriptor["parameters"]["properties"].get("path").is_some());
         assert!(descriptor["parameters"]["properties"].get("line").is_some());
-        assert!(descriptor["parameters"]["properties"]
-            .get("limit")
-            .is_some());
+        assert!(
+            descriptor["parameters"]["properties"]
+                .get("limit")
+                .is_some()
+        );
     }
 
     #[test]
@@ -1882,9 +1884,11 @@ mod tests {
         assert_eq!(descriptor["parameters"]["additionalProperties"], false);
         assert!(descriptor["parameters"]["properties"].get("glob").is_some());
         assert!(descriptor["parameters"]["properties"].get("root").is_some());
-        assert!(descriptor["parameters"]["properties"]
-            .get("include_hidden")
-            .is_some());
+        assert!(
+            descriptor["parameters"]["properties"]
+                .get("include_hidden")
+                .is_some()
+        );
     }
 
     #[test]
@@ -1893,9 +1897,11 @@ mod tests {
         assert_eq!(descriptor["name"], "process_run");
         assert_eq!(descriptor["parameters"]["required"], json!(["command"]));
         assert_eq!(descriptor["parameters"]["additionalProperties"], false);
-        assert!(descriptor["parameters"]["properties"]
-            .get("command")
-            .is_some());
+        assert!(
+            descriptor["parameters"]["properties"]
+                .get("command")
+                .is_some()
+        );
         assert!(descriptor["parameters"]["properties"].get("args").is_some());
         assert!(descriptor["parameters"]["properties"].get("cwd").is_some());
     }

@@ -1,5 +1,5 @@
 use crate::SessionContext;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn session_workspace_roots(context: &SessionContext) -> Vec<PathBuf> {

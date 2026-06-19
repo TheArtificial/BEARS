@@ -1,12 +1,13 @@
 use crate::{
+    SessionContext, ToolPolicy,
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
         resolve_requested_tool_path, session_workspace_roots,
     },
-    truncate_for_log, SessionContext, ToolPolicy,
+    truncate_for_log,
 };
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     fs,
@@ -883,7 +884,13 @@ pub(crate) async fn handle_copy_path(
     }
     eprintln!(
         "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
-        session_id, source.display(), destination.display(), kind, total_bytes, entries.len(), started.elapsed().as_millis(),
+        session_id,
+        source.display(),
+        destination.display(),
+        kind,
+        total_bytes,
+        entries.len(),
+        started.elapsed().as_millis(),
     );
     Ok(json!({
         "ok": true,

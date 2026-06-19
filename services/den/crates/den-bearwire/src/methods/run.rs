@@ -2,19 +2,18 @@ use std::time::Instant;
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions,
-    bears::{db as bears_db, BearProfile},
+    DenState, acp_sessions,
+    bears::{BearProfile, db as bears_db},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
-    runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
+    runtime::bearwire_projection::wire::{BearWireEvent, runtime_stream_event_to_bearwire_events},
     runtime_contracts::RoleRuntimeBinding,
     turn_runner::TurnStartRequest,
-    DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -30,10 +29,24 @@ fn client_tool_descriptors_from_context(
         requested_mode.unwrap_or("ask"),
         None,
     );
+    let simple_workspace_read =
+        den_runtime::native_runtime::pair_turn_is_simple_workspace_read(Some(prompt));
     let mut descriptors = Vec::new();
     for tool in den_runtime::client_tools::ClientToolName::all() {
         if *tool == den_runtime::client_tools::ClientToolName::McpCallTool
             || !policy.allows_tool(*tool)
+        {
+            continue;
+        }
+        if simple_workspace_read
+            && !matches!(
+                tool,
+                den_runtime::client_tools::ClientToolName::ReadTextFile
+                    | den_runtime::client_tools::ClientToolName::ListDirectory
+                    | den_runtime::client_tools::ClientToolName::FindPaths
+                    | den_runtime::client_tools::ClientToolName::SearchFiles
+                    | den_runtime::client_tools::ClientToolName::Stat
+            )
         {
             continue;
         }
@@ -43,7 +56,7 @@ fn client_tool_descriptors_from_context(
         }
         descriptors.push(den_runtime::client_tools::provider_tool_descriptor(*tool));
     }
-    if prompt_has_browser_intent(prompt) {
+    if !simple_workspace_read && prompt_has_browser_intent(prompt) {
         if let Some(mcp_tools) = context
             .pointer("/mcp/client_tools")
             .and_then(Value::as_array)
@@ -778,6 +791,8 @@ mod tests {
                 "direct_tools": {
                     "fs_read_text_file": { "supported": true },
                     "fs_find_paths": { "supported": true },
+                    "fs_edit_file": { "supported": true },
+                    "terminal_run_command": { "supported": true },
                     "chrome_open": { "supported": true }
                 }
             },
@@ -791,13 +806,15 @@ mod tests {
         });
         let descriptors = client_tool_descriptors_from_context(
             Some(&context),
-            Some("ask"),
+            Some("write"),
             "Please read README.md",
         );
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_find_paths"));
-        assert!(!names.contains(&"chrome_open"), "Ask mode should exclude browser/write tools unless read-only browser tooling is explicitly allowed by policy");
+        assert!(!names.contains(&"fs_edit_file"));
+        assert!(!names.contains(&"terminal_run_command"));
+        assert!(!names.contains(&"chrome_open"));
         assert!(!names.contains(&"mcp__chrome_devtools_custom__click"));
         let read = descriptors
             .as_array()

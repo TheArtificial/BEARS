@@ -1,16 +1,95 @@
-use den_core::{config::Config, DenError};
+use den_core::{DenError, config::Config};
 use serde_json::Value;
 
-use crate::{
-    bears::BearProfile,
-    llm::LlmToolDefinition,
-};
+use crate::{bears::BearProfile, llm::LlmToolDefinition};
 use den_core::tools::descriptor::{
-    builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
-    DenToolDescriptor,
+    DenToolDescriptor, builtin_den_tool_descriptors_for_pair_acp_surface,
+    builtin_den_tool_descriptors_for_profile,
 };
 
 use super::memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name};
+
+/// Pair turns that are clearly read-only workspace lookups should not pay the latency
+/// cost of the full Pair tool surface. Keep this conservative: if the prompt hints at
+/// mutation, execution, builds, tests, git diffs, or broad implementation work, it is
+/// not a simple read turn.
+pub fn pair_turn_is_simple_workspace_read(prompt: Option<&str>) -> bool {
+    let Some(prompt) = prompt.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let lower = prompt.to_ascii_lowercase();
+    const MUTATION_OR_EXECUTION: &[&str] = &[
+        "edit",
+        "write",
+        "change",
+        "modify",
+        "fix ",
+        "implement",
+        "create",
+        "delete",
+        "remove",
+        "move ",
+        "rename",
+        "apply",
+        "patch",
+        "commit",
+        "run ",
+        "execute",
+        "terminal",
+        "build",
+        "compile",
+        "test ",
+        "cargo ",
+        "npm ",
+        "docker",
+        "diff",
+        "refactor",
+        "replace",
+    ];
+    if MUTATION_OR_EXECUTION
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return false;
+    }
+    const READ_ACTIONS: &[&str] = &[
+        "read",
+        "show",
+        "open",
+        "cat ",
+        "inspect",
+        "look at",
+        "list",
+        "find",
+        "search",
+        "where is",
+        "what is in",
+    ];
+    if !READ_ACTIONS.iter().any(|needle| lower.contains(needle)) {
+        return false;
+    }
+    const WORKSPACE_HINTS: &[&str] = &[
+        "file",
+        "directory",
+        "folder",
+        "path",
+        "readme",
+        ".md",
+        ".rs",
+        ".toml",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".py",
+        ".sh",
+        "/",
+    ];
+    WORKSPACE_HINTS.iter().any(|needle| lower.contains(needle))
+}
 
 /// Pair turns omit adapter workspace/MCP tools unless the prompt suggests repo/file work.
 pub fn pair_turn_needs_workspace_client_tools(prompt: Option<&str>) -> bool {
@@ -175,7 +254,15 @@ pub fn merge_den_and_client_tools(
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
-    let mut merged = if role == BearProfile::Chat {
+    let simple_pair_workspace_read =
+        role == BearProfile::Pair && pair_turn_is_simple_workspace_read(pair_turn_prompt);
+    let mut merged = if simple_pair_workspace_read {
+        tracing::info!(
+            role = %role.as_str(),
+            "native pair turn using minimal workspace-read tool surface"
+        );
+        Vec::new()
+    } else if role == BearProfile::Chat {
         if chat_turn_needs_full_tool_surface(pair_turn_prompt) {
             den_tools_for_profile(config, role)
         } else {
@@ -222,6 +309,18 @@ pub fn merge_den_and_client_tools(
             continue;
         };
         if is_memfs_client_tool_name(name) {
+            continue;
+        }
+        if simple_pair_workspace_read
+            && !matches!(
+                name,
+                "fs_read_text_file"
+                    | "fs_list_directory"
+                    | "fs_find_paths"
+                    | "fs_search_files"
+                    | "fs_stat"
+            )
+        {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {
@@ -324,10 +423,40 @@ mod tests {
     }
 
     #[test]
-    fn pair_workspace_prompt_includes_client_tools() {
+    fn pair_simple_workspace_read_uses_minimal_client_tool_surface() {
         let config = native_test_config();
         let client_tools = serde_json::json!([
             {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "fs_find_paths", "parameters": {"type": "object"}},
+            {"name": "fs_edit_file", "parameters": {"type": "object"}},
+            {"name": "terminal_run_command", "parameters": {"type": "object"}},
+            {"name": "mcp__chrome_devtools_mcp_zed__click", "parameters": {"type": "object"}}
+        ]);
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            Some(&client_tools),
+            Some("please read README.md"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(pair_turn_is_simple_workspace_read(Some(
+            "please read README.md"
+        )));
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_find_paths"));
+        assert!(!names.contains(&"fs_edit_file"));
+        assert!(!names.contains(&"terminal_run_command"));
+        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
+        assert!(!names.contains(&"session_info"));
+    }
+
+    #[test]
+    fn pair_workspace_edit_prompt_includes_write_client_tools() {
+        let config = native_test_config();
+        let client_tools = serde_json::json!([
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "fs_edit_file", "parameters": {"type": "object"}},
         ]);
         let merged = merge_den_and_client_tools(
             &config,
@@ -337,7 +466,12 @@ mod tests {
         )
         .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(!pair_turn_is_simple_workspace_read(Some(
+            "please edit the file src/lib.rs"
+        )));
         assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_edit_file"));
+        assert!(names.contains(&"session_info"));
     }
 
     #[test]
@@ -396,7 +530,11 @@ mod tests {
     #[test]
     fn chat_turn_is_capabilities_meta_query_matches_common_phrases() {
         assert!(chat_turn_is_capabilities_meta_query("list your tools"));
-        assert!(chat_turn_is_capabilities_meta_query("What capabilities do you have?"));
-        assert!(!chat_turn_is_capabilities_meta_query("search memory for onboarding"));
+        assert!(chat_turn_is_capabilities_meta_query(
+            "What capabilities do you have?"
+        ));
+        assert!(!chat_turn_is_capabilities_meta_query(
+            "search memory for onboarding"
+        ));
     }
 }

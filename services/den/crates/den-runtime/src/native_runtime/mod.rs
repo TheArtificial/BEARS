@@ -8,10 +8,10 @@
 //! `run_native_profile_turn_collect_assistant_text` can add an LLM briefing turn projected into the
 //! memory_curate conversation.
 
+pub mod memfs;
 mod openai_stream;
 #[cfg(test)]
 mod openai_stream_tests;
-pub mod memfs;
 mod profile;
 mod profile_briefing;
 pub mod tool_invoker;
@@ -26,6 +26,7 @@ pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
 pub use profile_briefing::compose_curate_briefing_prompt;
 pub use tools::{
     chat_turn_is_capabilities_meta_query, merge_den_and_client_tools,
+    pair_turn_is_simple_workspace_read,
 };
 pub use turn::{
     continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,
