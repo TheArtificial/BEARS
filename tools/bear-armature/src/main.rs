@@ -8921,7 +8921,9 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
     let mut data = json!({
         "message": format!("BEARS Code token authentication failed: {message}"),
     });
-    if let Some(hint) = token_hint {
+    if message.contains("diagnostics:") {
+        data["hint"] = json!("Den returned token diagnostics. Inspect token_found, bear_found, token_bound_to_bear, token_owner_is_bear_member, and required_scope_present to identify whether DEN_API_URL, BEAR_SLUG, token value, Bear grant, or membership is wrong.");
+    } else if let Some(hint) = token_hint {
         data["hint"] = json!(hint);
     }
     token_validation_error(Some(data))

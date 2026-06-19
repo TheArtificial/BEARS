@@ -50,22 +50,50 @@ pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
     token: &str,
     slug: &str,
 ) -> Result<acp_tokens::AcpTokenAuth, CustomError> {
+    let required_scope = OAuthScope::AcpChat.as_str();
     if !acp_tokens::is_acp_token(token) {
-        return Err(CustomError::Authentication(
-            "expected a bear-scoped BEARS ACP token".to_string(),
-        ));
+        let diagnostics = acp_tokens::diagnose_for_bear_slug(
+            &state.sqlx_pool,
+            token,
+            slug,
+            required_scope,
+        )
+        .await?;
+        return Err(CustomError::Authentication(format!(
+            "expected a bear-scoped BEARS ACP token; diagnostics: {}",
+            diagnostics.summary()
+        )));
     }
-    let auth = acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, token, slug)
+    let auth = match acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, token, slug)
         .await?
-        .ok_or_else(|| {
-            CustomError::Authentication(
-                "invalid, expired, revoked, or unauthorized ACP token".to_string(),
+    {
+        Some(auth) => auth,
+        None => {
+            let diagnostics = acp_tokens::diagnose_for_bear_slug(
+                &state.sqlx_pool,
+                token,
+                slug,
+                required_scope,
             )
-        })?;
-    if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
-        return Err(CustomError::Authentication(
-            "ACP token is missing required acp:chat scope".to_string(),
-        ));
+            .await?;
+            return Err(CustomError::Authentication(format!(
+                "invalid, expired, revoked, or unauthorized ACP token; diagnostics: {}",
+                diagnostics.summary()
+            )));
+        }
+    };
+    if !acp_tokens::scopes_contains(&auth.scopes, required_scope) {
+        let diagnostics = acp_tokens::diagnose_for_bear_slug(
+            &state.sqlx_pool,
+            token,
+            slug,
+            required_scope,
+        )
+        .await?;
+        return Err(CustomError::Authentication(format!(
+            "ACP token is missing required acp:chat scope; diagnostics: {}",
+            diagnostics.summary()
+        )));
     }
     Ok(auth)
 }
