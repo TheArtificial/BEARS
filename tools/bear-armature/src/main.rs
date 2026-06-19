@@ -5621,7 +5621,7 @@ fn server_version_json(server_version: ServerVersion) -> Value {
 
 fn den_request_context(url: &str) -> String {
     format!(
-        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with ACP_GATEWAY_ENABLED=true, and that the network/VPN/firewall permits the connection"
+        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with BearWire/ACP gateway routes enabled, and that the network/VPN/firewall permits the connection"
     )
 }
 

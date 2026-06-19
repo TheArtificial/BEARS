@@ -16,9 +16,8 @@ use uuid::Uuid;
 
 use den_http::acp_tokens;
 use den_runtime::{
-    bearwire_runs,
     bears::{db as bears_db, db::BearParams},
-    DenState,
+    bearwire_runs, DenState,
 };
 
 use crate::{
@@ -86,11 +85,7 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
     (bear_id, slug)
 }
 
-async fn create_token_for_bear(
-    pool: &sqlx::PgPool,
-    user_id: i32,
-    bear_id: uuid::Uuid,
-) -> String {
+async fn create_token_for_bear(pool: &sqlx::PgPool, user_id: i32, bear_id: uuid::Uuid) -> String {
     bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant membership");
@@ -147,7 +142,10 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
         bearer_headers(&token),
         Path(session_id.clone()),
         Query(EventStreamQuery {
-            bear_slug: value["result"]["session"]["bear_slug"].as_str().unwrap().to_string(),
+            bear_slug: value["result"]["session"]["bear_slug"]
+                .as_str()
+                .unwrap()
+                .to_string(),
             after: None,
         }),
     )
@@ -157,15 +155,24 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let replay_text = std::str::from_utf8(&replay_body).unwrap();
-    assert!(replay_text.contains(&format!("id: {sequence}")), "{replay_text}");
-    assert!(replay_text.contains("\"type\":\"session.opened\""), "{replay_text}");
+    assert!(
+        replay_text.contains(&format!("id: {sequence}")),
+        "{replay_text}"
+    );
+    assert!(
+        replay_text.contains("\"type\":\"session.opened\""),
+        "{replay_text}"
+    );
 
     let replay_after = events(
         State(test_state(pool)),
         bearer_headers(&token),
         Path(session_id),
         Query(EventStreamQuery {
-            bear_slug: value["result"]["session"]["bear_slug"].as_str().unwrap().to_string(),
+            bear_slug: value["result"]["session"]["bear_slug"]
+                .as_str()
+                .unwrap()
+                .to_string(),
             after: Some(sequence),
         }),
     )
@@ -175,7 +182,10 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let replay_after_text = std::str::from_utf8(&replay_after_body).unwrap();
-    assert!(!replay_after_text.contains("session.opened"), "{replay_after_text}");
+    assert!(
+        !replay_after_text.contains("session.opened"),
+        "{replay_after_text}"
+    );
 }
 
 fn start_mock_openai_sse_server() -> String {
@@ -311,14 +321,117 @@ async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool
             && last_replay.contains("\"type\":\"run.completed\"")
         {
             assert!(last_replay.contains("hello from bearwire"), "{last_replay}");
-            assert!(last_replay.contains("\"type\":\"run.accepted\""), "{last_replay}");
-            assert!(last_replay.contains("\"type\":\"run.started\""), "{last_replay}");
+            assert!(
+                last_replay.contains("\"type\":\"run.accepted\""),
+                "{last_replay}"
+            );
+            assert!(
+                last_replay.contains("\"type\":\"run.started\""),
+                "{last_replay}"
+            );
             return;
         }
         thread::sleep(Duration::from_millis(50));
     }
 
-    panic!("BearWire run.start did not persist message.delta and run.completed events: {last_replay}");
+    panic!(
+        "BearWire run.start did not persist message.delta and run.completed events: {last_replay}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_state_auth_error_reports_specific_token_bear_diagnostics(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let (other_bear_id, other_bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    bears_db::grant_membership(
+        &pool,
+        user_id,
+        other_bear_id,
+        Some(bears_db::BEAR_ROLE_ADMIN),
+    )
+    .await
+    .expect("grant membership to other Bear");
+
+    let response = rpc(
+        State(test_state(pool)),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-state-diagnostics")),
+            method: "session.state".to_string(),
+            params: json!({
+                "bear_slug": other_bear_slug,
+                "limit": 1,
+            }),
+        }),
+    )
+    .await
+    .expect("session.state response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    let error = value["error"]["data"]["error"].as_str().unwrap();
+    assert!(error.contains("token_found=true"), "{error}");
+    assert!(error.contains("bear_found=true"), "{error}");
+    assert!(error.contains("token_bound_to_bear=false"), "{error}");
+    assert!(error.contains("token_owner_is_bear_member=true"), "{error}");
+    assert!(error.contains("required_scope_present=true"), "{error}");
+    assert!(
+        error.contains("token is not granted to this Bear"),
+        "{error}"
+    );
+    assert!(
+        error.contains(&format!("bear_slug=\"{}\"", other_bear_slug)),
+        "{error}"
+    );
+    assert!(
+        !error.contains(&token),
+        "diagnostics must not echo raw token"
+    );
+    assert!(
+        !error.contains(&bear_slug),
+        "diagnostics should only report requested Bear slug"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_state_auth_error_reports_missing_bear_slug(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, _bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let missing_slug = format!("missing-bear-{}", Uuid::new_v4().simple());
+
+    let response = rpc(
+        State(test_state(pool)),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-missing-bear")),
+            method: "session.state".to_string(),
+            params: json!({
+                "bear_slug": missing_slug,
+                "limit": 1,
+            }),
+        }),
+    )
+    .await
+    .expect("session.state response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    let error = value["error"]["data"]["error"].as_str().unwrap();
+    assert!(error.contains("token_found=true"), "{error}");
+    assert!(error.contains("bear_found=false"), "{error}");
+    assert!(
+        error.contains("bear slug does not exist in this Den database"),
+        "{error}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -382,7 +495,9 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
 #[tokio::test]
 async fn initialize_returns_bearwire_capabilities() {
     let response = rpc(
-        State(test_state(sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap())),
+        State(test_state(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+        )),
         HeaderMap::new(),
         Json(JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -399,7 +514,9 @@ async fn initialize_returns_bearwire_capabilities() {
 
 #[tokio::test]
 async fn planned_v1_methods_are_recognized() {
-    let state = test_state(sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap());
+    let state = test_state(
+        sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+    );
     for method in [
         "session.open",
         "session.resume",
@@ -428,14 +545,20 @@ async fn planned_v1_methods_are_recognized() {
             .await
             .unwrap();
         let value: Value = serde_json::from_slice(&body).unwrap();
-        assert_ne!(value.pointer("/error/code"), Some(&json!(-32601)), "{method}");
+        assert_ne!(
+            value.pointer("/error/code"),
+            Some(&json!(-32601)),
+            "{method}"
+        );
     }
 }
 
 #[tokio::test]
 async fn unknown_method_returns_method_not_found() {
     let response = rpc(
-        State(test_state(sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap())),
+        State(test_state(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+        )),
         HeaderMap::new(),
         Json(JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -456,7 +579,9 @@ async fn unknown_method_returns_method_not_found() {
 
 async fn assert_method_requires_bearer_token(method: &str, params: Value) {
     let response = rpc(
-        State(test_state(sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap())),
+        State(test_state(
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+        )),
         HeaderMap::new(),
         Json(JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -473,7 +598,10 @@ async fn assert_method_requires_bearer_token(method: &str, params: Value) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["error"]["code"], -32001);
-    assert!(value["error"]["data"]["error"].as_str().unwrap().contains("missing Authorization"));
+    assert!(value["error"]["data"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("missing Authorization"));
 }
 
 #[tokio::test]

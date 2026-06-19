@@ -8,12 +8,16 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, CustomError> {
     let value = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| CustomError::Authentication("missing Authorization bearer token".to_string()))?;
+        .ok_or_else(|| {
+            CustomError::Authentication("missing Authorization bearer token".to_string())
+        })?;
     value
         .strip_prefix("Bearer ")
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| CustomError::Authentication("expected Authorization: Bearer <token>".to_string()))
+        .ok_or_else(|| {
+            CustomError::Authentication("expected Authorization: Bearer <token>".to_string())
+        })
 }
 
 pub(crate) async fn authenticate_for_bear_slug(
@@ -22,19 +26,34 @@ pub(crate) async fn authenticate_for_bear_slug(
     bear_slug: &str,
 ) -> Result<i32, CustomError> {
     let token = bearer_token(headers)?;
+    let required_scope = acp_tokens::acp_chat_scope();
     if !acp_tokens::is_acp_token(token) {
-        return Err(CustomError::Authentication(
-            "expected a bear-scoped BEARS ACP token".to_string(),
-        ));
+        let diagnostics =
+            acp_tokens::diagnose_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
+                .await?;
+        return Err(CustomError::Authentication(format!(
+            "expected a bear-scoped BEARS ACP token; diagnostics: {}",
+            diagnostics.summary()
+        )));
     }
-    acp_tokens::authenticate_for_bear_slug(
-        &state.sqlx_pool,
-        token,
-        bear_slug,
-        acp_tokens::acp_chat_scope(),
-    )
-    .await?
-    .ok_or_else(|| CustomError::Authorization("token is not valid for this Bear".to_string()))
+    match acp_tokens::authenticate_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
+        .await?
+    {
+        Some(user_id) => Ok(user_id),
+        None => {
+            let diagnostics = acp_tokens::diagnose_for_bear_slug(
+                &state.sqlx_pool,
+                token,
+                bear_slug,
+                required_scope,
+            )
+            .await?;
+            Err(CustomError::Authorization(format!(
+                "token is not valid for this Bear; diagnostics: {}",
+                diagnostics.summary()
+            )))
+        }
+    }
 }
 
 pub(crate) async fn authenticated_bear(

@@ -42,6 +42,42 @@ pub struct CreatedAcpToken {
     pub id: Uuid,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AcpTokenDiagnostics {
+    pub bear_slug: String,
+    pub required_scope: String,
+    pub token_prefix_ok: bool,
+    pub token_found: bool,
+    pub token_active: bool,
+    pub bear_found: bool,
+    pub token_bound_to_bear: bool,
+    pub token_owner_is_bear_member: bool,
+    pub required_scope_present: bool,
+    pub ok: bool,
+    pub failure_reasons: Vec<String>,
+}
+
+impl AcpTokenDiagnostics {
+    pub fn summary(&self) -> String {
+        format!(
+            "bear_slug={:?}; token_prefix_ok={}; token_found={}; token_active={}; bear_found={}; token_bound_to_bear={}; token_owner_is_bear_member={}; required_scope_present={}; failure_reasons={}",
+            self.bear_slug,
+            self.token_prefix_ok,
+            self.token_found,
+            self.token_active,
+            self.bear_found,
+            self.token_bound_to_bear,
+            self.token_owner_is_bear_member,
+            self.required_scope_present,
+            if self.failure_reasons.is_empty() {
+                "none".to_string()
+            } else {
+                self.failure_reasons.join(", ")
+            }
+        )
+    }
+}
+
 pub fn is_acp_token(raw: &str) -> bool {
     raw.trim().starts_with(TOKEN_PREFIX)
 }
@@ -204,6 +240,126 @@ pub async fn authenticate_for_bear_slug(
     } else {
         Ok(None)
     }
+}
+
+pub async fn diagnose_for_bear_slug(
+    pool: &PgPool,
+    raw_token: &str,
+    bear_slug: &str,
+    required_scope: &str,
+) -> Result<AcpTokenDiagnostics, CustomError> {
+    let bear_slug = bear_slug.trim();
+    let token_prefix_ok = is_acp_token(raw_token);
+    let hash = token_hash(raw_token);
+
+    let token: Option<(Uuid, i32, serde_json::Value, bool)> = sqlx::query_as(
+        r"
+        SELECT id,
+               user_id,
+               scopes,
+               revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AS active
+        FROM acp_tokens
+        WHERE token_hash = $1
+        ",
+    )
+    .bind(hash)
+    .fetch_optional(pool)
+    .await?;
+
+    let bear: Option<(Uuid,)> = sqlx::query_as(
+        r"
+        SELECT id
+        FROM bears
+        WHERE slug = $1
+        ",
+    )
+    .bind(bear_slug)
+    .fetch_optional(pool)
+    .await?;
+
+    let token_found = token.is_some();
+    let token_active = token.as_ref().is_some_and(|(_, _, _, active)| *active);
+    let bear_found = bear.is_some();
+    let required_scope_present = token
+        .as_ref()
+        .is_some_and(|(_, _, scopes, _)| scopes_contains(scopes, required_scope));
+
+    let mut token_bound_to_bear = false;
+    let mut token_owner_is_bear_member = false;
+    if let (Some((token_id, user_id, _, _)), Some((bear_id,))) = (&token, &bear) {
+        let bound: (bool,) = sqlx::query_as(
+            r"
+            SELECT EXISTS(
+                SELECT 1 FROM acp_token_bears
+                WHERE token_id = $1 AND bear_id = $2
+            )
+            ",
+        )
+        .bind(token_id)
+        .bind(bear_id)
+        .fetch_one(pool)
+        .await?;
+        token_bound_to_bear = bound.0;
+
+        let member: (bool,) = sqlx::query_as(
+            r"
+            SELECT EXISTS(
+                SELECT 1 FROM user_bear
+                WHERE user_id = $1 AND bear_id = $2
+            )
+            ",
+        )
+        .bind(user_id)
+        .bind(bear_id)
+        .fetch_one(pool)
+        .await?;
+        token_owner_is_bear_member = member.0;
+    }
+
+    let mut failure_reasons = Vec::new();
+    if !token_prefix_ok {
+        failure_reasons.push("token does not start with bears_acp_".to_string());
+    }
+    if !token_found {
+        failure_reasons.push("token hash was not found in this Den database".to_string());
+    }
+    if token_found && !token_active {
+        failure_reasons.push("token is revoked or expired".to_string());
+    }
+    if !bear_found {
+        failure_reasons.push("bear slug does not exist in this Den database".to_string());
+    }
+    if token_found && bear_found && !token_bound_to_bear {
+        failure_reasons.push("token is not granted to this Bear".to_string());
+    }
+    if token_found && bear_found && token_bound_to_bear && !token_owner_is_bear_member {
+        failure_reasons.push("token owner is no longer a member of this Bear".to_string());
+    }
+    if token_found && !required_scope_present {
+        failure_reasons.push(format!("token is missing required scope {required_scope}"));
+    }
+
+    let ok = token_prefix_ok
+        && token_found
+        && token_active
+        && bear_found
+        && token_bound_to_bear
+        && token_owner_is_bear_member
+        && required_scope_present;
+
+    Ok(AcpTokenDiagnostics {
+        bear_slug: bear_slug.to_string(),
+        required_scope: required_scope.to_string(),
+        token_prefix_ok,
+        token_found,
+        token_active,
+        bear_found,
+        token_bound_to_bear,
+        token_owner_is_bear_member,
+        required_scope_present,
+        ok,
+        failure_reasons,
+    })
 }
 
 #[derive(Debug, Clone)]
