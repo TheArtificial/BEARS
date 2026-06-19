@@ -804,6 +804,199 @@ pub fn provider_tool_name_is_safe(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+fn object_schema(properties: serde_json::Value, required: Vec<&str>) -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+fn generic_object_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": true,
+    })
+}
+
+pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
+    let descriptor = tool.descriptor();
+    debug_assert!(provider_tool_name_is_safe(descriptor.provider_name));
+    let parameters = match tool {
+        ClientToolName::ReadTextFile => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file path under the user's workspace." },
+                "line": { "type": "integer", "minimum": 1, "description": "Optional 1-based starting line." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional maximum number of lines." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::ListDirectory => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local directory path under the user's workspace." },
+                "recursive": { "type": "boolean", "default": false, "description": "Whether to list recursively. Defaults to false." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum entries to return." },
+                "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::FindPaths => object_schema(
+            json!({
+                "root": { "type": "string", "description": "Optional absolute directory path under the workspace. Defaults to the workspace root." },
+                "glob": { "type": "string", "description": "Glob pattern to match against relative paths, such as **/*.rs or package.json." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum paths to return." },
+                "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
+            }),
+            vec!["glob"],
+        ),
+        ClientToolName::SearchFiles => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
+                "query": { "type": "string", "description": "Optional literal text to search for inside files. If omitted or empty, pattern is used for filename/path discovery only." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum matches to return." },
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "description": "Maximum total bytes to scan." },
+                "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." },
+                "case_sensitive": { "type": "boolean", "default": true, "description": "Whether literal matching is case-sensitive. Defaults to true." },
+                "pattern": { "type": "string", "description": "Optional simple wildcard pattern matched against relative file paths. Supports * and ?." },
+                "extensions": { "type": "array", "items": { "type": "string" }, "maxItems": 10, "description": "Optional list of file extensions to include, such as [\"rs\", \"ts\"]." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::Stat => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::EditFile => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                "old_text": { "type": "string", "description": "Exact text to replace." },
+                "new_text": { "type": "string", "description": "Replacement text." },
+                "replace_all": { "type": "boolean", "default": false, "description": "Replace all occurrences when policy allows it. Defaults to false." }
+            }),
+            vec!["path", "old_text", "new_text"],
+        ),
+        ClientToolName::CreateTextFile => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                "content": { "type": "string", "description": "File contents to write." },
+                "create_parent_dirs": { "type": "boolean", "default": false, "description": "Create missing parent directories when policy allows it." }
+            }),
+            vec!["path", "content"],
+        ),
+        ClientToolName::CreateDirectory => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local directory path under the workspace." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::MovePath | ClientToolName::CopyPath => object_schema(
+            json!({
+                "source_path": { "type": "string", "description": "Absolute local source path under the workspace." },
+                "destination_path": { "type": "string", "description": "Absolute local destination path under the workspace." },
+                "overwrite": { "type": "boolean", "default": false, "description": "Overwrite the destination when policy allows it." }
+            }),
+            vec!["source_path", "destination_path"],
+        ),
+        ClientToolName::ApplyPatch => object_schema(
+            json!({
+                "patch": { "type": "string", "description": "Unified diff patch to apply within the workspace." },
+                "dry_run": { "type": "boolean", "default": false, "description": "Validate without writing changes." }
+            }),
+            vec!["patch"],
+        ),
+        ClientToolName::DeletePath => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
+                "recursive": { "type": "boolean", "default": false, "description": "Required for non-empty directories." }
+            }),
+            vec!["path"],
+        ),
+        ClientToolName::GitStatus => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." }
+            }),
+            vec![],
+        ),
+        ClientToolName::GitDiff => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "staged": { "type": "boolean", "default": false, "description": "Show staged changes instead of unstaged changes." },
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+            }),
+            vec![],
+        ),
+        ClientToolName::GitLog => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+            }),
+            vec![],
+        ),
+        ClientToolName::GitShow => object_schema(
+            json!({
+                "revision": { "type": "string", "description": "Commit/revision to show." },
+                "path": { "type": "string", "description": "Optional absolute path inside the git repository/workspace." },
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+            }),
+            vec!["revision"],
+        ),
+        ClientToolName::GitAdd | ClientToolName::GitRestore => object_schema(
+            json!({
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute workspace paths to stage or restore." }
+            }),
+            vec!["paths"],
+        ),
+        ClientToolName::GitCommit => object_schema(
+            json!({
+                "message": { "type": "string", "description": "Commit message." }
+            }),
+            vec!["message"],
+        ),
+        ClientToolName::GitStash => object_schema(
+            json!({
+                "message": { "type": "string", "description": "Optional stash message." },
+                "include_untracked": { "type": "boolean", "default": false }
+            }),
+            vec![],
+        ),
+        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => object_schema(
+            json!({
+                "command": { "type": "string", "description": "Executable name. Shell strings are not accepted." },
+                "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
+                "cwd": { "type": "string", "description": "Absolute working directory under the workspace." },
+                "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
+                "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 131072 },
+                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." }
+            }),
+            vec!["command"],
+        ),
+        ClientToolName::ChromeOpen => object_schema(
+            json!({ "url": { "type": "string", "description": "HTTP/HTTPS URL to open." } }),
+            vec!["url"],
+        ),
+        ClientToolName::ChromeSnapshot
+        | ClientToolName::ChromeConsoleMessages
+        | ClientToolName::ChromeNetworkRequests
+        | ClientToolName::ChromeScreenshot
+        | ClientToolName::McpCallTool => generic_object_schema(),
+    };
+    json!({
+        "name": descriptor.provider_name,
+        "description": format!(
+            "ACP local workspace tool ({}, kind={}, risk={}). {}. Use only for the user's local editor workspace unless the tool explicitly targets browser state.",
+            descriptor.canonical_name,
+            descriptor.kind,
+            descriptor.risk,
+            descriptor.title,
+        ),
+        "parameters": parameters,
+    })
+}
+
 const ACP_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -1267,10 +1460,7 @@ pub fn tool_class(tool: ClientToolName) -> ToolClass {
     }
 }
 
-pub fn provider_tool_allowed_in_policy(
-    tool_name: &str,
-    policy: &ResolvedSessionPolicy,
-) -> bool {
+pub fn provider_tool_allowed_in_policy(tool_name: &str, policy: &ResolvedSessionPolicy) -> bool {
     ClientToolName::from_provider_alias(tool_name)
         .map(|tool| policy.allows_tool(tool))
         .unwrap_or(false)
@@ -1667,4 +1857,46 @@ pub fn supported_provider_tool_names() -> Vec<&'static str> {
         .map(|tool| tool.descriptor().provider_name)
         .collect()
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn provider_tool_descriptor_read_file_requires_path() {
+        let descriptor = provider_tool_descriptor(ClientToolName::ReadTextFile);
+        assert_eq!(descriptor["name"], "fs_read_text_file");
+        assert_eq!(descriptor["parameters"]["required"], json!(["path"]));
+        assert_eq!(descriptor["parameters"]["additionalProperties"], false);
+        assert!(descriptor["parameters"]["properties"].get("path").is_some());
+        assert!(descriptor["parameters"]["properties"].get("line").is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("limit")
+            .is_some());
+    }
+
+    #[test]
+    fn provider_tool_descriptor_find_paths_requires_glob() {
+        let descriptor = provider_tool_descriptor(ClientToolName::FindPaths);
+        assert_eq!(descriptor["name"], "fs_find_paths");
+        assert_eq!(descriptor["parameters"]["required"], json!(["glob"]));
+        assert_eq!(descriptor["parameters"]["additionalProperties"], false);
+        assert!(descriptor["parameters"]["properties"].get("glob").is_some());
+        assert!(descriptor["parameters"]["properties"].get("root").is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("include_hidden")
+            .is_some());
+    }
+
+    #[test]
+    fn provider_tool_descriptor_process_run_has_command_schema() {
+        let descriptor = provider_tool_descriptor(ClientToolName::ProcessRun);
+        assert_eq!(descriptor["name"], "process_run");
+        assert_eq!(descriptor["parameters"]["required"], json!(["command"]));
+        assert_eq!(descriptor["parameters"]["additionalProperties"], false);
+        assert!(descriptor["parameters"]["properties"]
+            .get("command")
+            .is_some());
+        assert!(descriptor["parameters"]["properties"].get("args").is_some());
+        assert!(descriptor["parameters"]["properties"].get("cwd").is_some());
+    }
+}

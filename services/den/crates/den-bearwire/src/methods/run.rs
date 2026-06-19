@@ -41,11 +41,7 @@ fn client_tool_descriptors_from_context(
         if !adapter_supports_tool(context, descriptor.provider_name) {
             continue;
         }
-        descriptors.push(json!({
-            "name": descriptor.provider_name,
-            "description": descriptor.title,
-            "parameters": { "type": "object", "properties": {} },
-        }));
+        descriptors.push(den_runtime::client_tools::provider_tool_descriptor(*tool));
     }
     if prompt_has_browser_intent(prompt) {
         if let Some(mcp_tools) = context
@@ -56,12 +52,9 @@ fn client_tool_descriptors_from_context(
         }
     }
     if descriptors.is_empty() {
-        let descriptor = den_runtime::client_tools::ClientToolName::ReadTextFile.descriptor();
-        descriptors.push(json!({
-            "name": descriptor.provider_name,
-            "description": descriptor.title,
-            "parameters": { "type": "object", "properties": {} },
-        }));
+        descriptors.push(den_runtime::client_tools::provider_tool_descriptor(
+            den_runtime::client_tools::ClientToolName::ReadTextFile,
+        ));
     }
     json!(descriptors)
 }
@@ -745,4 +738,77 @@ pub(crate) async fn run_cancel_result(
         "active_turn": active_turn.map(|turn| turn.diagnostic()),
         "event_sequence": persisted.sequence_no,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn descriptor_names(value: &Value) -> Vec<&str> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item.get("name").and_then(Value::as_str))
+            .collect()
+    }
+
+    #[test]
+    fn bearwire_file_prompt_uses_real_file_tool_schemas_and_excludes_browser_mcp() {
+        let context = json!({
+            "adapter": {
+                "direct_tools": {
+                    "fs_read_text_file": { "supported": true },
+                    "fs_find_paths": { "supported": true },
+                    "chrome_open": { "supported": true }
+                }
+            },
+            "mcp": {
+                "client_tools": [{
+                    "name": "mcp__chrome_devtools_custom__click",
+                    "description": "Click",
+                    "parameters": { "type": "object", "properties": { "uid": { "type": "string" } }, "required": ["uid"] }
+                }]
+            }
+        });
+        let descriptors = client_tool_descriptors_from_context(
+            Some(&context),
+            Some("ask"),
+            "Please read README.md",
+        );
+        let names = descriptor_names(&descriptors);
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_find_paths"));
+        assert!(!names.contains(&"chrome_open"), "Ask mode should exclude browser/write tools unless read-only browser tooling is explicitly allowed by policy");
+        assert!(!names.contains(&"mcp__chrome_devtools_custom__click"));
+        let read = descriptors
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == "fs_read_text_file")
+            .unwrap();
+        assert_eq!(read["parameters"]["required"], json!(["path"]));
+        assert_eq!(read["parameters"]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn bearwire_browser_prompt_includes_forwarded_mcp_tools() {
+        let context = json!({
+            "adapter": { "direct_tools": {} },
+            "mcp": {
+                "client_tools": [{
+                    "name": "mcp__chrome_devtools_custom__click",
+                    "description": "Click",
+                    "parameters": { "type": "object", "properties": { "uid": { "type": "string" } }, "required": ["uid"] }
+                }]
+            }
+        });
+        let descriptors = client_tool_descriptors_from_context(
+            Some(&context),
+            Some("ask"),
+            "Please click the browser page button",
+        );
+        let names = descriptor_names(&descriptors);
+        assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
+    }
 }

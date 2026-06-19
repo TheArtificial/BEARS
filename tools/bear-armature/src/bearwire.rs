@@ -660,9 +660,13 @@ async fn handle_bearwire_event(
         "run.progress" => {
             let data = event.get("data").unwrap_or(&Value::Null);
             let text = data.get("text").and_then(Value::as_str).unwrap_or("");
-            let kind = data.get("kind").and_then(Value::as_str).unwrap_or("progress");
+            let kind = data
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("progress");
             let elapsed_ms = data.get("elapsed_ms").and_then(Value::as_u64);
-            outcome.saw_visible_output = !text.is_empty();
+            // Progress is observability, not model-visible output. Do not let it satisfy
+            // prompt completion checks or suppress first-assistant/tool-event diagnostics.
             eprintln!(
                 "bear-armature: BearWire progress session_id={} run_id={} kind={} elapsed_ms={} text={}",
                 session_id,
