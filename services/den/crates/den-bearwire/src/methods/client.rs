@@ -185,14 +185,12 @@ pub(crate) async fn client_tool_result_result(
             "run does not belong to authenticated Bear/session".to_string(),
         ));
     }
-    if !matches!(
-        run.state.as_str(),
-        "waiting_for_tool_result" | "waiting_for_permission"
-    ) {
+    if matches!(run.state.as_str(), "completed" | "failed" | "cancelled") {
         return Ok(json!({
             "ok": false,
             "status": "late_result_ignored",
             "run_state": run.state,
+            "reason": "run_is_terminal",
         }));
     }
     let obligation =
@@ -205,11 +203,19 @@ pub(crate) async fn client_tool_result_result(
             })?;
     if !bearwire_obligations::obligation_accepts_client_method(&obligation, "client.tool.result") {
         return Err(CustomError::ValidationError(format!(
-            "BearWire tool obligation {} is not waiting for client.tool.result (expected {}, state {})",
+            "BearWire tool obligation {} does not accept client.tool.result (expected {}, state {})",
             obligation.id,
             obligation.expected_client_method,
             obligation.state
         )));
+    }
+    if !bearwire_obligations::obligation_is_open(&obligation) {
+        return Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "run_state": run.state,
+            "obligation_state": obligation.state,
+        }));
     }
 
     let payload = json!({
@@ -242,12 +248,19 @@ pub(crate) async fn client_tool_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
-            let _ = bearwire_obligations::mark_result_received(
+            let Some(_received_obligation) = bearwire_obligations::mark_result_received(
                 &state.sqlx_pool,
                 obligation.id,
                 payload.clone(),
             )
-            .await?;
+            .await? else {
+                return Ok(json!({
+                    "ok": false,
+                    "status": "late_result_ignored",
+                    "run_state": run.state,
+                    "obligation_state": obligation.state,
+                }));
+            };
             let event_type = if status == "ok" {
                 "tool_call.completed"
             } else {
@@ -316,6 +329,7 @@ pub(crate) async fn client_tool_result_result(
                     content,
                 },
             );
+            let _ = bearwire_obligations::mark_continued(&state.sqlx_pool, obligation.id).await?;
             Ok(json!({
                 "ok": true,
                 "duplicate": false,
@@ -350,11 +364,12 @@ pub(crate) async fn client_permission_result_result(
             "run does not belong to authenticated Bear/session".to_string(),
         ));
     }
-    if !matches!(run.state.as_str(), "waiting_for_permission") {
+    if matches!(run.state.as_str(), "completed" | "failed" | "cancelled") {
         return Ok(json!({
             "ok": false,
             "status": "late_result_ignored",
             "run_state": run.state,
+            "reason": "run_is_terminal",
         }));
     }
     let obligation =
@@ -370,11 +385,19 @@ pub(crate) async fn client_permission_result_result(
         "client.permission.result",
     ) {
         return Err(CustomError::ValidationError(format!(
-            "BearWire permission obligation {} is not waiting for client.permission.result (expected {}, state {})",
+            "BearWire permission obligation {} does not accept client.permission.result (expected {}, state {})",
             obligation.id,
             obligation.expected_client_method,
             obligation.state
         )));
+    }
+    if !bearwire_obligations::obligation_is_open(&obligation) {
+        return Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "run_state": run.state,
+            "obligation_state": obligation.state,
+        }));
     }
 
     let normalized_decision = match decision.as_str() {
@@ -415,12 +438,19 @@ pub(crate) async fn client_permission_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
-            let _ = bearwire_obligations::mark_result_received(
+            let Some(_received_obligation) = bearwire_obligations::mark_result_received(
                 &state.sqlx_pool,
                 obligation.id,
                 payload.clone(),
             )
-            .await?;
+            .await? else {
+                return Ok(json!({
+                    "ok": false,
+                    "status": "late_result_ignored",
+                    "run_state": run.state,
+                    "obligation_state": obligation.state,
+                }));
+            };
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
                 "expired" => "permission.expired",
@@ -482,6 +512,7 @@ pub(crate) async fn client_permission_result_result(
                     reason,
                 },
             );
+            let _ = bearwire_obligations::mark_continued(&state.sqlx_pool, obligation.id).await?;
             Ok(json!({
                 "ok": true,
                 "duplicate": false,

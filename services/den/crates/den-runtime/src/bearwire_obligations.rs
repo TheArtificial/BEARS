@@ -196,9 +196,9 @@ pub async fn mark_result_received(
         UPDATE bearwire_run_obligations
         SET state = 'result_received',
             result_payload = $2,
-            completed_at = COALESCE(completed_at, NOW()),
             updated_at = NOW()
         WHERE id = $1
+          AND state IN ('requested','waiting_for_client','result_received')
         RETURNING id, run_id, session_id, kind, expected_client_method,
                   tool_call_id, permission_id, state, request_payload, result_payload,
                   created_at, updated_at, completed_at
@@ -211,13 +211,62 @@ pub async fn mark_result_received(
     Ok(row.map(row_to_obligation))
 }
 
+pub async fn mark_continued(
+    pool: &PgPool,
+    obligation_id: Uuid,
+) -> Result<Option<BearWireRunObligationRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bearwire_run_obligations
+        SET state = 'continued',
+            completed_at = COALESCE(completed_at, NOW()),
+            updated_at = NOW()
+        WHERE id = $1
+          AND state IN ('result_received','continued')
+        RETURNING id, run_id, session_id, kind, expected_client_method,
+                  tool_call_id, permission_id, state, request_payload, result_payload,
+                  created_at, updated_at, completed_at
+        "#,
+    )
+    .bind(obligation_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
+pub async fn settle_outstanding_for_run(
+    pool: &PgPool,
+    run_id: &str,
+    state: BearWireObligationState,
+) -> Result<u64, DenError> {
+    let state = state.as_str();
+    let result = sqlx::query(
+        r#"
+        UPDATE bearwire_run_obligations
+        SET state = $2,
+            completed_at = COALESCE(completed_at, NOW()),
+            updated_at = NOW()
+        WHERE run_id = $1
+          AND state IN ('requested','waiting_for_client','result_received')
+        "#,
+    )
+    .bind(run_id)
+    .bind(state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub fn obligation_accepts_client_method(
     obligation: &BearWireRunObligationRow,
     method: &str,
 ) -> bool {
     obligation.expected_client_method == method
-        && !matches!(
-            obligation.state.as_str(),
-            "continued" | "failed" | "cancelled"
-        )
+}
+
+pub fn obligation_is_open(obligation: &BearWireRunObligationRow) -> bool {
+    matches!(
+        obligation.state.as_str(),
+        "requested" | "waiting_for_client" | "result_received"
+    )
 }

@@ -148,11 +148,11 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Treat `bearwire_run_obligations` as authoritative in handlers | `den-bearwire` | Complete. `client.tool.result` and `client.permission.result` validate expected client method and state from obligation rows |
 | Stop writing active obligation fields for new logic | `den-bearwire` / `den-runtime` | Complete. `bearwire_runs.state` remains lifecycle summary; active tool/permission/request IDs are no longer part of the run model |
 | Add active obligation query helpers | `den-runtime::bearwire_obligations` | Partially complete. Helpers exist for specific tool/permission obligations; add session/run list helpers later if `/status` needs richer obligation inspection |
-| Update run cancellation/failure/completion to settle obligations | `den-bearwire` | Pending follow-up for richer stale-obligation reporting; active run-state dependency is removed, but terminal settlement of all outstanding obligation rows can still be improved |
+| Update run cancellation/failure/completion to settle obligations | `den-bearwire` | Complete. Terminal run states now settle outstanding obligation rows as `continued`, `failed`, or `cancelled`; richer stale-obligation reporting remains optional observability work |
 | Remove `bearwire_runs.active_tool_call_id`, `active_permission_id`, `active_request_id` | migration + Rust structs | Complete. Added drop-column migration and removed fields from `BearWireRunRow` / run queries |
 | Add regression tests for obligation authority | `den-bearwire` | Partial. Existing BearWire tests pass; add deeper restart/cancel/wrong-method obligation tests as hardening follow-up |
 
-**Exit gate:** Core exit gate met for active-field removal: no BearWire code reads or writes `bearwire_runs.active_*`, and the columns are dropped by migration. Remaining hardening is richer stale-obligation settlement/reporting and deeper wrong-method/restart tests.
+**Exit gate:** Core exit gate met: no BearWire code reads or writes `bearwire_runs.active_*`, the columns are dropped by migration, client result handlers validate persisted obligations, and terminal run states settle outstanding obligations. Remaining hardening is deeper wrong-method/restart tests and optional richer stale-obligation reporting.
 
 ## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 
@@ -268,7 +268,7 @@ A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `wor
 | 1 | BearWire types in den-runtime | Complete |
 | 2 | `/bearwire/v1` served | Complete; still parallel to legacy `/acp` |
 | 3 | Armature BearWire client | Implementation complete; opt-in via `BEARS_BEARWIRE=1` or `BEARS_BEARWIRE=auto`; smoke/parity validation pending |
-| 3.1 | BearWire obligation authority cleanup | Complete for active-field removal; stale-obligation reporting/tests remain hardening follow-up |
+| 3.1 | BearWire obligation authority cleanup | Complete for active-field removal and terminal obligation settlement; deeper wrong-method/restart tests remain hardening follow-up |
 | 4 | Legacy removed | Pending; default path after parity confidence |
 | 5 | WebSocket | Optional; faster reconnect |
 | 6 | Bear stance terminology cleanup | Pending final cleanup; user/model-visible clarity |

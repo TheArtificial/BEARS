@@ -3559,13 +3559,17 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
 }
 
 fn conversation_id_for_history(den_session: &Value) -> Option<String> {
+    fn is_history_conversation_id(value: &str) -> bool {
+        value == "default" || value.starts_with("conv-") || value.starts_with("den-conv-")
+    }
+
     if let Some(r) = den_session
         .get("resolved_conversation_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if r.starts_with("conv-") || r == "default" {
+        if is_history_conversation_id(r) {
             return Some(r.to_string());
         }
     }
@@ -3575,7 +3579,7 @@ fn conversation_id_for_history(den_session: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if c.starts_with("conv-") || c == "default" {
+        if is_history_conversation_id(c) {
             return Some(c.to_string());
         }
     }
@@ -4088,7 +4092,7 @@ async fn replay_history_for_den_session(
         }
     } else {
         eprintln!(
-            "bear-armature: {} session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
+            "bear-armature: {} session_id={} has no conv-/den-conv-/default history yet (pending new- thread); skipping replay",
             lifecycle_method,
             session_id
         );
@@ -12532,6 +12536,27 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             "resolved_conversation_id": "conv-abc"
         });
         assert_eq!(conversation_id_for_history(&v).as_deref(), Some("conv-abc"));
+    }
+
+    #[test]
+    fn conversation_id_for_history_accepts_native_den_conv_ids() {
+        let v = json!({
+            "conversation_id": "new-acp-zed-x",
+            "resolved_conversation_id": "den-conv-abc"
+        });
+        assert_eq!(
+            conversation_id_for_history(&v).as_deref(),
+            Some("den-conv-abc")
+        );
+
+        let fallback = json!({
+            "conversation_id": "den-conv-fallback",
+            "resolved_conversation_id": Value::Null
+        });
+        assert_eq!(
+            conversation_id_for_history(&fallback).as_deref(),
+            Some("den-conv-fallback")
+        );
     }
 
     #[test]

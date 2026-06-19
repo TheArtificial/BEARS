@@ -233,6 +233,12 @@ pub(crate) async fn persist_run_failed(
         Some(reason),
     )
     .await;
+    let _ = bearwire_obligations::settle_outstanding_for_run(
+        pool,
+        run_id,
+        bearwire_obligations::BearWireObligationState::Failed,
+    )
+    .await;
     let mut event = BearWireEvent::ephemeral(
         "run.failed",
         json!({
@@ -341,6 +347,12 @@ async fn update_run_state_for_runtime_event(
                 Some("completed"),
             )
             .await;
+            let _ = bearwire_obligations::settle_outstanding_for_run(
+                pool,
+                run_id,
+                bearwire_obligations::BearWireObligationState::Continued,
+            )
+            .await;
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { category, .. }) => {
             let reason = format!("{:?}", category);
@@ -349,6 +361,12 @@ async fn update_run_state_for_runtime_event(
                 run_id,
                 bearwire_runs::BearWireRunState::Failed,
                 Some(&reason),
+            )
+            .await;
+            let _ = bearwire_obligations::settle_outstanding_for_run(
+                pool,
+                run_id,
+                bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
         }
@@ -360,6 +378,12 @@ async fn update_run_state_for_runtime_event(
                 Some("cancelled"),
             )
             .await;
+            let _ = bearwire_obligations::settle_outstanding_for_run(
+                pool,
+                run_id,
+                bearwire_obligations::BearWireObligationState::Cancelled,
+            )
+            .await;
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { error_type, .. }) => {
             let _ = bearwire_runs::transition_run(
@@ -367,6 +391,12 @@ async fn update_run_state_for_runtime_event(
                 run_id,
                 bearwire_runs::BearWireRunState::Failed,
                 error_type.as_deref().or(Some("error")),
+            )
+            .await;
+            let _ = bearwire_obligations::settle_outstanding_for_run(
+                pool,
+                run_id,
+                bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
         }
@@ -680,6 +710,12 @@ pub(crate) async fn run_cancel_result(
             &run.run_id,
             bearwire_runs::BearWireRunState::Cancelled,
             Some("client_requested"),
+        )
+        .await?;
+        let _ = bearwire_obligations::settle_outstanding_for_run(
+            &state.sqlx_pool,
+            &run.run_id,
+            bearwire_obligations::BearWireObligationState::Cancelled,
         )
         .await?;
     }
