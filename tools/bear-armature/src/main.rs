@@ -32,7 +32,10 @@ use axum::{extract::State, response::IntoResponse};
 use futures_util::StreamExt;
 use http::StatusCode;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
-use paths::{file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path};
+use paths::{
+    file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path,
+    resolve_requested_tool_path,
+};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use rmcp::{
@@ -6871,8 +6874,12 @@ async fn handle_tool_request_event(
         None
     };
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
-    let target_path_for_approval =
-        tool_path(event).and_then(|path| normalize_requested_tool_path(path).ok());
+    let target_path_for_approval = tool_path(event).and_then(|path| {
+        context_for_approval
+            .as_ref()
+            .and_then(|context| resolve_requested_tool_path(context, path).ok())
+            .or_else(|| normalize_requested_tool_path(path).ok())
+    });
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {

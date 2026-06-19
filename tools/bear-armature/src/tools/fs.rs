@@ -1,7 +1,7 @@
 use crate::{
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
-        normalize_requested_tool_path, session_workspace_roots,
+        resolve_requested_tool_path, session_workspace_roots,
     },
     truncate_for_log, SessionContext, ToolPolicy,
 };
@@ -35,7 +35,7 @@ pub(crate) async fn handle_read_text_file(
         .and_then(Value::as_u64)
         .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
         .unwrap_or(400.min(policy_max_lines));
-    let path = normalize_requested_tool_path(path)?;
+    let path = resolve_requested_tool_path(context, path)?;
     ensure_path_allowed_for_session(context, &path)?;
     let started = std::time::Instant::now();
     let raw = tokio::fs::read_to_string(&path)
@@ -106,7 +106,7 @@ pub(crate) async fn handle_list_directory(
         .and_then(Value::as_u64)
         .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
         .unwrap_or(200.min(policy_max_entries));
-    let path = normalize_requested_tool_path(path)?;
+    let path = resolve_requested_tool_path(context, path)?;
     ensure_path_allowed_for_session(context, &path)?;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
@@ -204,7 +204,7 @@ pub(crate) async fn handle_find_paths(
     let root = args
         .get("root")
         .and_then(Value::as_str)
-        .map(normalize_requested_tool_path)
+        .map(|path| resolve_requested_tool_path(context, path))
         .transpose()?
         .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
     ensure_path_allowed_for_session(context, &root)?;
@@ -308,7 +308,7 @@ pub(crate) async fn handle_search_files(
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let filters = search_filters_from_args(args)?;
-    let path = normalize_requested_tool_path(path)?;
+    let path = resolve_requested_tool_path(context, path)?;
     ensure_path_allowed_for_session(context, &path)?;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
@@ -438,7 +438,7 @@ pub(crate) async fn handle_stat(
         .get("include_symlink_target")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let path = normalize_requested_tool_path(raw_path)?;
+    let path = resolve_requested_tool_path(context, raw_path)?;
     ensure_path_allowed_for_session(context, &path)?;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
@@ -535,7 +535,7 @@ pub(crate) async fn handle_create_text_file(
             max_bytes
         ));
     }
-    let path = normalize_requested_tool_path(raw_path)?;
+    let path = resolve_requested_tool_path(context, raw_path)?;
     ensure_path_allowed_for_session(context, &path)?;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
@@ -599,7 +599,7 @@ pub(crate) async fn handle_create_directory(
         .get("allow_existing")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let path = normalize_requested_tool_path(raw_path)?;
+    let path = resolve_requested_tool_path(context, raw_path)?;
     ensure_path_allowed_for_session(context, &path)?;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
@@ -686,8 +686,8 @@ pub(crate) async fn handle_move_path(
         .get("expected_kind")
         .and_then(Value::as_str)
         .unwrap_or("any");
-    let source = normalize_requested_tool_path(raw_source)?;
-    let destination = normalize_requested_tool_path(raw_destination)?;
+    let source = resolve_requested_tool_path(context, raw_source)?;
+    let destination = resolve_requested_tool_path(context, raw_destination)?;
     ensure_path_allowed_for_session(context, &source)?;
     ensure_path_allowed_for_session(context, &destination)?;
     ensure_replace_text_path_allowed(&source, policy)?;
@@ -796,8 +796,8 @@ pub(crate) async fn handle_copy_path(
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 10_000);
     let max_bytes = policy.max_bytes.unwrap_or(5_242_880).clamp(1, 52_428_800);
-    let source = normalize_requested_tool_path(raw_source)?;
-    let destination = normalize_requested_tool_path(raw_destination)?;
+    let source = resolve_requested_tool_path(context, raw_source)?;
+    let destination = resolve_requested_tool_path(context, raw_destination)?;
     ensure_path_allowed_for_session(context, &source)?;
     ensure_path_allowed_for_session(context, &destination)?;
     ensure_replace_text_path_allowed(&source, policy)?;
@@ -942,7 +942,7 @@ pub(crate) async fn handle_apply_patch(
     let base = args
         .get("base_path")
         .and_then(Value::as_str)
-        .map(normalize_requested_tool_path)
+        .map(|path| resolve_requested_tool_path(context, path))
         .transpose()?
         .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
     ensure_path_allowed_for_session(context, &base)?;
@@ -1034,7 +1034,7 @@ pub(crate) async fn handle_delete_path(
         .and_then(Value::as_str)
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
-    let path = normalize_requested_tool_path(raw_path)?;
+    let path = resolve_requested_tool_path(context, raw_path)?;
     ensure_path_allowed_for_session(context, &path)?;
     ensure_delete_path_allowed(context, &path, policy)?;
     let started = std::time::Instant::now();
@@ -1218,7 +1218,7 @@ impl ReplaceTextPlan {
         let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
         let policy_create_files = policy.create_files.unwrap_or(false);
         let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
-        let path = normalize_requested_tool_path(&args.path)?;
+        let path = resolve_requested_tool_path(context, &args.path)?;
         ensure_path_allowed_for_session(context, &path)?;
         ensure_replace_text_path_allowed(&path, policy)?;
         let raw = read_replace_text_input(&path, policy_max_bytes)?;

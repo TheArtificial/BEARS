@@ -30,7 +30,31 @@ pub(crate) fn normalize_requested_tool_path(path: &str) -> Result<PathBuf> {
             "tool path must be an absolute local path; got {path:?}"
         ));
     }
-    Ok(PathBuf::from(path))
+    Ok(lexically_normalize_path(PathBuf::from(path)))
+}
+
+pub(crate) fn resolve_requested_tool_path(context: &SessionContext, path: &str) -> Result<PathBuf> {
+    let path = file_uri_or_path_to_path(path).ok_or_else(|| anyhow!("path must not be empty"))?;
+    let resolved = if is_absolute_local_path(&path) {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(&context.cwd).join(path)
+    };
+    Ok(lexically_normalize_path(resolved))
+}
+
+fn lexically_normalize_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub(crate) fn ensure_path_allowed_for_session(context: &SessionContext, path: &Path) -> Result<()> {
@@ -127,5 +151,36 @@ fn hex_value(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context() -> SessionContext {
+        SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_requested_tool_path_accepts_workspace_relative_paths() {
+        let path = resolve_requested_tool_path(&context(), "README.md").unwrap();
+        assert_eq!(path, PathBuf::from("/workspace/README.md"));
+    }
+
+    #[test]
+    fn resolve_requested_tool_path_normalizes_dot_segments_before_root_check() {
+        let ctx = context();
+        let path = resolve_requested_tool_path(&ctx, "docs/../README.md").unwrap();
+        assert_eq!(path, PathBuf::from("/workspace/README.md"));
+        ensure_path_allowed_for_session(&ctx, &path).unwrap();
+
+        let escaped = resolve_requested_tool_path(&ctx, "../etc/passwd").unwrap();
+        assert!(!escaped.starts_with("/workspace"));
+        assert!(ensure_path_allowed_for_session(&ctx, &escaped).is_err());
     }
 }
