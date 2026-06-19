@@ -1,6 +1,30 @@
 #!/bin/bash
 set -euo pipefail
 
+force_compile=0
+for arg in "$@"; do
+  case "$arg" in
+    --force-compile)
+      force_compile=1
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: .devcontainer/install-workspace-tools.sh [--force-compile]
+
+Options:
+  --force-compile   Build bear-armature from /workspace/tools/bear-armature and install it,
+                    skipping update manifests and release downloads.
+  -h, --help        Show this help.
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "install-workspace-tools.sh: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
 export DEBIAN_FRONTEND=noninteractive
 export RUST_VERSION="${RUST_VERSION:-1.92.0}"
 export RUSTUP_HOME=/usr/local/rustup
@@ -180,6 +204,12 @@ install_bear_armature() {
   cargo_version=""
   if [ -f /workspace/tools/bear-armature/Cargo.toml ]; then
     cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' /workspace/tools/bear-armature/Cargo.toml | head -n 1)"
+  fi
+
+  if [ "${force_compile}" = "1" ]; then
+    echo "bear-armature: --force-compile set; building from local source"
+    install_bear_armature_from_source "${install_dir}"
+    return 0
   fi
 
   if [ -z "${version}" ]; then
