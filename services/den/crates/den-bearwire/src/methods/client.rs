@@ -5,8 +5,9 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions, bearwire_events, bearwire_runs,
+    acp_sessions,
     bears::{db as bears_db, BearProfile},
+    bearwire_events, bearwire_runs,
     native_runtime::continue_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
     runtime_contracts::{
@@ -18,8 +19,8 @@ use den_runtime::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{param_string, required_param_string};
 use crate::methods::run::{persist_run_failed, persist_runtime_event_as_bearwire};
+use crate::methods::{param_string, required_param_string};
 
 fn spawn_continuation_task(
     state: &DenState,
@@ -136,7 +137,10 @@ pub(crate) async fn client_tool_result_result(
             "run does not belong to authenticated Bear/session".to_string(),
         ));
     }
-    if !matches!(run.state.as_str(), "waiting_for_tool_result") {
+    if !matches!(
+        run.state.as_str(),
+        "waiting_for_tool_result" | "waiting_for_permission"
+    ) {
         return Ok(json!({
             "ok": false,
             "status": "late_result_ignored",

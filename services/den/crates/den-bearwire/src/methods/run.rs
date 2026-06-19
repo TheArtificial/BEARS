@@ -163,7 +163,7 @@ async fn update_run_state_for_runtime_event(
             let (state, active_tool, active_permission) = if *approval_required {
                 (
                     bearwire_runs::BearWireRunState::WaitingForPermission,
-                    None,
+                    Some(tool_call_id.as_str()),
                     approval_request_id.as_deref(),
                 )
             } else {

@@ -200,9 +200,11 @@ pub(crate) async fn handle_prompt(
     let mut saw_tool_activity = false;
     let mut saw_error = false;
     let started = Instant::now();
+    let mut last_poll_log = Instant::now();
 
     while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
         let replay = fetch_events(http, config, session_id, after).await?;
+        let replay_count = replay.frames.len();
         let mut max_sequence = after;
         for frame in replay.frames {
             if let Some(sequence) = frame.sequence {
@@ -238,6 +240,18 @@ pub(crate) async fn handle_prompt(
                 diagnostics.summary()
             );
             break;
+        }
+        if last_poll_log.elapsed() >= Duration::from_secs(5) {
+            eprintln!(
+                "bear-armature: BearWire polling session_id={} run_id={} after={:?} replay_frames={} elapsed_ms={} diagnostics={}",
+                session_id,
+                run_id,
+                after,
+                replay_count,
+                started.elapsed().as_millis(),
+                diagnostics.summary()
+            );
+            last_poll_log = Instant::now();
         }
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
@@ -735,7 +749,23 @@ async fn handle_bearwire_event(
             )
             .await?;
         }
-        "tool_call.blocked" | "permission.requested" => {
+        "tool_call.blocked" => {
+            outcome.saw_tool_activity = true;
+            outcome.saw_visible_output = true;
+            diagnostics.saw_tool_activity = true;
+            diagnostics.saw_visible_output = true;
+            let legacy = bearwire_tool_event_to_legacy_tool_request(event, true);
+            handle_den_event(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                &legacy,
+                turn_token,
+            )
+            .await?;
+        }
+        "permission.requested" => {
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;
