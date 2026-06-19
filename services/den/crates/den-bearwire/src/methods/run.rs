@@ -223,7 +223,6 @@ pub(crate) async fn persist_run_failed(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    request_id: Option<Uuid>,
     reason: &str,
     message: String,
 ) {
@@ -231,9 +230,6 @@ pub(crate) async fn persist_run_failed(
         pool,
         run_id,
         bearwire_runs::BearWireRunState::Failed,
-        None,
-        None,
-        request_id,
         Some(reason),
     )
     .await;
@@ -277,29 +273,12 @@ async fn update_run_state_for_runtime_event(
             approval_required,
             ..
         }) => {
-            let (state, active_tool, active_permission) = if *approval_required {
-                (
-                    bearwire_runs::BearWireRunState::WaitingForPermission,
-                    Some(tool_call_id.as_str()),
-                    approval_request_id.as_deref(),
-                )
+            let state = if *approval_required {
+                bearwire_runs::BearWireRunState::WaitingForPermission
             } else {
-                (
-                    bearwire_runs::BearWireRunState::WaitingForToolResult,
-                    Some(tool_call_id.as_str()),
-                    None,
-                )
+                bearwire_runs::BearWireRunState::WaitingForToolResult
             };
-            let _ = bearwire_runs::transition_run(
-                pool,
-                run_id,
-                state,
-                active_tool,
-                active_permission,
-                Some(request_id),
-                None,
-            )
-            .await;
+            let _ = bearwire_runs::transition_run(pool, run_id, state, None).await;
             let obligation = bearwire_obligations::upsert_tool_call_obligation(
                 pool,
                 run_id,
@@ -359,9 +338,6 @@ async fn update_run_state_for_runtime_event(
                 pool,
                 run_id,
                 bearwire_runs::BearWireRunState::Completed,
-                None,
-                None,
-                Some(request_id),
                 Some("completed"),
             )
             .await;
@@ -372,9 +348,6 @@ async fn update_run_state_for_runtime_event(
                 pool,
                 run_id,
                 bearwire_runs::BearWireRunState::Failed,
-                None,
-                None,
-                Some(request_id),
                 Some(&reason),
             )
             .await;
@@ -384,9 +357,6 @@ async fn update_run_state_for_runtime_event(
                 pool,
                 run_id,
                 bearwire_runs::BearWireRunState::Cancelled,
-                None,
-                None,
-                Some(request_id),
                 Some("cancelled"),
             )
             .await;
@@ -396,9 +366,6 @@ async fn update_run_state_for_runtime_event(
                 pool,
                 run_id,
                 bearwire_runs::BearWireRunState::Failed,
-                None,
-                None,
-                Some(request_id),
                 error_type.as_deref().or(Some("error")),
             )
             .await;
@@ -527,9 +494,6 @@ pub(crate) async fn run_start_result(
             &run_id_for_task,
             bearwire_runs::BearWireRunState::Running,
             None,
-            None,
-            Some(request_id),
-            None,
         )
         .await;
         let mut started = BearWireEvent::ephemeral(
@@ -648,7 +612,6 @@ pub(crate) async fn run_start_result(
                                 &run_id_for_task,
                                 bear_id,
                                 user_id,
-                                Some(request_id),
                                 "stream_error",
                                 err.to_string(),
                             )
@@ -665,7 +628,6 @@ pub(crate) async fn run_start_result(
                     &run_id_for_task,
                     bear_id,
                     user_id,
-                    Some(request_id),
                     "start_failed",
                     err.to_string(),
                 )
@@ -717,9 +679,6 @@ pub(crate) async fn run_cancel_result(
             &state.sqlx_pool,
             &run.run_id,
             bearwire_runs::BearWireRunState::Cancelled,
-            None,
-            None,
-            None,
             Some("client_requested"),
         )
         .await?;

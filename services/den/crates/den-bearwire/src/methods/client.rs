@@ -58,9 +58,6 @@ fn spawn_continuation_task(
             &run.run_id,
             bearwire_runs::BearWireRunState::Continuing,
             None,
-            None,
-            Some(request_id),
-            None,
         )
         .await;
         let binding = RoleRuntimeBinding {
@@ -141,7 +138,6 @@ fn spawn_continuation_task(
                                 &run.run_id,
                                 run.bear_id,
                                 run.user_id,
-                                Some(request_id),
                                 "continuation_stream_error",
                                 err.to_string(),
                             )
@@ -158,7 +154,6 @@ fn spawn_continuation_task(
                     &run.run_id,
                     run.bear_id,
                     run.user_id,
-                    Some(request_id),
                     "continuation_start_failed",
                     err.to_string(),
                 )
@@ -199,11 +194,6 @@ pub(crate) async fn client_tool_result_result(
             "status": "late_result_ignored",
             "run_state": run.state,
         }));
-    }
-    if run.active_tool_call_id.as_deref() != Some(tool_call_id.as_str()) {
-        return Err(CustomError::ValidationError(
-            "tool_call_id does not match active BearWire run obligation".to_string(),
-        ));
     }
     let obligation =
         bearwire_obligations::get_tool_call_obligation(&state.sqlx_pool, &run_id, &tool_call_id)
@@ -282,9 +272,6 @@ pub(crate) async fn client_tool_result_result(
                 &run_id,
                 bearwire_runs::BearWireRunState::Continuing,
                 None,
-                None,
-                run.active_request_id,
-                None,
             )
             .await?;
             let session = acp_sessions::find_for_user_bear_session(
@@ -324,7 +311,7 @@ pub(crate) async fn client_tool_result_result(
                     .unwrap_or(session.conversation_id),
                 RuntimeContinuation::ToolResult {
                     tool_call_id: tool_call_id.clone(),
-                    approval_request_id: run.active_permission_id.clone(),
+                    approval_request_id: obligation.permission_id.clone(),
                     status: continuation_status,
                     content,
                 },
@@ -369,11 +356,6 @@ pub(crate) async fn client_permission_result_result(
             "status": "late_result_ignored",
             "run_state": run.state,
         }));
-    }
-    if run.active_permission_id.as_deref() != Some(permission_id.as_str()) {
-        return Err(CustomError::ValidationError(
-            "permission_id does not match active BearWire run obligation".to_string(),
-        ));
     }
     let obligation =
         bearwire_obligations::get_permission_obligation(&state.sqlx_pool, &run_id, &permission_id)
@@ -463,9 +445,6 @@ pub(crate) async fn client_permission_result_result(
                 &run_id,
                 bearwire_runs::BearWireRunState::Continuing,
                 None,
-                None,
-                run.active_request_id,
-                None,
             )
             .await?;
             let session = acp_sessions::find_for_user_bear_session(
@@ -498,7 +477,7 @@ pub(crate) async fn client_permission_result_result(
                     .unwrap_or(session.conversation_id),
                 RuntimeContinuation::ApprovalDecision {
                     approval_request_id: permission_id.clone(),
-                    tool_call_id: run.active_tool_call_id.clone(),
+                    tool_call_id: obligation.tool_call_id.clone(),
                     decision,
                     reason,
                 },
