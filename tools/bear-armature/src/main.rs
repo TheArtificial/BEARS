@@ -247,7 +247,7 @@ fn set_bear_debug_mode(mode: BearDebugMode) {
     }
 }
 
-fn bear_debug_verbose() -> bool {
+pub(crate) fn bear_debug_verbose() -> bool {
     bear_debug_mode().is_verbose()
 }
 

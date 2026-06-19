@@ -23,6 +23,7 @@ use crate::methods::{param_string, required_param_string};
 fn client_tool_descriptors_from_context(
     client_context: Option<&Value>,
     requested_mode: Option<&str>,
+    prompt: &str,
 ) -> Value {
     let context = client_context.unwrap_or(&Value::Null);
     let policy = den_runtime::client_tools::resolve_session_policy_for_mode(
@@ -46,11 +47,13 @@ fn client_tool_descriptors_from_context(
             "parameters": { "type": "object", "properties": {} },
         }));
     }
-    if let Some(mcp_tools) = context
-        .pointer("/mcp/client_tools")
-        .and_then(Value::as_array)
-    {
-        descriptors.extend(mcp_tools.iter().cloned());
+    if prompt_has_browser_intent(prompt) {
+        if let Some(mcp_tools) = context
+            .pointer("/mcp/client_tools")
+            .and_then(Value::as_array)
+        {
+            descriptors.extend(mcp_tools.iter().cloned());
+        }
     }
     if descriptors.is_empty() {
         let descriptor = den_runtime::client_tools::ClientToolName::ReadTextFile.descriptor();
@@ -61,6 +64,27 @@ fn client_tool_descriptors_from_context(
         }));
     }
     json!(descriptors)
+}
+
+fn prompt_has_browser_intent(prompt: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    [
+        "browser",
+        "chrome",
+        "page",
+        "dom",
+        "click",
+        "screenshot",
+        "console",
+        "network",
+        "lighthouse",
+        "navigate",
+        "url",
+        "web page",
+        "devtools",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
@@ -384,6 +408,7 @@ pub(crate) async fn run_start_result(
     let client_tools = client_tool_descriptors_from_context(
         params.get("client_context"),
         requested_mode.as_deref(),
+        &prompt,
     );
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?

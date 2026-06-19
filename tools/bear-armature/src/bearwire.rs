@@ -241,7 +241,7 @@ pub(crate) async fn handle_prompt(
             );
             break;
         }
-        if last_poll_log.elapsed() >= Duration::from_secs(5) {
+        if crate::bear_debug_verbose() && last_poll_log.elapsed() >= Duration::from_secs(5) {
             eprintln!(
                 "bear-armature: BearWire polling session_id={} run_id={} after={:?} replay_frames={} elapsed_ms={} diagnostics={}",
                 session_id,
