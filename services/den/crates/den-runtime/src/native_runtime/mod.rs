@@ -26,7 +26,8 @@ pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
 pub use profile_briefing::compose_curate_briefing_prompt;
 pub use tools::{
     chat_turn_is_capabilities_meta_query, merge_den_and_client_tools,
-    pair_turn_is_simple_workspace_read,
+    pair_turn_is_simple_workspace_read, pair_turn_needs_browser_client_tools,
+    pair_turn_needs_workspace_client_tools,
 };
 pub use turn::{
     continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,

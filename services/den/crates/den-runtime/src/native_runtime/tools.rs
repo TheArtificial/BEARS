@@ -1,7 +1,11 @@
 use den_core::{DenError, config::Config};
 use serde_json::Value;
 
-use crate::{bears::BearProfile, llm::LlmToolDefinition};
+use crate::{
+    bears::BearProfile,
+    client_tools::{ClientToolName, ToolClass, tool_class},
+    llm::LlmToolDefinition,
+};
 use den_core::tools::descriptor::{
     DenToolDescriptor, builtin_den_tool_descriptors_for_pair_acp_surface,
     builtin_den_tool_descriptors_for_profile,
@@ -89,6 +93,29 @@ pub fn pair_turn_is_simple_workspace_read(prompt: Option<&str>) -> bool {
         "/",
     ];
     WORKSPACE_HINTS.iter().any(|needle| lower.contains(needle))
+}
+
+pub fn pair_turn_needs_browser_client_tools(prompt: Option<&str>) -> bool {
+    let Some(prompt) = prompt.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let lower = prompt.to_ascii_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "browser",
+        "chrome",
+        "page",
+        "dom",
+        "click",
+        "screenshot",
+        "console",
+        "network",
+        "lighthouse",
+        "navigate",
+        "url",
+        "web page",
+        "devtools",
+    ];
+    KEYWORDS.iter().any(|keyword| lower.contains(keyword))
 }
 
 /// Pair turns omit adapter workspace/MCP tools unless the prompt suggests repo/file work.
@@ -256,10 +283,22 @@ pub fn merge_den_and_client_tools(
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
     let simple_pair_workspace_read =
         role == BearProfile::Pair && pair_turn_is_simple_workspace_read(pair_turn_prompt);
+    let pair_workspace_turn =
+        role == BearProfile::Pair && pair_turn_needs_workspace_client_tools(pair_turn_prompt);
+    let pair_browser_turn =
+        role == BearProfile::Pair && pair_turn_needs_browser_client_tools(pair_turn_prompt);
     let mut merged = if simple_pair_workspace_read {
         tracing::info!(
             role = %role.as_str(),
             "native pair turn using minimal workspace-read tool surface"
+        );
+        Vec::new()
+    } else if pair_workspace_turn || pair_browser_turn {
+        tracing::info!(
+            role = %role.as_str(),
+            workspace_turn = pair_workspace_turn,
+            browser_turn = pair_browser_turn,
+            "native pair turn using armature-local tool surface without Den server tools"
         );
         Vec::new()
     } else if role == BearProfile::Chat {
@@ -276,7 +315,7 @@ pub fn merge_den_and_client_tools(
         den_tools_for_profile(config, role)
     };
     let include_client_tools = if role == BearProfile::Pair {
-        pair_turn_needs_workspace_client_tools(pair_turn_prompt)
+        pair_workspace_turn || pair_browser_turn
     } else {
         role != BearProfile::Chat
     };
@@ -311,6 +350,9 @@ pub fn merge_den_and_client_tools(
         if is_memfs_client_tool_name(name) {
             continue;
         }
+        let client_tool = ClientToolName::from_provider_alias(name);
+        let is_browser_tool = name.starts_with("mcp__")
+            || client_tool.is_some_and(|tool| matches!(tool_class(tool), ToolClass::Browser));
         if simple_pair_workspace_read
             && !matches!(
                 name,
@@ -321,6 +363,16 @@ pub fn merge_den_and_client_tools(
                     | "fs_stat"
             )
         {
+            continue;
+        }
+        if !simple_pair_workspace_read
+            && pair_workspace_turn
+            && !pair_browser_turn
+            && is_browser_tool
+        {
+            continue;
+        }
+        if pair_browser_turn && !is_browser_tool {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {
@@ -392,13 +444,14 @@ mod tests {
             &config,
             BearProfile::Pair,
             Some(&client_tools),
-            Some("edit the file main.rs"),
+            Some("click the browser page button"),
         )
         .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"mcp__chrome_devtools_mcp_zed__click"));
         assert!(!names.contains(&"mcp__chrome_devtools_custom__click"));
-        assert!(names.contains(&"fs_read_text_file"));
+        assert!(!names.contains(&"fs_read_text_file"));
+        assert!(!names.contains(&"session_info"));
     }
 
     #[test]
@@ -471,7 +524,31 @@ mod tests {
         )));
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_edit_file"));
-        assert!(names.contains(&"session_info"));
+        assert!(!names.contains(&"session_info"));
+    }
+
+    #[test]
+    fn pair_workspace_build_prompt_includes_terminal_without_den_tools() {
+        let config = native_test_config();
+        let client_tools = serde_json::json!([
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "terminal_run_command", "parameters": {"type": "object"}},
+            {"name": "process_run", "parameters": {"type": "object"}},
+            {"name": "mcp__chrome_devtools_mcp_zed__click", "parameters": {"type": "object"}}
+        ]);
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            Some(&client_tools),
+            Some("please build the project and inspect errors"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"terminal_run_command"));
+        assert!(names.contains(&"process_run"));
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(!names.contains(&"session_info"));
+        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
     }
 
     #[test]

@@ -31,6 +31,10 @@ fn client_tool_descriptors_from_context(
     );
     let simple_workspace_read =
         den_runtime::native_runtime::pair_turn_is_simple_workspace_read(Some(prompt));
+    let workspace_turn =
+        den_runtime::native_runtime::pair_turn_needs_workspace_client_tools(Some(prompt));
+    let browser_turn =
+        den_runtime::native_runtime::pair_turn_needs_browser_client_tools(Some(prompt));
     let mut descriptors = Vec::new();
     for tool in den_runtime::client_tools::ClientToolName::all() {
         if *tool == den_runtime::client_tools::ClientToolName::McpCallTool
@@ -38,6 +42,10 @@ fn client_tool_descriptors_from_context(
         {
             continue;
         }
+        let is_browser_tool = matches!(
+            den_runtime::client_tools::tool_class(*tool),
+            den_runtime::client_tools::ToolClass::Browser,
+        );
         if simple_workspace_read
             && !matches!(
                 tool,
@@ -50,13 +58,19 @@ fn client_tool_descriptors_from_context(
         {
             continue;
         }
+        if !simple_workspace_read && workspace_turn && !browser_turn && is_browser_tool {
+            continue;
+        }
+        if browser_turn && !is_browser_tool {
+            continue;
+        }
         let descriptor = tool.descriptor();
         if !adapter_supports_tool(context, descriptor.provider_name) {
             continue;
         }
         descriptors.push(den_runtime::client_tools::provider_tool_descriptor(*tool));
     }
-    if !simple_workspace_read && prompt_has_browser_intent(prompt) {
+    if browser_turn {
         if let Some(mcp_tools) = context
             .pointer("/mcp/client_tools")
             .and_then(Value::as_array)
@@ -70,27 +84,6 @@ fn client_tool_descriptors_from_context(
         ));
     }
     json!(descriptors)
-}
-
-fn prompt_has_browser_intent(prompt: &str) -> bool {
-    let lower = prompt.to_ascii_lowercase();
-    [
-        "browser",
-        "chrome",
-        "page",
-        "dom",
-        "click",
-        "screenshot",
-        "console",
-        "network",
-        "lighthouse",
-        "navigate",
-        "url",
-        "web page",
-        "devtools",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
 }
 
 fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
