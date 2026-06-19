@@ -62,7 +62,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, OnceLock, RwLock},
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
@@ -185,6 +185,70 @@ fn env_bool(name: &str) -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BearDebugMode {
+    Off,
+    On,
+    Verbose,
+}
+
+impl BearDebugMode {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "0" | "false" | "no" | "off" => Some(Self::Off),
+            "1" | "true" | "yes" | "on" => Some(Self::On),
+            "verbose" | "debug" | "trace" => Some(Self::Verbose),
+            _ => None,
+        }
+    }
+
+    fn from_env() -> Self {
+        env::var("BEAR_DEBUG")
+            .ok()
+            .and_then(|value| Self::parse(&value))
+            .unwrap_or(Self::Off)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::Verbose => "verbose",
+        }
+    }
+
+    fn shows_thoughts(self) -> bool {
+        matches!(self, Self::On | Self::Verbose)
+    }
+
+    fn is_verbose(self) -> bool {
+        matches!(self, Self::Verbose)
+    }
+}
+
+static BEAR_DEBUG_MODE: OnceLock<RwLock<BearDebugMode>> = OnceLock::new();
+
+fn bear_debug_lock() -> &'static RwLock<BearDebugMode> {
+    BEAR_DEBUG_MODE.get_or_init(|| RwLock::new(BearDebugMode::from_env()))
+}
+
+fn bear_debug_mode() -> BearDebugMode {
+    bear_debug_lock()
+        .read()
+        .map(|guard| *guard)
+        .unwrap_or_else(|_| BearDebugMode::from_env())
+}
+
+fn set_bear_debug_mode(mode: BearDebugMode) {
+    if let Ok(mut guard) = bear_debug_lock().write() {
+        *guard = mode;
+    }
+}
+
+fn bear_debug_verbose() -> bool {
+    bear_debug_mode().is_verbose()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -728,9 +792,9 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
         acp_plan_update_payload(session_id, entries)?,
     )
     .await?;
-    if env_bool("DEN_ACP_DEBUG_UI") {
+    if bear_debug_verbose() {
         eprintln!(
-            "bear-armature: debug ui sent ACP plan update session_id={} entry_count={}",
+            "bear-armature: debug sent ACP plan update session_id={} entry_count={}",
             session_id, entry_count
         );
     }
@@ -4411,17 +4475,21 @@ async fn handle_local_slash_prompt(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
-    let display_prompt = prompt_display_text_from_params(&params).unwrap_or(prompt);
+    let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     send_user_message_chunk(session_id, &display_prompt).await?;
-    let report = handle_local_slash_command(
-        http,
-        config,
-        adapter_state,
-        shared_state,
-        session_id,
-        command,
-    )
-    .await;
+    let report = if command == LocalSlashCommand::Debug {
+        debug_report(debug_argument_from_prompt(&prompt))
+    } else {
+        handle_local_slash_command(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            command,
+        )
+        .await
+    };
     send_agent_message_chunk(session_id, &report).await?;
     write_prompt_end_turn_response(response_id).await
 }
@@ -4859,7 +4927,7 @@ enum LocalSlashCommand {
     Runtime,
     Status,
     Version,
-    DebugUi,
+    Debug,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4922,10 +4990,10 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
         den_required: false,
     },
     LocalSlashCommandDescriptor {
-        name: "debug-ui",
-        aliases: &[],
-        description: "Show BEARS ACP debug UI environment status.",
-        command: LocalSlashCommand::DebugUi,
+        name: "debug",
+        aliases: &["debug-ui"],
+        description: "Show or set BEARS debug thought visibility: /debug off|on|verbose.",
+        command: LocalSlashCommand::Debug,
         den_required: false,
     },
 ];
@@ -5010,7 +5078,7 @@ async fn handle_local_slash_command(
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
         LocalSlashCommand::Version => version_report(http, config).await,
-        LocalSlashCommand::DebugUi => debug_ui_report(),
+        LocalSlashCommand::Debug => debug_report(None),
     }
 }
 
@@ -5241,6 +5309,8 @@ async fn status_report(
     };
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
     let mut report = render_status_report(&environment, &tasks);
+    report.push_str("\n- Debug: ");
+    report.push_str(bear_debug_mode().as_str());
     let bearwire_status = if let (Some(http), Some(config)) = (http, config) {
         bearwire::protocol_status(http, config).await
     } else {
@@ -5355,16 +5425,37 @@ async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>)
     )
 }
 
-fn debug_ui_report() -> String {
-    let enabled = env_bool("DEN_ACP_DEBUG_UI");
-    let stream_tokens = env::var("DEN_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
-    let chunk_chars =
-        env::var("DEN_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
+fn debug_argument_from_prompt(prompt: &str) -> Option<&str> {
+    prompt.split_whitespace().nth(1)
+}
+
+fn debug_report(arg: Option<&str>) -> String {
+    let previous = bear_debug_mode();
+    let mut message = String::new();
+    if let Some(arg) = arg.map(str::trim).filter(|value| !value.is_empty()) {
+        match BearDebugMode::parse(arg) {
+            Some(mode) => {
+                set_bear_debug_mode(mode);
+                message = format!(
+                    "Updated BEARS debug mode: {} → {}\n\n",
+                    previous.as_str(),
+                    mode.as_str()
+                );
+            }
+            None => {
+                message = format!(
+                    "Unsupported debug mode `{arg}`. Use `/debug off`, `/debug on`, or `/debug verbose`.\n\n"
+                );
+            }
+        }
+    }
+    let current = bear_debug_mode();
     format!(
-        "BEARS ACP debug UI\n\n- DEN_ACP_DEBUG_UI: {}\n- DEN_ACP_STREAM_TOKENS: {}\n- DEN_ACP_TEXT_CHUNK_CHARS: {}",
-        if enabled { "enabled" } else { "disabled" },
-        stream_tokens,
-        chunk_chars,
+        "{message}BEARS debug\n\n- BEAR_DEBUG env default: {}\n- current mode: {}\n- thought messages: {}\n- verbose adapter logs: {}\n\nUse `/debug off`, `/debug on`, or `/debug verbose`.",
+        env::var("BEAR_DEBUG").unwrap_or_else(|_| "<unset>".to_string()),
+        current.as_str(),
+        if current.shows_thoughts() { "shown" } else { "hidden" },
+        if current.is_verbose() { "enabled" } else { "disabled" },
     )
 }
 
@@ -7750,7 +7841,7 @@ async fn handle_den_event(
         }
         "status_text" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() {
+            if !text.is_empty() && bear_debug_mode().shows_thoughts() {
                 send_agent_thought_chunk_for_turn(
                     shared_state,
                     session_id,
@@ -7758,6 +7849,12 @@ async fn handle_den_event(
                     normalize_thought_chunk_text(text).as_ref(),
                 )
                 .await?;
+            } else if !text.is_empty() && bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: suppressed thought chunk session_id={} text={}",
+                    session_id,
+                    truncate_for_log(text, 240)
+                );
             }
             Ok(false)
         }
@@ -7843,7 +7940,7 @@ async fn handle_den_event(
             }
             let entries = plan_entries_from_plan_update_event(event);
             if entries.is_empty() {
-                if env_bool("DEN_ACP_DEBUG_UI") {
+                if bear_debug_verbose() {
                     eprintln!(
                         "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
                         session_id
@@ -7854,7 +7951,7 @@ async fn handle_den_event(
                 {
                     send_plan_update(session_id, entries).await?;
                 }
-            } else if env_bool("DEN_ACP_DEBUG_UI") {
+            } else if bear_debug_verbose() {
                 eprintln!(
                     "bear-armature: skipped unchanged plan update for session_id={}",
                     session_id
