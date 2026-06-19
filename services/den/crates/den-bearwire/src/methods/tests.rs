@@ -16,8 +16,9 @@ use uuid::Uuid;
 
 use den_http::acp_tokens;
 use den_runtime::{
+    acp_sessions,
     bears::{db as bears_db, db::BearParams},
-    bearwire_runs, DenState,
+    bearwire_obligations, bearwire_runs, DenState,
 };
 
 use crate::{
@@ -102,6 +103,52 @@ fn bearer_headers(token: &str) -> HeaderMap {
         format!("Bearer {token}").parse().expect("header value"),
     );
     headers
+}
+
+async fn upsert_test_session(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+    bear_slug: &str,
+    session_id: &str,
+) {
+    acp_sessions::upsert_session(
+        pool,
+        acp_sessions::UpsertAcpSession {
+            user_id,
+            bear_id,
+            bear_slug: bear_slug.to_string(),
+            acp_session_id: session_id.to_string(),
+            runtime_session_id: format!("bearwire-test:{bear_id}:{session_id}"),
+            conversation_id: format!("den-conv-{}", Uuid::new_v4().simple()),
+            resolved_conversation_id: None,
+            client: "bearwire-test".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: Some("write".to_string()),
+        },
+    )
+    .await
+    .expect("upsert BearWire test session");
+}
+
+async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) -> Value {
+    let response = rpc(
+        State(state),
+        bearer_headers(token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!(format!("req-{}", Uuid::new_v4().simple()))),
+            method: method.to_string(),
+            params,
+        }),
+    )
+    .await
+    .expect("rpc response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -490,6 +537,229 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
         conflict,
         bearwire_runs::BearWireClientResultRecord::DuplicateConflict { .. }
     ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    bearwire_obligations::upsert_permission_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "perm-wrong-tool-route",
+        Some("call-wrong-tool-route"),
+        json!({ "test": "permission obligation" }),
+    )
+    .await
+    .expect("insert permission obligation");
+    let tool_response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "run_id": run_id,
+            "tool_call_id": "call-wrong-tool-route",
+            "status": "ok",
+            "content": "not accepted by permission obligation"
+        }),
+    )
+    .await;
+    let tool_error = tool_response["error"]["data"]["error"].as_str().unwrap();
+    assert!(
+        tool_error.contains("does not accept client.tool.result"),
+        "{tool_response}"
+    );
+
+    bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-wrong-permission-route",
+        Some("perm-wrong-permission-route"),
+        json!({ "test": "tool obligation" }),
+    )
+    .await
+    .expect("insert tool obligation");
+    let permission_response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.permission.result",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "run_id": run_id,
+            "permission_id": "perm-wrong-permission-route",
+            "decision": "approved"
+        }),
+    )
+    .await;
+    let permission_error = permission_response["error"]["data"]["error"]
+        .as_str()
+        .unwrap();
+    assert!(
+        permission_error.contains("does not accept client.permission.result"),
+        "{permission_response}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn tool_result_uses_persisted_obligation_after_fresh_state_and_stays_idempotent(
+    pool: sqlx::PgPool,
+) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let tool_call_id = format!("call_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    bearwire_runs::transition_run(
+        &pool,
+        &run_id,
+        bearwire_runs::BearWireRunState::Running,
+        None,
+    )
+    .await
+    .expect("transition run to running");
+    bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        &tool_call_id,
+        None,
+        json!({ "test": "fresh-state persisted obligation" }),
+    )
+    .await
+    .expect("insert tool obligation");
+
+    let params = json!({
+        "bear_slug": bear_slug,
+        "session_id": session_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "status": "ok",
+        "content": "persisted tool result"
+    });
+    let response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        params.clone(),
+    )
+    .await;
+    assert_eq!(response["result"]["ok"], true, "{response}");
+    assert_eq!(response["result"]["duplicate"], false, "{response}");
+    let obligation = bearwire_obligations::get_tool_call_obligation(&pool, &run_id, &tool_call_id)
+        .await
+        .expect("load obligation")
+        .expect("obligation exists");
+    assert_eq!(obligation.state, "continued");
+
+    let duplicate = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        params.clone(),
+    )
+    .await;
+    assert_eq!(duplicate["result"]["ok"], true, "{duplicate}");
+    assert_eq!(duplicate["result"]["duplicate"], true, "{duplicate}");
+    assert_eq!(
+        duplicate["result"]["obligation_state"], "continued",
+        "{duplicate}"
+    );
+
+    let conflict = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        json!({
+            "bear_slug": params["bear_slug"].clone(),
+            "session_id": params["session_id"].clone(),
+            "run_id": params["run_id"].clone(),
+            "tool_call_id": params["tool_call_id"].clone(),
+            "status": "ok",
+            "content": "different result"
+        }),
+    )
+    .await;
+    let error = conflict["error"]["data"]["error"].as_str().unwrap();
+    assert!(
+        error.contains("conflicting duplicate tool result"),
+        "{conflict}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-cancelled",
+        Some("perm-cancelled"),
+        json!({ "test": "tool obligation" }),
+    )
+    .await
+    .expect("insert tool obligation");
+    bearwire_obligations::upsert_permission_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "perm-cancelled",
+        Some("call-cancelled"),
+        json!({ "test": "permission obligation" }),
+    )
+    .await
+    .expect("insert permission obligation");
+
+    let response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.cancel",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(response["result"]["ok"], true, "{response}");
+    assert_eq!(response["result"]["cancelled"], true, "{response}");
+    assert_eq!(response["result"]["run_id"], run_id, "{response}");
+
+    let tool = bearwire_obligations::get_tool_call_obligation(&pool, &run_id, "call-cancelled")
+        .await
+        .expect("load tool obligation")
+        .expect("tool obligation exists");
+    let permission =
+        bearwire_obligations::get_permission_obligation(&pool, &run_id, "perm-cancelled")
+            .await
+            .expect("load permission obligation")
+            .expect("permission obligation exists");
+    assert_eq!(tool.state, "cancelled");
+    assert_eq!(permission.state, "cancelled");
 }
 
 #[tokio::test]

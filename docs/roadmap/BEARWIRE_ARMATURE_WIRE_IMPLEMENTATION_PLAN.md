@@ -135,9 +135,9 @@ Editor ──ACP stdio──► bears-acp-adapter
 | BearWire session lifecycle/resource methods | `tools/bear-armature` | Implemented BearWire `session.close`, `run.cancel`, and `resource.update` paths with legacy fallback |
 | Move any remaining ACP-specific descriptor framing | adapter + den-bearwire | BearWire forwards armature `client_context`; Den derives Pair local tool descriptors from armature direct-tool capabilities. Descriptor vocabulary cleanup remains Phase 6 terminology/neutrality work |
 | Dual-mode operation | adapter config | Implemented opt-in `BEARS_BEARWIRE=1`, auto-probe with `BEARS_BEARWIRE=auto`, and strict mode via `BEARS_BEARWIRE_REQUIRED=1`; default-to-BearWire remains Phase 4 |
-| Parity test suite | adapter + den integration | Code-side tests pass; external Zed/Cursor smoke still needed for plain chat, file tools, permission-gated edits, cancellation, close, and legacy fallback before Phase 4 |
+| Parity test suite | adapter + den integration | Code-side tests pass; external Zed ACP smoke still needed for plain chat, file tools, permission-gated edits, cancellation, close, and legacy fallback before Phase 4 |
 
-**Exit gate:** Implementation complete. Remaining validation before Phase 4 is an external Zed/Cursor smoke test against Den with BearWire enabled, plus parity confidence for plain chat, file tools, permission-gated edits, cancellation, close, and fallback behavior.
+**Exit gate:** Implementation complete. Remaining validation before Phase 4 is an external Zed ACP smoke test against Den with BearWire enabled, plus parity confidence for plain chat, file tools, permission-gated edits, cancellation, close, and fallback behavior.
 
 ## Phase 3.1 — BearWire obligation authority cleanup — Complete
 
@@ -150,9 +150,9 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Add active obligation query helpers | `den-runtime::bearwire_obligations` | Partially complete. Helpers exist for specific tool/permission obligations; add session/run list helpers later if `/status` needs richer obligation inspection |
 | Update run cancellation/failure/completion to settle obligations | `den-bearwire` | Complete. Terminal run states now settle outstanding obligation rows as `continued`, `failed`, or `cancelled`; richer stale-obligation reporting remains optional observability work |
 | Remove `bearwire_runs.active_tool_call_id`, `active_permission_id`, `active_request_id` | migration + Rust structs | Complete. Added drop-column migration and removed fields from `BearWireRunRow` / run queries |
-| Add regression tests for obligation authority | `den-bearwire` | Partial. Existing BearWire tests pass; add deeper restart/cancel/wrong-method obligation tests as hardening follow-up |
+| Add regression tests for obligation authority | `den-bearwire` | Complete. Added wrong-method, fresh-state/reconnect-shaped persisted obligation, duplicate retry, duplicate conflict, and cancel-settlement coverage |
 
-**Exit gate:** Core exit gate met: no BearWire code reads or writes `bearwire_runs.active_*`, the columns are dropped by migration, client result handlers validate persisted obligations, and terminal run states settle outstanding obligations. Remaining hardening is deeper wrong-method/restart tests and optional richer stale-obligation reporting.
+**Exit gate:** Met: no BearWire code reads or writes `bearwire_runs.active_*`, the columns are dropped by migration, client result handlers validate persisted obligations, terminal run states settle outstanding obligations, and hardening tests cover wrong-method/reconnect-shaped/cancel/duplicate-result cases. Remaining work is optional richer stale-obligation reporting if `/status` needs it.
 
 ## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 
@@ -268,7 +268,7 @@ A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `wor
 | 1 | BearWire types in den-runtime | Complete |
 | 2 | `/bearwire/v1` served | Complete; still parallel to legacy `/acp` |
 | 3 | Armature BearWire client | Implementation complete; opt-in via `BEARS_BEARWIRE=1` or `BEARS_BEARWIRE=auto`; smoke/parity validation pending |
-| 3.1 | BearWire obligation authority cleanup | Complete for active-field removal and terminal obligation settlement; deeper wrong-method/restart tests remain hardening follow-up |
+| 3.1 | BearWire obligation authority cleanup | Complete, including active-field removal, terminal obligation settlement, and wrong-method/reconnect-shaped/cancel/duplicate-result tests |
 | 4 | Legacy removed | Pending; default path after parity confidence |
 | 5 | WebSocket | Optional; faster reconnect |
 | 6 | Bear stance terminology cleanup | Pending final cleanup; user/model-visible clarity |

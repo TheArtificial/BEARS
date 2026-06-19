@@ -209,15 +209,6 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
-    if !bearwire_obligations::obligation_is_open(&obligation) {
-        return Ok(json!({
-            "ok": false,
-            "status": "late_result_ignored",
-            "run_state": run.state,
-            "obligation_state": obligation.state,
-        }));
-    }
-
     let payload = json!({
         "tool_call_id": tool_call_id,
         "status": status,
@@ -225,6 +216,38 @@ pub(crate) async fn client_tool_result_result(
         "structured_content": params.get("structured_content").cloned().unwrap_or(Value::Null),
         "error": params.get("error").cloned().unwrap_or(Value::Null),
     });
+    if !bearwire_obligations::obligation_is_open(&obligation) {
+        return match bearwire_runs::existing_client_result_for_payload(
+            &state.sqlx_pool,
+            &run_id,
+            "tool",
+            &tool_call_id,
+            &payload,
+        )
+        .await?
+        {
+            Some(bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+                Ok(json!({
+                    "ok": true,
+                    "duplicate": true,
+                    "result_id": row.id,
+                    "run_state": run.state,
+                    "obligation_state": obligation.state,
+                }))
+            }
+            Some(bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+                Err(CustomError::ValidationError(format!(
+                    "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
+                )))
+            }
+            _ => Ok(json!({
+                "ok": false,
+                "status": "late_result_ignored",
+                "run_state": run.state,
+                "obligation_state": obligation.state,
+            })),
+        };
+    }
     let record = bearwire_runs::record_client_result(
         &state.sqlx_pool,
         &run_id,
@@ -391,15 +414,6 @@ pub(crate) async fn client_permission_result_result(
             obligation.state
         )));
     }
-    if !bearwire_obligations::obligation_is_open(&obligation) {
-        return Ok(json!({
-            "ok": false,
-            "status": "late_result_ignored",
-            "run_state": run.state,
-            "obligation_state": obligation.state,
-        }));
-    }
-
     let normalized_decision = match decision.as_str() {
         "approved" | "approve" | "granted" | "allow" => "granted",
         "denied" | "deny" | "rejected" | "reject" => "denied",
@@ -415,6 +429,38 @@ pub(crate) async fn client_permission_result_result(
         "decision": normalized_decision,
         "reason": params.get("reason").cloned().unwrap_or(Value::Null),
     });
+    if !bearwire_obligations::obligation_is_open(&obligation) {
+        return match bearwire_runs::existing_client_result_for_payload(
+            &state.sqlx_pool,
+            &run_id,
+            "permission",
+            &permission_id,
+            &payload,
+        )
+        .await?
+        {
+            Some(bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+                Ok(json!({
+                    "ok": true,
+                    "duplicate": true,
+                    "result_id": row.id,
+                    "run_state": run.state,
+                    "obligation_state": obligation.state,
+                }))
+            }
+            Some(bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+                Err(CustomError::ValidationError(format!(
+                    "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
+                )))
+            }
+            _ => Ok(json!({
+                "ok": false,
+                "status": "late_result_ignored",
+                "run_state": run.state,
+                "obligation_state": obligation.state,
+            })),
+        };
+    }
     let record = bearwire_runs::record_client_result(
         &state.sqlx_pool,
         &run_id,

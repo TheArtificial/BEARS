@@ -165,6 +165,38 @@ fn row_to_client_result(row: sqlx::postgres::PgRow) -> BearWireClientResultRow {
     }
 }
 
+pub async fn existing_client_result_for_payload(
+    pool: &PgPool,
+    run_id: &str,
+    obligation_kind: &str,
+    obligation_id: &str,
+    payload_json: &serde_json::Value,
+) -> Result<Option<BearWireClientResultRecord>, DenError> {
+    let Some(existing) = sqlx::query(
+        r#"
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        FROM bearwire_client_results
+        WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
+        "#,
+    )
+    .bind(run_id)
+    .bind(obligation_kind)
+    .bind(obligation_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let row = row_to_client_result(existing);
+    if row.result_hash == result_hash(payload_json)? {
+        Ok(Some(BearWireClientResultRecord::DuplicateIdentical { row }))
+    } else {
+        Ok(Some(BearWireClientResultRecord::DuplicateConflict {
+            existing_hash: row.result_hash,
+        }))
+    }
+}
+
 pub async fn record_client_result(
     pool: &PgPool,
     run_id: &str,
