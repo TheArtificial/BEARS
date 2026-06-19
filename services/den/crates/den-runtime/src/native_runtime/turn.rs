@@ -564,20 +564,19 @@ pub async fn continue_native_acp_turn_event_stream(
                 reason.as_deref(),
             )
             .await?;
-            let content = reason.clone().unwrap_or_else(|| {
-                if approve {
-                    "approved".to_string()
-                } else {
-                    "denied".to_string()
-                }
-            });
-            tool_messages.push(ChatMessage {
-                role: "tool".to_string(),
-                content: Some(content),
-                tool_call_id: tool_call_id.clone(),
-                name: None,
-                tool_calls: None,
-            });
+            // Approval is control-plane state, not a tool result. On approval, wait for
+            // the armature to execute the tool and send RuntimeContinuation::ToolResult.
+            // On denial, satisfy the model tool-call chain with a denied tool result.
+            if !approve {
+                let content = reason.clone().unwrap_or_else(|| "denied".to_string());
+                tool_messages.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: Some(content),
+                    tool_call_id: tool_call_id.clone(),
+                    name: None,
+                    tool_calls: None,
+                });
+            }
         }
     }
     SESSION_STORE.update(&session_key, |session| {

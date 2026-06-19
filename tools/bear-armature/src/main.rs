@@ -1391,10 +1391,18 @@ async fn run() -> Result<()> {
         let value = match message {
             InboundMessage::Request(value) => value,
             InboundMessage::Response { id, value } => {
-                if !adapter_state.transport.route_response(&id, value).await {
+                if !adapter_state
+                    .transport
+                    .route_response(&id, value.clone())
+                    .await
+                {
+                    let diagnostics = adapter_state.transport.diagnostics().await;
                     eprintln!(
-                        "bear-armature: unmatched JSON-RPC response id={}",
-                        id_key(&id)
+                        "bear-armature: unmatched JSON-RPC response id={} value={} pending={:?} recent_timeouts={:?}",
+                        id_key(&id),
+                        truncate_for_log(&value.to_string(), 1200),
+                        diagnostics.pending,
+                        diagnostics.recent_timeouts,
                     );
                 }
                 continue;

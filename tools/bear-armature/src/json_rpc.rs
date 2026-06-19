@@ -1,15 +1,51 @@
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
 use tokio::{
     io::{self, AsyncWriteExt},
     sync::Mutex as TokioMutex,
 };
 use uuid::Uuid;
 
+#[derive(Debug)]
+struct PendingResponse {
+    method: String,
+    started_at: Instant,
+    timeout: Duration,
+    tx: tokio::sync::oneshot::Sender<Value>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PendingRequestSnapshot {
+    pub(crate) id: String,
+    pub(crate) method: String,
+    pub(crate) elapsed_ms: u128,
+    pub(crate) timeout_ms: u128,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TimedOutRequestSnapshot {
+    pub(crate) id: String,
+    pub(crate) method: String,
+    pub(crate) elapsed_ms: u128,
+    pub(crate) timeout_ms: u128,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct JsonRpcTransportDiagnostics {
+    pub(crate) pending: Vec<PendingRequestSnapshot>,
+    pub(crate) recent_timeouts: Vec<TimedOutRequestSnapshot>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct JsonRpcTransport {
-    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+    pending_responses: Arc<TokioMutex<HashMap<String, PendingResponse>>>,
+    recent_timeouts: Arc<TokioMutex<VecDeque<TimedOutRequestSnapshot>>>,
 }
 
 impl JsonRpcTransport {
@@ -19,12 +55,41 @@ impl JsonRpcTransport {
         id: Value,
         tx: tokio::sync::oneshot::Sender<Value>,
     ) {
-        self.pending_responses.lock().await.insert(id_key(&id), tx);
+        self.pending_responses.lock().await.insert(
+            id_key(&id),
+            PendingResponse {
+                method: "test".to_string(),
+                started_at: Instant::now(),
+                timeout: Duration::from_secs(1),
+                tx,
+            },
+        );
+    }
+
+    pub(crate) async fn diagnostics(&self) -> JsonRpcTransportDiagnostics {
+        let now = Instant::now();
+        let pending = self
+            .pending_responses
+            .lock()
+            .await
+            .iter()
+            .map(|(id, pending)| PendingRequestSnapshot {
+                id: id.clone(),
+                method: pending.method.clone(),
+                elapsed_ms: now.duration_since(pending.started_at).as_millis(),
+                timeout_ms: pending.timeout.as_millis(),
+            })
+            .collect();
+        let recent_timeouts = self.recent_timeouts.lock().await.iter().cloned().collect();
+        JsonRpcTransportDiagnostics {
+            pending,
+            recent_timeouts,
+        }
     }
 
     pub(crate) async fn route_response(&self, id: &Value, value: Value) -> bool {
-        if let Some(tx) = self.pending_responses.lock().await.remove(&id_key(id)) {
-            let _ = tx.send(value);
+        if let Some(pending) = self.pending_responses.lock().await.remove(&id_key(id)) {
+            let _ = pending.tx.send(value);
             true
         } else {
             false
@@ -40,7 +105,22 @@ impl JsonRpcTransport {
         let id = json!(format!("req-{}", Uuid::new_v4()));
         let key = id_key(&id);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending_responses.lock().await.insert(key.clone(), tx);
+        let started_at = Instant::now();
+        self.pending_responses.lock().await.insert(
+            key.clone(),
+            PendingResponse {
+                method: method.to_string(),
+                started_at,
+                timeout,
+                tx,
+            },
+        );
+        eprintln!(
+            "bear-armature: JSON-RPC client request sent method={} id={} timeout_ms={}",
+            method,
+            key,
+            timeout.as_millis()
+        );
         write_json(json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -55,6 +135,17 @@ impl JsonRpcTransport {
             )),
             Err(_) => {
                 self.pending_responses.lock().await.remove(&key);
+                let timeout_snapshot = TimedOutRequestSnapshot {
+                    id: key.clone(),
+                    method: method.to_string(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                    timeout_ms: timeout.as_millis(),
+                };
+                let mut recent = self.recent_timeouts.lock().await;
+                recent.push_back(timeout_snapshot);
+                while recent.len() > 20 {
+                    recent.pop_front();
+                }
                 Err(anyhow!(
                     "timed out waiting for client response to {method} id={key}"
                 ))

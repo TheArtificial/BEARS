@@ -4,20 +4,16 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    {
-        agent_loop::tool_outcome::{
-            is_legacy_synthetic_interrupted_tool_result,
-            tool_message_counts_toward_llm_resolution, INCOMPLETE_TOOL_RESULT_MARK,
-        },
-        conversation_events::{
-            canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
-        },
-        llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
-        runtime::compaction::{
-            semantic_groups_from_conversation_messages, TranscriptGroupingRow,
-        },
-        runtime_conversations::RuntimeSemanticGroup,
+    agent_loop::tool_outcome::{
+        is_legacy_synthetic_interrupted_tool_result, tool_message_counts_toward_llm_resolution,
+        INCOMPLETE_TOOL_RESULT_MARK,
     },
+    conversation_events::{
+        canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
+    },
+    llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
+    runtime::compaction::{semantic_groups_from_conversation_messages, TranscriptGroupingRow},
+    runtime_conversations::RuntimeSemanticGroup,
 };
 
 #[derive(Debug, Clone)]
@@ -27,14 +23,7 @@ struct TranscriptRow {
     content_json: Value,
 }
 
-type TranscriptHistoryRow = (
-    String,
-    i64,
-    String,
-    String,
-    Value,
-    Option<String>,
-);
+type TranscriptHistoryRow = (String, i64, String, String, Value, Option<String>);
 
 const TRANSCRIPT_HISTORY_QUERY: &str = r"
         SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
@@ -52,7 +41,9 @@ const TRANSCRIPT_HISTORY_QUERY: &str = r"
         LIMIT 80
         ";
 
-fn transcript_grouping_rows_from_history(history_rows: Vec<TranscriptHistoryRow>) -> Vec<TranscriptGroupingRow> {
+fn transcript_grouping_rows_from_history(
+    history_rows: Vec<TranscriptHistoryRow>,
+) -> Vec<TranscriptGroupingRow> {
     history_rows
         .into_iter()
         .map(
@@ -147,9 +138,7 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                 };
                 if let Some(last) = messages.last_mut() {
                     if last.role == "assistant" {
-                        last.tool_calls
-                            .get_or_insert_with(Vec::new)
-                            .push(call);
+                        last.tool_calls.get_or_insert_with(Vec::new).push(call);
                         if let Some(pending) = pending_tool_results.remove(&tool_call_id) {
                             messages.push(pending);
                         }
@@ -179,10 +168,7 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     .get("tool_call_id")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                let persisted_status = row
-                    .content_json
-                    .get("status")
-                    .and_then(Value::as_str);
+                let persisted_status = row.content_json.get("status").and_then(Value::as_str);
                 let content = if persisted_status == Some("incomplete") {
                     Some(INCOMPLETE_TOOL_RESULT_MARK.to_string())
                 } else {
@@ -255,15 +241,25 @@ pub fn repair_tool_call_message_chain(messages: Vec<ChatMessage>) -> Vec<ChatMes
             let mut has_legacy_synthetic = false;
             while index < messages.len() && messages[index].role == "tool" {
                 let tool_message = messages[index].clone();
-                if is_legacy_synthetic_interrupted_tool_result(
-                    tool_message.content.as_deref(),
-                ) {
+                if is_legacy_synthetic_interrupted_tool_result(tool_message.content.as_deref()) {
                     has_legacy_synthetic = true;
                 }
-                if let Some(tool_call_id) = tool_message.tool_call_id.as_deref() {
-                    if tool_message_counts_toward_llm_resolution(tool_message.content.as_deref()) {
-                        resolved_ids.insert(tool_call_id.to_string());
-                    }
+                let Some(tool_call_id) = tool_message.tool_call_id.as_deref() else {
+                    tracing::debug!("dropping tool message without tool_call_id from LLM context");
+                    index += 1;
+                    continue;
+                };
+                if !required_ids.iter().any(|required| required == tool_call_id) {
+                    tracing::debug!(
+                        tool_call_id,
+                        required_tool_call_ids = ?required_ids,
+                        "dropping tool message whose id is not in preceding assistant tool_calls"
+                    );
+                    index += 1;
+                    continue;
+                }
+                if tool_message_counts_toward_llm_resolution(tool_message.content.as_deref()) {
+                    resolved_ids.insert(tool_call_id.to_string());
                 }
                 tool_messages.push(tool_message);
                 index += 1;
@@ -327,10 +323,8 @@ fn orphan_tool_call_ids_from_rows(rows: &[TranscriptRow]) -> Vec<(String, String
                 }
             }
             "tool_result" => {
-                if let Some(tool_call_id) = row
-                    .content_json
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
+                if let Some(tool_call_id) =
+                    row.content_json.get("tool_call_id").and_then(Value::as_str)
                 {
                     resolved.insert(tool_call_id.to_string());
                 }
@@ -354,7 +348,8 @@ fn backfill_incomplete_tool_results(
     if orphans.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(format!("den-web:{bear_id}:{conversation_id}"));
+    let provenance =
+        ConversationEventProvenance::acp_session(format!("den-web:{bear_id}:{conversation_id}"));
     let context = canonical_persistence_context(
         pool.clone(),
         bear_id,
@@ -430,8 +425,7 @@ pub async fn load_transcript_messages_after_seq(
     conversation_id: &str,
     after_sequence: Option<i64>,
 ) -> Result<Vec<ChatMessage>, DenError> {
-    let mut grouping_rows =
-        load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    let mut grouping_rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
     if let Some(cutoff) = after_sequence {
         grouping_rows.retain(|row| row.sequence_no.unwrap_or(0) > cutoff);
     }
@@ -603,21 +597,58 @@ mod tests {
                 content: None,
                 tool_call_id: None,
                 name: None,
-                tool_calls: Some(vec![
-                    ChatToolCall {
-                        id: "call_orphan".to_string(),
-                        call_type: "function".to_string(),
-                        function: ChatToolCallFunction {
-                            name: "memory_read".to_string(),
-                            arguments: "{}".to_string(),
-                        },
+                tool_calls: Some(vec![ChatToolCall {
+                    id: "call_orphan".to_string(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "memory_read".to_string(),
+                        arguments: "{}".to_string(),
                     },
-                ]),
+                }]),
             },
         ];
         let repaired = repair_tool_call_message_chain(messages);
         assert_eq!(repaired.len(), 1);
         assert_eq!(repaired[0].role, "user");
+    }
+
+    #[test]
+    fn repair_tool_call_message_chain_drops_extra_unmatched_tool_messages() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: "call_1".to_string(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "memory_read".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("ok".to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("orphan approval control-plane artifact".to_string()),
+                tool_call_id: Some("call_other".to_string()),
+                name: None,
+                tool_calls: None,
+            },
+        ];
+        let repaired = repair_tool_call_message_chain(messages);
+        assert_eq!(repaired.len(), 2);
+        assert_eq!(repaired[0].role, "assistant");
+        assert_eq!(repaired[1].role, "tool");
+        assert_eq!(repaired[1].tool_call_id.as_deref(), Some("call_1"));
     }
 
     #[test]
