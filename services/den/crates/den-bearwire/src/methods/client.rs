@@ -9,7 +9,7 @@ use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},
-    bearwire_events, bearwire_runs,
+    bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::continue_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
     runtime_contracts::{
@@ -205,6 +205,22 @@ pub(crate) async fn client_tool_result_result(
             "tool_call_id does not match active BearWire run obligation".to_string(),
         ));
     }
+    let obligation =
+        bearwire_obligations::get_tool_call_obligation(&state.sqlx_pool, &run_id, &tool_call_id)
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "BearWire tool result has no persisted tool-call obligation".to_string(),
+                )
+            })?;
+    if !bearwire_obligations::obligation_accepts_client_method(&obligation, "client.tool.result") {
+        return Err(CustomError::ValidationError(format!(
+            "BearWire tool obligation {} is not waiting for client.tool.result (expected {}, state {})",
+            obligation.id,
+            obligation.expected_client_method,
+            obligation.state
+        )));
+    }
 
     let payload = json!({
         "tool_call_id": tool_call_id,
@@ -236,6 +252,12 @@ pub(crate) async fn client_tool_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
+            let _ = bearwire_obligations::mark_result_received(
+                &state.sqlx_pool,
+                obligation.id,
+                payload.clone(),
+            )
+            .await?;
             let event_type = if status == "ok" {
                 "tool_call.completed"
             } else {
@@ -353,6 +375,25 @@ pub(crate) async fn client_permission_result_result(
             "permission_id does not match active BearWire run obligation".to_string(),
         ));
     }
+    let obligation =
+        bearwire_obligations::get_permission_obligation(&state.sqlx_pool, &run_id, &permission_id)
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "BearWire permission result has no persisted permission obligation".to_string(),
+                )
+            })?;
+    if !bearwire_obligations::obligation_accepts_client_method(
+        &obligation,
+        "client.permission.result",
+    ) {
+        return Err(CustomError::ValidationError(format!(
+            "BearWire permission obligation {} is not waiting for client.permission.result (expected {}, state {})",
+            obligation.id,
+            obligation.expected_client_method,
+            obligation.state
+        )));
+    }
 
     let normalized_decision = match decision.as_str() {
         "approved" | "approve" | "granted" | "allow" => "granted",
@@ -392,6 +433,12 @@ pub(crate) async fn client_permission_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
+            let _ = bearwire_obligations::mark_result_received(
+                &state.sqlx_pool,
+                obligation.id,
+                payload.clone(),
+            )
+            .await?;
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
                 "expired" => "permission.expired",

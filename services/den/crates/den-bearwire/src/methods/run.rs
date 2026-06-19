@@ -9,7 +9,7 @@ use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},
-    bearwire_events, bearwire_runs,
+    bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     runtime_contracts::RoleRuntimeBinding,
@@ -300,6 +300,29 @@ async fn update_run_state_for_runtime_event(
                 None,
             )
             .await;
+            let obligation = bearwire_obligations::upsert_tool_call_obligation(
+                pool,
+                run_id,
+                session_id,
+                tool_call_id,
+                approval_request_id.as_deref(),
+                json!({
+                    "tool_call_id": tool_call_id,
+                    "approval_required": approval_required,
+                    "approval_request_id": approval_request_id,
+                    "request_id": request_id,
+                }),
+            )
+            .await;
+            if let Err(err) = obligation {
+                tracing::warn!(
+                    error = %err,
+                    session_id = %session_id,
+                    run_id = %run_id,
+                    tool_call_id = %tool_call_id,
+                    "failed to persist BearWire tool-call obligation"
+                );
+            }
             if let Some(started_at) = started_at {
                 let (kind, text) = if *approval_required {
                     (
