@@ -1,6 +1,6 @@
 # BearWire armature wire — implementation plan
 
-**Status:** In progress — Phases 0–2 complete; Phase 3 opt-in BearWire armature path underway  
+**Status:** In progress — Phases 0–2 complete; Phase 3 implementation complete, opt-in smoke/parity validation pending  
 **Date:** 2026-06-16  
 **Last updated:** 2026-06-19  
 **Decision:** [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md)  
@@ -124,19 +124,20 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 **Exit gate:** Complete. `den-bearwire` integration coverage now exercises RPC `run.start` with a mock OpenAI-compatible provider, then replays BearWire SSE and asserts `run.accepted`, `run.started`, `message.delta`, and `run.completed`.
 
-## Phase 3 — `bear-armature` BearWire client — In progress
+## Phase 3 — `bear-armature` BearWire client — Implementation complete; smoke validation pending
 
 **Goal:** Armature speaks BearWire to Den; translates to ACP stdio locally. Legacy binary/package aliases (`bears-acp-adapter`) remain compatibility shims during migration.
 
 | Task | Location | Notes |
 | --- | --- | --- |
-| BearWire HTTP client (RPC + SSE consumer) | `tools/bear-armature` | Implemented first opt-in path: `initialize`, `session.open`, `run.start`, event replay, fallback to legacy `/acp` unless `BEARS_BEARWIRE_REQUIRED=1` |
+| BearWire HTTP client (RPC + SSE consumer) | `tools/bear-armature` | Implemented opt-in path: `initialize`, `session.open`, `run.start`, event replay, fallback to legacy `/acp` unless `BEARS_BEARWIRE_REQUIRED=1` |
 | BearWire client result methods | `tools/bear-armature` | Implemented routing for `client.tool.result` and `client.permission.result` when BearWire events carry `run_id` |
-| Move any remaining ACP-specific descriptor framing | adapter + den-bearwire | In progress. BearWire now forwards armature `client_context` so Den can derive Pair local tool descriptors; remaining work is to make descriptor vocabulary explicitly BearWire-neutral |
-| Dual-mode operation | adapter config | Implemented opt-in `BEARS_BEARWIRE=1`; strict mode via `BEARS_BEARWIRE_REQUIRED=1`; auto-detect/default still pending |
-| Parity test suite | adapter + den integration | Pending. Need same editor session against legacy and BearWire backends, including file tools, permission-gated edits, cancellation, and session lifecycle |
+| BearWire session lifecycle/resource methods | `tools/bear-armature` | Implemented BearWire `session.close`, `run.cancel`, and `resource.update` paths with legacy fallback |
+| Move any remaining ACP-specific descriptor framing | adapter + den-bearwire | BearWire forwards armature `client_context`; Den derives Pair local tool descriptors from armature direct-tool capabilities. Descriptor vocabulary cleanup remains Phase 6 terminology/neutrality work |
+| Dual-mode operation | adapter config | Implemented opt-in `BEARS_BEARWIRE=1`, auto-probe with `BEARS_BEARWIRE=auto`, and strict mode via `BEARS_BEARWIRE_REQUIRED=1`; default-to-BearWire remains Phase 4 |
+| Parity test suite | adapter + den integration | Code-side tests pass; external Zed/Cursor smoke still needed for plain chat, file tools, permission-gated edits, cancellation, close, and legacy fallback before Phase 4 |
 
-**Exit gate:** Zed/Cursor smoke test against Den with BearWire enabled; golden semantic parity with legacy path.
+**Exit gate:** Implementation complete. Remaining validation before Phase 4 is an external Zed/Cursor smoke test against Den with BearWire enabled, plus parity confidence for plain chat, file tools, permission-gated edits, cancellation, close, and fallback behavior.
 
 ## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 
@@ -250,7 +251,7 @@ A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `wor
 | 0 | Mapping locked in tests | Complete |
 | 1 | BearWire types in den-runtime | Complete |
 | 2 | `/bearwire/v1` served | Complete; still parallel to legacy `/acp` |
-| 3 | Armature BearWire client | In progress; opt-in via `BEARS_BEARWIRE=1` |
+| 3 | Armature BearWire client | Implementation complete; opt-in via `BEARS_BEARWIRE=1` or `BEARS_BEARWIRE=auto`; smoke/parity validation pending |
 | 4 | Legacy removed | Pending; default path after parity confidence |
 | 5 | WebSocket | Optional; faster reconnect |
 | 6 | Bear stance terminology cleanup | Pending final cleanup; user/model-visible clarity |

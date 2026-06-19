@@ -4252,6 +4252,33 @@ async fn post_session_lifecycle_action_with_payload(
     action: &str,
     payload: Value,
 ) -> Result<()> {
+    if bearwire::enabled() {
+        let result = match action {
+            "close" => Some(bearwire::post_session_close(config, session_id).await),
+            "cancel" => Some(bearwire::post_run_cancel(config, session_id).await),
+            _ => None,
+        };
+        if let Some(result) = result {
+            match result {
+                Ok(value) => {
+                    eprintln!(
+                        "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
+                        action,
+                        session_id,
+                        truncate_for_log(&value.to_string(), 360)
+                    );
+                    return Ok(());
+                }
+                Err(err) if bearwire::required() => return Err(err),
+                Err(err) => eprintln!(
+                    "bear-armature: BearWire session lifecycle action={} failed; falling back to legacy ACP HTTP session_id={} error={err:#}",
+                    action,
+                    session_id
+                ),
+            }
+        }
+    }
+
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/{}",
         config.api_url,
@@ -7583,6 +7610,28 @@ async fn post_adapter_environment(
     let title = conversation_title
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let resource = json!({
+        "kind": "acp_adapter",
+        "environment": environment.clone(),
+        "conversation_title": title,
+    });
+    if bearwire::enabled() {
+        match bearwire::post_resource_update(config, session_id, resource).await {
+            Ok(value) => {
+                eprintln!(
+                    "bear-armature: posted BearWire resource.update session_id={} response={}",
+                    session_id,
+                    truncate_for_log(&value.to_string(), 360)
+                );
+                return Ok(());
+            }
+            Err(err) if bearwire::required() => return Err(err),
+            Err(err) => eprintln!(
+                "bear-armature: BearWire resource.update failed; falling back to legacy ACP adapter-environment session_id={} error={err:#}",
+                session_id
+            ),
+        }
+    }
     let payload = with_adapter_contract(json!({
         "environment": environment,
         "conversation_title": title,

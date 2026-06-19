@@ -16,6 +16,9 @@ const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub(crate) fn enabled() -> bool {
     env_bool("BEARS_BEARWIRE")
+        || std::env::var("BEARS_BEARWIRE")
+            .ok()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("auto"))
 }
 
 pub(crate) fn required() -> bool {
@@ -188,6 +191,53 @@ pub(crate) async fn handle_prompt(
     }
 
     crate::write_prompt_end_turn_response(response_id).await
+}
+
+pub(crate) async fn post_session_close(config: &Config, session_id: &str) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "session.close",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn post_run_cancel(config: &Config, session_id: &str) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "run.cancel",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn post_resource_update(
+    config: &Config,
+    session_id: &str,
+    resource: Value,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "resource.update",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "resource": resource,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
 }
 
 pub(crate) async fn post_tool_result(
