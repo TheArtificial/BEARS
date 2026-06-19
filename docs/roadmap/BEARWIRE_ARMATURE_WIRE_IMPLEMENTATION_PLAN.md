@@ -1,7 +1,8 @@
 # BearWire armature wire — implementation plan
 
-**Status:** Draft  
+**Status:** In progress — Phases 0–2 complete; Phase 3 opt-in BearWire armature path underway  
 **Date:** 2026-06-16  
+**Last updated:** 2026-06-19  
 **Decision:** [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md)  
 **Specs:** [BearWire JSON specification](../architecture/bearwire-json-spec.md), [BearWire Rust design](../architecture/bearwire-rust-design.md)
 
@@ -26,6 +27,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 - No adapter-SSE `type` strings on the Den ↔ armature hop.
 - `/acp/**` removed or thin-shimmed to BearWire internally.
 - `den-acp` renamed or superseded by `den-bearwire` (name optional; boundary is what matters).
+- Product/model-facing language uses **Bear stances** (`chat`, `pair`, `curate`, `work`, `watch`) for Bear posture, and reserves **session mode** for `ask` / `plan` / `write` tool-policy state.
 
 ## Principles
 
@@ -80,7 +82,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 | `conversation_resolved` | `ConversationResolved` |
 | `session_info_update` | `SessionInfoUpdate` |
 
-## Phase 0 — Mapping lock (no wire change)
+## Phase 0 — Mapping lock (no wire change) — Complete
 
 **Goal:** Pin the adapter-SSE → BearWire mapping in tests and docs.
 
@@ -92,7 +94,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 **Exit gate:** Tests compile; mapping table complete; no production wire change.
 
-## Phase 1 — Wire types + projection in core
+## Phase 1 — Wire types + projection in core — Complete
 
 **Goal:** Introduce serializable BearWire wire types and projection from `RuntimeSemanticEvent`.
 
@@ -106,7 +108,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 **Exit gate:** `cargo test -p den-runtime bearwire` green; golden traces extended.
 
-## Phase 2 — BearWire HTTP edge (parallel to `/acp`)
+## Phase 2 — BearWire HTTP edge (parallel to `/acp`) — Complete
 
 **Goal:** Serve BearWire v1 alongside legacy routes.
 
@@ -120,22 +122,23 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Binary composition | `services/den/src/lib.rs` | Mount `/bearwire` peer router (same pattern as post-ADR-0043 composition) |
 | Feature flag | `config.bearwire_enabled` or extend `acp_gateway_enabled` | Den advertises BearWire in `initialize` result when enabled |
 
-**Exit gate:** Integration test: RPC `run.start` → SSE receives `message.delta` + `run.completed` for a trivial prompt (mock provider).
+**Exit gate:** Complete. `den-bearwire` integration coverage now exercises RPC `run.start` with a mock OpenAI-compatible provider, then replays BearWire SSE and asserts `run.accepted`, `run.started`, `message.delta`, and `run.completed`.
 
-## Phase 3 — `bears-acp-adapter` BearWire client
+## Phase 3 — `bear-armature` BearWire client — In progress
 
-**Goal:** Armature speaks BearWire to Den; translates to ACP stdio locally.
+**Goal:** Armature speaks BearWire to Den; translates to ACP stdio locally. Legacy binary/package aliases (`bears-acp-adapter`) remain compatibility shims during migration.
 
 | Task | Location | Notes |
 | --- | --- | --- |
-| BearWire HTTP client (RPC + SSE consumer) | `tools/bears-acp-adapter` | Negotiate version in `initialize`; fall back to legacy `/acp` if Den < v1 |
-| Move any remaining ACP-specific descriptor framing | adapter | Server sends neutral tool policy; adapter adds ACP wire methods for editor |
-| Dual-mode operation | adapter config | `BEARS_BEARWIRE=1` or auto-detect from `initialize` |
-| Parity test suite | adapter + den integration | Same editor session against legacy and BearWire backends |
+| BearWire HTTP client (RPC + SSE consumer) | `tools/bear-armature` | Implemented first opt-in path: `initialize`, `session.open`, `run.start`, event replay, fallback to legacy `/acp` unless `BEARS_BEARWIRE_REQUIRED=1` |
+| BearWire client result methods | `tools/bear-armature` | Implemented routing for `client.tool.result` and `client.permission.result` when BearWire events carry `run_id` |
+| Move any remaining ACP-specific descriptor framing | adapter + den-bearwire | In progress. BearWire now forwards armature `client_context` so Den can derive Pair local tool descriptors; remaining work is to make descriptor vocabulary explicitly BearWire-neutral |
+| Dual-mode operation | adapter config | Implemented opt-in `BEARS_BEARWIRE=1`; strict mode via `BEARS_BEARWIRE_REQUIRED=1`; auto-detect/default still pending |
+| Parity test suite | adapter + den integration | Pending. Need same editor session against legacy and BearWire backends, including file tools, permission-gated edits, cancellation, and session lifecycle |
 
 **Exit gate:** Zed/Cursor smoke test against Den with BearWire enabled; golden semantic parity with legacy path.
 
-## Phase 4 — Deprecate adapter-SSE and `/acp/**`
+## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 
 **Goal:** Single armature wire.
 
@@ -149,7 +152,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 **Exit gate:** No production adapter release depends on adapter-SSE; `/acp` documented as removed.
 
-## Phase 5 — WebSocket transport (v2, optional)
+## Phase 5 — WebSocket transport (v2, optional) — Optional / Pending
 
 **Goal:** Align transport with JSON spec preferred binding.
 
@@ -160,6 +163,23 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Load balancer / Coolify notes | Sticky sessions or SSE-friendly proxy for v1 |
 
 **Exit gate:** Adapter uses WebSocket in CI; HTTP+SSE still supported.
+
+## Phase 6 — Bear stance terminology cleanup — Final cleanup / Pending
+
+**Goal:** Remove product/model-facing confusion between Bear **stances** and session **modes** after the BearWire cutover is stable.
+
+A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `work`, `watch`) that selects prompt framing, memory scope, and tool surface. A stance is not a separate Bear or separate identity. A **session mode** remains only the Pair coding-session tool-policy state (`ask`, `plan`, `write`).
+
+| Task | Notes |
+| --- | --- |
+| Add or update architecture docs defining “Bear stance” | Explicitly reserve “mode” for `ask` / `plan` / `write`; avoid using “profile”, “role”, or “agent” in user/model-facing text except for compatibility notes |
+| Scrub prompts and self-descriptions | Prompts should say “You are {BearName}, currently operating in the {stance} stance”; they must not imply each stance is a different Bear |
+| Scrub UI and docs | Replace user-visible “profile/role” language with “stance” where it refers to `chat` / `pair` / `curate` / `work` / `watch` |
+| Introduce internal code aliases before broad renames | Prefer `BearStance` wrappers/aliases around existing `BearProfile` first; avoid destabilizing the BearWire migration with a large mechanical rename |
+| Migrate internal names deliberately | Later rename `BearProfile`, `NativeCapabilityProfile`, `bear_profile_bindings`, `profile` columns/fields, and related API fields only with explicit migration/compatibility plan |
+| Keep compatibility boundaries clear | Legacy DB/API names may remain temporarily; model-facing tool labels and prompts should use “stance” immediately after this phase |
+
+**Exit gate:** User/model-facing language consistently distinguishes Bear stances from session modes; Bear self-description no longer presents stances as different Bears; internal legacy `profile` names are either migrated or wrapped behind stance-named APIs.
 
 ## Control-method mapping (complete)
 
@@ -215,6 +235,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 | WebSocket delayed indefinitely | v1 HTTP+SSE is full BearWire semantics, not a throwaway format |
 | Large adapter change | Dual-mode + feature flag; legacy default until Phase 4 |
 | `GatewayEvent` channels entangled with SSE | Phase 1 wire types bypass channels; handlers attach settlement server-side |
+| Stance/profile/mode terminology remains confused | Phase 6 explicitly scrubs product/model-facing language and reserves “mode” for `ask` / `plan` / `write` only |
 
 ## Out of scope
 
@@ -226,12 +247,13 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 | Phase | Milestone | User-visible |
 | --- | --- | --- |
-| 0 | Mapping locked in tests | None |
-| 1 | BearWire types in den-runtime | None |
-| 2 | `/bearwire/v1` served | None (flag off) |
-| 3 | Adapter BearWire client | Opt-in via env |
-| 4 | Legacy removed | Default path |
-| 5 | WebSocket | Faster reconnect (optional) |
+| 0 | Mapping locked in tests | Complete |
+| 1 | BearWire types in den-runtime | Complete |
+| 2 | `/bearwire/v1` served | Complete; still parallel to legacy `/acp` |
+| 3 | Armature BearWire client | In progress; opt-in via `BEARS_BEARWIRE=1` |
+| 4 | Legacy removed | Pending; default path after parity confidence |
+| 5 | WebSocket | Optional; faster reconnect |
+| 6 | Bear stance terminology cleanup | Pending final cleanup; user/model-visible clarity |
 
 ## Related documents
 
