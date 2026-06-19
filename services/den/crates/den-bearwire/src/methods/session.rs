@@ -3,9 +3,7 @@ use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions, bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent,
-    DenState,
+    acp_sessions, bearwire_events, runtime::bearwire_projection::wire::BearWireEvent, DenState,
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
@@ -18,10 +16,31 @@ pub(crate) async fn session_open_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
-    let conversation_id = param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
-    let runtime_session_id = param_string(params, "runtime_session_id")
-        .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
+    let existing = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?;
     let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
+    let conversation_id = param_string(params, "conversation_id")
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|session| session.conversation_id.clone())
+        })
+        .unwrap_or_else(|| format!("new-acp-{client}-{}", uuid::Uuid::new_v4().simple()));
+    let resolved_conversation_id = existing
+        .as_ref()
+        .and_then(|session| session.resolved_conversation_id.clone());
+    let runtime_session_id = param_string(params, "runtime_session_id")
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|session| session.runtime_session_id.clone())
+        })
+        .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
     let cwd = param_string(params, "cwd");
     let current_mode = param_string(params, "mode");
     acp_sessions::upsert_session(
@@ -33,7 +52,7 @@ pub(crate) async fn session_open_result(
             acp_session_id: session_id.clone(),
             runtime_session_id,
             conversation_id,
-            resolved_conversation_id: None,
+            resolved_conversation_id,
             client,
             cwd,
             current_mode,
@@ -85,7 +104,8 @@ pub(crate) async fn session_close_result(
         &bear.slug,
         &session_id,
     )
-    .await? else {
+    .await?
+    else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
@@ -120,7 +140,12 @@ pub(crate) async fn session_state_result(
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
-    let Some(bear_slug) = params.get("bear_slug").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(bear_slug) = params
+        .get("bear_slug")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
         return Ok(json!({
             "status": "available",
             "note": "Provide bear_slug and optional session_id for authenticated BearWire session state.",
@@ -128,7 +153,12 @@ pub(crate) async fn session_state_result(
         }));
     };
     let user_id = authenticate_for_bear_slug(state, headers, bear_slug).await?;
-    if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(session_id) = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let session = acp_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             user_id,

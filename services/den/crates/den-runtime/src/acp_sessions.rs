@@ -61,8 +61,8 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
         ON CONFLICT (user_id, bear_id, acp_session_id) DO UPDATE
         SET bear_slug = EXCLUDED.bear_slug,
             runtime_session_id = EXCLUDED.runtime_session_id,
-            conversation_id = EXCLUDED.conversation_id,
-            resolved_conversation_id = EXCLUDED.resolved_conversation_id,
+            conversation_id = COALESCE(NULLIF(EXCLUDED.conversation_id, ''), acp_sessions.conversation_id),
+            resolved_conversation_id = COALESCE(EXCLUDED.resolved_conversation_id, acp_sessions.resolved_conversation_id),
             client = EXCLUDED.client,
             cwd = COALESCE(EXCLUDED.cwd, acp_sessions.cwd),
             current_mode = COALESCE(acp_sessions.current_mode, EXCLUDED.current_mode),

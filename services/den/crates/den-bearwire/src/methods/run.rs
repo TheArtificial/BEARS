@@ -399,9 +399,24 @@ pub(crate) async fn run_start_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
     let prompt = required_param_string(params, "prompt")?;
-    let conversation_id =
-        param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
     let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
+    let existing = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?;
+    let conversation_id = param_string(params, "conversation_id")
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|session| session.conversation_id.clone())
+        })
+        .unwrap_or_else(|| format!("new-acp-{client}-{}", Uuid::new_v4().simple()));
+    let resolved_conversation_id = existing
+        .as_ref()
+        .and_then(|session| session.resolved_conversation_id.clone());
     let cwd = param_string(params, "cwd");
     let requested_mode =
         param_string(params, "requested_mode").or_else(|| param_string(params, "mode"));
@@ -424,9 +439,12 @@ pub(crate) async fn run_start_result(
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.clone(),
-            runtime_session_id: format!("bearwire:{}:{}", bear.id, session_id),
+            runtime_session_id: existing
+                .as_ref()
+                .map(|session| session.runtime_session_id.clone())
+                .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id)),
             conversation_id: conversation_id.clone(),
-            resolved_conversation_id: None,
+            resolved_conversation_id,
             client: client.clone(),
             cwd: cwd.clone(),
             current_mode: None,
