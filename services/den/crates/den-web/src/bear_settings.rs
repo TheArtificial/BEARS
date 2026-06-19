@@ -45,6 +45,8 @@ use crate::web::admin::bears::{
     BearMemberAdminRow, BearPlanModeRow, BearProfileBindingHealthRow, BearWebApprovalRow,
     BearWebFetchRow, BearWebSourceRow,
 };
+use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
+use den_runtime::agent_assist::ModelOption;
 
 use super::{
     bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
@@ -57,6 +59,7 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/access", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
         .route_with_tsr("/bear/{slug}/profiles", get(profiles_view))
+        .route_with_tsr("/bear/{slug}/models", get(models_view).post(models_post))
         .route_with_tsr("/bear/{slug}/profiles/{profile}", get(profile_detail_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
@@ -93,6 +96,33 @@ pub fn router() -> Router<AppState> {
 struct DomainQuery {
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BearModelsForm {
+    #[serde(default)]
+    bear_default_model: String,
+    #[serde(default)]
+    chat_model: String,
+    #[serde(default)]
+    pair_model: String,
+    #[serde(default)]
+    curate_model: String,
+    #[serde(default)]
+    work_model: String,
+    #[serde(default)]
+    watch_model: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BearProfileModelRow {
+    profile: String,
+    label: String,
+    configured_model: String,
+    resolved_model: String,
+    source: String,
 }
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
@@ -781,6 +811,190 @@ async fn profiles_view(
         },
     )
     .await
+}
+
+
+fn profile_label(profile: BearProfile) -> &'static str {
+    match profile {
+        BearProfile::Chat => "Chat",
+        BearProfile::Pair => "Pair",
+        BearProfile::Curate => "Curate",
+        BearProfile::Work => "Work",
+        BearProfile::Watch => "Watch",
+    }
+}
+
+fn form_profile_model<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a str {
+    match profile {
+        BearProfile::Chat => &form.chat_model,
+        BearProfile::Pair => &form.pair_model,
+        BearProfile::Curate => &form.curate_model,
+        BearProfile::Work => &form.work_model,
+        BearProfile::Watch => &form.watch_model,
+    }
+}
+
+fn model_available(options: &[ModelOption], raw: &str) -> bool {
+    let requested = raw.trim();
+    if requested.is_empty() {
+        return false;
+    }
+    let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+    options.iter().any(|model| {
+        if model.handle == requested {
+            return true;
+        }
+        let Some(resolved) = requested_resolved else {
+            return false;
+        };
+        resolved == model.handle
+            || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+                == Some(resolved)
+    })
+}
+
+async fn model_page_rows(
+    pool: &sqlx::PgPool,
+    bear: &den_runtime::bears::Bear,
+) -> Result<Vec<BearProfileModelRow>, CustomError> {
+    let settings = bears_db::list_profile_model_settings(pool, bear.id).await?;
+    let mut rows = Vec::new();
+    for profile in BearProfile::ALL {
+        let configured = settings
+            .iter()
+            .find(|row| row.profile == profile.as_str())
+            .and_then(|row| row.model.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("");
+        let resolved = if configured.is_empty() {
+            bear.default_model.as_deref().unwrap_or("")
+        } else {
+            configured
+        };
+        rows.push(BearProfileModelRow {
+            profile: profile.as_str().to_string(),
+            label: profile_label(profile).to_string(),
+            configured_model: configured.to_string(),
+            resolved_model: resolved.to_string(),
+            source: if configured.is_empty() { "Bear default" } else { "Profile override" }.to_string(),
+        });
+    }
+    Ok(rows)
+}
+
+async fn models_view(
+    Path(slug): Path<String>,
+    Query(query): Query<DomainQuery>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let (model_catalog_configured, model_options, models_fetch_error) =
+        model_catalog_select_context(&state).await;
+    let rows = model_page_rows(state.sqlx_pool(), &bear).await?;
+    web::render_template(
+        &state,
+        "bear/settings/models.html",
+        auth_session,
+        context! {
+            model_catalog_configured,
+            model_options,
+            models_fetch_error,
+            rows,
+            message => query.message,
+            error => query.error,
+            can_manage_bear,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "models"),
+        },
+    )
+    .await
+}
+
+async fn models_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearModelsForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
+    if !configured || model_options.is_empty() {
+        let message = fetch_error.unwrap_or_else(|| "No Bifrost models are available for validation.".to_string());
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/models?error={}",
+            bear.slug,
+            urlencoding::encode(&message)
+        ))
+        .into_response());
+    }
+
+    let default_trim = form.bear_default_model.trim();
+    if default_trim.is_empty() || !model_available(&model_options, default_trim) {
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/models?error={}",
+            bear.slug,
+            urlencoding::encode("Choose a Bifrost-available Bear default model.")
+        ))
+        .into_response());
+    }
+    let default_model = canonical_default_model_handle(default_trim);
+
+    for profile in BearProfile::ALL {
+        let raw = form_profile_model(&form, profile).trim();
+        if !raw.is_empty() && !model_available(&model_options, raw) {
+            let message = format!("{} override must be a Bifrost-available model.", profile_label(profile));
+            return Ok(Redirect::to(&format!(
+                "/bear/{}/models?error={}",
+                bear.slug,
+                urlencoding::encode(&message)
+            ))
+            .into_response());
+        }
+    }
+
+    bears_db::update_bear(
+        state.sqlx_pool(),
+        bear.id,
+        bears_db::BearParams {
+            slug: bear.slug.as_str(),
+            name: bear.name.as_str(),
+            description: bear.description.as_str(),
+            system_prompt: bear.system_prompt.as_str(),
+            default_model: default_model.as_deref(),
+            tools_enabled: None,
+            letta_agent_type: bear.letta_agent_type.as_deref(),
+            letta_tool_ids: bear.letta_tool_ids.clone(),
+            context_profile: bear.context_profile.clone(),
+        },
+    )
+    .await?;
+
+    for profile in BearProfile::ALL {
+        let raw = form_profile_model(&form, profile).trim();
+        let model = canonical_default_model_handle(raw);
+        bears_db::set_profile_model_setting(
+            state.sqlx_pool(),
+            bear.id,
+            profile,
+            model.as_deref(),
+        )
+        .await?;
+    }
+
+    Ok(Redirect::to(&format!(
+        "/bear/{}/models?message={}",
+        bear.slug,
+        urlencoding::encode("Model settings saved.")
+    ))
+    .into_response())
 }
 
 async fn profile_detail_view(

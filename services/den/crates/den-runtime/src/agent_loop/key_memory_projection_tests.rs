@@ -68,6 +68,7 @@ async fn projects_shared_identity_anchors_without_work_surface() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -78,8 +79,6 @@ async fn projects_shared_identity_anchors_without_work_surface() {
     assert!(result.rendered_text.contains("## Shared anchors"));
     assert!(!result.rendered_text.contains("## Work surface:"));
 }
-
-
 
 #[tokio::test]
 async fn long_context_model_metadata_increases_projection_budget() {
@@ -100,6 +99,7 @@ async fn long_context_model_metadata_increases_projection_budget() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -107,11 +107,17 @@ async fn long_context_model_metadata_increases_projection_budget() {
 
     assert_eq!(result.diagnostic["global_char_cap"].as_u64(), Some(16_000));
     assert_eq!(
-        result.diagnostic.pointer("/model_metadata/key").and_then(|v| v.as_str()),
+        result
+            .diagnostic
+            .pointer("/model_metadata/key")
+            .and_then(|v| v.as_str()),
         Some("openai/gpt-4.1")
     );
     assert_eq!(
-        result.diagnostic.pointer("/model_metadata/context_window").and_then(|v| v.as_u64()),
+        result
+            .diagnostic
+            .pointer("/model_metadata/context_window")
+            .and_then(|v| v.as_u64()),
         Some(1_047_576)
     );
 }
@@ -138,6 +144,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints.clone(),
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -174,6 +181,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints,
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -217,6 +225,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
         },
         work_surface_status_override: Some("resolved"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -288,6 +297,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -311,6 +321,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty().with_confinement([surface]),
     })
     .await

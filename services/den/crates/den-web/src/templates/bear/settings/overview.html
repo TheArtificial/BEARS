@@ -49,8 +49,7 @@
                 >{% endif %}
             </p>
             <p>
-                Model: {% if bear.default_model %}{{ bear.default_model | e }}{%
-                else %}<em>none</em>{% endif %}
+                Model: {% if bear.default_model %}<a href="/bear/{{ bear.slug | e }}/models"><code>{{ bear.default_model | e }}</code></a>{% else %}<a href="/bear/{{ bear.slug | e }}/models"><em>none</em></a>{% endif %}
             </p>
         </section>
 

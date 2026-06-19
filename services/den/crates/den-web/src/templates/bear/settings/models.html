@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Models · {{ bear.slug }}{% endblock %}
+
+{% block content %}
+{% include "bear/settings/_bear_nav.html" %}
+<div class="box">
+<h2>Models · {{ bear.name }}</h2>
+
+{% if message %}
+<p><strong>{{ message | e }}</strong></p>
+{% endif %}
+{% if error %}
+<p class="form-errors">{{ error | e }}</p>
+{% endif %}
+
+<p class="form-hint">
+  Model selection is resolved in layers: Bear default, then profile override, then future lane-specific assignments.
+  Lane-specific model assignments are TBD.
+</p>
+
+{% if models_fetch_error %}
+<p class="form-errors">{{ models_fetch_error | e }}</p>
+{% endif %}
+
+<form method="post" class="box full-width">
+  <h3>Bear default</h3>
+  <p class="form-hint">Used when a profile is set to inherit.</p>
+  <label for="bear_default_model">Bear default model</label>
+  <select id="bear_default_model" name="bear_default_model" required{% if not can_manage_bear %} disabled{% endif %}>
+    <option value="" disabled{% if not bear.default_model %} selected{% endif %}>— Choose a model —</option>
+    {% for m in model_options %}
+    <option value="{{ m.handle | e }}"{% if bear.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
+    {% endfor %}
+  </select>
+
+  <h3>Profile defaults</h3>
+  <p class="form-hint">Leave a profile set to inherit unless it needs a different tradeoff.</p>
+  <table>
+    <thead><tr><th>Profile</th><th>Model setting</th><th>Resolved</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><strong>{{ row.label | e }}</strong><br><code>{{ row.profile | e }}</code></td>
+        <td>
+          <select name="{{ row.profile | e }}_model"{% if not can_manage_bear %} disabled{% endif %}>
+            <option value=""{% if not row.configured_model %} selected{% endif %}>Inherit Bear default</option>
+            {% for m in model_options %}
+            <option value="{{ m.handle | e }}"{% if row.configured_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>{% if row.resolved_model %}<code>{{ row.resolved_model | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+        <td>{{ row.source | e }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if can_manage_bear %}
+  <p><button type="submit">Save model settings</button></p>
+  {% else %}
+  <p class="form-hint">Only Bear admins can edit model settings.</p>
+  {% endif %}
+</form>
+</div>
+{% endblock %}

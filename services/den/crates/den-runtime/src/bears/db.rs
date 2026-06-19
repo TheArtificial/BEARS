@@ -1,6 +1,6 @@
 //! SQL for bears and `user_bear` (runtime `query_as` — see `model.rs`).
 
-use sqlx::{types::Json, PgPool};
+use sqlx::{types::Json, FromRow, PgPool};
 use uuid::Uuid;
 
 use den_core::DenError;
@@ -20,6 +20,13 @@ pub struct BearParams<'a> {
     pub letta_agent_type: Option<&'a str>,
     pub letta_tool_ids: Json<Vec<String>>,
     pub context_profile: Option<Json<serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct BearProfileModelSetting {
+    pub bear_id: Uuid,
+    pub profile: String,
+    pub model: Option<String>,
 }
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
@@ -727,4 +734,84 @@ pub async fn ensure_default_runtime_plan(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn list_profile_model_settings(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearProfileModelSetting>, DenError> {
+    sqlx::query_as::<_, BearProfileModelSetting>(
+        r#"
+        SELECT bear_id, profile, model
+        FROM bear_profile_model_settings
+        WHERE bear_id = $1
+        ORDER BY profile
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn profile_model_setting(
+    pool: &PgPool,
+    bear_id: Uuid,
+    profile: BearProfile,
+) -> Result<Option<String>, DenError> {
+    sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT model
+        FROM bear_profile_model_settings
+        WHERE bear_id = $1 AND profile = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(profile.as_str())
+    .fetch_optional(pool)
+    .await
+    .map(|row| row.flatten().and_then(|model| {
+        let trimmed = model.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    }))
+    .map_err(Into::into)
+}
+
+pub async fn set_profile_model_setting(
+    pool: &PgPool,
+    bear_id: Uuid,
+    profile: BearProfile,
+    model: Option<&str>,
+) -> Result<(), DenError> {
+    let model = model.map(str::trim).filter(|s| !s.is_empty());
+    sqlx::query(
+        r#"
+        INSERT INTO bear_profile_model_settings (bear_id, profile, model, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (bear_id, profile) DO UPDATE
+        SET model = EXCLUDED.model,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(profile.as_str())
+    .bind(model)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn resolve_model_for_profile(
+    pool: &PgPool,
+    bear: &Bear,
+    profile: BearProfile,
+    system_default_model: &str,
+) -> Result<String, DenError> {
+    if let Some(model) = profile_model_setting(pool, bear.id, profile).await? {
+        return Ok(model);
+    }
+    if let Some(model) = bear.default_model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(model.to_string());
+    }
+    Ok(system_default_model.trim().to_string())
 }

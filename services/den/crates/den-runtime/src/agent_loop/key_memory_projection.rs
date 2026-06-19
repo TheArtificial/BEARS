@@ -55,6 +55,7 @@ pub struct KeyMemoryProjectionInput<'a> {
     pub session_hints: WorkSurfaceSessionHints,
     pub work_surface_status_override: Option<&'a str>,
     pub native_runtime: bool,
+    pub model_for_budget: Option<&'a str>,
     /// Mandatory access gate (ADR-0042 §7): records carrying access-bearing relations are
     /// only projected when this context grants them. An empty context is fail-closed.
     pub access: AccessContext,
@@ -205,9 +206,8 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
     };
 
     let model_metadata = input
-        .bear
-        .default_model
-        .as_deref()
+        .model_for_budget
+        .or(input.bear.default_model.as_deref())
         .and_then(model_registry::entry_for_handle);
     let budget = projection_budget_for_profile_and_model(
         input.profile,

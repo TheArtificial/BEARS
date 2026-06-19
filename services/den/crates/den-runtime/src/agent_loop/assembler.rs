@@ -158,6 +158,14 @@ pub async fn assemble_native_turn_for_bear(
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, DenError> {
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
+    let model_for_profile = bears_db::resolve_model_for_profile(
+        ctx.pool,
+        bear,
+        ctx.profile,
+        &ctx.config.default_llm_model,
+    )
+    .await
+    .ok();
     let projection = match project_key_memory(KeyMemoryProjectionInput {
         pool: ctx.pool,
         stores: ctx.stores,
@@ -167,6 +175,7 @@ pub async fn assemble_native_turn_for_bear(
         session_hints: ctx.session_hints(),
         work_surface_status_override: ctx.work_surface_status_override(),
         native_runtime: ctx.native_runtime,
+        model_for_budget: model_for_profile.as_deref(),
         // Fail-closed default: until session identity is resolved to entities (Phase 6),
         // any access-gated record is hidden. No-op today (no access rules exist yet).
         access: crate::memory::AccessContext::empty(),

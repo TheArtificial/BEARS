@@ -8,27 +8,23 @@ use uuid::Uuid;
 use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
-    {
-        turn_runner::{materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest},
-        agent_loop::{
-            agent_loop_session_key, assemble_native_turn_for_bear, run_agent_step_stream,
-            record_approval_decision, AgentLoopSession, AgentLoopSessionStore, AssembleTurnContext,
-            AgentStepOverflowContext, NativeToolDispatchMode, SessionTrackingStream,
-        },
-        bears::BearProfile,
-        conversation_persistence,
-        llm::{ChatMessage, LlmClient},
-        memory::MemoryStoreManager,
-        native_runtime::{
-            profile::NativeCapabilityProfile,
-            tools::merge_den_and_client_tools,
-        },
-        runtime_contracts::{
-            ContinueTurnRequest, RuntimeContinuation, RuntimeConversationBackend,
-            RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
-            RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent,
-            RoleRuntimeBinding, StartTurnRequest,
-        },
+    agent_loop::{
+        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
+        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
+        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
+    },
+    bears::BearProfile,
+    conversation_persistence,
+    llm::{ChatMessage, LlmClient},
+    memory::MemoryStoreManager,
+    native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
+    runtime_contracts::{
+        ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
+        RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
+        RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
+    },
+    turn_runner::{
+        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
     },
 };
 use den_core::DenError;
@@ -101,12 +97,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         if let Some(pool) = &self.pool {
             if let Some(bear_id) = bear_id_from_native_binding(binding) {
                 conversation_persistence::ensure_conversation_for_external_id(
-                    pool,
-                    bear_id,
-                    None,
-                    &id,
-                    None,
-                    None,
+                    pool, bear_id, None, &id, None, None,
                 )
                 .await?;
             }
@@ -168,8 +159,8 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
                 raw_payload: None,
             });
         };
-        let rows = conversation_persistence::list_messages_page(pool, canonical.id, None, 100)
-            .await?;
+        let rows =
+            conversation_persistence::list_messages_page(pool, canonical.id, None, 100).await?;
         let records = rows
             .into_iter()
             .rev()
@@ -246,8 +237,7 @@ async fn build_session(
     let bear = crate::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
-    let include_prompt_memory =
-        profile.include_prompt_memory && runtime_context.is_none();
+    let include_prompt_memory = profile.include_prompt_memory && runtime_context.is_none();
     let assembled = assemble_native_turn_for_bear(
         AssembleTurnContext {
             pool: deps.pool,
@@ -277,14 +267,17 @@ async fn build_session(
         .as_ref()
         .map(|projection| projection.cache_key.clone());
     let messages = assembled.messages;
-    let tools = merge_den_and_client_tools(
-        deps.config,
-        profile.profile,
-        client_tools,
-        human_message,
-    )?;
+    let tools =
+        merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
-    let model = llm.resolve_model(bear.default_model.as_deref());
+    let model = crate::bears::db::resolve_model_for_profile(
+        deps.pool,
+        &bear,
+        profile.profile,
+        llm.default_model(),
+    )
+    .await?;
+    let model = llm.resolve_model(Some(&model));
     let session = AgentLoopSession {
         session_key,
         bear_id,
@@ -334,15 +327,14 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     )
     .await?;
     let llm = LlmClient::new(deps.config);
-    let overflow = overflow_context(
-        deps.pool.clone(),
-        Arc::new(deps.config.clone()),
-        role,
-    );
+    let overflow = overflow_context(deps.pool.clone(), Arc::new(deps.config.clone()), role);
     let mut stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let mut text = String::new();
     while let Some(item) = stream.next().await {
-        if let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta }) = item? {
+        if let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
+            text: delta,
+        }) = item?
+        {
             text.push_str(&delta);
         }
     }
