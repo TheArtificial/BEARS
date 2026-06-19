@@ -83,7 +83,7 @@ pub(crate) async fn handle_prompt(
             "cwd": cwd,
             "mode": requested_mode,
             "adapter_contract": adapter_contract_context(),
-            "client_context": client_context,
+            "client_context": client_context.clone(),
         }),
     )
     .await
@@ -108,6 +108,7 @@ pub(crate) async fn handle_prompt(
             "prompt": prompt,
             "requested_mode": requested_mode,
             "adapter_contract": adapter_contract_context(),
+            "client_context": client_context,
         }),
     )
     .await

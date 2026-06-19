@@ -5,8 +5,9 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions, bearwire_events, bearwire_runs,
+    acp_sessions,
     bears::{db as bears_db, BearProfile},
+    bearwire_events, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     runtime_contracts::RoleRuntimeBinding,
@@ -16,6 +17,61 @@ use den_runtime::{
 
 use crate::auth::authenticated_bear;
 use crate::methods::{param_string, required_param_string};
+
+fn client_tool_descriptors_from_context(
+    client_context: Option<&Value>,
+    requested_mode: Option<&str>,
+) -> Value {
+    let context = client_context.unwrap_or(&Value::Null);
+    let policy = den_runtime::client_tools::resolve_session_policy_for_mode(
+        requested_mode.unwrap_or("ask"),
+        None,
+    );
+    let mut descriptors = Vec::new();
+    for tool in den_runtime::client_tools::ClientToolName::all() {
+        if *tool == den_runtime::client_tools::ClientToolName::McpCallTool
+            || !policy.allows_tool(*tool)
+        {
+            continue;
+        }
+        let descriptor = tool.descriptor();
+        if !adapter_supports_tool(context, descriptor.provider_name) {
+            continue;
+        }
+        descriptors.push(json!({
+            "name": descriptor.provider_name,
+            "description": descriptor.title,
+            "parameters": { "type": "object", "properties": {} },
+        }));
+    }
+    if let Some(mcp_tools) = context
+        .pointer("/mcp/client_tools")
+        .and_then(Value::as_array)
+    {
+        descriptors.extend(mcp_tools.iter().cloned());
+    }
+    if descriptors.is_empty() {
+        let descriptor = den_runtime::client_tools::ClientToolName::ReadTextFile.descriptor();
+        descriptors.push(json!({
+            "name": descriptor.provider_name,
+            "description": descriptor.title,
+            "parameters": { "type": "object", "properties": {} },
+        }));
+    }
+    json!(descriptors)
+}
+
+fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
+    client_context
+        .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            client_context
+                .pointer(&format!("/direct_tools/{provider_name}"))
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false)
+}
 
 pub(crate) async fn persist_runtime_event_as_bearwire(
     pool: &sqlx::PgPool,
@@ -189,9 +245,16 @@ pub(crate) async fn run_start_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
     let prompt = required_param_string(params, "prompt")?;
-    let conversation_id = param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
+    let conversation_id =
+        param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
     let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
     let cwd = param_string(params, "cwd");
+    let requested_mode =
+        param_string(params, "requested_mode").or_else(|| param_string(params, "mode"));
+    let client_tools = client_tool_descriptors_from_context(
+        params.get("client_context"),
+        requested_mode.as_deref(),
+    );
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
@@ -217,14 +280,8 @@ pub(crate) async fn run_start_result(
     .await?;
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
-    let run = bearwire_runs::create_run(
-        &state.sqlx_pool,
-        &run_id,
-        &session_id,
-        bear.id,
-        user_id,
-    )
-    .await?;
+    let run =
+        bearwire_runs::create_run(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id).await?;
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
         json!({
@@ -254,6 +311,7 @@ pub(crate) async fn run_start_result(
     let conversation_for_task = conversation_id.clone();
     let prompt_for_task = prompt.clone();
     let run_id_for_task = run_id.clone();
+    let client_tools_for_task = client_tools.clone();
     tokio::spawn(async move {
         let request_id = Uuid::new_v4();
         let _ = bearwire_runs::transition_run(
@@ -300,7 +358,7 @@ pub(crate) async fn run_start_result(
             conversation_selection: &conversation_for_task,
             upstream_target: &conversation_for_task,
             prompt: &prompt_for_task,
-            client_tools: None,
+            client_tools: Some(client_tools_for_task),
             runtime_context: None,
             runtime_context_len: 0,
             stream_tokens: true,
@@ -379,7 +437,8 @@ pub(crate) async fn run_cancel_result(
         &bear.slug,
         &session_id,
     )
-    .await? else {
+    .await?
+    else {
         return Ok(json!({
             "ok": true,
             "cancelled": false,
@@ -388,7 +447,9 @@ pub(crate) async fn run_cancel_result(
         }));
     };
 
-    let stream_cancel = state.acp_turn_cancellations.cancel_session(&session.acp_session_id);
+    let stream_cancel = state
+        .acp_turn_cancellations
+        .cancel_session(&session.acp_session_id);
     let active_turn = state.tool_turns.cancel_active_turn(&session.acp_session_id);
     let active_run = bearwire_runs::active_run_for_session(&state.sqlx_pool, &session_id).await?;
     if let Some(run) = &active_run {
