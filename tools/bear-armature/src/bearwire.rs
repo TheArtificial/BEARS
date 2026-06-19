@@ -25,6 +25,70 @@ pub(crate) fn required() -> bool {
     env_bool("BEARS_BEARWIRE_REQUIRED")
 }
 
+pub(crate) fn mode_summary() -> String {
+    let raw = std::env::var("BEARS_BEARWIRE").unwrap_or_else(|_| "<unset>".to_string());
+    let mode = if required() {
+        "required"
+    } else if raw.trim().eq_ignore_ascii_case("auto") {
+        "auto"
+    } else if enabled() {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    format!(
+        "{mode} (BEARS_BEARWIRE={raw}, BEARS_BEARWIRE_REQUIRED={})",
+        required()
+    )
+}
+
+pub(crate) async fn protocol_status(http: &reqwest::Client, config: &Config) -> String {
+    if !enabled() {
+        return format!("disabled; {}", mode_summary());
+    }
+    match rpc_call(http, config, "initialize", json!({})).await {
+        Ok(value) => {
+            let protocol = value
+                .get("protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let version = value
+                .get("version")
+                .and_then(Value::as_i64)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let server_name = value
+                .pointer("/server/name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let server_version = value
+                .pointer("/server/version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let git_sha = value
+                .pointer("/server/git_sha")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let legacy = value
+                .get("legacy_acp_enabled")
+                .and_then(Value::as_bool)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            format!(
+                "{}; Den advertises protocol={} version={} server={} {} git_sha={} legacy_acp_enabled={}",
+                mode_summary(),
+                protocol,
+                version,
+                server_name,
+                server_version,
+                git_sha,
+                legacy,
+            )
+        }
+        Err(err) => format!("{}; initialize failed: {err:#}", mode_summary()),
+    }
+}
+
 pub(crate) async fn validate_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
     let initialize = rpc_call(http, config, "initialize", json!({})).await?;
     if initialize.get("protocol").and_then(Value::as_str) != Some("bearwire")

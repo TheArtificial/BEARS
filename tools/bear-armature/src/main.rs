@@ -5240,7 +5240,15 @@ async fn status_report(
         }),
     };
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
-    render_status_report(&environment, &tasks)
+    let mut report = render_status_report(&environment, &tasks);
+    let bearwire_status = if let (Some(http), Some(config)) = (http, config) {
+        bearwire::protocol_status(http, config).await
+    } else {
+        format!("not configured; {}", bearwire::mode_summary())
+    };
+    report.push_str("\n- BearWire: ");
+    report.push_str(&bearwire_status);
+    report
 }
 
 fn compact_json_for_status(value: &Value) -> String {
@@ -5366,7 +5374,7 @@ async fn acp_doctor_report(
     adapter_state: &AdapterState,
     context: &SessionContext,
 ) -> String {
-    let (api_url, bear, den_status, token_status) =
+    let (api_url, bear, den_status, token_status, bearwire_status) =
         if let (Some(http), Some(config)) = (http, config) {
             let den_status = match fetch_server_version_for_diagnostics(http, config).await {
                 Ok(version) => version.summary(),
@@ -5376,11 +5384,13 @@ async fn acp_doctor_report(
                 Ok(()) => "valid for this Bear".to_string(),
                 Err(err) => format!("not validated: {err:#}"),
             };
+            let bearwire_status = bearwire::protocol_status(http, config).await;
             (
                 config.api_url.clone(),
                 config.bear.clone(),
                 den_status,
                 token_status,
+                bearwire_status,
             )
         } else {
             (
@@ -5388,10 +5398,11 @@ async fn acp_doctor_report(
                 "<not configured>".to_string(),
                 "Den not configured in this adapter process".to_string(),
                 "not validated: Den not configured".to_string(),
+                format!("not configured; {}", bearwire::mode_summary()),
             )
         };
     format!(
-        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
+        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n- BearWire: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
         env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
@@ -5401,6 +5412,7 @@ async fn acp_doctor_report(
         bear,
         den_status,
         token_status,
+        bearwire_status,
         serde_json::to_string_pretty(&adapter_state.client_capabilities).unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
         context.cwd,
         if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
@@ -5516,8 +5528,13 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
                 eprintln!("  {err:#}");
             }
         }
+        eprintln!(
+            "  BearWire: {}",
+            bearwire::protocol_status(http, config).await
+        );
     } else {
         eprintln!("• Skipping server reachability check until configuration is fixed");
+        eprintln!("  BearWire: not configured; {}", bearwire::mode_summary());
     }
     eprintln!();
 
