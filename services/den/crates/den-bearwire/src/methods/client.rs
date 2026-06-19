@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::http::HeaderMap;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -19,7 +21,9 @@ use den_runtime::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::run::{persist_run_failed, persist_runtime_event_as_bearwire};
+use crate::methods::run::{
+    persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
+};
 use crate::methods::{param_string, required_param_string};
 
 fn spawn_continuation_task(
@@ -33,7 +37,22 @@ fn spawn_continuation_task(
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
     tokio::spawn(async move {
+        let continuation_started_at = Instant::now();
         let request_id = Uuid::new_v4();
+        persist_run_progress(
+            &pool,
+            &run.session_id,
+            &run.run_id,
+            run.bear_id,
+            run.user_id,
+            continuation_started_at,
+            "continuation_started",
+            "Continuing Pair stance run after client result…",
+            json!({
+                "request_id": request_id,
+            }),
+        )
+        .await;
         let _ = bearwire_runs::transition_run(
             &pool,
             &run.run_id,
@@ -67,9 +86,42 @@ fn spawn_continuation_task(
         .await;
         match result {
             Ok((_continuation, mut stream)) => {
+                persist_run_progress(
+                    &pool,
+                    &run.session_id,
+                    &run.run_id,
+                    run.bear_id,
+                    run.user_id,
+                    continuation_started_at,
+                    "continuation_model_stream_waiting",
+                    "Waiting for model output after local tool/permission result…",
+                    json!({
+                        "request_id": request_id,
+                    }),
+                )
+                .await;
+                let mut first_event_seen = false;
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
+                            if !first_event_seen {
+                                first_event_seen = true;
+                                persist_run_progress(
+                                    &pool,
+                                    &run.session_id,
+                                    &run.run_id,
+                                    run.bear_id,
+                                    run.user_id,
+                                    continuation_started_at,
+                                    "continuation_first_runtime_event",
+                                    "Received first runtime event after continuation.",
+                                    json!({
+                                        "request_id": request_id,
+                                        "event_kind": crate::methods::run::runtime_event_kind(&runtime_event),
+                                    }),
+                                )
+                                .await;
+                            }
                             persist_runtime_event_as_bearwire(
                                 &pool,
                                 &run.session_id,
@@ -78,6 +130,7 @@ fn spawn_continuation_task(
                                 run.user_id,
                                 runtime_event,
                                 request_id,
+                                Some(continuation_started_at),
                             )
                             .await;
                         }

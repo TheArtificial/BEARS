@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::http::HeaderMap;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -73,6 +75,89 @@ fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) async fn persist_run_progress(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    started_at: Instant,
+    kind: &str,
+    text: &str,
+    detail: Value,
+) {
+    tracing::info!(
+        session_id = %session_id,
+        run_id = %run_id,
+        kind,
+        elapsed_ms = started_at.elapsed().as_millis(),
+        detail = %detail,
+        "BearWire run progress"
+    );
+    let mut event = BearWireEvent::ephemeral(
+        "run.progress",
+        json!({
+            "kind": kind,
+            "text": text,
+            "elapsed_ms": started_at.elapsed().as_millis(),
+            "detail": detail,
+        }),
+    );
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(run_id.to_string());
+    if let Err(err) = bearwire_events::append_bearwire_event(
+        pool,
+        session_id,
+        Some(bear_id),
+        Some(user_id),
+        event,
+    )
+    .await
+    {
+        tracing::warn!(
+            error = %err,
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            "failed to persist BearWire run.progress event"
+        );
+    }
+}
+
+pub(crate) fn runtime_event_kind(
+    event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
+) -> &'static str {
+    use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    match event {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
+            "assistant_text_delta"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { .. }) => "status_text",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. }) => "run_progress",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => "run_paused",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. }) => {
+            "tool_call_requested"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. }) => {
+            "tool_call_finished"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { .. }) => {
+            "conversation_resolved"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
+            "turn_completed"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. }) => "turn_failed",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
+            "turn_cancelled"
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { .. }) => "error",
+        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => "untranslated_provider_event",
+    }
+}
+
 pub(crate) async fn persist_runtime_event_as_bearwire(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -81,8 +166,19 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     user_id: i32,
     runtime_event: den_runtime::runtime_contracts::RuntimeStreamEvent,
     request_id: Uuid,
+    started_at: Option<Instant>,
 ) {
-    update_run_state_for_runtime_event(pool, run_id, &runtime_event, request_id).await;
+    update_run_state_for_runtime_event(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        &runtime_event,
+        request_id,
+        started_at,
+    )
+    .await;
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         event.bear_id = Some(bear_id.to_string());
         event.human_id = Some(user_id.to_string());
@@ -148,9 +244,13 @@ pub(crate) async fn persist_run_failed(
 
 async fn update_run_state_for_runtime_event(
     pool: &sqlx::PgPool,
+    session_id: &str,
     run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
     event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
     request_id: Uuid,
+    started_at: Option<Instant>,
 ) {
     use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
@@ -183,6 +283,36 @@ async fn update_run_state_for_runtime_event(
                 None,
             )
             .await;
+            if let Some(started_at) = started_at {
+                let (kind, text) = if *approval_required {
+                    (
+                        "tool_waiting_for_permission",
+                        "Waiting for client permission to run a local tool…",
+                    )
+                } else {
+                    (
+                        "tool_waiting_for_result",
+                        "Waiting for local tool result from the armature…",
+                    )
+                };
+                persist_run_progress(
+                    pool,
+                    session_id,
+                    run_id,
+                    bear_id,
+                    user_id,
+                    started_at,
+                    kind,
+                    text,
+                    json!({
+                        "tool_call_id": tool_call_id,
+                        "approval_required": approval_required,
+                        "approval_request_id": approval_request_id,
+                        "request_id": request_id,
+                    }),
+                )
+                .await;
+            }
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
             let _ = bearwire_runs::transition_run(
@@ -313,7 +443,26 @@ pub(crate) async fn run_start_result(
     let run_id_for_task = run_id.clone();
     let client_tools_for_task = client_tools.clone();
     tokio::spawn(async move {
+        let run_started_at = Instant::now();
         let request_id = Uuid::new_v4();
+        persist_run_progress(
+            &pool,
+            &session_for_task,
+            &run_id_for_task,
+            bear_id,
+            user_id,
+            run_started_at,
+            "run_background_started",
+            "Starting Pair stance run…",
+            json!({
+                "request_id": request_id,
+                "conversation_id": conversation_for_task.clone(),
+                "client": client.clone(),
+                "cwd": cwd.clone(),
+                "client_tool_count": client_tools_for_task.as_array().map(|items| items.len()).unwrap_or(0),
+            }),
+        )
+        .await;
         let _ = bearwire_runs::transition_run(
             &pool,
             &run_id_for_task,
@@ -343,6 +492,23 @@ pub(crate) async fn run_start_result(
             started,
         )
         .await;
+        persist_run_progress(
+            &pool,
+            &session_for_task,
+            &run_id_for_task,
+            bear_id,
+            user_id,
+            run_started_at,
+            "native_context_assembling",
+            "Preparing Pair stance context and tool surface…",
+            json!({
+                "request_id": request_id,
+                "client_tool_count": client_tools_for_task.as_array().map(|items| items.len()).unwrap_or(0),
+                "prompt_chars": prompt_for_task.chars().count(),
+            }),
+        )
+        .await;
+        let native_start = Instant::now();
         let stream_result = start_native_acp_turn_event_stream(TurnStartRequest {
             sqlx_pool: &pool,
             config: config.as_ref(),
@@ -367,9 +533,43 @@ pub(crate) async fn run_start_result(
 
         match stream_result {
             Ok(mut stream) => {
+                persist_run_progress(
+                    &pool,
+                    &session_for_task,
+                    &run_id_for_task,
+                    bear_id,
+                    user_id,
+                    run_started_at,
+                    "model_stream_waiting",
+                    "Context is ready; waiting for model output or tool request…",
+                    json!({
+                        "request_id": request_id,
+                        "native_context_ms": native_start.elapsed().as_millis(),
+                    }),
+                )
+                .await;
+                let mut first_event_seen = false;
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
+                            if !first_event_seen {
+                                first_event_seen = true;
+                                persist_run_progress(
+                                    &pool,
+                                    &session_for_task,
+                                    &run_id_for_task,
+                                    bear_id,
+                                    user_id,
+                                    run_started_at,
+                                    "first_runtime_event",
+                                    "Received first runtime event from model/native loop.",
+                                    json!({
+                                        "request_id": request_id,
+                                        "event_kind": runtime_event_kind(&runtime_event),
+                                    }),
+                                )
+                                .await;
+                            }
                             persist_runtime_event_as_bearwire(
                                 &pool,
                                 &session_for_task,
@@ -378,6 +578,7 @@ pub(crate) async fn run_start_result(
                                 user_id,
                                 runtime_event,
                                 request_id,
+                                Some(run_started_at),
                             )
                             .await;
                         }

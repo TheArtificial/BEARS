@@ -518,10 +518,27 @@ pub async fn continue_native_acp_turn_event_stream(
     match &request.continuation {
         RuntimeContinuation::ToolResult {
             tool_call_id,
+            approval_request_id,
             status,
             content,
-            ..
         } => {
+            if let Some(approval_request_id) = approval_request_id.as_deref() {
+                let approve = matches!(
+                    status,
+                    crate::runtime_contracts::RuntimeToolResultStatus::Ok
+                );
+                record_approval_decision(
+                    request.sqlx_pool,
+                    approval_request_id,
+                    approve,
+                    Some(if approve {
+                        "tool_result_delivered"
+                    } else {
+                        "tool_result_failed"
+                    }),
+                )
+                .await?;
+            }
             tool_messages.push(ChatMessage {
                 role: "tool".to_string(),
                 content: Some(content.clone()),
@@ -529,7 +546,6 @@ pub async fn continue_native_acp_turn_event_stream(
                 name: None,
                 tool_calls: None,
             });
-            let _ = status;
         }
         RuntimeContinuation::ApprovalDecision {
             approval_request_id,

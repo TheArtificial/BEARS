@@ -765,6 +765,22 @@ async fn handle_bearwire_event(
             )
             .await?;
         }
+        "run.paused" => {
+            let reason = event
+                .pointer("/data/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("paused");
+            let resume_token = event
+                .pointer("/data/resume_token")
+                .and_then(Value::as_str)
+                .unwrap_or("<none>");
+            outcome.saw_tool_activity = reason == "requires_approval";
+            diagnostics.saw_tool_activity |= outcome.saw_tool_activity;
+            eprintln!(
+                "bear-armature: BearWire run paused session_id={} reason={} resume_token={}",
+                session_id, reason, resume_token
+            );
+        }
         "permission.requested" => {
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
