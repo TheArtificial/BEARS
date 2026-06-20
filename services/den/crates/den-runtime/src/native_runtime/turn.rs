@@ -9,14 +9,14 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        NativeToolDispatchMode, SessionTrackingStream, agent_loop_session_key,
-        assemble_native_turn_for_bear, record_approval_decision, run_agent_step_stream,
+        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
+        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
+        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
     },
     bears::BearProfile,
     conversation_events::{
-        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
-        persist_canonical_conversation_record,
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, ConversationEventProvenance,
     },
     conversation_persistence,
     llm::{ChatMessage, LlmClient},
@@ -28,7 +28,7 @@ use crate::{
         RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
     },
     turn_runner::{
-        TurnContinueRequest, TurnStartRequest, materialize_runtime_conversation_if_needed,
+        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
     },
 };
 use den_core::DenError;
@@ -201,6 +201,7 @@ fn wrap_session_stream(
     conversation_id: &str,
     acp_session_id: &str,
     request_id: Option<String>,
+    stores: MemoryStoreManager,
 ) -> RuntimeEventStream {
     Box::pin(SessionTrackingStream::new(
         stream,
@@ -208,11 +209,13 @@ fn wrap_session_stream(
         SESSION_STORE.clone(),
         pool,
         bear_id,
+        session.bear_slug.clone(),
         user_id,
         conversation_id.to_string(),
         acp_session_id.to_string(),
         request_id,
         config,
+        stores,
         profile,
         NativeToolDispatchMode::DeferToClient,
     ))
@@ -286,6 +289,8 @@ async fn build_session(
     let session = AgentLoopSession {
         session_key,
         bear_id,
+        bear_slug: bear.slug.clone(),
+        user_id,
         conversation_id: conversation_id.to_string(),
         acp_session_id: acp_session_id.to_string(),
         request_id: request_id.map(|id| id.to_string()),
@@ -523,6 +528,7 @@ pub async fn start_native_profile_turn_event_stream(
         &conversation_id,
         acp_session_id,
         Some(request.request_id.to_string()),
+        request.memory_stores.clone(),
     );
     let _ = StartTurnRequest {
         conversation: RuntimeConversationRef {
@@ -647,10 +653,11 @@ pub async fn continue_native_acp_turn_event_stream(
         profile,
         request.sqlx_pool.clone(),
         session.bear_id,
-        None,
+        session.user_id,
         &conversation_id,
         acp_session_id,
         Some(request.request_id.to_string()),
+        request.memory_stores.clone(),
     );
     let _ = ContinueTurnRequest {
         conversation: request.conversation,

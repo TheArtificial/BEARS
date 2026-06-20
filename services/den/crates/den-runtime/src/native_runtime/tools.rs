@@ -1,10 +1,10 @@
-use den_core::{config::Config, DenError};
+use den_core::{DenError, config::Config};
 use serde_json::Value;
 
 use crate::{bears::BearProfile, llm::LlmToolDefinition};
 use den_core::tools::descriptor::{
-    builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
-    DenToolDescriptor,
+    DenToolDescriptor, builtin_den_tool_descriptors_for_pair_acp_surface,
+    builtin_den_tool_descriptors_for_profile,
 };
 
 use super::memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name};

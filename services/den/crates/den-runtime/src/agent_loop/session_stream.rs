@@ -7,20 +7,31 @@ use std::task::{Context, Poll};
 use futures::Stream;
 
 use crate::{
-    {
-        agent_loop::{
-            session_store::AgentLoopSessionStore,
-            tool_policy::{maybe_pause_for_tool_approval, provider_tool_requires_approval},
+    agent_loop::{
+        run_agent_step_stream,
+        session_store::AgentLoopSessionStore,
+        tool_call_finished_event_for_content,
+        tool_policy::{
+            maybe_pause_for_tool_approval, provider_tool_requires_approval,
+            provider_tool_supports_unilateral_execution,
         },
-        llm::ChatToolCall,
-        runtime_compaction::enqueue_compaction_after_turn,
-        runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
+        AgentStepOverflowContext,
     },
+    llm::{ChatMessage, ChatToolCall, LlmClient},
+    memory::MemoryStoreManager,
+    runtime_compaction::enqueue_compaction_after_turn,
+    runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
+};
+use den_core::tools::{
+    arguments::DenToolChannelContext, context::DenToolInvocationContext,
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
 use den_core::{config::Config, profile::BearProfile, DenError};
 
 use super::session_store::AgentLoopSession;
-use super::transcript::{spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step};
+use super::transcript::{
+    spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
@@ -31,8 +42,13 @@ pub enum NativeToolDispatchMode {
     ServerSideInProcess,
 }
 
-type ApprovalPauseFuture =
-    Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
+type ApprovalPauseFuture = Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
+type ServerToolFuture = Pin<
+    Box<
+        dyn Future<Output = Result<(ChatToolCall, ChatMessage, RuntimeEventStream), DenError>>
+            + Send,
+    >,
+>;
 
 pub struct SessionTrackingStream {
     inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>,
@@ -42,6 +58,7 @@ pub struct SessionTrackingStream {
     tool_calls: HashMap<String, (String, String)>,
     pool: sqlx::PgPool,
     bear_id: uuid::Uuid,
+    bear_slug: String,
     user_id: Option<i32>,
     conversation_id: String,
     acp_session_id: String,
@@ -51,8 +68,10 @@ pub struct SessionTrackingStream {
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
+    pending_server_tool: Option<ServerToolFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
+    stores: MemoryStoreManager,
     profile: BearProfile,
 }
 
@@ -63,11 +82,13 @@ impl SessionTrackingStream {
         store: AgentLoopSessionStore,
         pool: sqlx::PgPool,
         bear_id: uuid::Uuid,
+        bear_slug: String,
         user_id: Option<i32>,
         conversation_id: String,
         acp_session_id: String,
         request_id: Option<String>,
         config: Arc<Config>,
+        stores: MemoryStoreManager,
         profile: BearProfile,
         dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
@@ -79,6 +100,7 @@ impl SessionTrackingStream {
             tool_calls: HashMap::new(),
             pool,
             bear_id,
+            bear_slug,
             user_id,
             conversation_id,
             acp_session_id,
@@ -88,8 +110,10 @@ impl SessionTrackingStream {
             pending_approval: None,
             pending_tool_event: None,
             pending_pause_after_tool: None,
+            pending_server_tool: None,
             dispatch_mode,
             config,
+            stores,
             profile,
         }
     }
@@ -149,6 +173,98 @@ impl SessionTrackingStream {
             &calls,
             reason,
         );
+    }
+
+    fn server_tool_context(&self) -> DenToolInvocationContext {
+        DenToolInvocationContext {
+            bear_id: self.bear_id,
+            bear_slug: self.bear_slug.clone(),
+            binding_id: format!("den-native:{}:{}", self.bear_id, self.profile.as_str()),
+            profile: Some(self.profile),
+            user_id: self.user_id.unwrap_or_default(),
+            username: None,
+            membership_role: None,
+            conversation_id: self.conversation_id.clone(),
+            session_id: self.acp_session_id.clone(),
+            acp_session_id: Some(self.acp_session_id.clone()),
+            conversation_selection: Some(self.conversation_id.clone()),
+            runtime_target: Some(self.conversation_id.clone()),
+            workspace_roots: Vec::new(),
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            request_id: self.request_id.clone(),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("bearwire".to_string()),
+                protocol: Some("bearwire".to_string()),
+            },
+        }
+    }
+
+    fn should_execute_den_tool_server_side(&self, tool_name: &str) -> bool {
+        self.dispatch_mode == NativeToolDispatchMode::DeferToClient
+            && builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
+            && provider_tool_supports_unilateral_execution(tool_name)
+    }
+
+    fn begin_server_tool_execution(&mut self, call: ChatToolCall) {
+        let Some(invoker) = crate::native_runtime::tool_invoker() else {
+            let tool_name = call.function.name.clone();
+            self.pending_server_tool = Some(Box::pin(async move {
+                Err(DenError::System(format!(
+                    "builtin Den tool runtime is not initialized for {tool_name}"
+                )))
+            }));
+            return;
+        };
+        let provider_name = call.function.name.clone();
+        let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
+            .map(|descriptor| descriptor.name.to_string())
+            .unwrap_or_else(|| provider_name.clone());
+        let args = serde_json::from_str(&call.function.arguments)
+            .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+        let context = self.server_tool_context();
+        let pool = self.pool.clone();
+        let config = self.config.clone();
+        let stores = self.stores.clone();
+        let store = self.store.clone();
+        let session_key = self.session_key.clone();
+        let profile = self.profile;
+        self.pending_server_tool = Some(Box::pin(async move {
+            let content = match invoker
+                .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
+                .await
+            {
+                Ok(value) => {
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+                }
+                Err(error) => format!("error: {error}"),
+            };
+            let message = ChatMessage {
+                role: "tool".to_string(),
+                content: Some(content),
+                tool_call_id: Some(call.id.clone()),
+                name: Some(provider_name),
+                tool_calls: None,
+            };
+            store.update(&session_key, |session| {
+                session.messages.push(message.clone());
+            });
+            let session = store.get(&session_key).ok_or_else(|| {
+                DenError::System("native agent loop session not found".to_string())
+            })?;
+            let llm = LlmClient::new(config.as_ref());
+            let overflow = AgentStepOverflowContext {
+                pool: pool.clone(),
+                config: config.clone(),
+                profile,
+                session_store: store.clone(),
+            };
+            let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+            Ok((call, message, stream))
+        }));
     }
 
     fn persist_assistant_tool_step(&self) {
@@ -221,6 +337,24 @@ impl Stream for SessionTrackingStream {
 
         if let Some(pause) = self.pending_pause_after_tool.take() {
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
+        }
+
+        if let Some(fut) = self.pending_server_tool.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok((call, message, stream))) => {
+                    self.pending_server_tool = None;
+                    self.tool_calls.remove(&call.id);
+                    self.inner = stream;
+                    let finished =
+                        tool_call_finished_event_for_content(&call, message.content.as_deref());
+                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(finished))));
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_server_tool = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         if let Some(fut) = self.pending_approval.as_mut() {
@@ -301,7 +435,22 @@ impl Stream for SessionTrackingStream {
                     },
                     run_id: None,
                 });
-                if approval_required && self.dispatch_mode == NativeToolDispatchMode::DeferToClient {
+                if self.should_execute_den_tool_server_side(&tool_name) {
+                    self.persist_assistant_tool_step();
+                    let call = ChatToolCall {
+                        id: tool_call_id.clone(),
+                        call_type: "function".to_string(),
+                        function: crate::llm::ChatToolCallFunction {
+                            name: tool_name.clone(),
+                            arguments: arguments.to_string(),
+                        },
+                    };
+                    self.begin_server_tool_execution(call);
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                if approval_required && self.dispatch_mode == NativeToolDispatchMode::DeferToClient
+                {
                     let pool = self.pool.clone();
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();
@@ -356,8 +505,14 @@ impl Stream for SessionTrackingStream {
                 let conversation_id = self.conversation_id.clone();
                 let profile = self.profile;
                 tokio::spawn(async move {
-                    enqueue_compaction_after_turn(&pool, &config, bear_id, &conversation_id, profile)
-                        .await;
+                    enqueue_compaction_after_turn(
+                        &pool,
+                        &config,
+                        bear_id,
+                        &conversation_id,
+                        profile,
+                    )
+                    .await;
                 });
                 self.finished = true;
                 Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
@@ -367,7 +522,9 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(other) => {
                 if other.is_none() && !self.tool_calls.is_empty() {
                     self.persist_assistant_tool_step();
-                    self.persist_outstanding_tools_as_incomplete("llm_stream_ended_before_tool_results");
+                    self.persist_outstanding_tools_as_incomplete(
+                        "llm_stream_ended_before_tool_results",
+                    );
                     self.finished = true;
                     tracing::debug!(
                         acp_session_id = %self.acp_session_id,
@@ -436,6 +593,8 @@ mod tests {
         AgentLoopSession {
             session_key: session_key.to_string(),
             bear_id,
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
             acp_session_id: "acp-test".to_string(),
             request_id: Some("request-test".to_string()),
@@ -489,6 +648,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn den_tools_route_server_side_but_client_tools_do_not() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:acp-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "acp-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        assert!(stream.should_execute_den_tool_server_side("list_plans"));
+        assert!(stream.should_execute_den_tool_server_side("session_info"));
+        assert!(!stream.should_execute_den_tool_server_side("fs_read_text_file"));
+        assert!(!stream.should_execute_den_tool_server_side("mcp__chrome_devtools_custom__click"));
+    }
+
+    #[tokio::test]
     async fn approval_required_tool_call_wakes_after_installing_pending_future() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:acp-test", bear_id);
@@ -514,11 +703,13 @@ mod tests {
             sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
                 .expect("lazy test pool"),
             bear_id,
+            "test-bear".to_string(),
             Some(7),
             "den-conv-test".to_string(),
             "acp-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
@@ -526,7 +717,10 @@ mod tests {
         let waker = counting_waker(wake_count.clone());
         let mut cx = Context::from_waker(&waker);
 
-        assert!(matches!(Pin::new(&mut stream).poll_next(&mut cx), Poll::Pending));
+        assert!(matches!(
+            Pin::new(&mut stream).poll_next(&mut cx),
+            Poll::Pending
+        ));
         assert_eq!(wake_count.load(Ordering::SeqCst), 1);
         assert!(stream.pending_approval.is_some());
         assert!(stream.pending_tool_event.is_some());
@@ -555,8 +749,7 @@ mod tests {
             tool_calls: None,
         });
 
-        let repaired =
-            crate::agent_loop::context::repair_tool_call_message_chain(messages);
+        let repaired = crate::agent_loop::context::repair_tool_call_message_chain(messages);
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].role, "assistant");
         assert_eq!(repaired[2].role, "tool");

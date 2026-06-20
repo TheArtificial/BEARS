@@ -14,29 +14,26 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    {
-        agent_loop::{
-            pending_tool_calls, provider_tool_supports_unilateral_execution, run_agent_step_stream,
-            spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
-            tool_call_finished_event, tool_call_finished_event_for_content,
-            tool_call_finished_event_for_incomplete,
-            AgentLoopSessionStore, AgentStepOverflowContext, NativeToolDispatchMode,
-            SessionTrackingStream,
-        },
-        runtime_compaction::enqueue_compaction_after_turn,
-        runtime_contracts::ToolCallFinishStatus,
-        bears::BearProfile,
-        llm::{ChatMessage, ChatToolCall, LlmClient},
-        memory::MemoryStoreManager,
-        runtime_contracts::{
-            RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
-        },
+    agent_loop::{
+        pending_tool_calls, provider_tool_supports_unilateral_execution, run_agent_step_stream,
+        spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
+        tool_call_finished_event, tool_call_finished_event_for_content,
+        tool_call_finished_event_for_incomplete, AgentLoopSessionStore, AgentStepOverflowContext,
+        NativeToolDispatchMode, SessionTrackingStream,
+    },
+    bears::BearProfile,
+    llm::{ChatMessage, ChatToolCall, LlmClient},
+    memory::MemoryStoreManager,
+    runtime_compaction::enqueue_compaction_after_turn,
+    runtime_contracts::ToolCallFinishStatus,
+    runtime_contracts::{
+        RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
     },
 };
-use den_core::DenError;
 use den_core::tools::arguments::DenToolChannelContext;
 use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_core::DenError;
 
 use crate::native_runtime::RuntimeToolInvoker;
 
@@ -63,10 +60,8 @@ pub struct NativeWebChatLoopRuntime {
     pub tool_invoker: Arc<dyn RuntimeToolInvoker>,
 }
 
-type ToolExecFuture =
-    Pin<Box<dyn Future<Output = Result<ChatMessage, DenError>> + Send>>;
-type NextStepFuture =
-    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
+type ToolExecFuture = Pin<Box<dyn Future<Output = Result<ChatMessage, DenError>> + Send>>;
+type NextStepFuture = Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
 enum LoopPhase {
     Streaming(Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>),
@@ -95,7 +90,8 @@ fn turn_timeout_event() -> RuntimeStreamEvent {
     RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
         turn: None,
         category: RuntimeErrorCategory::Timeout,
-        message: "This reply took too long and was stopped. Try a simpler question or retry.".to_string(),
+        message: "This reply took too long and was stopped. Try a simpler question or retry."
+            .to_string(),
     })
 }
 
@@ -188,7 +184,11 @@ impl NativeWebChatLoopStream {
     fn emit_incomplete_tool_outcomes(&mut self, calls: &[ChatToolCall], reason: &str) {
         for call in calls {
             self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                tool_call_finished_event_for_incomplete(call.id.clone(), &call.function.name, reason),
+                tool_call_finished_event_for_incomplete(
+                    call.id.clone(),
+                    &call.function.name,
+                    reason,
+                ),
             ));
         }
     }
@@ -219,11 +219,13 @@ impl NativeWebChatLoopStream {
             runtime.session_store.clone(),
             runtime.pool.clone(),
             runtime.bear_id,
+            runtime.bear_slug.clone(),
             Some(runtime.user_id),
             runtime.conversation_id.clone(),
             runtime.session_id.clone(),
             Some(runtime.request_id.clone()),
             runtime.config.clone(),
+            runtime.stores.clone(),
             BearProfile::Chat,
             NativeToolDispatchMode::ServerSideInProcess,
         ))
@@ -254,11 +256,16 @@ impl NativeWebChatLoopStream {
                 session_store: runtime.session_store.clone(),
             };
             let raw = run_agent_step_stream(&runtime.llm, &session, Some(overflow)).await?;
-            Ok(NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session))
+            Ok(NativeWebChatLoopStream::wrap_step_stream(
+                &runtime, raw, &session,
+            ))
         }));
     }
 
-    fn poll_tool_execution(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RuntimeStreamEvent, DenError>>> {
+    fn poll_tool_execution(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<RuntimeStreamEvent, DenError>>> {
         let LoopPhase::ExecutingTools {
             calls,
             index,
@@ -272,9 +279,11 @@ impl NativeWebChatLoopStream {
         if *index >= calls.len() {
             let completed = std::mem::take(results);
             let runtime = self.runtime.clone();
-            runtime.session_store.update(&runtime.session_key, |session| {
-                session.messages.extend(completed);
-            });
+            runtime
+                .session_store
+                .update(&runtime.session_key, |session| {
+                    session.messages.extend(completed);
+                });
             self.begin_next_step();
             return Poll::Pending;
         }
@@ -282,7 +291,9 @@ impl NativeWebChatLoopStream {
         if active.is_none() {
             let call = calls[*index].clone();
             let runtime = self.runtime.clone();
-            *active = Some(Box::pin(async move { execute_one_web_chat_den_tool(&runtime, call).await }));
+            *active = Some(Box::pin(async move {
+                execute_one_web_chat_den_tool(&runtime, call).await
+            }));
         }
 
         let Some(fut) = active.as_mut() else {
@@ -304,14 +315,13 @@ impl NativeWebChatLoopStream {
             Poll::Ready(Err(error)) => {
                 let call = calls[*index].clone();
                 let summary = format!("{} failed: {error}", call.function.name);
-                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                    tool_call_finished_event(
+                self.pending_out
+                    .push_back(RuntimeStreamEvent::Semantic(tool_call_finished_event(
                         &call,
                         ToolCallFinishStatus::Error,
                         summary.clone(),
                         Some(summary),
-                    ),
-                ));
+                    )));
                 results.push(ChatMessage {
                     role: "tool".to_string(),
                     content: Some(format!("error: {error}")),
@@ -344,7 +354,8 @@ impl Stream for NativeWebChatLoopStream {
             if let LoopPhase::ExecutingTools { calls, index, .. } = &self.phase {
                 let pending = calls[*index..].to_vec();
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
-            } else if let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) {
+            } else if let Some(session) = self.runtime.session_store.get(&self.runtime.session_key)
+            {
                 let pending = pending_tool_calls(&session.messages);
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
             }
@@ -372,7 +383,9 @@ impl Stream for NativeWebChatLoopStream {
                 },
                 LoopPhase::Streaming(stream) => match stream.as_mut().poll_next(cx) {
                     Poll::Ready(Some(Ok(
-                        event @ RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }),
+                        event @ RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted {
+                            ..
+                        }),
                     ))) => {
                         self.saw_turn_completed = true;
                         self.touch_outbound();
@@ -396,15 +409,16 @@ impl Stream for NativeWebChatLoopStream {
                         return Poll::Ready(Some(Err(error)));
                     }
                     Poll::Ready(None) => {
-                        let session = match self.runtime.session_store.get(&self.runtime.session_key) {
-                            Some(session) => session,
-                            None => {
-                                self.phase = LoopPhase::Finished;
-                                return Poll::Ready(Some(Err(DenError::System(
-                                    "native web chat session not found".to_string(),
-                                ))));
-                            }
-                        };
+                        let session =
+                            match self.runtime.session_store.get(&self.runtime.session_key) {
+                                Some(session) => session,
+                                None => {
+                                    self.phase = LoopPhase::Finished;
+                                    return Poll::Ready(Some(Err(DenError::System(
+                                        "native web chat session not found".to_string(),
+                                    ))));
+                                }
+                            };
                         let pending = pending_tool_calls(&session.messages);
                         if pending.is_empty() {
                             if !self.saw_turn_completed {
@@ -447,7 +461,8 @@ async fn execute_one_web_chat_den_tool(
     let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| provider_name.clone());
-    let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default()));
+    let args: Value = serde_json::from_str(&call.function.arguments)
+        .unwrap_or_else(|_| Value::Object(Default::default()));
     let content = if !provider_tool_supports_unilateral_execution(&provider_name) {
         serde_json::json!({
             "ok": false,

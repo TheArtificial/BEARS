@@ -2,19 +2,18 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions,
-    bears::{db as bears_db, BearProfile},
+    DenState, acp_sessions,
+    bears::{BearProfile, db as bears_db},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
-    runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
+    runtime::bearwire_projection::wire::{BearWireEvent, runtime_stream_event_to_bearwire_events},
     runtime_contracts::RoleRuntimeBinding,
     turn_runner::TurnStartRequest,
-    DenState,
 };
 
 use crate::auth::authenticated_bear;

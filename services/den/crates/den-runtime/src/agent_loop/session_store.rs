@@ -15,6 +15,8 @@ use crate::{
 pub struct AgentLoopSession {
     pub session_key: String,
     pub bear_id: Uuid,
+    pub bear_slug: String,
+    pub user_id: Option<i32>,
     pub conversation_id: String,
     pub acp_session_id: String,
     pub request_id: Option<String>,
@@ -57,7 +59,10 @@ impl AgentLoopSessionStore {
 
     pub fn insert(&self, session: AgentLoopSession) {
         let key = session.session_key.clone();
-        self.inner.lock().expect("agent loop session lock").insert(key, session);
+        self.inner
+            .lock()
+            .expect("agent loop session lock")
+            .insert(key, session);
     }
 
     pub fn get(&self, key: &str) -> Option<AgentLoopSession> {
@@ -69,13 +74,21 @@ impl AgentLoopSessionStore {
     }
 
     pub fn update(&self, key: &str, update: impl FnOnce(&mut AgentLoopSession)) {
-        if let Some(session) = self.inner.lock().expect("agent loop session lock").get_mut(key) {
+        if let Some(session) = self
+            .inner
+            .lock()
+            .expect("agent loop session lock")
+            .get_mut(key)
+        {
             update(session);
         }
     }
 
     pub fn remove(&self, key: &str) {
-        self.inner.lock().expect("agent loop session lock").remove(key);
+        self.inner
+            .lock()
+            .expect("agent loop session lock")
+            .remove(key);
     }
 
     /// Read and clear the overflow-recovery flag for ACP turn outcome mapping.
