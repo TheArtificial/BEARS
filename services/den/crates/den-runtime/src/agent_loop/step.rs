@@ -10,17 +10,15 @@ use sqlx::PgPool;
 use tokio::time::timeout;
 
 use crate::{
-    {
-        agent_loop::{
-            context::repair_tool_call_message_chain,
-            overflow_retry::compact_session_messages_for_overflow,
-            session_store::{AgentLoopSession, AgentLoopSessionStore},
-        },
-        llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
-        native_runtime::openai_byte_stream_to_event_stream,
-        runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
-        runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
+    agent_loop::{
+        context::repair_tool_call_message_chain,
+        overflow_retry::compact_session_messages_for_overflow,
+        session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
+    llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
+    native_runtime::openai_byte_stream_to_event_stream_with_telemetry,
+    runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
+    runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
 };
 
 /// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.
@@ -133,7 +131,13 @@ impl LazyAgentStepStream {
                     }
                     Err(err)
                 }
-                Ok(Ok(byte_stream)) => Self::connect_byte_stream(session_key, model, started, byte_stream),
+                Ok(Ok(byte_stream)) => Self::connect_byte_stream(
+                    session_key,
+                    model,
+                    started,
+                    byte_stream,
+                    request.telemetry.clone(),
+                ),
             }
         })
     }
@@ -143,6 +147,7 @@ impl LazyAgentStepStream {
         model: String,
         started: Instant,
         byte_stream: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
+        telemetry: Option<crate::llm::LlmRequestTelemetry>,
     ) -> Result<RuntimeEventStream, DenError> {
         tracing::info!(
             session_key = %session_key,
@@ -151,9 +156,13 @@ impl LazyAgentStepStream {
             idle_timeout_secs = NATIVE_LLM_STREAM_IDLE_TIMEOUT.as_secs(),
             "LLM chat/completions handshake connected"
         );
-        let byte_stream = byte_stream_with_idle_timeout(byte_stream, NATIVE_LLM_STREAM_IDLE_TIMEOUT)
-            .map_err(DenError::from);
-        Ok(openai_byte_stream_to_event_stream(byte_stream))
+        let byte_stream =
+            byte_stream_with_idle_timeout(byte_stream, NATIVE_LLM_STREAM_IDLE_TIMEOUT)
+                .map_err(DenError::from);
+        Ok(openai_byte_stream_to_event_stream_with_telemetry(
+            byte_stream,
+            telemetry,
+        ))
     }
 
     async fn recover_from_overflow_and_retry(
@@ -252,7 +261,13 @@ impl LazyAgentStepStream {
                     duration_ms = started.elapsed().as_millis(),
                     "LLM chat/completions retry connected after emergency compaction"
                 );
-                Self::connect_byte_stream(session_key, model, started, byte_stream)
+                Self::connect_byte_stream(
+                    session_key,
+                    model,
+                    started,
+                    byte_stream,
+                    retry_request.telemetry.clone(),
+                )
             }
         }
     }
