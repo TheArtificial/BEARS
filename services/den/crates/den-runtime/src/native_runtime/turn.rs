@@ -685,8 +685,8 @@ mod tests {
     #[test]
     fn bear_id_from_native_binding_rejects_non_native_bindings() {
         let binding = RoleRuntimeBinding {
-            binding_id: "agent-letta-123".to_string(),
-            compatibility_backend: Some("runtime:letta".to_string()),
+            binding_id: "legacy-provider-123".to_string(),
+            compatibility_backend: Some("runtime:legacy".to_string()),
         };
         assert_eq!(bear_id_from_native_binding(&binding), None);
     }

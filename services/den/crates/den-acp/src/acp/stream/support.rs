@@ -307,7 +307,7 @@ impl AcpStreamDiagnostics {
         *self.untranslated_event_classes.entry(class).or_insert(0) += 1;
         if self.unmapped_event_samples.len() < 5 {
             self.unmapped_event_samples
-                .push(super::logging::summarize_letta_event_for_log(value).to_string());
+                .push(super::logging::summarize_provider_event_for_log(value).to_string());
         }
     }
 
@@ -322,11 +322,11 @@ impl AcpStreamDiagnostics {
         }
         self.emitted_empty_turn_error = true;
         let detail = format!(
-            "Letta stream ended without displayable assistant/status/error output. upstream_frames={}, parsed_events={}, mapped_events={}, unmapped_events={}, message_types={:?}, event_types={:?}",
+            "Runtime stream ended without displayable assistant/status/error output. upstream_frames={}, parsed_events={}, mapped_events={}, unmapped_events={}, message_types={:?}, event_types={:?}",
             self.upstream_frames, self.parsed_events, self.mapped_events, self.unmapped_events, self.native_message_types, self.native_event_types,
         );
         Some(GatewayEvent::Error {
-            message: "Letta completed the turn without producing displayable ACP output.".to_string(),
+            message: "Runtime completed the turn without producing displayable ACP output.".to_string(),
             detail: Some(detail),
             error_type: Some("empty_mapped_turn".to_string()),
             request_id: Some(context.request_id.to_string()),
@@ -411,7 +411,7 @@ impl AcpStreamDiagnostics {
             pending_tool_name_buffers = self.tool_call_accumulator.pending_name_buffers(),
             unmapped_event_samples = ?self.unmapped_event_samples,
             run_ids = ?self.run_ids,
-            "ACP Letta stream summary"
+            "ACP runtime stream summary"
         );
     }
 }

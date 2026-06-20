@@ -1,8 +1,8 @@
 use serde_json::Value;
 
-/// Shared boundary for sending a `pair` role turn to Letta.
+/// Shared boundary for sending a `pair` role turn to a runtime provider.
 ///
-/// Invariant: `human_message` is the only content serialized into Letta `messages[].content`.
+/// Invariant: `human_message` is the only user-authored content serialized into model input.
 /// Channel/runtime context must flow through structured fields (`client_tools`, Den tool context,
 /// session_info backing state, UI events, or explicit `override_system` replacement semantics), not
 /// by concatenating text into the user message.

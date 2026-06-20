@@ -54,28 +54,22 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Context assembler builds model input from **`bear_compiled_configs` system prompt** + **key memory projection** (SQLite; [v1 policy locked](../architecture/den-native-runtime.md#v1-selection-policy-locked)) + Den transcript + prompt-memory blocks + compaction — fully Den-owned. See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
 - Persist each step to canonical transcript; Den-native approvals store (new table) + pause/resume integrated with the tool-turn coordinator.
 
-### Phase 4 — Wire native loop under existing ACP orchestration for `pair`
+### Phase 4 — Wire native loop under existing ACP orchestration for `pair` — Closed
 
-- Replace the execution under `AcpRuntimeSseStream` with the native loop for `pair`, keeping orchestration (tool-turn coordinator, turn controller, SSE mapping) intact.
-- Flag-gate `RUNTIME=native|letta` (per-env first, optional per-bear) for parity validation via `./scripts/smoke-stack.sh` + golden ACP traces.
+- `AcpRuntimeSseStream` now consumes the Den-native `pair` loop while keeping ACP edge orchestration intact: tool-turn coordinator, turn controller, adapter SSE mapping, cancellation, and canonical persistence.
+- Pair prompt/continuation dispatch goes through the native runtime entry points (`start_native_acp_turn_event_stream`, `continue_native_acp_turn_event_stream`).
+- Golden ACP trace coverage validates OpenAI/Bifrost-style SSE → semantic events → Bearwire projection → adapter SSE (`bearwire_projection/golden_traces_tests.rs`).
 
-### Phase 5 — Collapse the seam and shed Letta-isms
+### Phase 5 — Collapse the seam and shed Letta-isms — Closed
 
-- Delete conversation materialization, `conv-*` creation, run-id cancellation, approval-deny recovery, synthetic `TurnCompleted`, stale-runtime cleanup.
-- Remove `RuntimeTurnBackend`/`LettaRuntimeTurnBackend`/`DenRuntimeAcpTurnRunner` and the contract traits once native is default. The loop becomes plain Den code; no pluggable runtime boundary.
-- Extend native runtime to `curate` and `watch` (already API-direct, no sandbox) via capability profiles.
-
-**Progress (`off-letta`):**
-
-- `NativeRuntimeConversationBackend` persists `den-conv-*` rows in Postgres and loads canonical visible history.
+- Native `den-conv-*` conversations are persisted in Postgres and canonical visible history is loaded from Den storage.
 - Prompt resolution skips re-materialization when a session already has a durable `den-conv-*` id.
-- Shared stale-approval denial constant moved off the Letta runner; dead `LettaAcpConversationRuntime` removed.
-- Native stale-runtime cleanup stays in-process (`run_ids` empty); `AGENT_RUNTIME=letta` logs a Phase 8 deprecation warning at startup.
-- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) exported for `curate`/`watch` capability profiles over one Den loop.
-- Golden ACP trace tests cover OpenAI SSE → semantic events → Bearwire projection → adapter SSE (`bearwire_projection/golden_traces_tests.rs`).
-- Native curate briefing: rule-based `memory_curate_executor` runs first; when briefing items remain under native runtime, `run_native_profile_turn_collect_assistant_text` runs a Curate profile LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
-- `RuntimeLettaConversationQueryBackend` renamed in `runtime_conversations.rs` to disambiguate from ACP/native `RuntimeConversationBackend` in `runtime/contracts`.
-- Deferred to Phase 6–8: delete `acp_turn_runner_letta.rs`, `LettaClient`, compose services, full trait removal.
+- `RuntimeTurnBackend` / `LettaRuntimeTurnBackend` / `DenRuntimeAcpTurnRunner` are gone; ACP turn dispatch is an edge wrapper over native runtime functions.
+- Dead `LettaAcpConversationRuntime` and stale Letta runner cleanup paths are removed. Stale runtime cleanup is now in-process (`run_ids` empty) and no longer issues external agent-wide cancels under native runtime.
+- Native continuation, stream diagnostics, and pair turn comments use runtime/native terminology instead of Letta-facing labels.
+- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) are exported for `curate`/`watch` capability profiles over one Den loop.
+- Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate profile LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
+- Remaining Letta/Codepool removal belongs to Phase 6–8 teardown: provisioning/sync modules, `LettaClient`, residual fixtures/docs, MemFS/Codepool services, and compose edits.
 
 ### Phase 6 — Den-native profile registry (replace provisioning)
 

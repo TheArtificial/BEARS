@@ -67,7 +67,7 @@ fn summarize_tool_arguments(value: &str) -> serde_json::Value {
     summary
 }
 
-pub(super) fn summarize_letta_event_for_log(value: &serde_json::Value) -> serde_json::Value {
+pub(super) fn summarize_provider_event_for_log(value: &serde_json::Value) -> serde_json::Value {
     let mut event = value.clone();
     let allow_preview = cfg!(debug_assertions)
         || std::env::var("BEARS_ACP_DEBUG_EVENT_SAMPLES")

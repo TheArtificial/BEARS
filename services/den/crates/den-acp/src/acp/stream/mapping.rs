@@ -123,7 +123,7 @@ pub(in crate::acp) fn runtime_stream_event_to_acp_seed_value(
     }
 }
 
-/// Native semantic events are projected twice today: seed JSON → Letta-compat mapper and
+/// Native semantic events are projected twice today: seed JSON → provider-compat mapper and
 /// Bearwire direct projection. Extending both for the same discriminant duplicates streamed
 /// assistant tokens (`I'mI'm your your…`).
 fn seed_mapped_event_covered_by_direct_projection(
@@ -234,5 +234,5 @@ pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_
 
 #[cfg(test)]
 pub(in crate::acp) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
-    super::logging::summarize_letta_event_for_log(value)
+    super::logging::summarize_provider_event_for_log(value)
 }

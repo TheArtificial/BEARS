@@ -2789,7 +2789,7 @@ use den_runtime::prompt_memory_blocks::{
     }
 
     #[test]
-    fn summarize_letta_event_for_log_redacts_large_tool_return() {
+    fn summarize_provider_event_for_log_redacts_large_tool_return() {
         let event = serde_json::json!({
             "message_type": "tool_return_message",
             "id": "message-test",
@@ -4122,7 +4122,7 @@ use den_runtime::prompt_memory_blocks::{
         // In full `acp_stream_` test runs, Tokio's clock can advance enough for the
         // synthetic local-tool timeout to settle before this probe. The invariant here is
         // narrower: no terminal may appear before either a real adapter result or an
-        // auto-timeout settlement, and Den must not post a Letta continuation before one
+        // auto-timeout settlement, and Den must not post a runtime continuation before one
         // of those settlements.
         if no_terminal.is_ok() {
             assert!(
@@ -5523,7 +5523,7 @@ use den_runtime::prompt_memory_blocks::{
         assert_eq!(
             *cancel_calls.lock().await,
             0,
-            "orphaned cleanup without run_ids must not issue an agent-wide Letta cancel"
+            "orphaned cleanup without run_ids must not issue an external runtime cancel"
         );
     }
 
@@ -6131,10 +6131,10 @@ data: "hello"}"#;
     }
 
     #[test]
-    fn resolver_maps_pending_acp_selection_to_letta_agent_target() {
+    fn resolver_maps_pending_acp_selection_to_native_runtime_target() {
         let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            compatibility_backend: Some("letta".to_string()),
+            compatibility_backend: Some("runtime:native".to_string()),
         };
         let resolution =
             resolve_acp_prompt_conversation(None, None, &binding, "new-acp-zed-abc123".to_string())
@@ -6155,7 +6155,7 @@ data: "hello"}"#;
     fn resolver_routes_explicit_conv_directly_and_requires_bear_check() {
         let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            compatibility_backend: Some("letta".to_string()),
+            compatibility_backend: Some("runtime:native".to_string()),
         };
         let conv_id = "conv-12345678-1234-4567-89ab-123456789abc";
         let resolution = resolve_acp_prompt_conversation(
@@ -6193,7 +6193,7 @@ data: "hello"}"#;
     fn resolver_never_archives_pending_or_default_targets() {
         let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            compatibility_backend: Some("letta".to_string()),
+            compatibility_backend: Some("runtime:native".to_string()),
         };
         let pending = AcpConversationResolution::from_selection(
             "new-acp-zed-abc123".to_string(),

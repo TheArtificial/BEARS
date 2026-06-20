@@ -13,7 +13,7 @@ use den_runtime::{
 pub(super) fn default_unavailable_context_budget() -> serde_json::Value {
     serde_json::json!({
         "status": "unavailable",
-        "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+        "reason": "provider context usage data is not wired into Den session_info yet",
         "source": "den.acp",
     })
 }

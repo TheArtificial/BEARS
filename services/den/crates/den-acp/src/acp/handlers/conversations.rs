@@ -157,7 +157,7 @@ pub(super) async fn conversation_history_inner(
             source_group_start: None,
             source_group_end: None,
             diagnostic: Some(
-                "Canonical ACP conversation history is not yet available for this conversation. Live Letta history fallback has been disabled for pair ACP reads during migration.".to_string(),
+                "Canonical ACP conversation history is not yet available for this conversation. Live provider history fallback has been disabled for pair ACP reads during migration.".to_string(),
             ),
             artifact: None,
             context_envelope: None,

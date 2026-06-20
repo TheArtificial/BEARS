@@ -881,7 +881,7 @@ impl Stream for AcpRuntimeSseStream {
                                         "Failed to continue runtime after ACP local tool result."
                                             .to_string(),
                                     detail: Some(err.to_string()),
-                                    error_type: Some("letta_tool_return_failed".to_string()),
+                                    error_type: Some("runtime_tool_return_failed".to_string()),
                                     request_id: Some(this.context.request_id.to_string()),
                                     context: None,
                                 },
@@ -960,12 +960,12 @@ impl Stream for AcpRuntimeSseStream {
                 Poll::Pending
             }
             Poll::Ready(Some(Err(err))) => {
-                let message = format!("Letta stream read failed: {err}");
+                let message = format!("Runtime stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
                     acp_session_id = %this.context.acp_session_id,
                     error = %err,
-                    "ACP upstream Letta SSE stream read error"
+                    "ACP upstream runtime stream read error"
                 );
                 this.turn_controller.on_stream_error();
                 let role_result = this.context.role_runtime.turn_result(
@@ -982,11 +982,11 @@ impl Stream for AcpRuntimeSseStream {
                 this.push_terminal_result_when_ready(role_result);
                 let event = serde_json::json!({
                     "type": "error",
-                    "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
+                    "message": "Runtime stream ended unexpectedly while BEARS was waiting for events.",
                     "detail": message,
                     "request_id": this.context.request_id.to_string(),
                     "diagnostic": {
-                        "code": "letta_stream_read_error",
+                        "code": "runtime_stream_read_error",
                         "component": "den.acp"
                     }
                 });
@@ -1036,7 +1036,7 @@ impl Stream for AcpRuntimeSseStream {
                         }) => {
                             this.pending.push_back(gateway_event_to_adapter_sse(
                                 GatewayEvent::Error {
-                                    message: "Cannot continue Letta after ACP tool result without original tool_call_id.".to_string(),
+                                    message: "Cannot continue runtime after ACP tool result without original tool_call_id.".to_string(),
                                     detail: Some(format!(
                                         "Tool result for {display_tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."
                                     )),
@@ -1060,7 +1060,7 @@ impl Stream for AcpRuntimeSseStream {
                     };
                     let binding = RoleRuntimeBinding {
                         binding_id: this.context.pair_agent_id.clone(),
-                        compatibility_backend: Some("letta".to_string()),
+                        compatibility_backend: Some("runtime:native".to_string()),
                     };
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();

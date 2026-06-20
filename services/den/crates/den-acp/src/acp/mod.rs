@@ -1,7 +1,7 @@
 //! Minimal Agent Client Protocol (ACP) gateway for adapter clients.
 //!
 //! This is the Phase 7 basic-chat slice: Den authenticates, authorizes the selected bear,
-//! injects trusted context, and maps text prompts to the Bear's API-direct `pair` Letta agent.
+//! injects trusted context, and maps text prompts to the Bear's Den-native `pair` profile.
 //! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
 pub(super) mod client;

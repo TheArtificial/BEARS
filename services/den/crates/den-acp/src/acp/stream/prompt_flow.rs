@@ -283,8 +283,8 @@ pub(in crate::acp) async fn run_prompt_flow(
             .archive_target
             .as_ref()
             .map(|conversation| conversation.id.as_str()),
-        letta_conversation_id = %conversation_resolution.upstream_target,
-        "ACP gateway routing prompt to pair role via Letta API"
+        runtime_conversation_id = %conversation_resolution.upstream_target,
+        "ACP gateway routing prompt to pair role via native runtime"
     );
     let active_plan_mode =
         plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
