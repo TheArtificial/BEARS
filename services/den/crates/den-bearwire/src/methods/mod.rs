@@ -24,6 +24,8 @@ pub(crate) fn initialize_result(state: &DenState) -> Value {
             "events": "/bearwire/v1/sessions/{session_id}/events"
         },
         "legacy_acp_enabled": state.config.acp_gateway_enabled,
+        "legacy_acp_deprecated": true,
+        "legacy_acp_removal_phase": "phase_4",
     })
 }
 
@@ -36,7 +38,10 @@ pub(crate) fn param_string(params: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(crate) fn required_param_string(params: &Value, key: &str) -> Result<String, den_http::errors::CustomError> {
+pub(crate) fn required_param_string(
+    params: &Value,
+    key: &str,
+) -> Result<String, den_http::errors::CustomError> {
     param_string(params, key)
         .ok_or_else(|| den_http::errors::CustomError::ValidationError(format!("{key} is required")))
 }

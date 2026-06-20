@@ -92,8 +92,17 @@ pub(crate) async fn protocol_status(http: &reqwest::Client, config: &Config) -> 
                 .and_then(Value::as_bool)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
+            let legacy_deprecated = value
+                .get("legacy_acp_deprecated")
+                .and_then(Value::as_bool)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let legacy_phase = value
+                .get("legacy_acp_removal_phase")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             format!(
-                "{}; Den advertises protocol={} version={} server={} {} git_sha={} legacy_acp_enabled={}",
+                "{}; Den advertises protocol={} version={} server={} {} git_sha={} legacy_acp_enabled={} legacy_acp_deprecated={} legacy_acp_removal_phase={}",
                 mode_summary(),
                 protocol,
                 version,
@@ -101,6 +110,8 @@ pub(crate) async fn protocol_status(http: &reqwest::Client, config: &Config) -> 
                 server_version,
                 git_sha,
                 legacy,
+                legacy_deprecated,
+                legacy_phase,
             )
         }
         Err(err) => format!("{}; initialize failed: {err:#}", mode_summary()),

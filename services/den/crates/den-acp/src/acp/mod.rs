@@ -29,8 +29,10 @@ pub(super) mod workflow_guidance;
 mod tests;
 
 use axum::{
+    body::Body,
     extract::{Path, State},
-    http::HeaderMap,
+    http::{HeaderMap, Request},
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -81,6 +83,15 @@ use self::{
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
+async fn log_legacy_acp_http_usage(request: Request<Body>, next: Next) -> impl IntoResponse {
+    tracing::warn!(
+        method = %request.method(),
+        path = %request.uri().path(),
+        "legacy ACP HTTP route used during BearWire migration"
+    );
+    next.run(request).await
+}
+
 pub fn router() -> Router<DenState> {
     Router::new()
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
@@ -128,6 +139,7 @@ pub fn router() -> Router<DenState> {
             get(conversation_history),
         )
         .route("/bears/{slug}/auth-check", get(auth_check))
+        .layer(middleware::from_fn(log_legacy_acp_http_usage))
 }
 
 pub(crate) use self::client::{
