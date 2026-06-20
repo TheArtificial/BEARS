@@ -25,46 +25,17 @@ const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_00
 fn client_tool_descriptors_from_context(
     client_context: Option<&Value>,
     requested_mode: Option<&str>,
-    prompt: &str,
 ) -> Value {
     let context = client_context.unwrap_or(&Value::Null);
     let policy = den_runtime::client_tools::resolve_session_policy_for_mode(
         requested_mode.unwrap_or("ask"),
         None,
     );
-    let simple_workspace_read =
-        den_runtime::native_runtime::pair_turn_is_simple_workspace_read(Some(prompt));
-    let workspace_turn =
-        den_runtime::native_runtime::pair_turn_needs_workspace_client_tools(Some(prompt));
-    let browser_turn =
-        den_runtime::native_runtime::pair_turn_needs_browser_client_tools(Some(prompt));
     let mut descriptors = Vec::new();
     for tool in den_runtime::client_tools::ClientToolName::all() {
         if *tool == den_runtime::client_tools::ClientToolName::McpCallTool
             || !policy.allows_tool(*tool)
         {
-            continue;
-        }
-        let is_browser_tool = matches!(
-            den_runtime::client_tools::tool_class(*tool),
-            den_runtime::client_tools::ToolClass::Browser,
-        );
-        if simple_workspace_read
-            && !matches!(
-                tool,
-                den_runtime::client_tools::ClientToolName::ReadTextFile
-                    | den_runtime::client_tools::ClientToolName::ListDirectory
-                    | den_runtime::client_tools::ClientToolName::FindPaths
-                    | den_runtime::client_tools::ClientToolName::SearchFiles
-                    | den_runtime::client_tools::ClientToolName::Stat
-            )
-        {
-            continue;
-        }
-        if !simple_workspace_read && workspace_turn && !browser_turn && is_browser_tool {
-            continue;
-        }
-        if browser_turn && !is_browser_tool {
             continue;
         }
         let descriptor = tool.descriptor();
@@ -73,13 +44,11 @@ fn client_tool_descriptors_from_context(
         }
         descriptors.push(den_runtime::client_tools::provider_tool_descriptor(*tool));
     }
-    if browser_turn {
-        if let Some(mcp_tools) = context
-            .pointer("/mcp/client_tools")
-            .and_then(Value::as_array)
-        {
-            descriptors.extend(mcp_tools.iter().cloned());
-        }
+    if let Some(mcp_tools) = context
+        .pointer("/mcp/client_tools")
+        .and_then(Value::as_array)
+    {
+        descriptors.extend(mcp_tools.iter().cloned());
     }
     if descriptors.is_empty() {
         descriptors.push(den_runtime::client_tools::provider_tool_descriptor(
@@ -476,7 +445,6 @@ pub(crate) async fn run_start_result(
     let client_tools = client_tool_descriptors_from_context(
         params.get("client_context"),
         requested_mode.as_deref(),
-        &prompt,
     );
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
@@ -862,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn bearwire_file_prompt_uses_real_file_tool_schemas_and_excludes_browser_mcp() {
+    fn bearwire_advertises_supported_direct_and_forwarded_mcp_tools() {
         let context = json!({
             "adapter": {
                 "direct_tools": {
@@ -881,18 +849,14 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(
-            Some(&context),
-            Some("write"),
-            "Please read README.md",
-        );
+        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("write"));
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_find_paths"));
-        assert!(!names.contains(&"fs_edit_file"));
-        assert!(!names.contains(&"terminal_run_command"));
-        assert!(!names.contains(&"chrome_open"));
-        assert!(!names.contains(&"mcp__chrome_devtools_custom__click"));
+        assert!(names.contains(&"fs_edit_file"));
+        assert!(names.contains(&"terminal_run_command"));
+        assert!(names.contains(&"chrome_open"));
+        assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
         let read = descriptors
             .as_array()
             .unwrap()
@@ -915,11 +879,7 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(
-            Some(&context),
-            Some("ask"),
-            "Please click the browser page button",
-        );
+        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("ask"));
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
     }
