@@ -6,17 +6,17 @@ use std::{
 };
 
 use axum::{
-    extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::IntoResponse,
     Json,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use den_http::acp_tokens;
 use den_runtime::{
-    acp_sessions,
+    DenState, acp_sessions,
     bears::{db as bears_db, db::BearParams},
     bearwire_obligations, bearwire_runs,
     conversation_message_types::{
@@ -24,12 +24,13 @@ use den_runtime::{
         ConversationMessageWrite,
     },
     conversation_persistence::{append_message, ensure_conversation_for_external_id},
-    DenState,
+    native_runtime::NativeRuntimeConversationBackend,
+    runtime_contracts::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
 };
 
 use crate::{
-    events::{events, EventStreamQuery},
-    rpc::{rpc, JsonRpcRequest},
+    events::{EventStreamQuery, events},
+    rpc::{JsonRpcRequest, rpc},
 };
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
@@ -467,6 +468,77 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
     .await
     .expect("count persisted user prompt");
     assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, _) = create_test_bear(&pool).await;
+    let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let canonical = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure canonical conversation");
+    append_message(
+        &pool,
+        canonical.id,
+        &ConversationMessageWrite {
+            message_type: ConversationMessageType::User,
+            role: Some(ConversationMessageRole::User),
+            visibility: ConversationMessageVisibility::Default,
+            content_text: "first user prompt".to_string(),
+            content_json: json!({}),
+            provider_message_id: Some("prior-user".to_string()),
+            source_event_id: None,
+            created_at: None,
+        },
+    )
+    .await
+    .expect("append user message");
+    append_message(
+        &pool,
+        canonical.id,
+        &ConversationMessageWrite {
+            message_type: ConversationMessageType::Assistant,
+            role: Some(ConversationMessageRole::Assistant),
+            visibility: ConversationMessageVisibility::Default,
+            content_text: "first assistant reply".to_string(),
+            content_json: json!({}),
+            provider_message_id: Some("prior-assistant".to_string()),
+            source_event_id: None,
+            created_at: None,
+        },
+    )
+    .await
+    .expect("append assistant message");
+
+    let backend = NativeRuntimeConversationBackend::with_pool(pool.clone());
+    let binding = RoleRuntimeBinding {
+        binding_id: format!("den-native:{bear_id}:pair"),
+        compatibility_backend: Some("native".to_string()),
+    };
+    let history = backend
+        .load_history(
+            &binding,
+            &RuntimeConversationRef {
+                id: conversation_id,
+            },
+        )
+        .await
+        .expect("load native history");
+
+    assert_eq!(history.records.len(), 2);
+    assert_eq!(history.records[0].role, "user");
+    assert_eq!(history.records[0].content, "first user prompt");
+    assert_eq!(history.records[1].role, "assistant");
+    assert_eq!(history.records[1].content, "first assistant reply");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1161,10 +1233,12 @@ async fn assert_method_requires_bearer_token(method: &str, params: Value) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["error"]["code"], -32001);
-    assert!(value["error"]["data"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("missing Authorization"));
+    assert!(
+        value["error"]["data"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("missing Authorization")
+    );
 }
 
 #[tokio::test]

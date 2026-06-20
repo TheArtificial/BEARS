@@ -9,14 +9,14 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
-        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
-        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
+        AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        NativeToolDispatchMode, SessionTrackingStream, agent_loop_session_key,
+        assemble_native_turn_for_bear, record_approval_decision, run_agent_step_stream,
     },
     bears::BearProfile,
     conversation_events::{
-        canonical_persistence_context, persist_canonical_conversation_record,
-        CanonicalConversationRecord, ConversationEventProvenance,
+        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
+        persist_canonical_conversation_record,
     },
     conversation_persistence,
     llm::{ChatMessage, LlmClient},
@@ -28,7 +28,7 @@ use crate::{
         RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
     },
     turn_runner::{
-        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
+        TurnContinueRequest, TurnStartRequest, materialize_runtime_conversation_if_needed,
     },
 };
 use den_core::DenError;
@@ -174,13 +174,10 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
             .into_iter()
             .rev()
             .filter_map(|row| {
-                if row.message_type != "visible_message" {
+                if !row.is_transcript_visible() {
                     return None;
                 }
                 let role = row.role?;
-                if role != "user" && role != "assistant" {
-                    return None;
-                }
                 Some(RuntimeHistoryRecord {
                     message_id: row.provider_message_id,
                     role,
