@@ -15,7 +15,7 @@
 {% endif %}
 
 <p class="form-hint">
-  Model selection is resolved in layers: Bear default, then profile override, then future lane-specific assignments.
+  Model selection is resolved in layers: Bear default, then stance override, then future lane-specific assignments.
   Lane-specific model assignments are TBD.
 </p>
 
@@ -25,7 +25,7 @@
 
 <form method="post" class="box full-width">
   <h3>Bear default</h3>
-  <p class="form-hint">Used when a profile is set to inherit.</p>
+  <p class="form-hint">Used when a stance is set to inherit.</p>
   <label for="bear_default_model">Bear default model</label>
   <select id="bear_default_model" name="bear_default_model" required{% if not can_manage_bear %} disabled{% endif %}>
     <option value="" disabled{% if not bear.default_model %} selected{% endif %}>— Choose a model —</option>
@@ -34,10 +34,10 @@
     {% endfor %}
   </select>
 
-  <h3>Profile defaults</h3>
-  <p class="form-hint">Leave a profile set to inherit unless it needs a different tradeoff.</p>
+  <h3>Stance defaults</h3>
+  <p class="form-hint">Leave a stance set to inherit unless it needs a different tradeoff.</p>
   <table>
-    <thead><tr><th>Profile</th><th>Model setting</th><th>Resolved</th><th>Source</th></tr></thead>
+    <thead><tr><th>Stance</th><th>Model setting</th><th>Resolved</th><th>Source</th></tr></thead>
     <tbody>
       {% for row in rows %}
       <tr>

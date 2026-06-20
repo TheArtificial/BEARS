@@ -32,7 +32,7 @@ real-page smoke testing in development.
 
 ## Onboarding (`src/web/onboarding.rs`)
 
-- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a profile-aware `context_profile`, provisions native profile bindings, and redirects to chat
+- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a stance-aware `context_profile`, provisions native stance bindings, and redirects to chat
 
 ## Bear settings (`src/web/bear_settings.rs`)
 
@@ -41,14 +41,14 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 - `GET /bear/{slug}/overview` — readiness summary and navigation hub
 - `GET /bear/{slug}/access` — membership list; bear admins grant/revoke via POST actions
 - `GET /bear/{slug}/persona` — compiled prompts and block bindings
-- `GET /bear/{slug}/profiles` — native profile binding table
+- `GET /bear/{slug}/stances` — native stance binding table
 - `GET|POST /bear/{slug}/models` — Bear default model plus per-profile model overrides (`inherit` or Bifrost-available model); lane-specific assignments are TBD
-- `GET /bear/{slug}/profiles/{profile}` — profile detail for `chat`, `pair`, `curate`, `work`, or `watch`
+- `GET /bear/{slug}/stances/{profile}` — stance detail for `chat`, `pair`, `curate`, `work`, or `watch`
 - `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
 - `GET /bear/{slug}/context` — prompt memory blocks
 - `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
 - `GET /bear/{slug}/advanced` — diagnostics and provision action
-- `POST /bear/{slug}/provision-missing-profiles` — provision missing native profile bindings (redirects to `/profiles`); legacy `/provision-missing-roles` aliases here
+- `POST /bear/{slug}/provision-missing-stances` — provision missing native stance bindings (redirects to `/stances`); legacy `/provision-missing-roles` aliases here
 
 ## Bear memory & entities (`src/bear_memory.rs`)
 
@@ -66,7 +66,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin`
 - `GET /bear/{slug}/details` — permanent redirect to `/bear/{slug}/overview`
-- `GET /bear/{slug}/details/{*rest}` — permanent redirects to canonical `/bear/{slug}/…` paths (legacy `roles/` → `profiles/`)
+- `GET /bear/{slug}/details/{*rest}` — permanent redirects to canonical `/bear/{slug}/…` paths (legacy `roles/` → `stances/`)
 - `GET /bear/{slug}/edit` — redirect to `/bear/{slug}/edit/overview`
 - `GET|POST /bear/{slug}/edit/overview` — edit slug, name, description; delete bear form
 - `GET|POST /bear/{slug}/edit/prompt` — edit system prompt (bear admins)
@@ -92,7 +92,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
-- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and native profile provisioning defaults)
+- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and native stance provisioning defaults)
 - `GET /admin/bears/{id}` — redirects to member-facing `/bear/{slug}/…` profile/settings pages
 - `GET|POST /admin/bears/{id}/edit` — legacy redirects to member-facing edit pages
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ role_detail.profile }} profile · {{ bear.slug }}{% endblock %}
+{% block title %}{{ role_detail.profile }} stance · {{ bear.slug }}{% endblock %}
 
 {% block content %}
 {% include "bear/settings/_bear_nav.html" %}
@@ -34,7 +34,7 @@
   <div>
     <div class="box full-width">
       <h3>Memory</h3>
-      <p class="form-hint">Profile-local branch memory. Shared <code>core/</code> memory is Bear-wide.</p>
+      <p class="form-hint">Stance-local branch memory. Shared <code>core/</code> memory is Bear-wide.</p>
       <ul>
         {% for item in role_detail.memory %}<li>{{ item | e }}</li>{% endfor %}
       </ul>
@@ -60,7 +60,7 @@
   <div>
     <div class="box full-width">
       <h3>Contract</h3>
-      <p class="form-hint">Protected profile instructions and boundaries.</p>
+      <p class="form-hint">Protected stance instructions and boundaries.</p>
       <pre class="den-bear-prompt-pre">{{ role_detail.role_contract | e }}</pre>
     </div>
   </div>
@@ -68,7 +68,7 @@
 
 <section class="box full-width">
   <h3>Composed prompt</h3>
-  <p class="form-hint">What this profile sees after Den combines the baseline, profile contract, user steering, Bear context, and runtime context.</p>
+  <p class="form-hint">What this stance sees after Den combines the baseline, stance contract, user steering, Bear context, and runtime context.</p>
   <pre class="den-bear-prompt-pre">{{ role_detail.composed_prompt | e }}</pre>
 </section>
 </div>

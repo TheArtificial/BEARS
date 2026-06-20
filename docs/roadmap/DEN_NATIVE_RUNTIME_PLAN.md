@@ -71,13 +71,13 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate profile LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
 - Remaining Letta/Codepool removal belongs to Phase 7–8 teardown: web chat harness, `LettaClient`, residual fixtures/docs, MemFS/Codepool services, and compose edits.
 
-### Phase 6 — Den-native profile registry (replace provisioning) — Closed
+### Phase 6 — Den-native stance registry (replace provisioning) — Closed
 
-- Each operating profile is a Den-owned runtime profile: compiled system prompt, model choice, descriptor-owned tool roster, memory scope, and `den-native:{bear_id}:{profile}` binding id.
-- Native reconciliation (`reconcile_bear_native` / `provision_missing_bear_profiles_native`) refreshes all five profile bindings from compiled prompts + `config_hash` without Letta HTTP or external agent creation.
+- Each operating stance is a Den-owned runtime stance: compiled system prompt, model choice, descriptor-owned tool roster, memory scope, and `den-native:{bear_id}:{profile}` binding id.
+- Native reconciliation (`reconcile_bear_native` / `provision_missing_bear_profiles_native`) refreshes all five stance bindings from compiled prompts + `config_hash` without Letta HTTP or external agent creation.
 - `DenNativeProfileRegistry` is wired into pair binding resolution; `profile_config_hash` uses native runtime-family labels and omits Letta tool rosters.
 - Active admin create/edit/import/API paths ignore legacy Letta agent/tool fields and write native-compatible empty legacy values.
-- Operator UI/routes and provisioning APIs advertise **profile** vocabulary for the five operating profiles; membership **roles** (`user_bear.role`) remain unchanged.
+- Operator UI/routes and provisioning APIs advertise **profile** vocabulary for the five operating stances; membership **roles** (`user_bear.role`) remain unchanged.
 - Deprecated `bear_profile_bindings.letta_agent_id` and residual Letta import/backfill schema are retained only as Phase 8 migration residue; physical column/service/client deletion remains Phase 8.
 
 ### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `work`

@@ -18,4 +18,4 @@ pub mod tools;
 pub use error::DenError;
 pub use governance::{GovernanceMode, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};
-pub use profile::BearProfile;
+pub use profile::{BearProfile, BearStance};

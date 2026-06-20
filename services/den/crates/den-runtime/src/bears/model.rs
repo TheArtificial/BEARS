@@ -47,10 +47,10 @@ fn default_provisioning_version() -> i32 {
     1
 }
 
-// `BearProfile` now lives in the `den-core` foundation crate (shared by runtime,
-// docket, tools, memory, web/api). Re-exported here so existing
-// `crate::bears::{BearProfile, model::BearProfile}` paths keep compiling.
-pub use den_core::BearProfile;
+// `BearStance` now lives in the `den-core` foundation crate (shared by runtime,
+// docket, tools, memory, web/api). `BearProfile` is re-exported as a deprecated
+// compatibility alias while call sites migrate to stance terminology.
+pub use den_core::{BearProfile, BearStance};
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct BearProfileBinding {
@@ -127,8 +127,8 @@ mod tests {
         assert!(!BearProfile::Curate.is_harness_backed());
         assert!(!BearProfile::Watch.is_harness_backed());
         assert_eq!(BearProfile::Chat.runtime_family(), "native_harness_backed");
-                assert_eq!(BearProfile::Work.runtime_family(), "native_harness_backed");
-                assert_eq!(BearProfile::Pair.runtime_family(), "native_api_direct");
+        assert_eq!(BearProfile::Work.runtime_family(), "native_harness_backed");
+        assert_eq!(BearProfile::Pair.runtime_family(), "native_api_direct");
     }
 
     #[test]

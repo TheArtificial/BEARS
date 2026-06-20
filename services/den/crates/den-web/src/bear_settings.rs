@@ -45,7 +45,9 @@ use crate::web::admin::bears::{
     BearMemberAdminRow, BearPlanModeRow, BearProfileBindingHealthRow, BearWebApprovalRow,
     BearWebFetchRow, BearWebSourceRow,
 };
-use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
+use crate::web::bear_create_support::{
+    canonical_default_model_handle, model_catalog_select_context,
+};
 use den_runtime::agent_assist::ModelOption;
 
 use super::{
@@ -58,9 +60,11 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
         .route_with_tsr("/bear/{slug}/access", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
-        .route_with_tsr("/bear/{slug}/profiles", get(profiles_view))
+        .route_with_tsr("/bear/{slug}/stances", get(stances_view))
+        .route_with_tsr("/bear/{slug}/profiles", get(stances_view))
         .route_with_tsr("/bear/{slug}/models", get(models_view).post(models_post))
-        .route_with_tsr("/bear/{slug}/profiles/{profile}", get(profile_detail_view))
+        .route_with_tsr("/bear/{slug}/stances/{stance}", get(stance_detail_view))
+        .route_with_tsr("/bear/{slug}/profiles/{stance}", get(stance_detail_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
@@ -87,12 +91,16 @@ pub fn router() -> Router<AppState> {
             post(revoke_web_approval_action),
         )
         .route_with_tsr(
+            "/bear/{slug}/provision-missing-stances",
+            post(provision_missing_stances_action),
+        )
+        .route_with_tsr(
             "/bear/{slug}/provision-missing-profiles",
-            post(provision_missing_profiles_action),
+            post(provision_missing_stances_action),
         )
         .route_with_tsr(
             "/bear/{slug}/provision-missing-roles",
-            post(provision_missing_profiles_action),
+            post(provision_missing_stances_action),
         )
 }
 
@@ -789,7 +797,7 @@ async fn persona_view(
     .await
 }
 
-async fn profiles_view(
+async fn stances_view(
     Path(slug): Path<String>,
     Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
@@ -804,19 +812,18 @@ async fn profiles_view(
         bear_agent_health_rows(&state, bear.id, letta_configured).await?;
     web::render_template(
         &state,
-        "bear/settings/profiles.html",
+        "bear/settings/stances.html",
         auth_session,
         context! {
             agent_health_rows,
             message => query.message,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "profiles"),
+            ..bear_nav_context(&bear, "stances"),
         },
     )
     .await
 }
-
 
 fn profile_label(profile: BearProfile) -> &'static str {
     match profile {
@@ -881,7 +888,12 @@ async fn model_page_rows(
             label: profile_label(profile).to_string(),
             configured_model: configured.to_string(),
             resolved_model: resolved.to_string(),
-            source: if configured.is_empty() { "Bear default" } else { "Profile override" }.to_string(),
+            source: if configured.is_empty() {
+                "Bear default"
+            } else {
+                "Stance override"
+            }
+            .to_string(),
         });
     }
     Ok(rows)
@@ -931,7 +943,8 @@ async fn models_post(
     };
     let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
     if !configured || model_options.is_empty() {
-        let message = fetch_error.unwrap_or_else(|| "No Bifrost models are available for validation.".to_string());
+        let message = fetch_error
+            .unwrap_or_else(|| "No Bifrost models are available for validation.".to_string());
         return Ok(Redirect::to(&format!(
             "/bear/{}/models?error={}",
             bear.slug,
@@ -954,7 +967,10 @@ async fn models_post(
     for profile in BearProfile::ALL {
         let raw = form_profile_model(&form, profile).trim();
         if !raw.is_empty() && !model_available(&model_options, raw) {
-            let message = format!("{} override must be a Bifrost-available model.", profile_label(profile));
+            let message = format!(
+                "{} override must be a Bifrost-available model.",
+                profile_label(profile)
+            );
             return Ok(Redirect::to(&format!(
                 "/bear/{}/models?error={}",
                 bear.slug,
@@ -984,13 +1000,8 @@ async fn models_post(
     for profile in BearProfile::ALL {
         let raw = form_profile_model(&form, profile).trim();
         let model = canonical_default_model_handle(raw);
-        bears_db::set_profile_model_setting(
-            state.sqlx_pool(),
-            bear.id,
-            profile,
-            model.as_deref(),
-        )
-        .await?;
+        bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
+            .await?;
     }
 
     Ok(Redirect::to(&format!(
@@ -1001,8 +1012,8 @@ async fn models_post(
     .into_response())
 }
 
-async fn profile_detail_view(
-    Path((slug, profile)): Path<(String, String)>,
+async fn stance_detail_view(
+    Path((slug, stance)): Path<(String, String)>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -1010,19 +1021,19 @@ async fn profile_detail_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let role = profile
+    let role = stance
         .parse::<BearProfile>()
         .map_err(CustomError::NotFound)?;
     let role_detail = build_role_detail_view(&state, &bear, role).await?;
     web::render_template(
         &state,
-        "bear/settings/profile.html",
+        "bear/settings/stance.html",
         auth_session,
         context! {
             role_detail,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "profiles"),
+            ..bear_nav_context(&bear, "stances"),
         },
     )
     .await
@@ -1459,7 +1470,7 @@ async fn revoke_web_approval_action(
     .into_response())
 }
 
-async fn provision_missing_profiles_action(
+async fn provision_missing_stances_action(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -1475,12 +1486,12 @@ async fn provision_missing_profiles_action(
     )
     .await
     {
-        Ok(0) => "No missing native profile bindings to provision.".to_string(),
-        Ok(n) => format!("Provisioned {n} missing native profile binding(s)."),
+        Ok(0) => "No missing native stance bindings to provision.".to_string(),
+        Ok(n) => format!("Provisioned {n} missing native stance binding(s)."),
         Err(err) => format!("Provisioning failed: {err}"),
     };
     Ok(Redirect::to(&format!(
-        "/bear/{}/profiles?message={}",
+        "/bear/{}/stances?message={}",
         bear.slug,
         urlencoding::encode(&message)
     ))

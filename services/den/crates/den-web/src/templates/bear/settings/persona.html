@@ -8,8 +8,8 @@
   <h2>Prompts · {{ bear.name }}</h2>
 
   <p class="form-hint">
-    Den keeps a Bear-level baseline prompt and, when profile-aware prompt composition
-    is enabled, composes profile-specific prompts for chat, pair, curate, work, and watch.
+    Den keeps a Bear-level baseline prompt and, when stance-aware prompt composition
+    is enabled, composes stance-specific prompts for chat, pair, curate, work, and watch.
   </p>
 
   <p>
@@ -18,22 +18,22 @@
 
   <h3>Prompt architecture</h3>
   {% if context_profile_enabled %}
-  <p>Mode: <strong>profile-aware prompt composition</strong>{% if template_id %} · Template: <code>{{ template_id | e }}</code>{% endif %}</p>
-  <p class="form-hint">The stored baseline prompt below is one input. Each runtime profile also has a protected contract and Den-composed context.</p>
+  <p>Mode: <strong>stance-aware prompt composition</strong>{% if template_id %} · Template: <code>{{ template_id | e }}</code>{% endif %}</p>
+  <p class="form-hint">The stored baseline prompt below is one input. Each runtime stance also has a protected contract and Den-composed context.</p>
   {% else %}
   <p>Mode: <strong>single baseline system prompt</strong></p>
-  <p class="form-hint">This Bear does not currently use profile-aware prompt composition.</p>
+  <p class="form-hint">This Bear does not currently use stance-aware prompt composition.</p>
   {% endif %}
 
   <h3>Stored baseline system prompt</h3>
-  <p class="form-hint">This is the editable Bear-level prompt stored on the Bear row. It is visible here even when profile-aware prompts are enabled.</p>
+  <p class="form-hint">This is the editable Bear-level prompt stored on the Bear row. It is visible here even when stance-aware prompts are enabled.</p>
   <pre style="white-space: pre-wrap; max-height: 20rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
 
   {% if compiled_roles and compiled_roles | length > 0 %}
-  <h3>Compiled runtime profile prompts</h3>
-  <p class="form-hint">These previews show what each profile sees after Den combines baseline prompt, profile contract, Bear context, managed blocks, and runtime context.</p>
+  <h3>Compiled runtime stance prompts</h3>
+  <p class="form-hint">These previews show what each stance sees after Den combines baseline prompt, stance contract, Bear context, managed blocks, and runtime context.</p>
   <table>
-    <thead><tr><th>Profile</th><th>Chars</th><th>Preview</th></tr></thead>
+    <thead><tr><th>Stance</th><th>Chars</th><th>Preview</th></tr></thead>
     <tbody>
     {% for row in compiled_roles %}
       <tr>

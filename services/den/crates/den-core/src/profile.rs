@@ -1,4 +1,4 @@
-//! `BearProfile`: the operational profile vocabulary (ADR-0036/ADR-0039).
+//! `BearStance`: the operational stance vocabulary (ADR-0036/ADR-0039).
 //!
 //! This is a foundational closed-set enum shared across den crates (runtime,
 //! docket, tools, memory, web/api), so it lives in `den-core`. The original
@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::BearId;
 
-/// Operational profile a Bear runs under (not a membership role).
+/// Operational stance a Bear runs under (not a membership role).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BearProfile {
+pub enum BearStance {
     Chat,
     Pair,
     Curate,
@@ -22,7 +22,7 @@ pub enum BearProfile {
     Watch,
 }
 
-impl BearProfile {
+impl BearStance {
     pub const ALL: [Self; 5] = [
         Self::Chat,
         Self::Pair,
@@ -56,20 +56,20 @@ impl BearProfile {
     pub fn tags_for_bear(self, bear_id: BearId) -> Vec<String> {
         vec![
             format!("bear:{bear_id}"),
-            format!("profile:{}", self.as_str()),
-            format!("bear:{bear_id}:profile:{}", self.as_str()),
+            format!("stance:{}", self.as_str()),
+            format!("bear:{bear_id}:stance:{}", self.as_str()),
             "git-memory-enabled".to_string(),
         ]
     }
 }
 
-impl fmt::Display for BearProfile {
+impl fmt::Display for BearStance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for BearProfile {
+impl FromStr for BearStance {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -79,7 +79,10 @@ impl FromStr for BearProfile {
             "curate" => Ok(Self::Curate),
             "work" => Ok(Self::Work),
             "watch" => Ok(Self::Watch),
-            other => Err(format!("unknown bear profile: {other}")),
+            other => Err(format!("unknown bear stance: {other}")),
         }
     }
 }
+
+/// Deprecated compatibility alias while downstream code migrates from profile terminology.
+pub type BearProfile = BearStance;
