@@ -704,6 +704,115 @@ async fn tool_result_uses_persisted_obligation_after_fresh_state_and_stays_idemp
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_a = format!("run_{}", Uuid::new_v4().simple());
+    let run_b = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    bearwire_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
+        .await
+        .expect("create first active run");
+
+    let err = bearwire_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
+        .await
+        .expect_err("second active run in one ACP session should be rejected");
+    assert!(
+        err.to_string()
+            .contains("idx_bearwire_runs_one_active_per_session"),
+        "unexpected error: {err}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_a = format!("session-a-{}", Uuid::new_v4().simple());
+    let session_b = format!("session-b-{}", Uuid::new_v4().simple());
+    let run_a = format!("run_{}", Uuid::new_v4().simple());
+    let run_b = format!("run_{}", Uuid::new_v4().simple());
+    let tool_call_id = "call-collision";
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_a).await;
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_b).await;
+    bearwire_runs::create_run(&pool, &run_a, &session_a, bear_id, user_id)
+        .await
+        .expect("create run a");
+    bearwire_runs::create_run(&pool, &run_b, &session_b, bear_id, user_id)
+        .await
+        .expect("create run b");
+    bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_a,
+        &session_a,
+        tool_call_id,
+        None,
+        json!({ "session": "a" }),
+    )
+    .await
+    .expect("insert session a obligation");
+    bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_b,
+        &session_b,
+        tool_call_id,
+        None,
+        json!({ "session": "b" }),
+    )
+    .await
+    .expect("insert session b obligation");
+
+    let wrong_session = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_b,
+            "run_id": run_a,
+            "tool_call_id": tool_call_id,
+            "status": "ok",
+            "content": "wrong session"
+        }),
+    )
+    .await;
+    let error = wrong_session["error"]["data"]["error"].as_str().unwrap();
+    assert!(
+        error.contains("run does not belong to authenticated Bear/session"),
+        "{wrong_session}"
+    );
+
+    let response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "client.tool.result",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_a,
+            "run_id": run_a,
+            "tool_call_id": tool_call_id,
+            "status": "ok",
+            "content": "correct session"
+        }),
+    )
+    .await;
+    assert_eq!(response["result"]["ok"], true, "{response}");
+
+    let obligation_a = bearwire_obligations::get_tool_call_obligation(&pool, &run_a, tool_call_id)
+        .await
+        .expect("load session a obligation")
+        .expect("session a obligation exists");
+    let obligation_b = bearwire_obligations::get_tool_call_obligation(&pool, &run_b, tool_call_id)
+        .await
+        .expect("load session b obligation")
+        .expect("session b obligation exists");
+    assert_eq!(obligation_a.state, "continued");
+    assert_eq!(obligation_b.state, "waiting_for_client");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

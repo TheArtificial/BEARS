@@ -161,11 +161,11 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Task | Location | Notes |
 | --- | --- | --- |
 | Audit runtime/session identity keys | `den-runtime`, `den-bearwire`, `den-acp`, `bear-armature` | Confirm every continuation path carries `bear_id`, `human/user_id`, `session_id`, `run_id`, `conversation_id`, `tool_call_id`, and `permission_id` where applicable |
-| Same-session multi-run isolation tests | `den-bearwire` | Two runs in the same ACP session must not satisfy each other's obligations or continuations |
-| Cross-session collision tests | `den-bearwire` / `den-runtime` | Same `tool_call_id` in two sessions must remain isolated by session/run |
-| Conversation continuity tests | `den-bearwire` / `bear-armature` | Reused ACP session with resolved `den-conv-*` must load prior transcript and must not create a fresh native conversation each turn |
+| Same-session multi-run isolation tests | `den-bearwire` | Complete for active-run isolation: DB constraint rejects a second active run in one ACP session |
+| Cross-session collision tests | `den-bearwire` / `den-runtime` | Complete for BearWire tool results: same `tool_call_id` in two sessions remains isolated by session/run and wrong-session delivery is rejected |
+| Conversation continuity tests | `den-bearwire` / `bear-armature` | Partially complete. BearWire now uses resolved `den-conv-*` as native runtime `upstream_target`; add end-to-end transcript-loading assertion next |
 | Restart / missing session-store behavior | `den-runtime` / `den-bearwire` | Tool result after Den restart or missing `SESSION_STORE` should return an explicit non-continuable diagnostic, not malformed LLM messages |
-| ADR-0044 session-state appendix | docs | Keep stream wake guidance plus concise session/run/conversation ownership invariants |
+| ADR-0044 session-state appendix | docs | Complete. ADR-0044 now records stream progress invariants plus session/run/conversation ownership rules |
 
 **Exit gate:** Tests cover same-session multi-run isolation, cross-session id collisions, resolved-conversation continuity, and missing in-memory continuation state. Remaining Phase 4 work must not proceed until these cases are green or explicitly accepted as known risks.
 
