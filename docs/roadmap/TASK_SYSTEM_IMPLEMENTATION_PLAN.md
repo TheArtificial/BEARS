@@ -1,8 +1,8 @@
 # Task System Implementation Plan
 
-> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md) / [Docket plan](DOCKET_IMPLEMENTATION_PLAN.md)); the MemFS task artifacts and Letta Code activity layer here are superseded. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md) / [Docket plan](DOCKET_IMPLEMENTATION_PLAN.md)); the MemFS task artifacts and Letta Code activity layer here are superseded. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)). Session task-list checkout/sync semantics are now captured in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).
 
-> **Partially superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md).** That ADR evolves `bear_work_plans` + JSONB `items` into a relational jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events) and is the canonical spec for the work-management schema. **Phases 1–4 below are superseded** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by job/task creation and the `den.job.*` / `den.task.*` tools). **Phases 5–6 remain valid** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034. The `den.work_plan.*` tool names and `bear_work_plan_events` are retired in favor of the ADR-0034 surface.
+> **Partially superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md) and amended by [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).** ADR-0034 evolves `bear_work_plans` + JSONB `items` into a relational jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events). ADR-0045 clarifies that session task lists are working projections/checkouts: items may be local-only or Docket-backed, and authorized changes may sync to Docket. **Phases 1–4 below are superseded** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by task-list checkout/sync plus Docket job/task creation). **Phases 5–6 remain valid** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034 and ADR-0045. The legacy `den.work_plan.*` tool names and `bear_work_plan_events` are retired/migrated in favor of task-list-facing provider names and the ADR-0034 Docket surface.
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This plan turns the multi-agent task architecture into implementable Den work. It complements [`tasks-schema.md`](../architecture/tasks-schema.md), which remains the canonical file format for MemFS task intents, approved tasks, and work results.
@@ -11,14 +11,18 @@ This document now also tracks the task/activity portion of the single ontology-a
 
 ## Decision Summary
 
-- Den owns a per-bear live activity board for current plans and status, aligned with Letta Code's lightweight `TodoWrite` / `UpdatePlan` progress layer.
+> Read this section as historical. The current terminology is: session **task list** for the Bear/human working view, Docket **job** for the durable orchestration container, and Docket **task** for canonical task nodes in a job hierarchy.
+
+- Den owns a per-bear/session visible task-list projection for current focus and status, aligned with coding-agent `TodoWrite` / `UpdatePlan` style progress UI.
 - BEARS should support ACP `pair` Ask/Plan/Write modes aligned with common coding-agent clients: Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools, with concrete effects still requiring Den policy, adapter safety checks, and ACP client approval.
 - MemFS owns durable task artifacts: channel intent files, curate-approved task files, and work result files. Workplan/plan-mode artifacts are a separate ontology domain and must not be treated, described, or surfaced as MemFS semantic-memory documents, even if some current implementation details still use `pair/plans/` storage.
-- ACP session rows remain protocol bindings only. They may reference an activity plan, but they do not own planning state. Legacy fields such as ACP `current_mode` may remain for compatibility, but must resolve into the canonical turn-state model rather than acting as an independent source of truth.
-- Channel agents never hand work directly to the work agent. They write or request task intents; review approval is the promotion boundary.
+- ACP session rows remain protocol bindings only. They may reference a session task list or checked-out Docket task subtree, but they do not own Docket planning state. Legacy fields such as ACP `current_mode` may remain for compatibility, but must resolve into the canonical turn-state model rather than acting as an independent source of truth.
+- Channel agents never hand work directly to the work agent. They update session task lists, check out or reference Docket-backed work when authorized, or request task-list handoff/sync review; Docket dispatch remains the execution boundary.
 - Letta Code-based agents interact with activity state through Den meta tools and short injected context, not by reading Den database rows directly.
 
 ## Data Model Foundation
+
+> Historical implementation note: `bear_work_plans` is the legacy activity-board/task-list projection. Future work should read it through ADR-0045 and migrate toward session task-list checkout/sync plus Docket jobs/tasks.
 
 The initial migration adds `bear_work_plans` and `bear_work_plan_events`.
 
@@ -40,12 +44,12 @@ The initial migration adds `bear_work_plans` and `bear_work_plan_events`.
 
 Add Den meta tools before implementing runtime behavior.
 
-These tools implement the live activity/progress layer, not the full pre-implementation planning gate:
+These tools implement the live activity/progress layer, not the full pre-implementation planning gate. In the current terminology, they should migrate to task-list-facing provider names while legacy internal names may remain temporarily:
 
-- `den.work_plan.list`: list visible work plans for the current bear.
-- `den.work_plan.get_status`: read one visible plan or the current session's plan projection.
-- `den.work_plan.update`: create or update the current role's live plan.
-- `den.work_plan.request_handoff`: request conversion of plan items into a task intent.
+- `list_task_lists` (legacy `list_plans` / internal `den.work_plan.list`): list visible task-list projections for the current Bear/session.
+- `get_task_list_status` (legacy `get_plan_status` / internal `den.work_plan.get_status`): read one visible task list or the current session's task-list projection.
+- `update_task_list` (legacy `update_plan` / internal `den.work_plan.update`): create or update the current role's visible session task list; Docket-backed items may sync when authorized.
+- `request_task_list_handoff` (legacy `request_work_handoff` / internal `den.work_plan.request_handoff`): request review/promotion/sync of task-list items or changes into durable Docket work.
 
 Tool policy:
 
@@ -117,7 +121,7 @@ Acceptance:
 
 Acceptance:
 
-- `den.work_plan.request_handoff` validates selected plan items and writes a task intent through the same code path as `den.task.write_intent`.
+- `request_task_list_handoff` validates selected task-list items and requests review/promotion/sync into Docket work through the same policy boundary as durable task intent creation.
 - Handoff updates `handoff_intent_path`, sets visibility to `handoff_requested`, and appends an audit event.
 - Review review remains the only path from channel-originated intent to `core/tasks/`.
 - Work dispatch only reads approved `core/tasks/` definitions.
@@ -167,9 +171,9 @@ Required additions:
 - Keep the first DB implementation JSONB-backed. Normalize plan items only if querying individual items becomes painful.
 - Do not store secrets, raw credentials, or long local file excerpts in work plans.
 - Use optimistic concurrency with `version` on updates to prevent silent status clobbering.
-- Keep work plans short. Durable details belong in MemFS task files, result files, or conversation history.
-- If a plan item implies external effects, prefer `request_handoff` over continuing as live plan state.
-- Planning state is not shared Bear memory by default. Use the activity board for tactical progress, a workplan artifact for approval, role-local memory for durable lessons, and review review for anything that should enter `core/`.
+- Keep session task lists short enough to remain useful as working focus state. Durable details belong in Docket jobs/tasks, workplan artifacts, role-local memory, result records, or conversation history as appropriate.
+- If a local-only task-list item needs durable execution semantics, prefer `request_task_list_handoff` or `sync_task_list` over pretending the local item is already canonical Docket work.
+- Planning state is not shared Bear memory by default. Use the session task list for tactical progress, a workplan artifact for approval, Docket for canonical jobs/tasks, role-local memory for durable lessons, and curate/review for anything that should enter `core/`.
 
 ## Next implementation steps
 
@@ -188,3 +192,4 @@ Required additions:
 - Whether completed activity plans should archive automatically after a fixed age.
 - Whether operator edits to activity plans should be allowed or recorded only as administrative events.
 - Exact workplan-artifact namespace and representation: separate Den-controlled artifact namespace, workplan-native ids without file-like surfacing, or a hybrid model.
+- Exact checkout/sync API shape for session task lists: whether `checkout_task_list` / `sync_task_list` are separate tools or modes of `update_task_list`.
