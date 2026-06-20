@@ -403,6 +403,73 @@ async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let prompt = "Remember this first prompt for future turns";
+
+    let response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-persist-user-prompt")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+                "client": "zed",
+                "prompt": prompt
+            }),
+        }),
+    )
+    .await
+    .expect("run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["result"]["ok"], true, "{value}");
+    let session = acp_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+        .await
+        .expect("load session")
+        .expect("session exists");
+    let resolved = session
+        .resolved_conversation_id
+        .as_deref()
+        .expect("run.start should resolve conversation");
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE bear_id = $1 AND external_conversation_id = $2
+            LIMIT 1
+        )
+        AND message_type = 'user'
+        AND role = 'user'
+        AND content_text = $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(resolved)
+    .bind(prompt)
+    .fetch_one(&pool)
+    .await
+    .expect("count persisted user prompt");
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn run_start_uses_resolved_conversation_history_for_existing_session(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

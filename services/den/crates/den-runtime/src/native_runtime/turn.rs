@@ -14,6 +14,10 @@ use crate::{
         AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
     },
     bears::BearProfile,
+    conversation_events::{
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, ConversationEventProvenance,
+    },
     conversation_persistence,
     llm::{ChatMessage, LlmClient},
     memory::MemoryStoreManager,
@@ -483,6 +487,30 @@ pub async fn start_native_profile_turn_event_stream(
         Vec::new(),
     )
     .await?;
+    if request.runtime_context.is_none() {
+        let provenance = ConversationEventProvenance::acp_session(acp_session_id.to_string());
+        let mut content_json = provenance.as_content_json("user_prompt");
+        content_json["role"] = serde_json::json!("user");
+        content_json["acp_session_id"] = serde_json::json!(acp_session_id);
+        content_json["client"] = serde_json::json!(request.client);
+        content_json["request_id"] = serde_json::json!(request.request_id.to_string());
+        let record =
+            CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
+        persist_canonical_conversation_record(
+            &canonical_persistence_context(
+                request.sqlx_pool.clone(),
+                request.bear_id,
+                Some(request.user_id),
+                conversation_id.clone(),
+                Some(acp_session_id.to_string()),
+                Some(request.request_id.to_string()),
+                acp_session_id.to_string(),
+                false,
+            ),
+            &record,
+        )
+        .await?;
+    }
     let llm = LlmClient::new(request.config);
     let overflow = overflow_context(
         request.sqlx_pool.clone(),

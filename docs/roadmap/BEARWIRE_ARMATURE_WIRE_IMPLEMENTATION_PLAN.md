@@ -154,7 +154,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 **Exit gate:** Met: no BearWire code reads or writes `bearwire_runs.active_*`, the columns are dropped by migration, client result handlers validate persisted obligations, terminal run states settle outstanding obligations, and hardening tests cover wrong-method/reconnect-shaped/cancel/duplicate-result cases. Remaining work is optional richer stale-obligation reporting if `/status` needs it.
 
-## Phase 3.2 — State isolation and continuation audit — Pending
+## Phase 3.2 — State isolation and continuation audit — Complete
 
 **Goal:** Prove BearWire/ACP session, run, tool, permission, and conversation state cannot leak across sessions or turns, and make failures diagnosable when in-memory continuation state is unavailable.
 
@@ -284,7 +284,7 @@ A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `wor
 | 2 | `/bearwire/v1` served | Complete; still parallel to legacy `/acp` |
 | 3 | Armature BearWire client | Implementation complete; opt-in via `BEARS_BEARWIRE=1` or `BEARS_BEARWIRE=auto`; smoke/parity validation pending |
 | 3.1 | BearWire obligation authority cleanup | Complete, including active-field removal, terminal obligation settlement, and wrong-method/reconnect-shaped/cancel/duplicate-result tests |
-| 3.2 | State isolation and continuation audit | Pending; required before legacy removal confidence |
+| 3.2 | State isolation and continuation audit | Complete for Den/BearWire; armature-side parity remains covered by Phase 3 smoke validation |
 | 4 | Legacy removed | Pending; default path after parity confidence |
 | 5 | WebSocket | Optional; faster reconnect |
 | 6 | Bear stance terminology cleanup | Pending final cleanup; user/model-visible clarity |
