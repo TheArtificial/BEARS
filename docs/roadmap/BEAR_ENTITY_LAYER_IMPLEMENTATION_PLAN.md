@@ -4,7 +4,7 @@
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
-For the canonical role model and current names, see [bear roles](../architecture/bear-roles.md). "Role" = **trust profile**; `curate` is the curation profile.
+For the canonical role model and current names, see [bear roles](../architecture/bear-roles.md). "Role" = **trust stance**; `curate` is the curation stance.
 
 ## Goal
 
@@ -56,7 +56,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 ## Phase 3 — Relation layer (two tables + view); retire `entity_ref`  ✅ landed (`den-memory/src/relations.rs`)
 
-- Migration: `memory_relations` (descriptive) and `memory_access_rules` (access-bearing), identical shape (`link_id`, `bear_id`, `sequence_no`, `src_memory_id`, `entity_id`, `relation`, `qualifiers_json`, `author_profile`, `author_agent_id`, `confidence`, `state`, `supersedes_link_id`, `created_at`); `memory_links` **view** = union with a `class` column.
+- Migration: `memory_relations` (descriptive) and `memory_access_rules` (access-bearing), identical shape (`link_id`, `bear_id`, `sequence_no`, `src_memory_id`, `entity_id`, `relation`, `qualifiers_json`, `author_stance`, `author_agent_id`, `confidence`, `state`, `supersedes_link_id`, `created_at`); `memory_links` **view** = union with a `class` column.
 - **Descriptor-routed writes**: the relation descriptor's class selects the table; writers never choose. Validate `qualifiers_json` against `allowed_qualifiers`. `memory_access_rules` enforces **target entity `resolution ≥ resolved`**.
 - Retire `memory_records.entity_ref` and the legacy `memory_links` base table.
 
@@ -131,8 +131,8 @@ Identity and multi-profile hazards every phase must hold against.
 
 **Cross-profile safety (multi-agent overwrite / role drift)**
 
-- **No cross-branch overwrite:** a trust profile cannot mutate another profile's records or relations; `core/` is written only via `curate`; the bear-wide sequence allocator prevents concurrent clobber (append-only + supersession, never in-place edit).
-- **Authorship recorded:** every record/relation carries `author_profile`; access-rule writes are `curate`/Den-only and enforced, not advisory.
+- **No cross-branch overwrite:** a trust stance cannot mutate another stance's records or relations; `core/` is written only via `curate`; the bear-wide sequence allocator prevents concurrent clobber (append-only + supersession, never in-place edit).
+- **Authorship recorded:** every record/relation carries `author_stance`; access-rule writes are `curate`/Den-only and enforced, not advisory.
 
 **Visibility (fail-closed)**
 

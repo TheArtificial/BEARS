@@ -1,6 +1,6 @@
 # BEARS roadmap
 
-> **Status (2026-06): Den-native runtime is the live stack.** BEARS runs a single **Den-native, in-process agent runtime** for all trust profiles (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Canonical architecture: [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md). Canonical migration plan: [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phases 7–8 open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
+> **Status (2026-06): Den-native runtime is the live stack.** BEARS runs a single **Den-native, in-process agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Canonical architecture: [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md). Canonical migration plan: [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phases 7–8 open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
 
 High-level planning hub for BEARS. This file answers what works today, what is next, and which detailed plans are canonical — without duplicating every contract.
 
@@ -17,7 +17,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 | Area | Status (2026-06) | Canonical docs |
 |---|---|---|
-| **Den-native runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; profile registry `den-native:{bear_id}:{profile}` | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md), [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
+| **Den-native runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md), [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
 | **Letta/Codepool/MemFS removal** | **Done** in code + compose; schema/UI still has transitional `letta_*` naming; Phase 8 backfill not run | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md), [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md) |
 | **Crate split / build time** | **v0–v2 complete**: workspace (`den-core`, `den-llm`, `den-memory`, `den-docket`, `den-runtime`, `den-http`, `den-oauth`, `den-web`, `den-acp`, `den-api`); clippy pedantic/nursery gated | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
@@ -37,7 +37,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 ### What is working today
 
 - **Stack:** `bears-den` + `bears-bifrost` + Postgres (+ optional `bears-qdrant` via `COMPOSE_PROFILES=recall`). No Letta/Codepool/MemFS services.
-- **Runtime:** One native agent loop (`den-runtime`) streams tool-calling turns to Bifrost; profiles differ by descriptor roster + compiled prompts, not separate external agents.
+- **Runtime:** One native agent loop (`den-runtime`) streams tool-calling turns to Bifrost; stances differ by descriptor roster + compiled prompts, not separate external agents.
 - **Memory:** Per-Bear SQLite `memory_records` with logical paths; `core/` promotion via `curate`; key memory projection at turn start.
 - **Web chat:** Den-hosted Deep Chat; canonical conversation persistence; native tool loop for server-side Den tools.
 - **ACP pair:** Native turn execution with adapter-local tool relay; golden trace tests for SSE projection.
@@ -46,7 +46,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 ### What is next (priority order)
 
-1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` profile.
+1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` stance.
 2. **MemFS → SQLite cutover** — validate import runbook on staging Bears; post-import `den reindex` ([`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) §1).
 3. **ADR-0041 harvest + consolidation** — `salience` on records, `memory_harvest_marks`, supersession writes, `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5).
 4. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
@@ -59,7 +59,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 ### Important contradictions resolved here
 
 - **Den-native supersedes Letta-era paths everywhere in §1–Summary.** Web chat is **Den → native loop → Bifrost**, not Den → Letta Code → Letta. Memory is **SQLite-canonical**, not "no Den memory store."
-- **Trust profiles, not Letta agent types.** `chat`/`pair`/`curate`/`work`/`watch` are Den capability profiles with `den-native:{bear_id}:{profile}` bindings — not per-role Letta agent ids (legacy columns may remain for compat).
+- **Trust stances, not Letta agent types.** `chat`/`pair`/`curate`/`work`/`watch` are Den capability stances with `den-native:{bear_id}:{stance}` bindings — not per-role Letta agent ids (legacy columns may remain for compat).
 - **ACP direct mode supersedes Codepool relay.** [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical.
 - **Workplan ≠ semantic memory.** Activity/workplan artifacts stay in the workflow-state ontology ([`workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md)), not `den.memory.*`.
 - **`memory_search` is hybrid when Qdrant is configured** (vector + keyword + graph + temporal); keyword-only fallback when recall disabled. See [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md).
@@ -149,8 +149,8 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 ### Terminology (current)
 
 - **BEARS** — deployment stack: **Den**, **Bifrost**, Postgres, optional **Qdrant**/**Garage**, frontends. Not a single bear.
-- **Bear** — logical assistant: identity, membership, policy. **Runtime:** multi-profile native loop ([bear roles](../architecture/bear-roles.md)).
-- **Trust profile** — `chat`, `pair`, `curate`, `work`, `watch`: capability surface (tools, memory scopes, sandbox). Bound as `den-native:{bear_id}:{profile}`.
+- **Bear** — logical assistant: identity, membership, policy. **Runtime:** multi-stance native loop ([bear roles](../architecture/bear-roles.md)).
+- **Trust stance** — `chat`, `pair`, `curate`, `work`, `watch`: capability surface (tools, memory scopes, sandbox). Bound as `den-native:{bear_id}:{stance}`.
 - **Users ↔ bears** — many-to-many membership; Den enforces on every chat/ACP call.
 - **Den** — control plane + gateway: auth, bear lifecycle, native runtime, reflection workers, operator UI, `/v1` chat, ACP surface. **Inference:** Den-native loop → **Bifrost** (`LLM_API_URL`).
 - **Canonical memory** — per-Bear SQLite (`memory_records`, proposals, promotions). **Derived recall** — Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), not source of truth.

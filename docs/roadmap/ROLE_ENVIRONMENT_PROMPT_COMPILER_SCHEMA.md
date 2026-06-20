@@ -1,6 +1,6 @@
 # Role Environment Prompt Compiler Schema
 
-> **Direction changed (2026-06).** Reframe "role harness configuration" as the Den role-runtime profile (one native loop). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Reframe "role harness configuration" as the Den role-runtime stance (one native loop). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Purpose

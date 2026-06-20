@@ -9,7 +9,7 @@
 - [ADR-0034 — Jobs and tasks (Docket)](adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0026 — Work handoff and human escalation](adr-0026-work-handoff-and-human-escalation.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
-- [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md)
+- [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
 
 ## Context
@@ -74,7 +74,7 @@ EffectivePolicy = TrustProfile × GovernanceMode × Armature × RunAuthContext
 
 - **TrustProfile** — durable boundaries and defaults (this ADR / ADR-0036).
 - **GovernanceMode** — supervision dial (this ADR).
-- **Armature** — where actuators live: ACP client tools, Den sandbox, or none (`interactive-profiles-and-role-axes.md`).
+- **Armature** — where actuators live: ACP client tools, Den sandbox, or none (`interactive-stances-and-role-axes.md`).
 - **RunAuthContext** — git/auth/operation actor selection ([ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)).
 
 The model never *infers* this cross product. Den enforces the tool roster, memory write target, and approval class for the effective policy, and exposes the components through `session_info`.

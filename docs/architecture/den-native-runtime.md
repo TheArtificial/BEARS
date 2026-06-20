@@ -108,7 +108,7 @@ Compilation merges:
 - per-Bear **`bear_block_bindings`** (`inherit` vs `custom` overrides),
 - Bear-local **`context_profile`** fields (`user_steering`, `bear_context`, and role-contract fallbacks).
 
-The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-role `rendered_prompt_hashes_json` for drift checks on `bear_profile_bindings`.
+The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-role `rendered_prompt_hashes_json` for drift checks on stance bindings (`bear_profile_bindings` during the compatibility migration).
 
 **Target invariant:** the native agent loop **must** read compiled prompts from `bear_compiled_configs`. It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
 
@@ -276,13 +276,13 @@ Most "agent patterns" (Plan & Solve, Reflexion, Reflection, REWOO, STORM, LATS, 
 
 ## Role model and provisioning
 
-- A per-role "agent" becomes a **Den-owned runtime profile**: **`bear_compiled_configs` system prompt** + **key memory projection policy** + model + tool roster + memory scope + approval policy + sandbox flag. There is no external agent create/patch/recompile/drift.
-- Reconcile compares `bear_profile_bindings.config_hash` to the current compiled prompt hash; native runtimes re-read compiled prompts on each turn rather than caching stale text in an external agent.
+- A per-role "agent" becomes a **Den-owned runtime stance**: **`bear_compiled_configs` system prompt** + **key memory projection policy** + model + tool roster + memory scope + approval policy + sandbox flag. There is no external agent create/patch/recompile/drift.
+- Reconcile compares the stance binding `config_hash` (`bear_profile_bindings.config_hash` during the compatibility migration) to the current compiled prompt hash; native runtimes re-read compiled prompts on each turn rather than caching stale text in an external agent.
 - `bears.letta_agent_id` is deprecated; role identity is a Den-native binding. Letta provisioning, drift detection, and Letta tool-catalog resolution are removed. The model catalog comes from Bifrost's model list.
 
 ### Current gap (implementation)
 
-Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`) for all profiles including `chat`. **Derived recall** (Qdrant + platform embedding standard, [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) is wired for turn-start injection and hybrid `memory_search` when `QDRANT_URL` is set. Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
+Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_prompt_text` and projects **key memory** from per-Bear SQLite in the context assembler (`core/agent_loop/key_memory_projection.rs`) for all stances including `chat`. **Derived recall** (Qdrant + platform embedding standard, [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) is wired for turn-start injection and hybrid `memory_search` when `QDRANT_URL` is set. Remaining parity gaps: conversation-persisted work-surface binding (v1.1), richer situation briefing records, and golden ACP traces validating end-to-end grounding.
 
 ## What this supersedes
 

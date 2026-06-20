@@ -10,7 +10,7 @@
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
 - [ADR-0040 — Connections and user-facing work-surface presentation](adr-0040-connections-and-work-surface-presentation.md)
 - [ADR-0028 — Environment affordance and resource boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
-- [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md)
+- [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
 - [`den-native-runtime.md`](../architecture/den-native-runtime.md)
 - [`DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) Phase 7

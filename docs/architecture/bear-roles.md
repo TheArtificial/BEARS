@@ -1,18 +1,18 @@
-# Bear profiles: chat, pair, curate, work, and watch
+# Bear stances: chat, pair, curate, work, and watch
 
-This document describes the five internal profiles Bear Den uses. It is the core reference for role names, role responsibilities, cross-role cooperation, and role-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full role model.
+This document describes the five internal stances Bear Den uses. It is the core reference for role names, role responsibilities, cross-role cooperation, and role-facing product language. Other current architecture and guide docs should prefer linking here rather than restating the full role model.
 
-A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-role runtime. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
+A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-role runtime. Each role has a distinct job, trust stance, memory branch, and relationship to external systems.
 
 Roles are the preferred conceptual vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, architecture discussion, and user-facing explanation when a boundary matters. The Bear should still identify as the Bear rather than as a separate role runtime or sub-agent.
 
 ## Status and relationship to other docs
 
-This is the durable conceptual source for the five Bear profiles: what they are, why they exist, how they cooperate, and how we should talk about them.
+This is the durable conceptual source for the five Bear stances: what they are, why they exist, how they cooperate, and how we should talk about them.
 
-For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-profiles-and-role-axes.md`](interactive-profiles-and-role-axes.md).
+For the post-Letta split between **trust**, **armature**, and **work surfaces** (especially `chat` vs `pair`), see [`interactive-stances-and-role-axes.md`](interactive-stances-and-role-axes.md).
 
-The five profiles are **trust profiles** (`Profile` in code): durable trust-and-memory contracts. How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance mode** (`Mode` in code) on the run / workspace session. A Bear going offline mid-session is a governance-mode transition, not a switch from `pair` to `work`. See [ADR-0039 — Trust profiles and governance modes](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
+The five stances are durable trust-and-memory contracts (`BearStance` in code; `BearProfile` remains a temporary compatibility alias). How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance mode** (`Mode` in code) on the run / workspace session. A Bear going offline mid-session is a governance-mode transition, not a switch from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
 
 For how **work surfaces** relate to **conversations** (including “start a conversation with this repository”), see [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
 
@@ -20,7 +20,7 @@ It is not the implementation spec for provisioning, prompt hashes, tool ids, run
 
 | Document | Audience | Purpose |
 |----------|----------|---------|
-| [`bear-roles.md`](bear-roles.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five internal profiles. |
+| [`bear-roles.md`](bear-roles.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five internal stances. |
 | `docs/decisions/*` | Engineering and architecture | Historical decision records and rationale. |
 | Runtime/provisioning specs such as `den-bear-spec.md` | Engineering implementation | Den-owned runtime and provisioning behavior. |
 
@@ -40,9 +40,9 @@ A Bear is one assistant that can operate through five coordinated roles:
 
 The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful runtime. The role is the operating mode and trust boundary; the channel is the concrete touchpoint; the work surface is the durable work context the Bear may be acting on.
 
-## Why five profiles?
+## Why five stances?
 
-The five-profile model supports five product and safety goals at once:
+The five-stance model supports five product and safety goals at once:
 
 1. **One coherent Bear, many contexts.** Users experience one assistant, while the system routes different contexts to the right internal role.
 2. **Better concurrency.** Chat, IDE collaboration, background work, and inbound events can proceed without all traffic bottlenecking through one stateful agent.
@@ -178,7 +178,7 @@ It is the primary semantic authority for what becomes shared Bear memory or shar
 
 ## How the roles cooperate
 
-The five profiles form a flow from raw interaction to durable memory and approved action:
+The five stances form a flow from raw interaction to durable memory and approved action:
 
 1. A person talks with `chat` or works with `pair`.
 2. `chat` or `pair` answers directly when the request fits the synchronous surface.
@@ -222,14 +222,14 @@ Use role/channel/work-surface language for ordinary explanation:
 - “Each role has a clear job and a clear trust boundary.”
 - “The `chat` role is where the Bear talks with people in chat-like channels.”
 - “The `pair` role is where the Bear works alongside a person in a client or workspace.”
-- “The `curate` profile reviews what becomes shared memory.”
+- “The `curate` stance reviews what becomes shared memory.”
 - “The `work` role performs approved external tasks.”
 - “The `watch` role receives external events and records observations.”
 
 Use implementation detail carefully:
 
 - “Den projects the Bear into a runtime for the appropriate role.”
-- “The `curate` profile reviews and integrates durable knowledge.”
+- “The `curate` stance reviews and integrates durable knowledge.”
 - “The `chat` and `pair` roles are the two synchronous user-facing roles.”
 
 ### Avoid
@@ -271,7 +271,7 @@ For example:
 
 ## Design and data-model implications
 
-The five profiles should shape product and data design:
+The five stances should shape product and data design:
 
 - User-facing conversation history belongs primarily to `chat` or `pair` channels, not to `work` or `watch`.
 - Background tasks should be represented as reviewed work, not as hidden chat side effects.
@@ -291,4 +291,4 @@ A sixth role should not be added merely because a new feature exists. A new role
 - runtime/tooling needs,
 - and product meaning.
 
-Until then, new capabilities should usually attach to one of the existing five profiles.
+Until then, new capabilities should usually attach to one of the existing five stances.

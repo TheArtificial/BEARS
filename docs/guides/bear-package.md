@@ -41,7 +41,7 @@ YAML is the canonical interchange format (not JSON). It carries:
 
 - Bear **identity** (name, slug, charter text, optional source `bear_id` for provenance)
 - **Version fields** for import validation (see [Schema and compatibility](#schema-and-compatibility))
-- **Role runtime profiles** (model ids, tool roster references, memory scope, approval policy keys)
+- **Role runtime stances** (model ids, tool roster references, memory scope, approval policy keys)
 - **Provisioning** metadata (`provisioning_version`, capability config)
 - Pointers to **`artifacts/`** (skills, policies, optional source `context_profile` for recompile)
 

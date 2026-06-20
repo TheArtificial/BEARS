@@ -79,7 +79,7 @@ Layered DAG, leaves at the bottom; both former "big crates" are split. Sizes are
 
 | Crate | Role | Depends on | Source today | Churn |
 |-------|------|------------|--------------|-------|
-| **`den-core`** | Foundation leaf: shared domain **newtypes** (bear/job/task/run/session ids) and **enums** (role, trust profile, governance mode, statuses), error types, config, `PgPool`/`SqlitePool` handles, migrations runner, tracing/observability setup, **and the model-facing tool *surface* (`den_core::tools`: descriptors, argument shapes, capability traits, `dispatch`/`context`/`display`/`work_surface`/`support`)** — folded in when `den-tools` was dissolved. Third-party deps only. | `errors/`, `observability/`, `config.rs`, shared model types, former `den-tools` surface | low |
+| **`den-core`** | Foundation leaf: shared domain **newtypes** (bear/job/task/run/session ids) and **enums** (role, trust stance, governance mode, statuses), error types, config, `PgPool`/`SqlitePool` handles, migrations runner, tracing/observability setup, **and the model-facing tool *surface* (`den_core::tools`: descriptors, argument shapes, capability traits, `dispatch`/`context`/`display`/`work_surface`/`support`)** — folded in when `den-tools` was dissolved. Third-party deps only. | `errors/`, `observability/`, `config.rs`, shared model types, former `den-tools` surface | low |
 | **`den-llm`** | Bifrost/LLM gateway client + streaming. Stable, widely depended on. | `den-core` | low |
 | **`den-memory`** | Bear memory: `MemoryStore` trait + per-Bear SQLite impl + curation. **Native today** (see *Memory status*). | `den-core` | medium |
 | **`den-docket`** | Jobs/tasks orchestration (Postgres): `DocketService` + `TaskDispatcher` traits + impl. Never executes task bodies. | `den-core` | medium |
@@ -118,7 +118,7 @@ The split is also the vehicle for paying down idiom debt. Two workstreams run al
 Replace untyped structured data with Rust types, applying "parse, don't validate" at boundaries:
 
 - **Ids → newtypes.** `BearId(Uuid)`, `JobId`, `TaskId`, `RunId`, `ConversationId`, `SessionId` instead of bare `Uuid`/`String`. Prevents argument transposition and clarifies signatures.
-- **Closed sets → enums.** Role, trust profile, governance mode (ADR-0039), task/run/criterion status (ADR-0034), tool scope/side-effect kinds. Several already exist as enums; ensure DB mapping uses `sqlx::Type`/derive, not string `match`, and that no boundary re-stringifies them.
+- **Closed sets → enums.** Role, trust stance, governance mode (ADR-0039), task/run/criterion status (ADR-0034), tool scope/side-effect kinds. Several already exist as enums; ensure DB mapping uses `sqlx::Type`/derive, not string `match`, and that no boundary re-stringifies them.
 - **Tool arguments → typed structs.** Replace `serde_json::Value` poking in tool dispatch with per-tool argument structs that `Deserialize` once at the boundary. Tool names, aliases, and permission classes stay **descriptor-owned** (per `AGENTS.md`: no scattered alias `match` arms or hardcoded allowlists; use a descriptor resolver).
 - **Paths → typed.** A logical-path newtype (and `PathBuf` where filesystem) instead of `String` for memory logical paths.
 - **Errors → `thiserror` at crate boundaries**, reserving `anyhow` for the binary/top. Each crate exposes a typed error enum.
@@ -370,7 +370,7 @@ The **residual** `core/acp/` (`sessions`, `tokens`, `runtime`, `turn_controller`
 
 - [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md): owns the `core/docket/` module and `DocketService`/`TaskDispatcher` trait seams. This plan consumes those seams and turns them into crate boundaries.
 - [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md): define the memory vs. tasks storage boundary the split makes compile-time-hard.
-- [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md): trust profile / governance mode enums are prime de-stringify targets in `den-core`.
+- [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md): trust stance / governance mode enums are prime de-stringify targets in `den-core`.
 - [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md): removal of `core/letta/` and `core/codepool/` reduces what must be moved; sequence the legacy deletion into v0.
 
 ## Open questions

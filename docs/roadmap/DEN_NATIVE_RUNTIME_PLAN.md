@@ -8,7 +8,7 @@ This plan supersedes the Letta-backed runtime direction in older roadmap docs (P
 
 ## Goal
 
-Replace Letta entirely with a single Den-native, in-process agent runtime: a streaming tool-calling loop that talks directly to Bifrost, stores all Bear memory/cognition in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), retiring the git MemFS sidecar), reuses Den's existing orchestration/persistence, unifies all roles under capability profiles, and deletes the control-plane/execution-process split (Letta server, Letta Code SDK, Codepool) along with its concurrency artifacts.
+Replace Letta entirely with a single Den-native, in-process agent runtime: a streaming tool-calling loop that talks directly to Bifrost, stores all Bear memory/cognition in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), retiring the git MemFS sidecar), reuses Den's existing orchestration/persistence, unifies all roles under capability stances, and deletes the control-plane/execution-process split (Letta server, Letta Code SDK, Codepool) along with its concurrency artifacts.
 
 ## Why the previous plan was wrong
 
@@ -41,7 +41,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 - New `core/memory/store/` backed by `sqlx` SQLite. Schema per ADR-0031: `memory_records`, `memory_links`, `memory_promotions`, plus a Bear-wide monotonic sequence allocator.
 - Operational defaults: WAL, `synchronous=NORMAL`, `busy_timeout=5000`; single logical write path (`SqlitePool`, `max_connections(1)`); define per-Bear DB file lifecycle/placement.
-- **Logical-path projection**: map logical paths to (`scope_type`, `scope_profile`, `work_surface_ref`, `kind`) so `memory_browse`/`memory_read` keep the stable-anchor UX over rows.
+- **Logical-path projection**: map logical paths to (`scope_type`, stance scope — currently the compatibility column `scope_profile`, `work_surface_ref`, `kind`) so `memory_browse`/`memory_read` keep the stable-anchor UX over rows.
 - Migrate Den-hosted memory tools off MemFS to the SQLite store (`memory_write`, `memory_read`, `memory_review`, `memfs` retire/replace), routed through the memory manager to SQLite instead of the `/v1/git` MemFS API.
 - Move all Bear cognition into per-Bear SQLite: `bear_memory_proposals`, `bear_observations`, and curate/promotion decisions + audit migrate from Den Postgres; `core/` promotion writes `memory_records`/`memory_promotions`.
 - **Reflection-run boundary (split):** scheduler/queue stays in Den Postgres; the run record + outcomes move to SQLite next to `memory_promotions`; the queue references the SQLite run id.
@@ -67,17 +67,17 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - `RuntimeTurnBackend` / `LettaRuntimeTurnBackend` / `DenRuntimeAcpTurnRunner` are gone; ACP turn dispatch is an edge wrapper over native runtime functions.
 - Dead `LettaAcpConversationRuntime` and stale Letta runner cleanup paths are removed. Stale runtime cleanup is now in-process (`run_ids` empty) and no longer issues external agent-wide cancels under native runtime.
 - Native continuation, stream diagnostics, and pair turn comments use runtime/native terminology instead of Letta-facing labels.
-- Profile turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) are exported for `curate`/`watch` capability profiles over one Den loop.
-- Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate profile LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
+- Stance turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) are exported for `curate`/`watch` capability stances over one Den loop.
+- Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate stance LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
 - Remaining Letta/Codepool removal belongs to Phase 7–8 teardown: web chat harness, `LettaClient`, residual fixtures/docs, MemFS/Codepool services, and compose edits.
 
 ### Phase 6 — Den-native stance registry (replace provisioning) — Closed
 
-- Each operating stance is a Den-owned runtime stance: compiled system prompt, model choice, descriptor-owned tool roster, memory scope, and `den-native:{bear_id}:{profile}` binding id.
+- Each operating stance is a Den-owned runtime stance: compiled system prompt, model choice, descriptor-owned tool roster, memory scope, and `den-native:{bear_id}:{stance}` binding id.
 - Native reconciliation (`reconcile_bear_native` / `provision_missing_bear_profiles_native`) refreshes all five stance bindings from compiled prompts + `config_hash` without Letta HTTP or external agent creation.
-- `DenNativeProfileRegistry` is wired into pair binding resolution; `profile_config_hash` uses native runtime-family labels and omits Letta tool rosters.
+- The Den-native stance registry is wired into pair binding resolution; stance config hashes use native runtime-family labels and omit Letta tool rosters.
 - Active admin create/edit/import/API paths ignore legacy Letta agent/tool fields and write native-compatible empty legacy values.
-- Operator UI/routes and provisioning APIs advertise **profile** vocabulary for the five operating stances; membership **roles** (`user_bear.role`) remain unchanged.
+- Operator UI/routes and provisioning APIs advertise **stance** vocabulary for the five operating stances; membership **roles** (`user_bear.role`) remain unchanged.
 - Deprecated `bear_profile_bindings.letta_agent_id` and residual Letta import/backfill schema are retained only as Phase 8 migration residue; physical column/service/client deletion remains Phase 8.
 
 ### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `work`

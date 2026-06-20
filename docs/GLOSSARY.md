@@ -2,7 +2,7 @@
 
 a conversation, background run, etc.
 
-**trust profile**
+**trust stance**
 
 a bundle of capability boundaries
 used to enforce the Rule of Two
@@ -31,7 +31,7 @@ Connections. See ADR-0006 and ADR-0040.
 a Den-level, owner-scoped authenticated link to an
 external provider (GitHub, Figma, Google, SSH).
 Set up once, reusable across resources, Bears, trust
-profiles, and governance modes. A work surface is
+stances, and governance modes. A work surface is
 reached through a connection when externally backed.
 See ADR-0037 and ADR-0040.
 
@@ -52,5 +52,5 @@ and ADR-0039).
 **continuation bias**
 how aggressively a run continues vs. yields. Owned
 by the governance mode, defaulted/modulated by the
-trust profile — not defined by the profile. See
+trust stance — not defined by the stance. See
 ADR-0039.
