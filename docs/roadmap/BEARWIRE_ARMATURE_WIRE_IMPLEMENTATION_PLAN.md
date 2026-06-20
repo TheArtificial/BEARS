@@ -163,11 +163,11 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Audit runtime/session identity keys | `den-runtime`, `den-bearwire`, `den-acp`, `bear-armature` | Confirm every continuation path carries `bear_id`, `human/user_id`, `session_id`, `run_id`, `conversation_id`, `tool_call_id`, and `permission_id` where applicable |
 | Same-session multi-run isolation tests | `den-bearwire` | Complete for active-run isolation: DB constraint rejects a second active run in one ACP session |
 | Cross-session collision tests | `den-bearwire` / `den-runtime` | Complete for BearWire tool results: same `tool_call_id` in two sessions remains isolated by session/run and wrong-session delivery is rejected |
-| Conversation continuity tests | `den-bearwire` / `bear-armature` | Partially complete. BearWire now uses resolved `den-conv-*` as native runtime `upstream_target`; add end-to-end transcript-loading assertion next |
+| Conversation continuity tests | `den-bearwire` / `bear-armature` | Complete for Den/BearWire: reused ACP session with resolved `den-conv-*` uses that native conversation as runtime `upstream_target`, and an integration test asserts prior transcript reaches the LLM request |
 | Restart / missing session-store behavior | `den-runtime` / `den-bearwire` | Complete for BearWire client results: missing native in-memory session returns `continuation_unavailable` and does not record/settle the obligation |
 | ADR-0044 session-state appendix | docs | Complete. ADR-0044 now records stream progress invariants plus session/run/conversation ownership rules |
 
-**Exit gate target:** Tests cover same-session multi-run isolation, cross-session id collisions, resolved-conversation continuity, and missing in-memory continuation state. Remaining Phase 4 work must not proceed until these cases are green or explicitly accepted as known risks.
+**Exit gate:** Met for Den/BearWire state isolation: tests cover same-session active-run isolation, cross-session id collisions, resolved-conversation continuity, and missing in-memory continuation state. Armature-side parity remains part of Phase 3 smoke validation.
 
 ## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 

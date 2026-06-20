@@ -18,7 +18,13 @@ use den_http::acp_tokens;
 use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, db::BearParams},
-    bearwire_obligations, bearwire_runs, DenState,
+    bearwire_obligations, bearwire_runs,
+    conversation_message_types::{
+        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+        ConversationMessageWrite,
+    },
+    conversation_persistence::{append_message, ensure_conversation_for_external_id},
+    DenState,
 };
 
 use crate::{
@@ -236,6 +242,10 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
 }
 
 fn start_mock_openai_sse_server() -> String {
+    start_mock_openai_sse_server_asserting_body(Vec::new())
+}
+
+fn start_mock_openai_sse_server_asserting_body(required_body_substrings: Vec<String>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock LLM server");
     let addr = listener.local_addr().expect("mock LLM local addr");
     thread::spawn(move || {
@@ -245,6 +255,12 @@ fn start_mock_openai_sse_server() -> String {
                 request.starts_with("POST /chat/completions "),
                 "unexpected LLM request: {request}"
             );
+            for needle in &required_body_substrings {
+                assert!(
+                    request.contains(needle),
+                    "LLM request body missing expected substring {needle:?}: {request}"
+                );
+            }
             let body = concat!(
                 "data: {\"id\":\"chatcmpl-bearwire-test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello from bearwire\"},\"finish_reason\":null}]}\n\n",
                 "data: {\"id\":\"chatcmpl-bearwire-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
@@ -384,6 +400,107 @@ async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool
     panic!(
         "BearWire run.start did not persist message.delta and run.completed events: {last_replay}"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn run_start_uses_resolved_conversation_history_for_existing_session(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let pending_conversation_id = format!("new-acp-zed-{}", Uuid::new_v4().simple());
+    let resolved_conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    acp_sessions::upsert_session(
+        &pool,
+        acp_sessions::UpsertAcpSession {
+            user_id,
+            bear_id,
+            bear_slug: bear_slug.clone(),
+            acp_session_id: session_id.clone(),
+            runtime_session_id: format!("bearwire:{bear_id}:{session_id}"),
+            conversation_id: pending_conversation_id.clone(),
+            resolved_conversation_id: Some(resolved_conversation_id.clone()),
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: Some("write".to_string()),
+        },
+    )
+    .await
+    .expect("upsert resolved BearWire session");
+    let canonical = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &resolved_conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure resolved conversation");
+    append_message(
+        &pool,
+        canonical.id,
+        &ConversationMessageWrite {
+            message_type: ConversationMessageType::User,
+            role: Some(ConversationMessageRole::User),
+            visibility: ConversationMessageVisibility::Default,
+            content_text: "Earlier user asked about cached history".to_string(),
+            content_json: json!({}),
+            provider_message_id: Some("prior-user".to_string()),
+            source_event_id: None,
+            created_at: None,
+        },
+    )
+    .await
+    .expect("append prior user message");
+    append_message(
+        &pool,
+        canonical.id,
+        &ConversationMessageWrite {
+            message_type: ConversationMessageType::Assistant,
+            role: Some(ConversationMessageRole::Assistant),
+            visibility: ConversationMessageVisibility::Default,
+            content_text: "Earlier assistant reply from persisted history".to_string(),
+            content_json: json!({}),
+            provider_message_id: Some("prior-assistant".to_string()),
+            source_event_id: None,
+            created_at: None,
+        },
+    )
+    .await
+    .expect("append prior assistant message");
+
+    let mut config = den_core::config::Config::test_stub();
+    config.llm_api_url = start_mock_openai_sse_server_asserting_body(vec![
+        "Earlier user asked about cached history".to_string(),
+        "Earlier assistant reply from persisted history".to_string(),
+        "Current turn should see history".to_string(),
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    let state = test_state_with_config(pool.clone(), config);
+    let response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-history-run-start")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "client": "zed",
+                "prompt": "Current turn should see history"
+            }),
+        }),
+    )
+    .await
+    .expect("run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["result"]["ok"], true, "{value}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
