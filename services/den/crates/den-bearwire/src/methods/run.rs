@@ -1,23 +1,26 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    DenState, acp_sessions,
-    bears::{BearProfile, db as bears_db},
+    acp_sessions,
+    bears::{db as bears_db, BearProfile},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
-    runtime::bearwire_projection::wire::{BearWireEvent, runtime_stream_event_to_bearwire_events},
+    runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     runtime_contracts::RoleRuntimeBinding,
     turn_runner::TurnStartRequest,
+    DenState,
 };
 
 use crate::auth::authenticated_bear;
 use crate::methods::{param_string, required_param_string};
+
+const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_000);
 
 fn client_tool_descriptors_from_context(
     client_context: Option<&Value>,
@@ -147,6 +150,24 @@ pub(crate) async fn persist_run_progress(
             "failed to persist BearWire run.progress event"
         );
     }
+}
+
+fn runtime_event_satisfies_eager_prefix(
+    event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
+) -> bool {
+    use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    matches!(
+        event,
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::AssistantTextDelta { .. }
+                | RuntimeSemanticEvent::ToolCallRequested { .. }
+                | RuntimeSemanticEvent::RunPaused { .. }
+                | RuntimeSemanticEvent::TurnCompleted { .. }
+                | RuntimeSemanticEvent::TurnFailed { .. }
+                | RuntimeSemanticEvent::TurnCancelled { .. }
+                | RuntimeSemanticEvent::Error { .. }
+        )
+    )
 }
 
 pub(crate) fn runtime_event_kind(
@@ -504,7 +525,9 @@ pub(crate) async fn run_start_result(
     let prompt_for_task = prompt.clone();
     let run_id_for_task = run_id.clone();
     let client_tools_for_task = client_tools.clone();
+    let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
+        let mut eager_prefix_tx = Some(eager_prefix_tx);
         let run_started_at = Instant::now();
         let request_id = Uuid::new_v4();
         persist_run_progress(
@@ -611,6 +634,13 @@ pub(crate) async fn run_start_result(
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
+                            if !first_event_seen
+                                && runtime_event_satisfies_eager_prefix(&runtime_event)
+                            {
+                                if let Some(tx) = eager_prefix_tx.take() {
+                                    let _ = tx.send(());
+                                }
+                            }
                             if !first_event_seen {
                                 first_event_seen = true;
                                 persist_run_progress(
@@ -642,6 +672,9 @@ pub(crate) async fn run_start_result(
                             .await;
                         }
                         Err(err) => {
+                            if let Some(tx) = eager_prefix_tx.take() {
+                                let _ = tx.send(());
+                            }
                             persist_run_failed(
                                 &pool,
                                 &session_for_task,
@@ -658,6 +691,9 @@ pub(crate) async fn run_start_result(
                 }
             }
             Err(err) => {
+                if let Some(tx) = eager_prefix_tx.take() {
+                    let _ = tx.send(());
+                }
                 persist_run_failed(
                     &pool,
                     &session_for_task,
@@ -671,6 +707,18 @@ pub(crate) async fn run_start_result(
             }
         }
     });
+
+    if tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx)
+        .await
+        .is_err()
+    {
+        tracing::info!(
+            session_id = %session_id,
+            run_id = %run_id,
+            timeout_ms = BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis(),
+            "BearWire eager prefix drive timed out before first semantic runtime event"
+        );
+    }
 
     Ok(json!({
         "ok": true,
