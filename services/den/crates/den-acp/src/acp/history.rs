@@ -30,7 +30,7 @@ pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String,
     if s == "default" {
         return Ok("default".to_string());
     }
-    let ok = (s.starts_with("conv-") || s.starts_with("new-"))
+    let ok = (s.starts_with("conv-") || s.starts_with("den-conv-") || s.starts_with("new-"))
         && s.len() > 8
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -38,8 +38,27 @@ pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String,
         Ok(s.to_string())
     } else {
         Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default', a runtime conv- id, or a pending new- id): {s}"
+            "invalid conversation_id (expected 'default', a runtime conv-/den-conv- id, or a pending new- id): {s}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_conversation_id_accepts_native_den_conversation_ids() {
+        assert_eq!(
+            normalize_acp_conversation_id(Some("den-conv-48e47b94a6ce4720a87f4daf5d3601b2"))
+                .unwrap(),
+            "den-conv-48e47b94a6ce4720a87f4daf5d3601b2"
+        );
+    }
+
+    #[test]
+    fn normalize_conversation_id_still_rejects_invalid_ids() {
+        assert!(normalize_acp_conversation_id(Some("den/conv/bad")).is_err());
     }
 }
 

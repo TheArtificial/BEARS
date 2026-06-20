@@ -117,7 +117,7 @@ pub(super) async fn conversation_history_inner(
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
-            "history is only available for default or saved conv- conversations".to_string(),
+            "history is only available for default or saved conv-/den-conv- conversations".to_string(),
         ));
     }
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
