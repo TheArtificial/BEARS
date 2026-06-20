@@ -164,10 +164,10 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Same-session multi-run isolation tests | `den-bearwire` | Complete for active-run isolation: DB constraint rejects a second active run in one ACP session |
 | Cross-session collision tests | `den-bearwire` / `den-runtime` | Complete for BearWire tool results: same `tool_call_id` in two sessions remains isolated by session/run and wrong-session delivery is rejected |
 | Conversation continuity tests | `den-bearwire` / `bear-armature` | Partially complete. BearWire now uses resolved `den-conv-*` as native runtime `upstream_target`; add end-to-end transcript-loading assertion next |
-| Restart / missing session-store behavior | `den-runtime` / `den-bearwire` | Tool result after Den restart or missing `SESSION_STORE` should return an explicit non-continuable diagnostic, not malformed LLM messages |
+| Restart / missing session-store behavior | `den-runtime` / `den-bearwire` | Complete for BearWire client results: missing native in-memory session returns `continuation_unavailable` and does not record/settle the obligation |
 | ADR-0044 session-state appendix | docs | Complete. ADR-0044 now records stream progress invariants plus session/run/conversation ownership rules |
 
-**Exit gate:** Tests cover same-session multi-run isolation, cross-session id collisions, resolved-conversation continuity, and missing in-memory continuation state. Remaining Phase 4 work must not proceed until these cases are green or explicitly accepted as known risks.
+**Exit gate target:** Tests cover same-session multi-run isolation, cross-session id collisions, resolved-conversation continuity, and missing in-memory continuation state. Remaining Phase 4 work must not proceed until these cases are green or explicitly accepted as known risks.
 
 ## Phase 4 — Deprecate adapter-SSE and `/acp/**` — Pending
 

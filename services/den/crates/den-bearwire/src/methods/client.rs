@@ -26,6 +26,38 @@ use crate::methods::run::{
 };
 use crate::methods::{param_string, required_param_string};
 
+fn continuation_conversation_id(session: &acp_sessions::AcpSessionRow) -> String {
+    session
+        .resolved_conversation_id
+        .clone()
+        .unwrap_or_else(|| session.conversation_id.clone())
+}
+
+fn continuation_unavailable_response(
+    run: &bearwire_runs::BearWireRunRow,
+    session_id: &str,
+    conversation_id: &str,
+    obligation_state: &str,
+    obligation_id: impl ToString,
+) -> Value {
+    json!({
+        "ok": false,
+        "status": "continuation_unavailable",
+        "reason": "native_agent_loop_session_not_found",
+        "run_state": run.state,
+        "obligation_state": obligation_state,
+        "diagnostic": {
+            "component": "den-bearwire",
+            "phase": "native_session_missing_before_continuation",
+            "run_id": run.run_id,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "obligation_id": obligation_id.to_string(),
+            "message": "Den cannot accept this client result for continuation because the in-memory native agent loop session is not present. This usually means Den restarted or the run was orphaned; retry the turn in a fresh session."
+        }
+    })
+}
+
 fn spawn_continuation_task(
     state: &DenState,
     run: bearwire_runs::BearWireRunRow,
@@ -249,6 +281,30 @@ pub(crate) async fn client_tool_result_result(
             })),
         };
     }
+    let session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let continuation_conversation_id = continuation_conversation_id(&session);
+    if !den_runtime::native_runtime::native_acp_session_exists(
+        &continuation_conversation_id,
+        &session_id,
+    ) {
+        return Ok(continuation_unavailable_response(
+            &run,
+            &session_id,
+            &continuation_conversation_id,
+            &obligation.state,
+            obligation.id,
+        ));
+    }
+    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
     let record = bearwire_runs::record_client_result(
         &state.sqlx_pool,
         &run_id,
@@ -311,17 +367,6 @@ pub(crate) async fn client_tool_result_result(
                 None,
             )
             .await?;
-            let session = acp_sessions::find_for_user_bear_session(
-                &state.sqlx_pool,
-                user_id,
-                &bear.slug,
-                &session_id,
-            )
-            .await?
-            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-            let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
             let content = params
                 .get("content")
                 .and_then(|v| v.as_str())
@@ -342,10 +387,7 @@ pub(crate) async fn client_tool_result_result(
                 state,
                 transitioned.clone().unwrap_or(run.clone()),
                 binding_id,
-                session
-                    .resolved_conversation_id
-                    .clone()
-                    .unwrap_or(session.conversation_id),
+                continuation_conversation_id,
                 RuntimeContinuation::ToolResult {
                     tool_call_id: tool_call_id.clone(),
                     approval_request_id: obligation.permission_id.clone(),
@@ -462,6 +504,30 @@ pub(crate) async fn client_permission_result_result(
             })),
         };
     }
+    let session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let continuation_conversation_id = continuation_conversation_id(&session);
+    if !den_runtime::native_runtime::native_acp_session_exists(
+        &continuation_conversation_id,
+        &session_id,
+    ) {
+        return Ok(continuation_unavailable_response(
+            &run,
+            &session_id,
+            &continuation_conversation_id,
+            &obligation.state,
+            obligation.id,
+        ));
+    }
+    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
     let record = bearwire_runs::record_client_result(
         &state.sqlx_pool,
         &run_id,
@@ -524,17 +590,6 @@ pub(crate) async fn client_permission_result_result(
                 None,
             )
             .await?;
-            let session = acp_sessions::find_for_user_bear_session(
-                &state.sqlx_pool,
-                user_id,
-                &bear.slug,
-                &session_id,
-            )
-            .await?
-            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-            let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
             let decision = if normalized_decision == "granted" {
                 RuntimeApprovalDecision::Approve
             } else {
@@ -548,10 +603,7 @@ pub(crate) async fn client_permission_result_result(
                 state,
                 transitioned.clone().unwrap_or(run.clone()),
                 binding_id,
-                session
-                    .resolved_conversation_id
-                    .clone()
-                    .unwrap_or(session.conversation_id),
+                continuation_conversation_id,
                 RuntimeContinuation::ApprovalDecision {
                     approval_request_id: permission_id.clone(),
                     tool_call_id: obligation.tool_call_id.clone(),

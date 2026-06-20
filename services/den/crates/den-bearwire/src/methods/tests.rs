@@ -613,7 +613,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn tool_result_uses_persisted_obligation_after_fresh_state_and_stays_idempotent(
+async fn tool_result_without_live_native_session_is_not_accepted_for_continuation(
     pool: sqlx::PgPool,
 ) {
     let user_id = create_test_user(&pool).await;
@@ -660,46 +660,42 @@ async fn tool_result_uses_persisted_obligation_after_fresh_state_and_stays_idemp
         params.clone(),
     )
     .await;
-    assert_eq!(response["result"]["ok"], true, "{response}");
-    assert_eq!(response["result"]["duplicate"], false, "{response}");
+    assert_eq!(response["result"]["ok"], false, "{response}");
+    assert_eq!(
+        response["result"]["status"], "continuation_unavailable",
+        "{response}"
+    );
+    assert_eq!(
+        response["result"]["reason"], "native_agent_loop_session_not_found",
+        "{response}"
+    );
+    assert_eq!(
+        response["result"]["diagnostic"]["run_id"], run_id,
+        "{response}"
+    );
     let obligation = bearwire_obligations::get_tool_call_obligation(&pool, &run_id, &tool_call_id)
         .await
         .expect("load obligation")
         .expect("obligation exists");
-    assert_eq!(obligation.state, "continued");
-
-    let duplicate = rpc_value(
-        test_state(pool.clone()),
-        &token,
-        "client.tool.result",
-        params.clone(),
-    )
-    .await;
-    assert_eq!(duplicate["result"]["ok"], true, "{duplicate}");
-    assert_eq!(duplicate["result"]["duplicate"], true, "{duplicate}");
-    assert_eq!(
-        duplicate["result"]["obligation_state"], "continued",
-        "{duplicate}"
-    );
-
-    let conflict = rpc_value(
-        test_state(pool.clone()),
-        &token,
-        "client.tool.result",
-        json!({
-            "bear_slug": params["bear_slug"].clone(),
-            "session_id": params["session_id"].clone(),
-            "run_id": params["run_id"].clone(),
-            "tool_call_id": params["tool_call_id"].clone(),
+    assert_eq!(obligation.state, "waiting_for_client");
+    let recorded = bearwire_runs::existing_client_result_for_payload(
+        &pool,
+        &run_id,
+        "tool",
+        &tool_call_id,
+        &json!({
+            "tool_call_id": tool_call_id,
             "status": "ok",
-            "content": "different result"
+            "content": "persisted tool result",
+            "structured_content": Value::Null,
+            "error": Value::Null,
         }),
     )
-    .await;
-    let error = conflict["error"]["data"]["error"].as_str().unwrap();
+    .await
+    .expect("query existing result");
     assert!(
-        error.contains("conflicting duplicate tool result"),
-        "{conflict}"
+        recorded.is_none(),
+        "result must not be recorded when continuation is unavailable"
     );
 }
 
@@ -798,7 +794,11 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
         }),
     )
     .await;
-    assert_eq!(response["result"]["ok"], true, "{response}");
+    assert_eq!(response["result"]["ok"], false, "{response}");
+    assert_eq!(
+        response["result"]["status"], "continuation_unavailable",
+        "{response}"
+    );
 
     let obligation_a = bearwire_obligations::get_tool_call_obligation(&pool, &run_a, tool_call_id)
         .await
@@ -808,7 +808,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
         .await
         .expect("load session b obligation")
         .expect("session b obligation exists");
-    assert_eq!(obligation_a.state, "continued");
+    assert_eq!(obligation_a.state, "waiting_for_client");
     assert_eq!(obligation_b.state, "waiting_for_client");
 }
 

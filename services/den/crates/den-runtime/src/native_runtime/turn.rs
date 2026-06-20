@@ -41,6 +41,11 @@ pub fn take_session_overflow_compaction_recovered(
     SESSION_STORE.take_overflow_compaction_recovered(&key)
 }
 
+pub fn native_acp_session_exists(conversation_id: &str, acp_session_id: &str) -> bool {
+    let key = agent_loop_session_key(conversation_id, acp_session_id);
+    SESSION_STORE.get(&key).is_some()
+}
+
 fn overflow_context(
     pool: PgPool,
     config: Arc<Config>,
