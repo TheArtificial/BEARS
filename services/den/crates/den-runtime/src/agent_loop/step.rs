@@ -214,6 +214,7 @@ impl LazyAgentStepStream {
             tool_choice: request.tool_choice,
             temperature: request.temperature,
             max_tokens: request.max_tokens,
+            telemetry: request.telemetry,
         };
 
         tracing::info!(
@@ -325,6 +326,7 @@ pub async fn run_agent_step_stream(
         tool_choice: None,
         temperature: None,
         max_tokens: None,
+        telemetry: Some(session.llm_telemetry()),
     };
     Ok(Box::pin(LazyAgentStepStream::new(
         llm.clone(),

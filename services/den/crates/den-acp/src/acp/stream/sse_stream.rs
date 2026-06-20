@@ -1080,6 +1080,7 @@ impl Stream for AcpRuntimeSseStream {
                                 config: &api_state.config,
                                 memory_stores: &api_state.memory_stores,
                                 request_id,
+                                run_id: None,
                                 acp_session_id: &acp_session_id,
                                 conversation: continuation_conversation,
                                 binding: &binding,

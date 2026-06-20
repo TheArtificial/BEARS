@@ -179,6 +179,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
             config: &state.config,
             memory_stores: &state.memory_stores,
             request_id,
+            run_id: None,
             user_id,
             session_id,
             bear_id: bear.id,

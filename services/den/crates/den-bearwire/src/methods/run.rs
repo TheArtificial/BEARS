@@ -596,6 +596,7 @@ pub(crate) async fn run_start_result(
             config: config.as_ref(),
             memory_stores: &memory_stores,
             request_id,
+            run_id: Some(&run_id_for_task),
             user_id,
             session_id: &session_for_task,
             bear_id,

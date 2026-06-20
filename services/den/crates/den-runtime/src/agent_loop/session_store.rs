@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
-    llm::{ChatMessage, LlmToolDefinition},
+    llm::{ChatMessage, LlmRequestTelemetry, LlmToolDefinition},
 };
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,9 @@ pub struct AgentLoopSession {
     pub session_key: String,
     pub bear_id: Uuid,
     pub conversation_id: String,
+    pub acp_session_id: String,
+    pub request_id: Option<String>,
+    pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
     pub model: String,
@@ -27,6 +30,19 @@ pub struct AgentLoopSession {
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,
+}
+
+impl AgentLoopSession {
+    pub fn llm_telemetry(&self) -> LlmRequestTelemetry {
+        LlmRequestTelemetry {
+            request_id: self.request_id.clone(),
+            run_id: self.run_id.clone(),
+            session_id: Some(self.acp_session_id.clone()),
+            conversation_id: Some(self.conversation_id.clone()),
+            bear_id: Some(self.bear_id.to_string()),
+            stance: Some(self.profile.as_str().to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Default)]

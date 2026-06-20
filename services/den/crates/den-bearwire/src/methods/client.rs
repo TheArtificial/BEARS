@@ -70,6 +70,7 @@ fn spawn_continuation_task(
                 config: config.as_ref(),
                 memory_stores: &memory_stores,
                 request_id,
+                run_id: Some(&run.run_id),
                 acp_session_id: &run.session_id,
                 conversation: RuntimeConversationRef {
                     id: conversation_id,

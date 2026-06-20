@@ -230,6 +230,8 @@ async fn build_session(
     user_id: Option<i32>,
     client_context: Option<&serde_json::Value>,
     client_tools: Option<&serde_json::Value>,
+    request_id: Option<Uuid>,
+    run_id: Option<&str>,
     stream_tokens: bool,
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, DenError> {
@@ -282,6 +284,9 @@ async fn build_session(
         session_key,
         bear_id,
         conversation_id: conversation_id.to_string(),
+        acp_session_id: acp_session_id.to_string(),
+        request_id: request_id.map(|id| id.to_string()),
+        run_id: run_id.map(str::to_string),
         messages,
         tools,
         model,
@@ -318,6 +323,8 @@ pub async fn run_native_profile_turn_collect_assistant_text(
         Some(session_id),
         None,
         Some(conversation_id),
+        None,
+        None,
         None,
         None,
         None,
@@ -378,6 +385,8 @@ pub async fn start_native_web_chat_turn_event_stream(
         Some(params.conversation_id),
         Some(params.user_id),
         None,
+        None,
+        Some(params.request_id),
         None,
         true,
         Vec::new(),
@@ -463,6 +472,8 @@ pub async fn start_native_profile_turn_event_stream(
         Some(request.user_id),
         None,
         request.client_tools.as_ref(),
+        Some(request.request_id),
+        request.run_id,
         request.stream_tokens,
         Vec::new(),
     )
@@ -580,6 +591,11 @@ pub async fn continue_native_acp_turn_event_stream(
         }
     }
     SESSION_STORE.update(&session_key, |session| {
+        session.request_id = Some(request.request_id.to_string());
+        session.run_id = request
+            .run_id
+            .map(str::to_string)
+            .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
     });
     let session = SESSION_STORE
