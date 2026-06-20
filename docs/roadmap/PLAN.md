@@ -28,6 +28,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **MemFS → SQLite ETL** | **`den import-memfs` + UI upload landed**; validation/rollback runbook open | [`MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md`](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Bear entity layer** | **Phases 0–4 partial landed** (gate, entity-filter + graph recall); anchors + tools + portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
+| **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
 | **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
 | **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
@@ -107,6 +108,7 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - [Multi-role runtime](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md)
 - [Memory tools](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
 - [Memory curation](MEMORY_CURATION_PLAN.md)
+- [Personalization](PERSONALIZATION_PLAN.md)
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md)
 - [Docket implementation](DOCKET_IMPLEMENTATION_PLAN.md)
 - [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
