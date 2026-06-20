@@ -1,5 +1,11 @@
 # How Den Builds Bears
 
+Concepts TODO:
+- model ops
+- channels and armatures
+- internal bear architecture: stances, memory, skills
+- memory: conversation / bear memory / skills / cabinet
+
 Den does not merely send prompts to a model. It assembles a Bear from several connected concerns: visible behavior, durable identity, current context, memory, tools, collaboration, curation, and runtime infrastructure.
 
 This document is the beginning of a hierarchical explanation. The first and last sections are framing sections; the middle sections are intended to expand into deeper documentation over time.
