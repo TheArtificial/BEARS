@@ -3,11 +3,9 @@ use serde::Serialize;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{
-    conversation_message_types::{
-        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
-        ConversationMessageWrite,
-    },
+use crate::conversation_message_types::{
+    ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+    ConversationMessageWrite,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +29,15 @@ pub struct PersistedConversationMessage {
     pub created_at: time::OffsetDateTime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedTranscriptMessage {
+    pub sequence_no: i64,
+    pub message_id: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub created_at: time::OffsetDateTime,
+}
+
 impl PersistedConversationMessage {
     pub fn storage_message_type(&self) -> Result<ConversationMessageType, DenError> {
         ConversationMessageType::try_from_storage(&self.message_type)
@@ -47,18 +54,61 @@ impl PersistedConversationMessage {
         }
     }
 
-    /// Rows that should appear in user-facing chat history (web chat / pair reflection).
-    pub fn is_transcript_visible(&self) -> bool {
-        let Ok(visibility) = self.storage_visibility() else {
-            return false;
-        };
-        if !visibility.is_transcript_visible() {
-            return false;
+    pub fn transcript_role(&self) -> Option<&'static str> {
+        match (self.message_type.as_str(), self.role.as_deref()) {
+            ("user", _) => Some("user"),
+            ("assistant", _) => Some("assistant"),
+            ("message", Some("user")) => Some("user"),
+            ("message", Some("assistant")) => Some("assistant"),
+            (_, Some("user"))
+                if self.storage_message_type().ok() == Some(ConversationMessageType::User) =>
+            {
+                Some("user")
+            }
+            (_, Some("assistant"))
+                if self.storage_message_type().ok() == Some(ConversationMessageType::Assistant) =>
+            {
+                Some("assistant")
+            }
+            _ => None,
         }
-        matches!(
-            self.role.as_deref(),
-            Some("user") | Some("assistant")
-        )
+    }
+
+    pub fn to_model_transcript_message(&self) -> Option<PersistedTranscriptMessage> {
+        let visibility = self.storage_visibility().ok()?;
+        if !visibility.is_model_transcript_visible() {
+            return None;
+        }
+        let role = self.transcript_role()?;
+        Some(PersistedTranscriptMessage {
+            sequence_no: self.sequence_no,
+            message_id: self.provider_message_id.clone(),
+            role: role.to_string(),
+            content: self.content_text.clone(),
+            created_at: self.created_at,
+        })
+    }
+
+    pub fn to_user_history_transcript_message(&self) -> Option<PersistedTranscriptMessage> {
+        let visibility = self.storage_visibility().ok()?;
+        if !visibility.is_user_history_visible() {
+            return None;
+        }
+        self.to_model_transcript_message()
+    }
+
+    /// Rows that may be replayed into model transcript context.
+    pub fn is_model_transcript_visible(&self) -> bool {
+        self.to_model_transcript_message().is_some()
+    }
+
+    /// Rows that may be shown in user-facing conversation history.
+    pub fn is_user_history_visible(&self) -> bool {
+        self.to_user_history_transcript_message().is_some()
+    }
+
+    pub fn is_transcript_visible(&self) -> bool {
+        self.is_model_transcript_visible()
     }
 }
 
@@ -123,7 +173,9 @@ pub async fn ensure_conversation_for_external_id(
             .try_get("bear_id")
             .map_err(|err| DenError::Database(format!("decode conversation bear_id: {err}")))?,
         external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
-            DenError::Database(format!("decode conversation external_conversation_id: {err}"))
+            DenError::Database(format!(
+                "decode conversation external_conversation_id: {err}"
+            ))
         })?,
         source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
             DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
@@ -156,14 +208,16 @@ pub async fn get_conversation_by_id(
 
     row.map(|row| {
         Ok(ConversationRecord {
-            id: row.try_get("id").map_err(|err| {
-                DenError::Database(format!("decode conversation id: {err}"))
-            })?,
-            bear_id: row.try_get("bear_id").map_err(|err| {
-                DenError::Database(format!("decode conversation bear_id: {err}"))
-            })?,
+            id: row
+                .try_get("id")
+                .map_err(|err| DenError::Database(format!("decode conversation id: {err}")))?,
+            bear_id: row
+                .try_get("bear_id")
+                .map_err(|err| DenError::Database(format!("decode conversation bear_id: {err}")))?,
             external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
-                DenError::Database(format!("decode conversation external_conversation_id: {err}"))
+                DenError::Database(format!(
+                    "decode conversation external_conversation_id: {err}"
+                ))
             })?,
             source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
                 DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
@@ -171,9 +225,9 @@ pub async fn get_conversation_by_id(
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
             })?,
-            updated_at: row
-                .try_get("updated_at")
-                .map_err(|err| DenError::Database(format!("decode conversation updated_at: {err}")))?,
+            updated_at: row.try_get("updated_at").map_err(|err| {
+                DenError::Database(format!("decode conversation updated_at: {err}"))
+            })?,
         })
     })
     .transpose()
@@ -201,14 +255,16 @@ pub async fn get_conversation_for_external_id(
 
     row.map(|row| {
         Ok(ConversationRecord {
-            id: row.try_get("id").map_err(|err| {
-                DenError::Database(format!("decode conversation id: {err}"))
-            })?,
-            bear_id: row.try_get("bear_id").map_err(|err| {
-                DenError::Database(format!("decode conversation bear_id: {err}"))
-            })?,
+            id: row
+                .try_get("id")
+                .map_err(|err| DenError::Database(format!("decode conversation id: {err}")))?,
+            bear_id: row
+                .try_get("bear_id")
+                .map_err(|err| DenError::Database(format!("decode conversation bear_id: {err}")))?,
             external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
-                DenError::Database(format!("decode conversation external_conversation_id: {err}"))
+                DenError::Database(format!(
+                    "decode conversation external_conversation_id: {err}"
+                ))
             })?,
             source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
                 DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
@@ -216,9 +272,9 @@ pub async fn get_conversation_for_external_id(
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
             })?,
-            updated_at: row
-                .try_get("updated_at")
-                .map_err(|err| DenError::Database(format!("decode conversation updated_at: {err}")))?,
+            updated_at: row.try_get("updated_at").map_err(|err| {
+                DenError::Database(format!("decode conversation updated_at: {err}"))
+            })?,
         })
     })
     .transpose()
@@ -295,15 +351,19 @@ pub async fn list_conversations_for_bear(
     rows.into_iter()
         .map(|row| {
             Ok(ConversationRecord {
-                id: row.try_get("id").map_err(|err| {
-                    DenError::Database(format!("decode conversation id: {err}"))
-                })?,
+                id: row
+                    .try_get("id")
+                    .map_err(|err| DenError::Database(format!("decode conversation id: {err}")))?,
                 bear_id: row.try_get("bear_id").map_err(|err| {
                     DenError::Database(format!("decode conversation bear_id: {err}"))
                 })?,
-                external_conversation_id: row.try_get("external_conversation_id").map_err(|err| {
-                    DenError::Database(format!("decode conversation external_conversation_id: {err}"))
-                })?,
+                external_conversation_id: row.try_get("external_conversation_id").map_err(
+                    |err| {
+                        DenError::Database(format!(
+                            "decode conversation external_conversation_id: {err}"
+                        ))
+                    },
+                )?,
                 source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
                     DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
                 })?,
@@ -360,7 +420,9 @@ pub async fn list_messages_page(
                     DenError::Database(format!("decode conversation message content_text: {err}"))
                 })?,
                 provider_message_id: row.try_get("provider_message_id").map_err(|err| {
-                    DenError::Database(format!("decode conversation message provider_message_id: {err}"))
+                    DenError::Database(format!(
+                        "decode conversation message provider_message_id: {err}"
+                    ))
                 })?,
                 created_at: row.try_get("created_at").map_err(|err| {
                     DenError::Database(format!("decode conversation message created_at: {err}"))
@@ -383,10 +445,9 @@ pub async fn append_message(
     let provider_message_id = message.provider_message_id.as_deref();
     let source_event_id = message.source_event_id.as_deref();
     let created_at = message.created_at.as_deref();
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|err| DenError::Database(format!("begin append conversation message tx: {err}")))?;
+    let mut tx = pool.begin().await.map_err(|err| {
+        DenError::Database(format!("begin append conversation message tx: {err}"))
+    })?;
 
     if let Some(source_event_id) = source_event_id {
         if let Some(existing_sequence_no) = sqlx::query_scalar::<_, i64>(
@@ -402,8 +463,11 @@ pub async fn append_message(
         .bind(source_event_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|err| DenError::Database(format!("lookup conversation message source_event_id: {err}")))?
-        {
+        .map_err(|err| {
+            DenError::Database(format!(
+                "lookup conversation message source_event_id: {err}"
+            ))
+        })? {
             tx.rollback().await.map_err(|err| {
                 DenError::Database(format!("rollback append conversation message tx: {err}"))
             })?;
@@ -471,7 +535,9 @@ pub async fn append_message(
     .await
     {
         tx.rollback().await.map_err(|rollback_err| {
-            DenError::Database(format!("rollback append conversation message tx: {rollback_err}"))
+            DenError::Database(format!(
+                "rollback append conversation message tx: {rollback_err}"
+            ))
         })?;
 
         let duplicate_sequence_no = if source_event_id.is_some() {
@@ -504,9 +570,9 @@ pub async fn append_message(
         )));
     }
 
-    tx.commit()
-        .await
-        .map_err(|err| DenError::Database(format!("commit append conversation message tx: {err}")))?;
+    tx.commit().await.map_err(|err| {
+        DenError::Database(format!("commit append conversation message tx: {err}"))
+    })?;
 
     Ok(sequence_no)
 }
@@ -559,10 +625,7 @@ pub async fn insert_message_if_absent(
     Ok(())
 }
 
-pub async fn count_visible_messages(
-    pool: &PgPool,
-    conversation_id: Uuid,
-) -> Result<i64, DenError> {
+pub async fn count_visible_messages(pool: &PgPool, conversation_id: Uuid) -> Result<i64, DenError> {
     sqlx::query_scalar::<_, i64>(
         r"
         SELECT COUNT(*)::bigint
@@ -577,3 +640,55 @@ pub async fn count_visible_messages(
     .map_err(|err| DenError::Database(format!("count visible conversation messages: {err}")))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::OffsetDateTime;
+
+    fn row(
+        message_type: &str,
+        role: Option<&str>,
+        visibility: &str,
+    ) -> PersistedConversationMessage {
+        PersistedConversationMessage {
+            sequence_no: 7,
+            message_type: message_type.to_string(),
+            role: role.map(str::to_string),
+            visibility: visibility.to_string(),
+            content_text: "hello transcript".to_string(),
+            provider_message_id: Some("provider-7".to_string()),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn transcript_projection_accepts_canonical_and_legacy_message_shapes() {
+        for message in [
+            row("user", None, "default"),
+            row("assistant", None, "default"),
+            row("message", Some("user"), "default"),
+            row("message", Some("assistant"), "default"),
+        ] {
+            assert!(message.to_model_transcript_message().is_some());
+            assert!(message.to_user_history_transcript_message().is_some());
+        }
+    }
+
+    #[test]
+    fn transcript_projection_separates_model_replay_from_user_history_visibility() {
+        let hidden = row("user", Some("user"), "hidden_from_user");
+        assert!(hidden.to_model_transcript_message().is_some());
+        assert!(hidden.to_user_history_transcript_message().is_none());
+
+        let diagnostic = row("assistant", Some("assistant"), "diagnostic_only");
+        assert!(diagnostic.to_model_transcript_message().is_none());
+        assert!(diagnostic.to_user_history_transcript_message().is_none());
+    }
+
+    #[test]
+    fn transcript_projection_rejects_non_transcript_roles() {
+        let workflow = row("workflow_event", Some("system"), "default");
+        assert!(workflow.to_model_transcript_message().is_none());
+        assert!(workflow.to_user_history_transcript_message().is_none());
+    }
+}

@@ -174,16 +174,13 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
             .into_iter()
             .rev()
             .filter_map(|row| {
-                if !row.is_transcript_visible() {
-                    return None;
-                }
-                let role = row.role?;
-                Some(RuntimeHistoryRecord {
-                    message_id: row.provider_message_id,
-                    role,
-                    content: row.content_text,
-                    created_at: Some(row.created_at.to_string()),
-                })
+                row.to_model_transcript_message()
+                    .map(|message| RuntimeHistoryRecord {
+                        message_id: message.message_id,
+                        role: message.role,
+                        content: message.content,
+                        created_at: Some(message.created_at.to_string()),
+                    })
             })
             .collect();
         Ok(RuntimeHistoryPage {

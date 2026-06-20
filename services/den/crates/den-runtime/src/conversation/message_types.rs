@@ -98,8 +98,16 @@ impl ConversationMessageVisibility {
         }
     }
 
-    pub fn is_transcript_visible(self) -> bool {
+    pub fn is_model_transcript_visible(self) -> bool {
         matches!(self, Self::Default | Self::HiddenFromUser)
+    }
+
+    pub fn is_user_history_visible(self) -> bool {
+        matches!(self, Self::Default)
+    }
+
+    pub fn is_transcript_visible(self) -> bool {
+        self.is_model_transcript_visible()
     }
 }
 

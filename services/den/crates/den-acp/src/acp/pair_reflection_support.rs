@@ -2,7 +2,7 @@ use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_runtime::{
     acp_sessions,
-    bears::{db as bears_db, BearProfile},
+    bears::{BearProfile, db as bears_db},
     conversation_persistence,
     memory::{create_proposal, tools as sqlite_memory},
     memory_proposals::CreateMemoryProposal,
@@ -51,14 +51,8 @@ pub(crate) async fn run_pair_reflection_summary(
             )
             .await?;
             rows.into_iter()
-                .filter(|row| row.is_transcript_visible())
-                .map(|row| {
-                    format!(
-                        "{}: {}",
-                        row.role.as_deref().unwrap_or(row.message_type.as_str()),
-                        row.content_text.trim()
-                    )
-                })
+                .filter_map(|row| row.to_model_transcript_message())
+                .map(|message| format!("{}: {}", message.role, message.content.trim()))
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -208,4 +202,3 @@ pub(crate) async fn run_pair_reflection_summary(
     .await?;
     Ok(())
 }
-

@@ -1325,7 +1325,7 @@ use den_runtime::prompt_memory_blocks::{
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
             .into_iter()
-            .filter(|message| message.message_type == "visible_message" && message.role.as_deref() == Some("user"))
+            .filter(|message| message.message_type == "user" && message.role.as_deref() == Some("user"))
             .collect();
         assert_eq!(user_messages.len(), 1, "duplicate prompt provenance should dedup canonical persistence");
 
@@ -1414,7 +1414,7 @@ use den_runtime::prompt_memory_blocks::{
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
             .into_iter()
-            .filter(|message| message.message_type == "visible_message" && message.role.as_deref() == Some("user"))
+            .filter(|message| message.message_type == "user" && message.role.as_deref() == Some("user"))
             .collect();
         assert_eq!(user_messages.len(), 2, "distinct prompt request_ids should remain separate canonical messages");
     }

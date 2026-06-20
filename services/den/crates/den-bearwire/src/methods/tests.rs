@@ -246,20 +246,53 @@ fn start_mock_openai_sse_server() -> String {
     start_mock_openai_sse_server_asserting_body(Vec::new())
 }
 
+#[derive(Debug, Clone)]
+struct MockLlmRequestAssertion {
+    required_body_substrings: Vec<String>,
+    exact_body_counts: Vec<(String, usize)>,
+}
+
+impl MockLlmRequestAssertion {
+    fn requiring(required_body_substrings: Vec<String>) -> Self {
+        Self {
+            required_body_substrings,
+            exact_body_counts: Vec::new(),
+        }
+    }
+}
+
 fn start_mock_openai_sse_server_asserting_body(required_body_substrings: Vec<String>) -> String {
+    start_mock_openai_sse_server_asserting_requests(vec![MockLlmRequestAssertion::requiring(
+        required_body_substrings,
+    )])
+}
+
+fn start_mock_openai_sse_server_asserting_requests(
+    request_assertions: Vec<MockLlmRequestAssertion>,
+) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock LLM server");
     let addr = listener.local_addr().expect("mock LLM local addr");
     thread::spawn(move || {
-        if let Ok((mut stream, _)) = listener.accept() {
+        for assertion in request_assertions {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
             let request = read_http_request(&mut stream);
             assert!(
                 request.starts_with("POST /chat/completions "),
                 "unexpected LLM request: {request}"
             );
-            for needle in &required_body_substrings {
+            for needle in &assertion.required_body_substrings {
                 assert!(
                     request.contains(needle),
                     "LLM request body missing expected substring {needle:?}: {request}"
+                );
+            }
+            for (needle, expected_count) in &assertion.exact_body_counts {
+                let actual_count = request.matches(needle).count();
+                assert_eq!(
+                    actual_count, *expected_count,
+                    "LLM request body had unexpected count for {needle:?}: {request}"
                 );
             }
             let body = concat!(
@@ -468,6 +501,135 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
     .await
     .expect("count persisted user prompt");
     assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let first_prompt = "First prompt: remember the blue teapot";
+    let second_prompt = "What was my first prompt?";
+    let mut second = MockLlmRequestAssertion::requiring(vec![
+        first_prompt.to_string(),
+        "hello from bearwire".to_string(),
+        second_prompt.to_string(),
+    ]);
+    second
+        .exact_body_counts
+        .push((second_prompt.to_string(), 1));
+
+    let mut config = den_core::config::Config::test_stub();
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion {
+            required_body_substrings: vec![first_prompt.to_string()],
+            exact_body_counts: vec![(first_prompt.to_string(), 1)],
+        },
+        second,
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    let state = test_state_with_config(pool.clone(), config);
+
+    let first_response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-first-history-turn")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+                "client": "zed",
+                "prompt": first_prompt
+            }),
+        }),
+    )
+    .await
+    .expect("first run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(first_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let first_value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(first_value["result"]["ok"], true, "{first_value}");
+    let first_run_id = first_value["result"]["run_id"]
+        .as_str()
+        .expect("first run_id")
+        .to_string();
+
+    let session = acp_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+        .await
+        .expect("load session")
+        .expect("session exists");
+    let resolved = session
+        .resolved_conversation_id
+        .as_deref()
+        .expect("first run.start should resolve conversation")
+        .to_string();
+
+    let mut first_turn_ready = false;
+    for _ in 0..50 {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT state FROM bearwire_runs WHERE run_id = $1 LIMIT 1")
+                .bind(&first_run_id)
+                .fetch_optional(&pool)
+                .await
+                .expect("load first run state");
+        let assistant_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM conversation_messages
+            WHERE conversation_id = (
+                SELECT id FROM conversations
+                WHERE bear_id = $1 AND external_conversation_id = $2
+                LIMIT 1
+            )
+            AND message_type = 'assistant'
+            AND content_text = 'hello from bearwire'
+            "#,
+        )
+        .bind(bear_id)
+        .bind(&resolved)
+        .fetch_one(&pool)
+        .await
+        .expect("count first assistant message");
+        if state.as_deref() == Some("completed") && assistant_count == 1 {
+            first_turn_ready = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        first_turn_ready,
+        "first turn did not complete and persist assistant output before second turn"
+    );
+
+    let second_response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-second-history-turn")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "client": "zed",
+                "prompt": second_prompt
+            }),
+        }),
+    )
+    .await
+    .expect("second run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(second_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let second_value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(second_value["result"]["ok"], true, "{second_value}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]

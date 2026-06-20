@@ -3,24 +3,23 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    gateway_events::GatewayEvent,
     acp_sessions,
-    conversation_persistence::PersistedConversationMessage,
     agent_assist::sanitize_visible_transcript_text,
+    conversation_persistence::PersistedConversationMessage,
+    gateway_events::GatewayEvent,
     runtime_compaction::{
-            choose_compaction_decision, semantic_groups_from_runtime_messages,
-            RuntimeCompactionDecision, RuntimeCompactionPolicy,
-        },
+        RuntimeCompactionDecision, RuntimeCompactionPolicy, choose_compaction_decision,
+        semantic_groups_from_runtime_messages,
+    },
     runtime_compaction_observability::{
-            build_compaction_applied_event, build_compaction_skipped_event,
-            RuntimeCompactionEvent,
-        },
+        RuntimeCompactionEvent, build_compaction_applied_event, build_compaction_skipped_event,
+    },
     runtime_conversations::{
-            RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
-        },
+        RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
+    },
 };
 
-use super::{format_acp_session_timestamp, AcpConversationHistoryMessage};
+use super::{AcpConversationHistoryMessage, format_acp_session_timestamp};
 
 pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
@@ -85,9 +84,7 @@ fn runtime_inner_for_acp_history(msg: &serde_json::Value) -> &serde_json::Value 
     }
 }
 
-pub(crate) fn runtime_messages_for_compaction(
-    body: &serde_json::Value,
-) -> Vec<serde_json::Value> {
+pub(crate) fn runtime_messages_for_compaction(body: &serde_json::Value) -> Vec<serde_json::Value> {
     runtime_messages_top_array(body)
         .iter()
         .map(runtime_inner_for_acp_history)
@@ -136,11 +133,19 @@ pub(crate) fn runtime_compaction_event_for_history(
     match runtime_compaction_decision_for_history(body, trigger.clone()) {
         Some(decision) => {
             let artifact = den_runtime::runtime_compaction::artifact_ref_from_decision(
-                format!("{conversation_id}:{}-{}", decision.selected_group_start, decision.selected_group_end),
+                format!(
+                    "{conversation_id}:{}-{}",
+                    decision.selected_group_start, decision.selected_group_end
+                ),
                 &decision,
                 &policy,
             );
-            build_compaction_applied_event(conversation_id.to_string(), &decision, &policy, artifact)
+            build_compaction_applied_event(
+                conversation_id.to_string(),
+                &decision,
+                &policy,
+                artifact,
+            )
         }
         None => build_compaction_skipped_event(
             conversation_id.to_string(),
@@ -208,25 +213,18 @@ pub(super) fn map_canonical_history_page(
         .iter()
         .rev()
         .filter_map(|row| {
-            let role = match (row.message_type.as_str(), row.role.as_deref()) {
-                ("user", _) => "user",
-                ("assistant", _) => "assistant",
-                ("message", Some("user")) => "user",
-                ("message", Some("assistant")) => "assistant",
-                _ => return None,
-            };
-            if row.visibility == "diagnostic_only" {
-                return None;
-            }
-            let text = sanitize_visible_transcript_text(&row.content_text);
+            let message = row.to_user_history_transcript_message()?;
+            let text = sanitize_visible_transcript_text(&message.content);
             if text.trim().is_empty() {
                 return None;
             }
             Some(AcpConversationHistoryMessage {
-                id: row.provider_message_id.clone().or_else(|| Some(row.sequence_no.to_string())),
-                role: role.to_string(),
+                id: message
+                    .message_id
+                    .or_else(|| Some(message.sequence_no.to_string())),
+                role: message.role,
                 text,
-                created_at: Some(format_acp_session_timestamp(row.created_at)),
+                created_at: Some(format_acp_session_timestamp(message.created_at)),
             })
         })
         .collect();
