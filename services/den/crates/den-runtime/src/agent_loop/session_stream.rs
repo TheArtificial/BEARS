@@ -320,6 +320,12 @@ impl Stream for SessionTrackingStream {
                         )
                         .await
                     }));
+                    // We just installed a new future after polling the inner stream. If we
+                    // return Pending without waking, the approval future has not been polled
+                    // yet and no waker is registered for it; the tool request can remain
+                    // parked until an unrelated upstream wake. Schedule an immediate re-poll
+                    // so the future can start and register its own wake source.
+                    cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(Ok(event)))
