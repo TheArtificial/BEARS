@@ -821,7 +821,7 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_visible_output = true;
-            let legacy = bearwire_tool_event_to_legacy_tool_request(event, true);
+            let legacy = bearwire_permission_event_to_legacy_permission_request(event);
             handle_den_event(
                 config,
                 adapter_state,
@@ -880,4 +880,57 @@ async fn handle_bearwire_event(
     diagnostics.saw_error |= outcome.saw_error;
     diagnostics.saw_turn_complete |= outcome.saw_done;
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn bearwire_requested_tool_projects_to_executable_tool_request() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "tool_call_id": "call-1",
+                "tool_name": "fs_read_text_file",
+                "arguments": { "path": "/workspace/README.md" }
+            }
+        });
+
+        let legacy = bearwire_tool_event_to_legacy_tool_request(&event, false);
+
+        assert_eq!(legacy["type"], "tool_request");
+        assert_eq!(legacy["tool_name"], "fs_read_text_file");
+        assert_eq!(legacy["approval"]["required"], false);
+    }
+
+    #[test]
+    fn bearwire_blocked_tool_projects_to_permission_request() {
+        let event = json!({
+            "type": "tool_call.blocked",
+            "run_id": "run-web-1",
+            "resource_refs": [
+                { "kind": "tool_call", "id": "call-web-1" },
+                { "kind": "permission_request", "id": "perm-web-1" }
+            ],
+            "data": {
+                "tool_call_id": "call-web-1",
+                "tool_name": "web_fetch",
+                "title": "Fetch URL",
+                "reason": "BEARS wants to fetch https://example.com/.",
+                "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+            }
+        });
+
+        let legacy = bearwire_permission_event_to_legacy_permission_request(&event);
+
+        assert_eq!(legacy["type"], "permission_request");
+        assert_eq!(legacy["run_id"], "run-web-1");
+        assert_eq!(legacy["permission_id"], "perm-web-1");
+        assert_eq!(legacy["tool_call_id"], "call-web-1");
+        assert_eq!(legacy["tool_name"], "web_fetch");
+        assert_eq!(legacy["target"]["url"], "https://example.com/");
+    }
 }

@@ -28,16 +28,12 @@ fn main() {
     let built_at = build_time_utc_rfc3339();
     println!("cargo:rustc-env=DEN_ACP_ADAPTER_BUILT_AT_UTC={built_at}");
 
-    let adapter_version = env_with_aliases(
-        &[
-            "BEAR_ARMATURE_RELEASE_VERSION",
-            "DEN_ACP_ADAPTER_RELEASE_VERSION",
-            "BEARS_ACP_ADAPTER_RELEASE_VERSION",
-        ],
-    )
-    .unwrap_or_else(|| {
-        std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION set by Cargo")
-    });
+    let adapter_version = env_with_aliases(&[
+        "BEAR_ARMATURE_RELEASE_VERSION",
+        "DEN_ACP_ADAPTER_RELEASE_VERSION",
+        "BEARS_ACP_ADAPTER_RELEASE_VERSION",
+    ])
+    .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION set by Cargo"));
     println!("cargo:rustc-env=DEN_ACP_ADAPTER_VERSION={adapter_version}");
 
     let build_sha = env_with_aliases(&[
@@ -73,11 +69,9 @@ fn main() {
 }
 
 fn env_with_aliases(names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| {
-        std::env::var(name)
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-    })
+    names
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|s| !s.trim().is_empty()))
 }
 
 fn build_time_utc_rfc3339() -> String {
