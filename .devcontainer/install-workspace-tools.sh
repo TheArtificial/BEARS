@@ -15,6 +15,10 @@ Options:
   --force-compile   Build bear-armature from /workspace/tools/bear-armature and install it,
                     skipping update manifests and release downloads.
   -h, --help        Show this help.
+
+Notes:
+  Installed bear-armature defaults to BearWire auto mode. To force the temporary
+  legacy Den /acp HTTP path, set BEARS_LEGACY_ACP_HTTP=1 in the armature env.
 USAGE
       exit 0
       ;;
