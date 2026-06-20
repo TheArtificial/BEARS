@@ -406,21 +406,12 @@ pub(crate) async fn post_permission_result(
             "session_id": session_id,
             "run_id": run_id,
             "permission_id": permission_id,
-            "decision": normalize_permission_decision(payload.get("decision").and_then(Value::as_str).unwrap_or("denied")),
+            "decision": payload.get("decision").and_then(Value::as_str).unwrap_or("denied"),
             "reason": payload.get("reason").cloned().unwrap_or(Value::Null),
             "adapter_contract": adapter_contract_context(),
         }),
     )
     .await
-}
-
-fn normalize_permission_decision(decision: &str) -> &'static str {
-    match decision {
-        "approve" | "approved" | "allow" | "allow_once" | "allow_url" | "allow_host"
-        | "granted" => "granted",
-        "timeout" | "timed_out" => "expired",
-        _ => "denied",
-    }
 }
 
 pub(crate) async fn try_handle_prompt(
@@ -693,6 +684,25 @@ async fn handle_bearwire_event(
                 .get("kind")
                 .and_then(Value::as_str)
                 .unwrap_or("progress");
+            if kind == "plan_update" {
+                let entries = data
+                    .get("detail")
+                    .and_then(|detail| detail.get("entries"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
+                let legacy = json!({ "type": "plan_update", "entries": entries });
+                outcome.saw_visible_output = true;
+                handle_den_event(
+                    config,
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    &legacy,
+                    turn_token,
+                )
+                .await?;
+                return Ok(outcome);
+            }
             let elapsed_ms = data.get("elapsed_ms").and_then(Value::as_u64);
             // Progress is observability, not model-visible output. Do not let it satisfy
             // prompt completion checks or suppress first-assistant/tool-event diagnostics.

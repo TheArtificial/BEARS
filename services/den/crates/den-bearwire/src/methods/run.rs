@@ -2,18 +2,19 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    DenState, acp_sessions,
-    bears::{BearProfile, db as bears_db},
+    acp_sessions,
+    bears::{db as bears_db, BearProfile},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
-    runtime::bearwire_projection::wire::{BearWireEvent, runtime_stream_event_to_bearwire_events},
+    runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     runtime_contracts::RoleRuntimeBinding,
     turn_runner::TurnStartRequest,
+    DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -281,6 +282,8 @@ async fn update_run_state_for_runtime_event(
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
+            tool_name,
+            arguments,
             approval_request_id,
             approval_required,
             ..
@@ -299,6 +302,8 @@ async fn update_run_state_for_runtime_event(
                 approval_request_id.as_deref(),
                 json!({
                     "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
                     "approval_required": approval_required,
                     "approval_request_id": approval_request_id,
                     "request_id": request_id,
@@ -313,6 +318,36 @@ async fn update_run_state_for_runtime_event(
                     tool_call_id = %tool_call_id,
                     "failed to persist BearWire tool-call obligation"
                 );
+            }
+            if *approval_required {
+                if let Some(permission_id) = approval_request_id.as_deref() {
+                    if let Err(err) = bearwire_obligations::upsert_permission_obligation(
+                        pool,
+                        run_id,
+                        session_id,
+                        permission_id,
+                        Some(tool_call_id),
+                        json!({
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                            "approval_required": approval_required,
+                            "approval_request_id": approval_request_id,
+                            "request_id": request_id,
+                        }),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %err,
+                            session_id = %session_id,
+                            run_id = %run_id,
+                            permission_id = %permission_id,
+                            tool_call_id = %tool_call_id,
+                            "failed to persist BearWire permission obligation"
+                        );
+                    }
+                }
             }
             if let Some(started_at) = started_at {
                 let (kind, text) = if *approval_required {
@@ -337,6 +372,8 @@ async fn update_run_state_for_runtime_event(
                     text,
                     json!({
                         "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
                         "approval_required": approval_required,
                         "approval_request_id": approval_request_id,
                         "request_id": request_id,

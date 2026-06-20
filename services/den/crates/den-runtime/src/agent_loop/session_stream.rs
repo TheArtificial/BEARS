@@ -8,7 +8,6 @@ use futures::Stream;
 
 use crate::{
     agent_loop::{
-        AgentStepOverflowContext,
         approvals::create_native_approval,
         run_agent_step_stream,
         session_store::AgentLoopSessionStore,
@@ -17,6 +16,7 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
+        AgentStepOverflowContext,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     memory::MemoryStoreManager,
@@ -27,7 +27,7 @@ use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{DenError, config::Config, profile::BearProfile};
+use den_core::{config::Config, profile::BearProfile, DenError};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -217,6 +217,50 @@ impl SessionTrackingStream {
             && !self.should_request_den_tool_permission(tool_name)
     }
 
+    fn web_fetch_permission_target(arguments: &serde_json::Value) -> serde_json::Value {
+        let mut target = arguments.clone();
+        if !target.is_object() {
+            target = serde_json::json!({});
+        }
+        target["kind"] = serde_json::json!("web_fetch");
+        if let Some(url) = target.get("url").and_then(|value| value.as_str()) {
+            if let Ok(parsed) = url::Url::parse(url.trim()) {
+                if let Some(host) = parsed.host_str() {
+                    let host = match parsed.port() {
+                        Some(port)
+                            if !((parsed.scheme() == "https" && port == 443)
+                                || (parsed.scheme() == "http" && port == 80)) =>
+                        {
+                            format!("{}:{port}", host.trim_end_matches('.').to_ascii_lowercase())
+                        }
+                        _ => host.trim_end_matches('.').to_ascii_lowercase(),
+                    };
+                    target["host"] = serde_json::json!(host);
+                }
+            }
+        }
+        target
+    }
+
+    fn plan_update_event_from_tool_message(message: &ChatMessage) -> Option<RuntimeSemanticEvent> {
+        let content = message.content.as_deref()?;
+        let value: serde_json::Value = serde_json::from_str(content).ok()?;
+        let entries = value
+            .get("plan")
+            .and_then(|plan| plan.get("items"))
+            .and_then(|items| items.as_array())?
+            .clone();
+        if entries.is_empty() {
+            return None;
+        }
+        Some(RuntimeSemanticEvent::RunProgress {
+            kind: "plan_update".to_string(),
+            text: None,
+            phase: Some("tool_result".to_string()),
+            detail: Some(serde_json::json!({ "entries": entries })),
+        })
+    }
+
     fn begin_server_tool_execution(&mut self, call: ChatToolCall) {
         let Some(invoker) = crate::native_runtime::tool_invoker() else {
             let tool_name = call.function.name.clone();
@@ -353,6 +397,8 @@ impl Stream for SessionTrackingStream {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
                     self.inner = stream;
+                    self.pending_pause_after_tool =
+                        Self::plan_update_event_from_tool_message(&message);
                     let finished =
                         tool_call_finished_event_for_content(&call, message.content.as_deref());
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(finished))));
@@ -448,7 +494,8 @@ impl Stream for SessionTrackingStream {
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();
                     let acp_session_id = self.acp_session_id.clone();
-                    let arguments_value = arguments.clone();
+                    let permission_target = Self::web_fetch_permission_target(&arguments);
+                    let arguments_value = permission_target.clone();
                     let approval_tool_call_id = tool_call_id.clone();
                     let approval_tool_name = tool_name.clone();
                     self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
@@ -457,7 +504,7 @@ impl Stream for SessionTrackingStream {
                             tool_name: tool_name.clone(),
                             title: None,
                             kind: Some("function".to_string()),
-                            arguments: arguments.clone(),
+                            arguments: permission_target,
                             approval_request_id: None,
                             approval_required: true,
                             approval_reason: Some(
@@ -605,8 +652,8 @@ mod tests {
     use super::*;
     use std::{
         sync::{
-            Arc,
             atomic::{AtomicUsize, Ordering},
+            Arc,
         },
         task::{RawWaker, RawWakerVTable, Waker},
     };

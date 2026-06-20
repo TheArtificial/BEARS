@@ -3,8 +3,9 @@
 Concepts TODO:
 - model ops
 - channels and armatures
+- tools
 - internal bear architecture: stances, memory, skills
-- memory: conversation / bear memory / skills / cabinet
+- memory curation: conversation / bear memory / skills / cabinet
 
 Den does not merely send prompts to a model. It assembles a Bear from several connected concerns: visible behavior, durable identity, current context, memory, tools, collaboration, curation, and runtime infrastructure.
 

@@ -5,7 +5,8 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_http::errors::CustomError;
+use den_core::tools::constants::DEN_WEB_FETCH;
+use den_http::{errors::CustomError, web_policy};
 use den_runtime::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},
@@ -31,6 +32,72 @@ fn continuation_conversation_id(session: &acp_sessions::AcpSessionRow) -> String
         .resolved_conversation_id
         .clone()
         .unwrap_or_else(|| session.conversation_id.clone())
+}
+
+async fn record_web_fetch_approval_from_permission(
+    pool: &sqlx::PgPool,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    decision: &str,
+    obligation_payload: &Value,
+) -> Result<(), CustomError> {
+    if !matches!(decision, "allow_once" | "allow_url" | "allow_host") {
+        return Ok(());
+    }
+    let tool_name = obligation_payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(descriptor) =
+        den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+    else {
+        return Ok(());
+    };
+    if descriptor.name != DEN_WEB_FETCH {
+        return Ok(());
+    }
+    let args = obligation_payload
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let url = args
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("web_fetch permission payload missing url".to_string())
+        })?;
+    let (scope_kind, scope_value) = if decision == "allow_host" {
+        let host = match args
+            .get("host")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(host) => web_policy::normalize_web_host(host)?,
+            None => web_policy::normalize_web_url(url)?.host,
+        };
+        ("host", host)
+    } else {
+        ("url", web_policy::normalize_web_url(url)?.url)
+    };
+    let ttl_seconds = if decision == "allow_once" {
+        Some(60 * 60)
+    } else {
+        None
+    };
+    web_policy::record_web_approval(
+        pool,
+        bear_id,
+        scope_kind,
+        &scope_value,
+        Some(user_id),
+        "acp",
+        ttl_seconds,
+    )
+    .await?;
+    Ok(())
 }
 
 fn continuation_unavailable_response(
@@ -458,8 +525,9 @@ pub(crate) async fn client_permission_result_result(
         )));
     }
     let normalized_decision = match decision.as_str() {
-        "approved" | "approve" | "granted" | "allow" => "granted",
-        "denied" | "deny" | "rejected" | "reject" => "denied",
+        "approved" | "approve" | "granted" | "allow" | "allow_once" | "allow_url"
+        | "allow_host" => "granted",
+        "denied" | "deny" | "rejected" | "reject" | "reject_once" | "reject_always" => "denied",
         "timeout" | "timed_out" => "expired",
         other => {
             return Err(CustomError::ValidationError(format!(
@@ -564,6 +632,16 @@ pub(crate) async fn client_permission_result_result(
                     "obligation_state": obligation.state,
                 }));
             };
+            if normalized_decision == "granted" {
+                record_web_fetch_approval_from_permission(
+                    &state.sqlx_pool,
+                    bear.id,
+                    user_id,
+                    decision.as_str(),
+                    &obligation.request_payload,
+                )
+                .await?;
+            }
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
                 "expired" => "permission.expired",
