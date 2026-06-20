@@ -21,17 +21,17 @@ use den_runtime::{
     },
 };
 
-/// Operator and member `<select>` for Letta `agent_type` (subset of Letta `AgentType`; empty = server default).
+/// Deprecated legacy provider agent-type rows kept only for old template compatibility.
 #[derive(Serialize)]
 pub struct AgentTypeSelectRow {
     pub value: &'static str,
     pub label: &'static str,
 }
 
-pub const LETTA_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
+pub const LEGACY_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
     AgentTypeSelectRow {
         value: "",
-        label: "Letta default",
+        label: "Legacy provider default",
     },
     AgentTypeSelectRow {
         value: "memgpt_agent",
@@ -178,8 +178,8 @@ impl From<&Bear> for BearConfigurationEditForm {
     fn from(bear: &Bear) -> Self {
         Self {
             default_model: bear.default_model.clone().unwrap_or_default(),
-            letta_agent_type: bear.letta_agent_type.clone().unwrap_or_default(),
-            letta_tool_ids: bear.letta_tool_ids.0.clone(),
+            letta_agent_type: String::new(),
+            letta_tool_ids: Vec::new(),
         }
     }
 }
@@ -220,10 +220,10 @@ pub struct NewBearForm {
     pub system_prompt: String,
     #[validate(length(max = 255))]
     pub default_model: String,
-    /// Letta `agent_type` (`<select>` value); empty string = Letta default.
+    /// Deprecated legacy provider `agent_type`; ignored by Den-native provisioning.
     #[validate(length(max = 64))]
     pub letta_agent_type: String,
-    /// Letta `tool_ids` from `<select name="letta_tool_ids" multiple>`.
+    /// Deprecated legacy provider tool ids; ignored by Den-native provisioning.
     #[serde(default)]
     pub letta_tool_ids: Vec<String>,
 }
@@ -236,8 +236,8 @@ impl From<&Bear> for NewBearForm {
             description: bear.description.clone(),
             system_prompt: bear.system_prompt.clone(),
             default_model: bear.default_model.clone().unwrap_or_default(),
-            letta_agent_type: bear.letta_agent_type.clone().unwrap_or_default(),
-            letta_tool_ids: bear.letta_tool_ids.0.clone(),
+            letta_agent_type: String::new(),
+            letta_tool_ids: Vec::new(),
         }
     }
 }
@@ -294,7 +294,9 @@ pub async fn model_catalog_select_context(
         Err(e) => (
             true,
             Vec::new(),
-            Some(format!("Could not load available models from Bifrost: {e}.")),
+            Some(format!(
+                "Could not load available models from Bifrost: {e}."
+            )),
         ),
     }
 }
@@ -334,7 +336,8 @@ pub fn validate_default_model_for_catalog(
                 return;
             }
             let requested = default_model_trim.trim();
-            let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+            let requested_resolved =
+                den_runtime::llm::model_registry::resolve_model_handle(requested);
             let available = models.iter().any(|model| {
                 if model.handle == requested {
                     return true;
@@ -371,25 +374,25 @@ pub fn canonical_default_model_handle(raw: &str) -> Option<String> {
 
 /// Native model list for the new-bear template, merging stored handles like the edit page.
 pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> minijinja::Value {
-    let (letta_configured, letta_model_options, letta_models_fetch_error) =
+    let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(state).await;
     let model_trim = form.default_model.trim();
     let model_handle = (!model_trim.is_empty()).then_some(model_trim);
-    let letta_model_options = if letta_configured {
-        ensure_stored_model_in_options_for_handle(model_handle, letta_model_options)
+    let model_options = if model_catalog_configured {
+        ensure_stored_model_in_options_for_handle(model_handle, model_options)
     } else {
-        letta_model_options
+        model_options
     };
 
     context! {
         native_runtime => true,
-        letta_configured,
-        letta_model_options,
-        letta_models_fetch_error,
-        letta_tools_configured => false,
-        letta_tool_options => Vec::<ToolOption>::new(),
-        letta_tools_fetch_error => Option::<String>::None,
-        letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
+        model_catalog_configured,
+        model_options,
+        models_fetch_error,
+        legacy_tools_configured => false,
+        legacy_tool_options => Vec::<ToolOption>::new(),
+        legacy_tools_fetch_error => Option::<String>::None,
+        legacy_agent_type_rows => LEGACY_AGENT_TYPE_ROWS,
     }
 }
 
@@ -402,7 +405,7 @@ pub async fn bear_edit_page_context(
     admin_bear_edit_page_context(state, form).await
 }
 
-/// Operator admin edit-bear form: Bifrost catalog when native, Letta fields when Letta-backed.
+/// Operator admin edit-bear form: Bifrost catalog for Den-native profiles.
 pub async fn admin_bear_edit_page_context(
     state: &AppState,
     form: &NewBearForm,
@@ -600,8 +603,8 @@ pub fn build_context_profile_json_for_template(
 pub async fn insert_new_bear_row(
     pool: &sqlx::PgPool,
     form: &NewBearForm,
-    letta_tool_ids: Vec<String>,
-    letta_agent_type_db: Option<String>,
+    _legacy_tool_ids: Vec<String>,
+    _legacy_agent_type: Option<String>,
     default_model_opt: Option<&str>,
 ) -> Result<Uuid, CustomError> {
     bears_db::create_bear(
@@ -613,8 +616,8 @@ pub async fn insert_new_bear_row(
             system_prompt: form.system_prompt.trim(),
             default_model: default_model_opt,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: letta_agent_type_db.as_deref(),
-            letta_tool_ids: Json(letta_tool_ids),
+            letta_agent_type: None,
+            letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
     )
@@ -626,8 +629,8 @@ pub async fn insert_new_bear_row(
 pub async fn insert_new_bear_row_with_context_profile(
     pool: &sqlx::PgPool,
     form: &NewBearForm,
-    letta_tool_ids: Vec<String>,
-    letta_agent_type_db: Option<String>,
+    _legacy_tool_ids: Vec<String>,
+    _legacy_agent_type: Option<String>,
     default_model_opt: Option<&str>,
     context_profile: Json<serde_json::Value>,
 ) -> Result<Uuid, CustomError> {
@@ -642,8 +645,8 @@ pub async fn insert_new_bear_row_with_context_profile(
             system_prompt: system_prompt.trim(),
             default_model: default_model_opt,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: letta_agent_type_db.as_deref(),
-            letta_tool_ids: Json(letta_tool_ids),
+            letta_agent_type: None,
+            letta_tool_ids: Json(Vec::new()),
             context_profile: Some(context_profile),
         },
     )
@@ -670,7 +673,7 @@ mod model_catalog_tests {
 
     #[test]
     fn validation_accepts_alias_when_canonical_handle_is_available() {
-        let fetch = Some(Ok(vec![option("openai/gpt-4.1")])) ;
+        let fetch = Some(Ok(vec![option("openai/gpt-4.1")]));
         let mut errors = ValidationErrors::new();
         validate_default_model_for_catalog(&fetch, "gpt-4.1", &mut errors);
         assert!(!has_default_model_error(&errors));
@@ -678,7 +681,7 @@ mod model_catalog_tests {
 
     #[test]
     fn validation_accepts_bifrost_available_model_without_den_metadata() {
-        let fetch = Some(Ok(vec![option("openai/new-model")])) ;
+        let fetch = Some(Ok(vec![option("openai/new-model")]));
         let mut errors = ValidationErrors::new();
         validate_default_model_for_catalog(&fetch, "openai/new-model", &mut errors);
         assert!(!has_default_model_error(&errors));
@@ -686,7 +689,7 @@ mod model_catalog_tests {
 
     #[test]
     fn validation_rejects_den_metadata_model_not_available_in_bifrost() {
-        let fetch = Some(Ok(vec![option("openai/gpt-4o")])) ;
+        let fetch = Some(Ok(vec![option("openai/gpt-4o")]));
         let mut errors = ValidationErrors::new();
         validate_default_model_for_catalog(&fetch, "gpt-4.1", &mut errors);
         assert!(has_default_model_error(&errors));
@@ -694,7 +697,7 @@ mod model_catalog_tests {
 
     #[test]
     fn validation_rejects_unknown_model_when_only_unrelated_unknown_is_available() {
-        let fetch = Some(Ok(vec![option("openai/available-but-unknown")])) ;
+        let fetch = Some(Ok(vec![option("openai/available-but-unknown")]));
         let mut errors = ValidationErrors::new();
         validate_default_model_for_catalog(&fetch, "openai/not-available-and-unknown", &mut errors);
         assert!(has_default_model_error(&errors));

@@ -17,7 +17,9 @@ pub struct BearParams<'a> {
     pub system_prompt: &'a str,
     pub default_model: Option<&'a str>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
+    /// Deprecated legacy provider field; active Den-native provisioning ignores it.
     pub letta_agent_type: Option<&'a str>,
+    /// Deprecated legacy provider field; active Den-native provisioning ignores it.
     pub letta_tool_ids: Json<Vec<String>>,
     pub context_profile: Option<Json<serde_json::Value>>,
 }
@@ -473,26 +475,6 @@ pub async fn profile_binding_id(
     Ok(row.map(|r| r.0))
 }
 
-/// Legacy Letta agent id for a profile binding, when provisioned via Letta.
-pub async fn profile_letta_agent_id(
-    pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
-) -> Result<Option<String>, DenError> {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        r"
-        SELECT letta_agent_id
-        FROM bear_profile_bindings
-        WHERE bear_id = $1 AND profile = $2
-        ",
-    )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.and_then(|r| r.0))
-}
-
 pub async fn mark_bear_profile_binding_provisioning(
     pool: &PgPool,
     bear_id: Uuid,
@@ -521,7 +503,6 @@ pub async fn mark_bear_profile_binding_ready(
     bear_id: Uuid,
     profile: BearProfile,
     binding_id: &str,
-    letta_agent_id: Option<&str>,
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
@@ -531,10 +512,10 @@ pub async fn mark_bear_profile_binding_ready(
             bear_id, profile, binding_id, letta_agent_id, provisioning_status,
             last_provisioned_version, last_synced_at, last_provisioning_error, config_hash, updated_at
         )
-        VALUES ($1, $2, $3, $4, 'ready', $5, NOW(), NULL, $6::jsonb, NOW())
+        VALUES ($1, $2, $3, NULL, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET binding_id = EXCLUDED.binding_id,
-                      letta_agent_id = EXCLUDED.letta_agent_id,
+                      letta_agent_id = NULL,
                       provisioning_status = 'ready',
                       last_provisioned_version = EXCLUDED.last_provisioned_version,
                       last_synced_at = NOW(),
@@ -546,7 +527,6 @@ pub async fn mark_bear_profile_binding_ready(
     .bind(bear_id)
     .bind(profile.as_str())
     .bind(binding_id)
-    .bind(letta_agent_id)
     .bind(version)
     .bind(config_hash)
     .execute(pool)
@@ -577,29 +557,6 @@ pub async fn mark_bear_profile_binding_synced(
     .bind(profile.as_str())
     .bind(version)
     .bind(config_hash)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn mark_bear_profile_binding_drifted(
-    pool: &PgPool,
-    bear_id: Uuid,
-    profile: BearProfile,
-    message: &str,
-) -> Result<(), DenError> {
-    sqlx::query(
-        r"
-        UPDATE bear_profile_bindings
-        SET provisioning_status = 'drifted',
-            last_provisioning_error = $3,
-            updated_at = NOW()
-        WHERE bear_id = $1 AND profile = $2
-        ",
-    )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(message)
     .execute(pool)
     .await?;
     Ok(())
@@ -690,28 +647,6 @@ pub async fn list_pending_skill_proposals(
     .fetch_all(pool)
     .await
     .map_err(Into::into)
-}
-
-/// When the operator left `letta_agent_type` empty, persist the default used for Letta (`letta_v1_agent`).
-pub async fn backfill_default_letta_agent_type(
-    pool: &PgPool,
-    bear_id: Uuid,
-    default: &str,
-) -> Result<(), DenError> {
-    sqlx::query(
-        r"
-        UPDATE bears
-        SET letta_agent_type = $2,
-            updated_at = NOW()
-        WHERE id = $1
-          AND (letta_agent_type IS NULL OR btrim(letta_agent_type) = '')
-        ",
-    )
-    .bind(bear_id)
-    .bind(default)
-    .execute(pool)
-    .await?;
-    Ok(())
 }
 
 /// Seed `runtime_plan` once so codepool always has a BearRuntimePlan v1 snapshot.

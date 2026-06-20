@@ -66,7 +66,6 @@ impl BearDirectory for DenBearDirectory<'_> {
             name: bear.name,
             description: Some(bear.description),
             default_model: bear.default_model,
-            letta_agent_type: bear.letta_agent_type,
             created_at: format_rfc3339(bear.created_at),
             updated_at: format_rfc3339(bear.updated_at),
         }))

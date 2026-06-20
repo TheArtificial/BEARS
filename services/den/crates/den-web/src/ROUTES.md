@@ -32,7 +32,7 @@ real-page smoke testing in development.
 
 ## Onboarding (`src/web/onboarding.rs`)
 
-- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a role-aware `context_profile`, provisions/syncs role agents, and redirects to chat
+- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a profile-aware `context_profile`, provisions native profile bindings, and redirects to chat
 
 ## Bear settings (`src/web/bear_settings.rs`)
 
@@ -48,7 +48,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 - `GET /bear/{slug}/context` — prompt memory blocks
 - `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
 - `GET /bear/{slug}/advanced` — diagnostics and provision action
-- `POST /bear/{slug}/provision-missing-roles` — provision missing native profile bindings (redirects to `/profiles`)
+- `POST /bear/{slug}/provision-missing-profiles` — provision missing native profile bindings (redirects to `/profiles`); legacy `/provision-missing-roles` aliases here
 
 ## Bear memory & entities (`src/bear_memory.rs`)
 
@@ -92,11 +92,9 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
-- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and role-agent provisioning defaults)
-- `GET /admin/bears/{id}` — operator bear registry detail; redirects to member-facing `/bear/{slug}/…`
-- `POST /admin/bears/{id}/provision-missing-profiles` (alias `/provision-missing-roles`) — provision missing Den-native profile bindings
-- `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)
-- `POST /admin/bears/{id}/retry-letta` — reconcile Den-native profile bindings (legacy URL name)
+- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and native profile provisioning defaults)
+- `GET /admin/bears/{id}` — redirects to member-facing `/bear/{slug}/…` profile/settings pages
+- `GET|POST /admin/bears/{id}/edit` — legacy redirects to member-facing edit pages
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test

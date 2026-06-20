@@ -22,6 +22,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     config::Config,
+    core::{acp_tokens, user::db as user_db},
     errors::CustomError,
     web::{
         bear_create_support::{
@@ -31,33 +32,32 @@ use crate::{
         },
         render_template, AppState,
     },
-    core::{
-        acp_tokens,
-        user::db as user_db,
-    },
 };
 use den_runtime::{
     acp_sessions,
-    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
     bears::{
-            db as bears_db,
-            db::{
-                role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
-            },
-            provision, Bear, BearProfile,
-        },
+        db as bears_db,
+        db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
+        provision, Bear, BearProfile,
+    },
+    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
     memory::tools::sqlite_collect_role_logical_paths,
 };
 
+pub(crate) use super::bear_member::{
+    email_verify_redirect, load_bear_member, viewer_can_manage_bear,
+};
 use super::bear_settings;
-pub(crate) use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
 pub fn router() -> Router<AppState> {
     bear_settings::router()
         .merge(Router::new())
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(legacy_details_redirect))
-        .route("/bear/{slug}/details/{*rest}", get(legacy_details_path_redirect))
+        .route(
+            "/bear/{slug}/details/{*rest}",
+            get(legacy_details_path_redirect),
+        )
         .route_with_tsr("/bear/{slug}/edit", get(bear_edit_redirect_get))
         .route_with_tsr(
             "/bear/{slug}/edit/overview",
@@ -71,8 +71,14 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/edit/configuration",
             get(bear_edit_configuration_get).post(bear_edit_configuration_post),
         )
-        .route_with_tsr("/bear/{slug}/code-token", get(bear_code_token_get).post(bear_code_token_post))
-        .route_with_tsr("/bear/{slug}/memory/browse/runtime-blocks", get(runtime_blocks_redirect))
+        .route_with_tsr(
+            "/bear/{slug}/code-token",
+            get(bear_code_token_get).post(bear_code_token_post),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/memory/browse/runtime-blocks",
+            get(runtime_blocks_redirect),
+        )
         .route_with_tsr(
             "/bear/{slug}/memory/browse/proposals/{proposal_id}",
             get(memory_proposal_legacy_redirect),
@@ -105,7 +111,10 @@ async fn legacy_details_path_redirect(Path((slug, rest)): Path<(String, String)>
                 if sub.starts_with("proposals/") {
                     format!("/bear/{slug}/memory/{sub}")
                 } else if sub == "runtime-blocks" {
-                    format!("/bear/{slug}/advanced?message={}", urlencoding::encode("Runtime memory blocks view is deprecated."))
+                    format!(
+                        "/bear/{slug}/advanced?message={}",
+                        urlencoding::encode("Runtime memory blocks view is deprecated.")
+                    )
                 } else {
                     format!("/bear/{slug}/memory?{}", sub.replace('/', "&"))
                 }
@@ -118,7 +127,10 @@ async fn legacy_details_path_redirect(Path((slug, rest)): Path<(String, String)>
             format!("/bear/{slug}/profiles/{profile}")
         }
         p if p.starts_with("profiles/") => format!("/bear/{slug}/{p}"),
-        other => format!("/bear/{slug}/overview?legacy={}", urlencoding::encode(other)),
+        other => format!(
+            "/bear/{slug}/overview?legacy={}",
+            urlencoding::encode(other)
+        ),
     };
     Redirect::permanent(&target)
 }
@@ -410,8 +422,7 @@ async fn bear_work_surface_rows(
     let manager = den_runtime::memory::MemoryStoreManager::new(config);
     let store = manager.store_for_bear(bear_id).await?;
 
-    let core_paths =
-        sqlite_collect_role_logical_paths(&store, BearProfile::Pair.as_str()).await?;
+    let core_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Pair.as_str()).await?;
     let pair_paths = &core_paths;
     let work_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Work.as_str()).await?;
 
@@ -454,10 +465,12 @@ async fn bear_work_surface_rows(
         let glossary_present = child_paths.iter().any(|path| path == &glossary_path);
         let pair_understanding_path = format!("pair/work_surfaces/{slug}/current-understanding.md");
         let work_understanding_path = format!("work/work_surfaces/{slug}/current-understanding.md");
-        let pair_current_understanding_present =
-            pair_paths.iter().any(|path| path == &pair_understanding_path);
-        let work_current_understanding_present =
-            work_paths.iter().any(|path| path == &work_understanding_path);
+        let pair_current_understanding_present = pair_paths
+            .iter()
+            .any(|path| path == &pair_understanding_path);
+        let work_current_understanding_present = work_paths
+            .iter()
+            .any(|path| path == &work_understanding_path);
         let workplace_labels = [
             (BearProfile::Pair, pair_current_understanding_present),
             (BearProfile::Work, work_current_understanding_present),
@@ -864,21 +877,13 @@ async fn new_bear_post(
         validation_errors = e;
     }
 
-    let letta_tool_ids: Vec<String> = form
+    let legacy_tool_ids: Vec<String> = form
         .letta_tool_ids
         .iter()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-
-    let letta_agent_type_db: Option<String> = {
-        let t = form.letta_agent_type.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t.to_string())
-        }
-    };
+    let legacy_agent_type: Option<String> = None;
 
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
@@ -896,20 +901,17 @@ async fn new_bear_post(
         let id = insert_new_bear_row(
             state.sqlx_pool(),
             &form,
-            letta_tool_ids.clone(),
-            letta_agent_type_db.clone(),
+            legacy_tool_ids.clone(),
+            legacy_agent_type.clone(),
             default_model_opt.as_deref(),
         )
         .await?;
 
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+                .await
         {
             tracing::warn!(%id, "Native profile provision failed: {e}");
             let page = bear_new_form_context(&state, &form).await;
@@ -926,12 +928,8 @@ async fn new_bear_post(
             .await;
         }
 
-        if let Err(err) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            id,
-        )
-        .await
+        if let Err(err) =
+            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), id).await
         {
             tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
         }
@@ -955,7 +953,6 @@ async fn new_bear_post(
     )
     .await
 }
-
 
 async fn bear_edit_redirect_get(
     Path(slug): Path<String>,
@@ -1054,19 +1051,16 @@ async fn bear_edit_overview_post(
                 system_prompt: bear.system_prompt.as_str(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: bear.letta_agent_type.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), bear.id)
+                .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
@@ -1177,19 +1171,16 @@ async fn bear_edit_prompt_post(
                 system_prompt: form.system_prompt.trim(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: bear.letta_agent_type.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), bear.id)
+                .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after prompt edit failed: {e}");
             return render_template(
@@ -1307,19 +1298,16 @@ async fn bear_edit_configuration_post(
                 system_prompt: bear.system_prompt.as_str(),
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: bear.letta_agent_type.as_deref(),
-                letta_tool_ids: bear.letta_tool_ids.clone(),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
         .await?;
 
-        if let Err(e) = provision::reconcile_bear_native(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            bear.id,
-        )
-        .await
+        if let Err(e) =
+            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), bear.id)
+                .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
@@ -1360,7 +1348,6 @@ async fn bear_edit_configuration_post(
     )
     .await
 }
-
 
 #[derive(Debug, Deserialize)]
 struct BearDeleteForm {

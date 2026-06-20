@@ -95,7 +95,6 @@ async fn reconcile_one_native_profile(
             bear.id,
             profile,
             &binding_id,
-            None,
             bear.provisioning_version,
             &config_hash,
         )

@@ -29,7 +29,6 @@ pub struct BearRecord {
     pub name: String,
     pub description: Option<String>,
     pub default_model: Option<String>,
-    pub letta_agent_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

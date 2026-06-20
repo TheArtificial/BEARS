@@ -23,9 +23,9 @@ pub struct Bear {
     pub description: String,
     pub default_model: Option<String>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
-    /// Letta `agent_type` on create/patch when set (e.g. `memgpt_agent`, `letta_v1_agent`).
+    /// Deprecated legacy provider `agent_type`; ignored by Den-native provisioning.
     pub letta_agent_type: Option<String>,
-    /// Letta `tool_ids` on create/patch (JSON array of strings in Postgres).
+    /// Deprecated legacy provider tool ids; ignored by Den-native provisioning.
     pub letta_tool_ids: Json<Vec<String>>,
     /// Optional BearRuntimePlan v1 JSON for codepool (memory git remote, seeds; extensible).
     pub runtime_plan: Option<Json<serde_json::Value>>,
@@ -126,9 +126,9 @@ mod tests {
         assert!(!BearProfile::Pair.is_harness_backed());
         assert!(!BearProfile::Curate.is_harness_backed());
         assert!(!BearProfile::Watch.is_harness_backed());
-        assert_eq!(BearProfile::Chat.runtime_family(), "letta_code_harness");
-        assert_eq!(BearProfile::Work.runtime_family(), "letta_code_harness");
-        assert_eq!(BearProfile::Pair.runtime_family(), "letta_api_direct");
+        assert_eq!(BearProfile::Chat.runtime_family(), "native_harness_backed");
+                assert_eq!(BearProfile::Work.runtime_family(), "native_harness_backed");
+                assert_eq!(BearProfile::Pair.runtime_family(), "native_api_direct");
     }
 
     #[test]

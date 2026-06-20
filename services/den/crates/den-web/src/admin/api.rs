@@ -52,9 +52,11 @@ pub struct CreateBearRequest {
     description: String,
     system_prompt: String,
     default_model: Option<String>,
-    /// Deprecated: prefer `letta_tool_ids`. When set, stored as `bears.tools_enabled` for backward compatibility.
+    /// Deprecated legacy payload; ignored by Den-native provisioning.
     tools_enabled: Option<serde_json::Value>,
+    /// Deprecated legacy provider field; accepted for compatibility but ignored.
     letta_agent_type: Option<String>,
+    /// Deprecated legacy provider field; accepted for compatibility but ignored.
     #[serde(default)]
     letta_tool_ids: Vec<String>,
 }
@@ -77,18 +79,9 @@ async fn create_bear(
             "bear slug already exists".to_string(),
         ));
     }
-    let tools = body.tools_enabled.map(SqlxJson);
-    let letta_tool_ids: Vec<String> = body
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let letta_agent_type = body
-        .letta_agent_type
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let _legacy_tools_enabled = body.tools_enabled;
+    let _legacy_agent_type = body.letta_agent_type;
+    let _legacy_tool_ids = body.letta_tool_ids;
     let id = bears_db::create_bear(
         state.sqlx_pool(),
         BearParams {
@@ -101,9 +94,9 @@ async fn create_bear(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty()),
-            tools_enabled: tools,
-            letta_agent_type: letta_agent_type.as_deref(),
-            letta_tool_ids: SqlxJson(letta_tool_ids),
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: SqlxJson(Vec::new()),
             context_profile: None,
         },
     )

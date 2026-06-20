@@ -157,18 +157,18 @@ pub(crate) struct BearProfileBindingHealthRow {
     pub(crate) binding_id: String,
     pub(crate) runtime_family: String,
     pub(crate) branch: String,
-    pub(crate) letta_agent_id: Option<String>,
+    pub(crate) legacy_agent_id: Option<String>,
     pub(crate) provisioning_status: String,
     pub(crate) last_provisioned_version: i32,
     pub(crate) last_synced_at: Option<String>,
     pub(crate) health_status: String,
     pub(crate) health_label: String,
     pub(crate) health_detail: Option<String>,
-    letta_name: Option<String>,
-    letta_model: Option<String>,
-    letta_agent_type: Option<String>,
-    letta_tool_count: Option<usize>,
-    letta_memory_block_count: Option<usize>,
+    legacy_provider_name: Option<String>,
+    legacy_provider_model: Option<String>,
+    legacy_provider_type: Option<String>,
+    legacy_provider_tool_count: Option<usize>,
+    legacy_provider_memory_block_count: Option<usize>,
     memfs_view_state: Option<String>,
     memfs_view_quarantined: bool,
     memfs_view_diagnostic: Option<String>,
@@ -227,18 +227,18 @@ impl BearProfileBindingHealthRow {
             binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
-            letta_agent_id: binding,
+            legacy_agent_id: binding,
             provisioning_status: agent.provisioning_status.clone(),
             last_provisioned_version: agent.last_provisioned_version,
             last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
             health_status: health_status.to_string(),
             health_label: health_label.to_string(),
             health_detail,
-            letta_name: None,
-            letta_model: None,
-            letta_agent_type: None,
-            letta_tool_count: None,
-            letta_memory_block_count: None,
+            legacy_provider_name: None,
+            legacy_provider_model: None,
+            legacy_provider_type: None,
+            legacy_provider_tool_count: None,
+            legacy_provider_memory_block_count: None,
             memfs_view_state: None,
             memfs_view_quarantined: false,
             memfs_view_diagnostic: None,
@@ -752,8 +752,6 @@ async fn edit_action(
         validation_errors = e;
     }
 
-    let letta_agent_type_db: Option<String> = bear.letta_agent_type.clone();
-
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
 
@@ -782,8 +780,8 @@ async fn edit_action(
                 system_prompt,
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -911,8 +909,8 @@ async fn edit_prompt_action(
                 system_prompt: system_prompt.trim(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: bear.letta_agent_type.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
                 context_profile: context_profile.clone(),
             },
         )
@@ -1136,7 +1134,7 @@ async fn provision_missing_profiles_action(
     };
 
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}/roles?message={}",
+        "/admin/bears/{id}/profiles?message={}",
         urlencoding::encode(&message)
     ))
     .into_response())

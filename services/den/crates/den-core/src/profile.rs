@@ -47,9 +47,9 @@ impl BearProfile {
 
     pub fn runtime_family(self) -> &'static str {
         if self.is_harness_backed() {
-            "letta_code_harness"
+            "native_harness_backed"
         } else {
-            "letta_api_direct"
+            "native_api_direct"
         }
     }
 

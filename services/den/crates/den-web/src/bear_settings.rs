@@ -87,8 +87,12 @@ pub fn router() -> Router<AppState> {
             post(revoke_web_approval_action),
         )
         .route_with_tsr(
+            "/bear/{slug}/provision-missing-profiles",
+            post(provision_missing_profiles_action),
+        )
+        .route_with_tsr(
             "/bear/{slug}/provision-missing-roles",
-            post(provision_missing_roles_action),
+            post(provision_missing_profiles_action),
         )
 }
 
@@ -321,7 +325,7 @@ fn manifest_for_bear(bear: &den_runtime::bears::Bear) -> Result<BearBundleManife
             birthdate: exported_birthdate,
             default_model: bear.default_model.clone(),
             tools_enabled: bear.tools_enabled.as_ref().map(|v| v.0.clone()),
-            letta_agent_type: bear.letta_agent_type.clone(),
+            letta_agent_type: None,
         },
         prompts: BearBundlePrompts {
             system_prompt: bear.system_prompt.clone(),
@@ -568,7 +572,7 @@ async fn import_bear_bundle(
             system_prompt: &manifest.prompts.system_prompt,
             default_model: manifest.bear.default_model.as_deref(),
             tools_enabled: manifest.bear.tools_enabled.clone().map(sqlx::types::Json),
-            letta_agent_type: manifest.bear.letta_agent_type.as_deref(),
+            letta_agent_type: None,
             letta_tool_ids: sqlx::types::Json(Vec::new()),
             context_profile: manifest
                 .prompts
@@ -970,8 +974,8 @@ async fn models_post(
             system_prompt: bear.system_prompt.as_str(),
             default_model: default_model.as_deref(),
             tools_enabled: None,
-            letta_agent_type: bear.letta_agent_type.as_deref(),
-            letta_tool_ids: bear.letta_tool_ids.clone(),
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(Vec::new()),
             context_profile: bear.context_profile.clone(),
         },
     )
@@ -1455,7 +1459,7 @@ async fn revoke_web_approval_action(
     .into_response())
 }
 
-async fn provision_missing_roles_action(
+async fn provision_missing_profiles_action(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,

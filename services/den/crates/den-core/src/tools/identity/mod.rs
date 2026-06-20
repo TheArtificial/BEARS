@@ -59,9 +59,8 @@ pub async fn get_bear_self(
             "slug": bear.slug,
             "name": bear.name,
             "description": bear.description,
-            "default_model": bear.default_model,
-            "letta_agent_type": bear.letta_agent_type,
-            "member_count": member_count,
+                        "default_model": bear.default_model,
+                        "member_count": member_count,
             "created_at": bear.created_at,
             "updated_at": bear.updated_at
         },
@@ -180,7 +179,10 @@ pub async fn authorize_context(
     dir: &impl BearDirectory,
     context: &DenToolInvocationContext,
 ) -> Result<BearProfile, DenError> {
-    if !dir.user_may_use_bear(context.user_id, context.bear_id).await? {
+    if !dir
+        .user_may_use_bear(context.user_id, context.bear_id)
+        .await?
+    {
         return Err(DenError::Authorization(
             "user is not a member of this bear".to_string(),
         ));
