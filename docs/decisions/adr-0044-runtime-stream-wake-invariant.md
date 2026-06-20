@@ -98,7 +98,25 @@ Before a stream becomes permanently finished, it must either:
 
 Terminal suppression is allowed only when another state machine owns the terminal emission and this ownership is explicit.
 
-### 6. Instrument important boundaries with `tracing`
+### 6. Session, run, and continuation identity must be explicit
+
+Runtime streams and continuation handlers must not rely on ambient session state when a durable identifier exists. The intended identity chain is:
+
+```text
+bear_id + human/user_id + acp_session_id + run_id + conversation_id + tool_call_id/permission_id
+```
+
+Rules:
+
+- `run_id` scopes BearWire obligations and client results.
+- `acp_session_id` scopes client/armature state and approval UI routing.
+- `conversation_id` scopes transcript loading and LLM continuation context.
+- pending `new-acp-*` selections are session selections, not durable transcript ids.
+- resolved `den-conv-*` ids are the native runtime transcript ids and should be reused on later turns.
+- `tool_call_id` and `permission_id` are never sufficient without their run/session context.
+- if in-memory session state required for continuation is missing, return an explicit non-continuable diagnostic instead of fabricating transcript state.
+
+### 7. Instrument important boundaries with `tracing`
 
 Runtime stream state machines should log low-volume lifecycle milestones at `info` or `debug`, and high-volume parser/stream internals at `trace` under targeted names. Do not add bespoke envvars when `tracing` target/level filtering is sufficient.
 
@@ -109,7 +127,7 @@ tracing::debug!(target: "den.llm.stream", ...);
 tracing::trace!(target: "den.llm.stream", ...);
 ```
 
-### 7. Regression tests should poll manually when wake behavior matters
+### 8. Regression tests should poll manually when wake behavior matters
 
 Async stream wake bugs often disappear under `.next().await` because a runtime may provide incidental wakes. For wake-sensitive behavior, tests should manually call `poll_next` with a custom counting waker and assert the expected wake behavior.
 
@@ -165,8 +183,9 @@ When reviewing custom `Stream` implementations in `den-runtime`:
 5. If newly-assigned work needs another poll to progress, require either immediate polling or `cx.waker().wake_by_ref()`.
 6. Check that queued output is drained before upstream input is polled again.
 7. Check that terminal/cancel paths settle obligations or persist incomplete work deliberately.
-8. Check that high-volume instrumentation uses `tracing::trace!`/`debug!` targets, not custom env toggles.
-9. Add a manual-poll regression test when wake behavior is part of the invariant.
+8. Check that continuation paths carry run/session/conversation identifiers explicitly and reject mismatches.
+9. Check that high-volume instrumentation uses `tracing::trace!`/`debug!` targets, not custom env toggles.
+10. Add a manual-poll regression test when wake behavior is part of the invariant.
 
 A targeted review after the BearWire delay found:
 
@@ -174,3 +193,4 @@ A targeted review after the BearWire delay found:
 - `LazyAgentStepStream` returns `Pending` only after polling an existing future/stream.
 - `openai_byte_stream_to_event_stream` returns `Pending` only after polling the underlying byte stream.
 - `NativeWebChatLoopStream` already wakes after queueing output or advancing internal tool execution state.
+- BearWire `run.start` must pass the resolved `den-conv-*` as the runtime `upstream_target` when a session has already been resolved, while retaining the original ACP session selection for session binding.

@@ -89,6 +89,17 @@ fn client_tool_descriptors_from_context(
     json!(descriptors)
 }
 
+fn runtime_upstream_target(
+    conversation_selection: &str,
+    resolved_conversation_id: Option<&str>,
+) -> String {
+    resolved_conversation_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(conversation_selection)
+        .to_string()
+}
+
 fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
     client_context
         .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
@@ -457,6 +468,8 @@ pub(crate) async fn run_start_result(
     let resolved_conversation_id = existing
         .as_ref()
         .and_then(|session| session.resolved_conversation_id.clone());
+    let upstream_target =
+        runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
     let cwd = param_string(params, "cwd");
     let requested_mode =
         param_string(params, "requested_mode").or_else(|| param_string(params, "mode"));
@@ -484,7 +497,7 @@ pub(crate) async fn run_start_result(
                 .map(|session| session.runtime_session_id.clone())
                 .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id)),
             conversation_id: conversation_id.clone(),
-            resolved_conversation_id,
+            resolved_conversation_id: resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: cwd.clone(),
             current_mode: None,
@@ -522,6 +535,7 @@ pub(crate) async fn run_start_result(
     let bear_id = bear.id;
     let session_for_task = session_id.clone();
     let conversation_for_task = conversation_id.clone();
+    let upstream_target_for_task = upstream_target.clone();
     let prompt_for_task = prompt.clone();
     let run_id_for_task = run_id.clone();
     let client_tools_for_task = client_tools.clone();
@@ -542,6 +556,7 @@ pub(crate) async fn run_start_result(
             json!({
                 "request_id": request_id,
                 "conversation_id": conversation_for_task.clone(),
+                "upstream_target": upstream_target_for_task.clone(),
                 "client": client.clone(),
                 "cwd": cwd.clone(),
                 "client_tool_count": client_tools_for_task.as_array().map(|items| items.len()).unwrap_or(0),
@@ -605,7 +620,7 @@ pub(crate) async fn run_start_result(
             cwd: cwd.as_deref(),
             binding: &binding,
             conversation_selection: &conversation_for_task,
-            upstream_target: &conversation_for_task,
+            upstream_target: &upstream_target_for_task,
             prompt: &prompt_for_task,
             client_tools: Some(client_tools_for_task),
             runtime_context: None,
@@ -824,6 +839,26 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn runtime_upstream_target_prefers_resolved_conversation_for_history() {
+        assert_eq!(
+            runtime_upstream_target("new-acp-zed-pending", Some("den-conv-existing")),
+            "den-conv-existing"
+        );
+    }
+
+    #[test]
+    fn runtime_upstream_target_falls_back_to_session_selection() {
+        assert_eq!(
+            runtime_upstream_target("new-acp-zed-pending", None),
+            "new-acp-zed-pending"
+        );
+        assert_eq!(
+            runtime_upstream_target("conv-existing", Some("   ")),
+            "conv-existing"
+        );
     }
 
     #[test]
