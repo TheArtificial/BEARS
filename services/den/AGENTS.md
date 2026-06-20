@@ -1,20 +1,106 @@
 # AGENTS.md
 
-How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja, PostgreSQL, optional split web/API/workers). For **running locally**, see [`docs/quickstart.md`](docs/quickstart.md). For **deploy** (env, migrations, Docker build), see [`docs/deploy.md`](docs/deploy.md). **Service toggles** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`) and health checks are covered in [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
+How to orient in **Den**: this is the Rust service for Bear identity/session state, Den-hosted memory and work tools, BearWire, web/API surfaces, canonical conversation persistence, and the Den-native agent runtime.
 
-In the **BEARS** monorepo, **Den** is the **provisioning controller** and **orchestrator** for the stack: it **configures** downstream services (especially the **Letta API server**), **runs** first-party surfaces such as the **web chat UI**, and exposes **control-plane tools** (for example **Den meta tools**). **Streaming harness execution** (Letta Code SDK) is implemented in **`services/codepool/`** (**Codepool**) at the repo root; Den calls it over the private network. With **`RUN_WEB=true`**, **`CODEPOOL_BASE_URL`** must be non-empty at startup (**production** images default to **`http://bears-codepool:3030`** when unset; override for local dev — see [`docs/quickstart.md`](docs/quickstart.md)). **Its own** PostgreSQL state exists so Den can **enforce policy**, **validate** operations, and **rebuild** consistent outward configuration from **repo + backups**—not to hold Letta’s runtime agent memory, which stays on the **Letta** side. See [`../../docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md) and the root [`../../AGENTS.md`](../../AGENTS.md) (“Den’s role”).
+Den is no longer just a generic Axum starter or a Letta/Codepool orchestration shim. The active Pair/ACP path is:
+
+```text
+ACP client / armature
+        │
+        ▼
+bear-armature
+        │ BearWire v1
+        ▼
+den-bearwire
+        │
+        ▼
+Den-native Pair runtime
+```
+
+Key crates and areas:
+
+- `crates/den-bearwire/` — BearWire RPC/SSE edge for armatures.
+- `crates/den-runtime/` — native runtime, agent loop, conversation persistence, BearWire event projection, memory/runtime helpers.
+- `crates/den-core/` — descriptor-owned Den tools, tool constants, dispatch, policy/context types.
+- `crates/den-acp/` — legacy ACP HTTP/SSE compatibility and historical ACP helpers. Do not add new first-class ACP behavior here unless maintaining a legacy boundary.
+- `src/core/tools/` — concrete Den tool context wiring for builtin Den-hosted tools.
+- `migrations/` — Postgres schema.
+- `src/lib.rs` / `src/main.rs` — binary composition and service startup.
+
+For repository-wide project rules, Bear concepts, worktree safety, and stack commands, also read [`../../AGENTS.md`](../../AGENTS.md).
+
+## BearWire / ACP runtime rules
+
+- BearWire is the canonical Den ↔ armature wire. Prefer `den-bearwire` for new armature-facing behavior.
+- `den-acp` is legacy compatibility unless explicitly working on migration/shims.
+- Do not reintroduce adapter-SSE or legacy `/acp/**` hot-path behavior when BearWire can handle the flow.
+- ACP/Zed is an armature, not a generic channel. It owns local filesystem/git/terminal/MCP execution and permission UI.
+- Channels such as Slack, WhatsApp, web chat, and macOS app chat should be implemented as channel adapters, not as ACP armatures. See [`../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md).
+
+## Tool surfaces and routing
+
+Den-native Pair sessions expose a stable mixed tool surface:
+
+- Den-hosted tools:
+  - `session_info`
+  - `memory_write_entry`
+  - `memory_status`
+  - `memory_browse`
+  - `memory_read`
+  - `memory_search`
+  - `memory_request_review`
+  - `web_fetch`
+  - `web_search`
+  - `list_plans`
+  - `get_plan_status`
+  - `update_plan`
+  - `request_work_handoff`
+  - `set_conversation_title`
+- Armature-local/client tools:
+  - `fs_*`
+  - `git_*`
+  - `terminal_run_command`
+  - `process_run`
+  - forwarded MCP tools.
+
+Rules:
+
+- Do not use prompt heuristics to hide or reveal Pair tools turn-by-turn. This caused ACP sessions to lose filesystem capabilities after meta/capability questions.
+- Route by descriptor ownership, not by ad hoc tool-name matches:
+  - Den-hosted tools execute in Den through the Den tool dispatcher/invoker.
+  - Armature-local and forwarded MCP tools are emitted to the armature/client.
+- If the model sees a Den-hosted tool such as `list_plans`, Den must be able to execute it server-side. It must not reach `bear-armature` as an unsupported local tool request.
+- Keep model-facing names descriptor-owned and concise; do not advertise legacy `den_*`, `situation_get`, `memory_tree`, or implementation-branded names.
+
+## Conversation history
+
+- Canonical conversation persistence is the source of truth for transcript replay.
+- Native runtime history loading should use shared transcript projection helpers, not raw `message_type` string checks.
+- Keep model transcript replay and user-visible history as separate projections.
+- For BearWire multi-turn fixes, test both:
+  1. current turn persistence for future history;
+  2. next-turn LLM request includes prior user and assistant messages exactly once.
 
 ## Verifying Rust changes (agents + dev containers)
 
-**`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, **run checks from the `services/den/` directory** (package root), for example:
+**`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, run checks from the repository root with `--manifest-path services/den/Cargo.toml`, or from `services/den/` directly, for example:
 
 - `cargo build` or `cargo check` — compile the library + binary.
 - `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
 - `cargo clippy --all-targets` — Clippy is not suppressed at the crate root; the heaviest legacy bundle remains scoped on [`src/api/oauth/mod.rs`](src/api/oauth/mod.rs). Fix warnings in code you touch and shrink those module-level allows over time.
 
-Do not assume the environment is “simulated only”: prefer **running `cargo` yourself** to catch compile errors before handing work back.
+Do not assume the environment is “simulated only”: prefer running focused `cargo` checks yourself to catch compile errors before handing work back.
 
-**Docker build:** Do not treat a change as **complete** until a **`docker build`** of [`Dockerfile`](Dockerfile) from the `services/den/` directory succeeds. Release images use **`--features production`**, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly; otherwise run the image build (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
+Useful focused checks:
+
+```bash
+cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
+cargo test --manifest-path services/den/Cargo.toml -p den-runtime pair_
+cargo test --manifest-path services/den/Cargo.toml -p den-runtime den_tools_route_server_side_but_client_tools_do_not
+cargo test --manifest-path services/den/Cargo.toml -p den-acp canonical_history_page
+```
+
+**Docker build:** For release/deploy-impacting changes, do not treat the change as complete until a `docker build` of [`Dockerfile`](Dockerfile) from `services/den/` succeeds. For narrow Rust/runtime changes, run the most specific cargo tests first and explicitly state if Docker was not run. Release images use `--features production`, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
 
 ## Start here
 
@@ -32,9 +118,12 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 
 ## Working on features
 
-- **HTTP (web UI)** — `src/web/`, templates under `src/web/templates/`. **CSS:** follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
-- **HTTP (standalone API + OAuth provider)** — `src/api/`.
-- **Shared domain / DB** — `src/core/` (this tree still carries a large legacy domain from extraction; follow existing modules and `migrations/`).
+- **BearWire / armatures** — `crates/den-bearwire/`, `crates/den-runtime/src/runtime/bearwire_projection/`, and `tools/bear-armature/` at the repo root.
+- **Native runtime / agent loop** — `crates/den-runtime/src/agent_loop/`, `crates/den-runtime/src/native_runtime/`.
+- **Den-hosted tools** — descriptors and dispatch in `crates/den-core/src/tools/`; concrete service wiring in `src/core/tools/`.
+- **Conversation persistence/history** — `crates/den-runtime/src/conversation/`, `crates/den-runtime/src/native_runtime/turn.rs`, ACP history compatibility in `crates/den-acp/src/acp/history.rs`.
+- **HTTP web UI** — `src/web/`, templates under `src/web/templates/`. CSS: follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
+- **HTTP API / OAuth provider** — `src/api/`.
 - **Config** — `src/config.rs`, plus env and ops notes in [`docs/deploy.md`](docs/deploy.md), [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md), and [`.env.example`](.env.example).
 - **Entrypoint / workers** — [`src/lib.rs`](src/lib.rs) (`run()`), thin [`src/main.rs`](src/main.rs).
 
@@ -60,4 +149,13 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 
 ## Planning docs (BEARS)
 
-Monorepo **[`docs/planning/`](../../docs/planning/)**: [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [PLAN](../../docs/planning/PLAN.md), [Multi-agent implementation (incl. doc + operator UI Phase 8.5)](../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths; do not duplicate planning markdown under `services/den/plans/`.
+Use monorepo roadmap docs under [`../../docs/roadmap/`](../../docs/roadmap/) for active implementation plans.
+
+Especially relevant for Den work:
+
+- [`../../docs/roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
+- [`../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
+- [`../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- [`../../docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md)
+
+Do not duplicate roadmap markdown under `services/den/plans/`.

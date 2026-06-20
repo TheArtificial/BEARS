@@ -56,12 +56,31 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `core/` is canonical shared Bear memory. Role branches (`talk/`, `pair/`, `curate/`, `work/`, `watch/`) are role-local memory.
 - Letta Archives are derived semantic retrieval indexes over canonical sources, not the source of truth. Do not introduce a Bear Den vector store while Letta Archives satisfy retrieval needs.
 
+## Channels and Armatures
+
+- A **channel** carries conversation between humans and Bears. Examples: Slack, WhatsApp, web chat, macOS app chat.
+- An **armature** gives a Bear a trusted work-surface harness. Examples: ACP/Zed, future editor integrations, local CLI/TUI with workspace tools.
+- BearWire remains armature-first. Channel adapters may reuse Den run services and may later use BearWire if they run out of process, but simple channels should not be forced to pretend to be ACP armatures.
+- For channel planning, see `docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md`.
+
 ## Tool Naming
 
 - Model-facing provider names should be concise action names, not implementation-branded names. Prefer `session_info`, `memory_browse`, `memory_read`, `memory_search`, `memory_write_entry`, `web_fetch`, `web_search`, and `fs_edit_file`.
 - Keep canonical internal names scoped and dotted, for example `den.session.info`, `den.memory.browse`, and `acp.fs.edit_file`.
 - Tool names, provider aliases, permission classes, adapter/client methods, and UI labels should be descriptor-owned. Do not add scattered alias `match` arms or hardcoded allowlists when a descriptor resolver can be used.
+- Provider names are not enough to decide execution location. Use descriptor metadata/resolvers to determine whether a tool is Den-hosted, armature-local, forwarded MCP, or future channel-local.
 - Legacy aliases may be accepted at routing boundaries, but do not advertise legacy names such as `situation_get`, `memory_tree`, `fs_replace_text`, or `den_*` provider names to models.
+
+## BearWire, ACP, and Tool Routing
+
+- BearWire is the Den ↔ armature wire. ACP/Zed is an armature: it provides a trusted local work-surface harness with editor/workspace tools, permission UX, and session state.
+- Channels such as Slack, WhatsApp, web chat, and macOS app chat are conversation surfaces, not armatures by default. They should not inherit ACP/local-workspace assumptions unless they explicitly expose a trusted work-surface tool boundary.
+- Keep Pair/ACP tool surfaces stable across turns. Do not hide filesystem, git, terminal, MCP, or Den-hosted tools based on prompt heuristics; that causes models to learn false per-turn capabilities.
+- Tool ownership must be descriptor-owned:
+  - Den-hosted tools (`session_info`, `memory_*`, `web_fetch`, `web_search`, `list_plans`, `get_plan_status`, `update_plan`, `request_work_handoff`, etc.) execute inside Den.
+  - Armature-local tools (`fs_*`, `git_*`, `terminal_run_command`, `process_run`, forwarded MCP tools) execute through the armature/client.
+  - Do not route Den-hosted tools to `bear-armature` for local execution.
+- If adding, renaming, or aliasing tools, update descriptors/resolvers first. Avoid scattered string `match` arms or hardcoded allowlists except at narrow routing boundaries.
 
 ## Memory and Reflection
 
@@ -69,6 +88,15 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
 - `curate` owns cross-role memory curation and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+
+## Conversation History and Transcript Projection
+
+- Canonical conversation storage is the source of truth for user/assistant transcript replay.
+- Avoid raw `message_type` / `role` filtering in runtime paths. Use shared projection helpers for model transcript vs user-visible history.
+- Model replay and UI history are different projections:
+  - model transcript may include rows hidden from user history when appropriate;
+  - user-visible history should not include diagnostic-only rows.
+- When fixing history bugs, verify both persistence and next-turn LLM request construction.
 
 ## Worktree safety (mandatory)
 
