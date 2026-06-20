@@ -175,7 +175,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 | Task | Notes |
 | --- | --- |
-| Default adapter to BearWire | Legacy path behind `BEARS_LEGACY_ACP_HTTP=1` for one release |
+| Default adapter to BearWire | In progress. `bear-armature` now defaults to BearWire auto mode; force legacy with `BEARS_LEGACY_ACP_HTTP=1` for one release |
 | Remove `gateway_event_to_adapter_sse` from hot path | Keep function behind `#[deprecated]` until adapter release ships |
 | Redirect or 410 `/acp/**` routes | Or internal shim: `/acp/prompt` → `run.start` RPC (optional compatibility layer) |
 | Rename `den-acp` → `den-bearwire` | Crate + docs; `ACP_GATEWAY_ENABLED` → `BEARWIRE_ENABLED` (env alias kept) |

@@ -14,22 +14,40 @@ use crate::{
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 
+fn bearwire_env_value() -> Option<String> {
+    std::env::var("BEARS_BEARWIRE")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+}
+
+pub(crate) fn legacy_acp_http_forced() -> bool {
+    env_bool("BEARS_LEGACY_ACP_HTTP")
+}
+
 pub(crate) fn enabled() -> bool {
-    env_bool("BEARS_BEARWIRE")
-        || std::env::var("BEARS_BEARWIRE")
-            .ok()
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("auto"))
+    if legacy_acp_http_forced() {
+        return false;
+    }
+    match bearwire_env_value().as_deref() {
+        None | Some("") | Some("auto") => true,
+        Some("0" | "false" | "no" | "off" | "disabled") => false,
+        Some(_) => env_bool("BEARS_BEARWIRE"),
+    }
 }
 
 pub(crate) fn required() -> bool {
-    env_bool("BEARS_BEARWIRE_REQUIRED")
+    env_bool("BEARS_BEARWIRE_REQUIRED") && !legacy_acp_http_forced()
 }
 
 pub(crate) fn mode_summary() -> String {
     let raw = std::env::var("BEARS_BEARWIRE").unwrap_or_else(|_| "<unset>".to_string());
-    let mode = if required() {
+    let legacy_raw =
+        std::env::var("BEARS_LEGACY_ACP_HTTP").unwrap_or_else(|_| "<unset>".to_string());
+    let mode = if legacy_acp_http_forced() {
+        "legacy-forced"
+    } else if required() {
         "required"
-    } else if raw.trim().eq_ignore_ascii_case("auto") {
+    } else if raw.trim().is_empty() || raw == "<unset>" || raw.trim().eq_ignore_ascii_case("auto") {
         "auto"
     } else if enabled() {
         "enabled"
@@ -37,7 +55,7 @@ pub(crate) fn mode_summary() -> String {
         "disabled"
     };
     format!(
-        "{mode} (BEARS_BEARWIRE={raw}, BEARS_BEARWIRE_REQUIRED={})",
+        "{mode} (BEARS_BEARWIRE={raw}, BEARS_BEARWIRE_REQUIRED={}, BEARS_LEGACY_ACP_HTTP={legacy_raw})",
         required()
     )
 }
