@@ -8,6 +8,8 @@ use futures::Stream;
 
 use crate::{
     agent_loop::{
+        AgentStepOverflowContext,
+        approvals::create_native_approval,
         run_agent_step_stream,
         session_store::AgentLoopSessionStore,
         tool_call_finished_event_for_content,
@@ -15,7 +17,6 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
-        AgentStepOverflowContext,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     memory::MemoryStoreManager,
@@ -23,10 +24,10 @@ use crate::{
     runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
 };
 use den_core::tools::{
-    arguments::DenToolChannelContext, context::DenToolInvocationContext,
+    arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{DenError, config::Config, profile::BearProfile};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -203,10 +204,17 @@ impl SessionTrackingStream {
         }
     }
 
+    fn should_request_den_tool_permission(&self, tool_name: &str) -> bool {
+        self.dispatch_mode == NativeToolDispatchMode::DeferToClient
+            && builtin_den_tool_descriptor_for_provider_name(tool_name)
+                .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
+    }
+
     fn should_execute_den_tool_server_side(&self, tool_name: &str) -> bool {
         self.dispatch_mode == NativeToolDispatchMode::DeferToClient
             && builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
             && provider_tool_supports_unilateral_execution(tool_name)
+            && !self.should_request_den_tool_permission(tool_name)
     }
 
     fn begin_server_tool_execution(&mut self, call: ChatToolCall) {
@@ -435,6 +443,50 @@ impl Stream for SessionTrackingStream {
                     },
                     run_id: None,
                 });
+                if self.should_request_den_tool_permission(&tool_name) {
+                    let pool = self.pool.clone();
+                    let bear_id = self.bear_id;
+                    let conversation_id = self.conversation_id.clone();
+                    let acp_session_id = self.acp_session_id.clone();
+                    let arguments_value = arguments.clone();
+                    let approval_tool_call_id = tool_call_id.clone();
+                    let approval_tool_name = tool_name.clone();
+                    self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::ToolCallRequested {
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            title: None,
+                            kind: Some("function".to_string()),
+                            arguments: arguments.clone(),
+                            approval_request_id: None,
+                            approval_required: true,
+                            approval_reason: Some(
+                                "web_fetch requires approval for this URL".to_string(),
+                            ),
+                            run_id: None,
+                        },
+                    ));
+                    self.pending_approval = Some(Box::pin(async move {
+                        let approval_id = create_native_approval(
+                            &pool,
+                            bear_id,
+                            &conversation_id,
+                            &acp_session_id,
+                            &approval_tool_call_id,
+                            &approval_tool_name,
+                            &arguments_value,
+                        )
+                        .await
+                        .ok()?;
+                        Some(RuntimeSemanticEvent::RunPaused {
+                            reason: "requires_approval".to_string(),
+                            resume_token: Some(approval_id),
+                            expires_at: None,
+                        })
+                    }));
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
                 if self.should_execute_den_tool_server_side(&tool_name) {
                     self.persist_assistant_tool_step();
                     let call = ChatToolCall {
@@ -553,8 +605,8 @@ mod tests {
     use super::*;
     use std::{
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
         task::{RawWaker, RawWakerVTable, Waker},
     };
@@ -673,6 +725,8 @@ mod tests {
 
         assert!(stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
+        assert!(stream.should_request_den_tool_permission("web_fetch"));
+        assert!(!stream.should_execute_den_tool_server_side("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("fs_read_text_file"));
         assert!(!stream.should_execute_den_tool_server_side("mcp__chrome_devtools_custom__click"));
     }

@@ -1,4 +1,8 @@
 use den_core::config::Config;
+use den_core::tools::{
+    arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
+};
 use std::sync::{Arc, LazyLock};
 
 use futures::StreamExt;
@@ -9,17 +13,17 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
-        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
-        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
+        AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        NativeToolDispatchMode, SessionTrackingStream, agent_loop_session_key,
+        assemble_native_turn_for_bear, record_approval_decision, run_agent_step_stream,
     },
     bears::BearProfile,
     conversation_events::{
-        canonical_persistence_context, persist_canonical_conversation_record,
-        CanonicalConversationRecord, ConversationEventProvenance,
+        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
+        persist_canonical_conversation_record,
     },
     conversation_persistence,
-    llm::{ChatMessage, LlmClient},
+    llm::{ChatMessage, ChatToolCall, LlmClient},
     memory::MemoryStoreManager,
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
     runtime_contracts::{
@@ -28,7 +32,7 @@ use crate::{
         RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
     },
     turn_runner::{
-        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
+        TurnContinueRequest, TurnStartRequest, materialize_runtime_conversation_if_needed,
     },
 };
 use den_core::DenError;
@@ -551,6 +555,137 @@ pub async fn continue_native_profile_turn_event_stream(
     continue_native_acp_turn_event_stream(request, role).await
 }
 
+fn find_pending_tool_call(session: &AgentLoopSession, tool_call_id: &str) -> Option<ChatToolCall> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .filter_map(|message| message.tool_calls.as_ref())
+        .flatten()
+        .find(|call| call.id == tool_call_id)
+        .cloned()
+}
+
+fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
+    builtin_den_tool_descriptor_for_provider_name(&call.function.name)
+        .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
+}
+
+fn normalize_approved_web_url(raw: &str) -> Result<String, DenError> {
+    let mut url = url::Url::parse(raw.trim())
+        .map_err(|err| DenError::ValidationError(format!("web_fetch url is invalid: {err}")))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(DenError::ValidationError(
+                "web_fetch url scheme must be http or https".to_string(),
+            ));
+        }
+    }
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+async fn record_web_fetch_url_approval(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    call: &ChatToolCall,
+) -> Result<(), DenError> {
+    let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    let raw_url = args
+        .get("url")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| DenError::ValidationError("web_fetch args missing url".to_string()))?;
+    let normalized_url = normalize_approved_web_url(raw_url)?;
+    sqlx::query(
+        r#"
+        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
+        VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
+        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
+        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
+                      source = EXCLUDED.source,
+                      expires_at = EXCLUDED.expires_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(normalized_url)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("record web_fetch approval: {err}")))?;
+    Ok(())
+}
+
+async fn execute_approved_den_tool_for_session(
+    request: &TurnContinueRequest<'_>,
+    session: &AgentLoopSession,
+    call: &ChatToolCall,
+    profile: BearProfile,
+) -> Result<ChatMessage, DenError> {
+    if call_is_den_web_fetch(call) {
+        record_web_fetch_url_approval(request.sqlx_pool, session.bear_id, session.user_id, call)
+            .await?;
+    }
+    let Some(invoker) = super::tool_invoker() else {
+        return Err(DenError::System(
+            "builtin Den tool runtime is not initialized".to_string(),
+        ));
+    };
+    let canonical = builtin_den_tool_descriptor_for_provider_name(&call.function.name)
+        .map(|descriptor| descriptor.name.to_string())
+        .unwrap_or_else(|| call.function.name.clone());
+    let args = serde_json::from_str(&call.function.arguments)
+        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    let context = DenToolInvocationContext {
+        bear_id: session.bear_id,
+        bear_slug: session.bear_slug.clone(),
+        binding_id: request.binding.binding_id.clone(),
+        profile: Some(profile),
+        user_id: session.user_id.unwrap_or_default(),
+        username: None,
+        membership_role: None,
+        conversation_id: session.conversation_id.clone(),
+        session_id: session.acp_session_id.clone(),
+        acp_session_id: Some(session.acp_session_id.clone()),
+        conversation_selection: Some(session.conversation_id.clone()),
+        runtime_target: Some(session.conversation_id.clone()),
+        workspace_roots: Vec::new(),
+        session_policy: None,
+        activity: None,
+        runtime: None,
+        context_budget: None,
+        request_id: Some(request.request_id.to_string()),
+        channel: DenToolChannelContext {
+            family: Some("acp".to_string()),
+            client: Some("bearwire".to_string()),
+            protocol: Some("bearwire".to_string()),
+        },
+    };
+    let content = match invoker
+        .invoke(
+            request.sqlx_pool,
+            request.config,
+            request.memory_stores,
+            &canonical,
+            args,
+            context,
+        )
+        .await
+    {
+        Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+        Err(err) => format!("error: {err}"),
+    };
+    Ok(ChatMessage {
+        role: "tool".to_string(),
+        content: Some(content),
+        tool_call_id: Some(call.id.clone()),
+        name: Some(call.function.name.clone()),
+        tool_calls: None,
+    })
+}
+
 pub async fn continue_native_acp_turn_event_stream(
     request: TurnContinueRequest<'_>,
     profile: BearProfile,
@@ -558,6 +693,7 @@ pub async fn continue_native_acp_turn_event_stream(
     let acp_session_id = request.acp_session_id;
     let conversation_id = request.conversation.id.clone();
     let session_key = agent_loop_session_key(&conversation_id, acp_session_id);
+    let existing_session = SESSION_STORE.get(&session_key);
     let mut tool_messages = Vec::new();
     match &request.continuation {
         RuntimeContinuation::ToolResult {
@@ -608,10 +744,25 @@ pub async fn continue_native_acp_turn_event_stream(
                 reason.as_deref(),
             )
             .await?;
-            // Approval is control-plane state, not a tool result. On approval, wait for
-            // the armature to execute the tool and send RuntimeContinuation::ToolResult.
-            // On denial, satisfy the model tool-call chain with a denied tool result.
-            if !approve {
+            // Approval is control-plane state. Armature-local approvals wait for the
+            // armature to execute the tool and send RuntimeContinuation::ToolResult;
+            // Den-hosted web_fetch approvals execute server-side immediately.
+            if approve {
+                if let Some(session) = existing_session.as_ref() {
+                    if let Some(tool_call_id) = tool_call_id.as_deref() {
+                        if let Some(call) = find_pending_tool_call(session, tool_call_id) {
+                            if call_is_den_web_fetch(&call) {
+                                tool_messages.push(
+                                    execute_approved_den_tool_for_session(
+                                        &request, session, &call, profile,
+                                    )
+                                    .await?,
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
                 let content = reason.clone().unwrap_or_else(|| "denied".to_string());
                 tool_messages.push(ChatMessage {
                     role: "tool".to_string(),
