@@ -394,7 +394,65 @@ impl Stream for SessionTrackingStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{ChatMessage, ChatToolCall, ChatToolCallFunction};
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        task::{RawWaker, RawWakerVTable, Waker},
+    };
+
+    use crate::{
+        agent_loop::StrategyProfile,
+        llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
+        runtime_contracts::RuntimeStreamEvent,
+    };
+
+    fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {
+        unsafe fn clone(data: *const ()) -> RawWaker {
+            let arc = Arc::<AtomicUsize>::from_raw(data.cast());
+            let cloned = arc.clone();
+            std::mem::forget(arc);
+            RawWaker::new(Arc::into_raw(cloned).cast(), &VTABLE)
+        }
+        unsafe fn wake(data: *const ()) {
+            let arc = Arc::<AtomicUsize>::from_raw(data.cast());
+            arc.fetch_add(1, Ordering::SeqCst);
+        }
+        unsafe fn wake_by_ref(data: *const ()) {
+            let arc = Arc::<AtomicUsize>::from_raw(data.cast());
+            arc.fetch_add(1, Ordering::SeqCst);
+            std::mem::forget(arc);
+        }
+        unsafe fn drop(data: *const ()) {
+            std::mem::drop(Arc::<AtomicUsize>::from_raw(data.cast()));
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+        let raw = RawWaker::new(Arc::into_raw(counter).cast(), &VTABLE);
+        unsafe { Waker::from_raw(raw) }
+    }
+
+    fn test_session(session_key: &str, bear_id: uuid::Uuid) -> AgentLoopSession {
+        AgentLoopSession {
+            session_key: session_key.to_string(),
+            bear_id,
+            conversation_id: "den-conv-test".to_string(),
+            acp_session_id: "acp-test".to_string(),
+            request_id: Some("request-test".to_string()),
+            run_id: Some("run-test".to_string()),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            model: "openai/test".to_string(),
+            step: 0,
+            max_steps: 4,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: true,
+            key_memory_projection_cache_key: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        }
+    }
 
     fn sample_tool_call(id: &str) -> ChatToolCall {
         ChatToolCall {
@@ -428,6 +486,50 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("checking"));
         assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[tokio::test]
+    async fn approval_required_tool_call_wakes_after_installing_pending_future() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:acp-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-read".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"path":"README.md"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        ))]);
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(inner),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            Some(7),
+            "den-conv-test".to_string(),
+            "acp-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        let wake_count = Arc::new(AtomicUsize::new(0));
+        let waker = counting_waker(wake_count.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        assert!(matches!(Pin::new(&mut stream).poll_next(&mut cx), Poll::Pending));
+        assert_eq!(wake_count.load(Ordering::SeqCst), 1);
+        assert!(stream.pending_approval.is_some());
+        assert!(stream.pending_tool_event.is_some());
     }
 
     #[test]
