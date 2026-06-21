@@ -94,7 +94,7 @@ Implemented or partially implemented today:
 
 Known gaps:
 
-- `services/bifrost/config.json` still contains an explicit provider-key model allowlist; this can prevent Bifrost from exposing newly available provider models.
+- Bifrost provider keys are no longer explicitly limited to a manually maintained model allowlist when the desired behavior is all catalog-supported models.
 - Den overlay is still static Rust code rather than a small overlay artifact/cache hydrated from Bifrost catalog data.
 - Den does not yet parse/use the richest Bifrost management catalog endpoints (`/api/models/details`, `/api/models/base`) when management auth/config_store are available.
 - No conversation-level model state/stickiness yet.
@@ -327,13 +327,13 @@ model_metadata_overrides (
 
 Do not add this until we confirm live Bifrost catalog queries are insufficient for admin/runtime needs.
 
-### Phase 1.5 — Bifrost catalog-first metadata ✅/partial
+### Phase 1.5 — Bifrost catalog-first metadata ✅
 
 - Prefer Bifrost `/v1/models` over the legacy BEARS sidecar for availability.
 - Let Bifrost Model Catalog/provider list-model APIs populate available models.
 - Keep Den static registry as overlay/fallback only.
-- Remove or relax explicit key-level model allowlists unless intentionally restricting access.
-- Evaluate `/api/models/details` and `/api/models/base` for richer metadata when management auth is configured.
+- Remove or relax explicit key-level model allowlists unless intentionally restricting access. Done for the default OpenAI key in `services/bifrost/config.json`.
+- Future improvement: evaluate `/api/models/details` and `/api/models/base` for richer metadata when management auth is configured.
 
 Exit:
 
@@ -561,7 +561,6 @@ Future outputs:
 
 Remaining:
 
-- remove stale explicit provider-key model allowlists in Bifrost where the desired behavior is "all catalog-supported models".
 - show model metadata/availability badges on Models page,
 - use richer Bifrost catalog metadata where available,
 - tests for profile override persistence and runtime selection,
