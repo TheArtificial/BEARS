@@ -70,6 +70,7 @@ pub struct SessionTrackingStream {
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
+    pending_server_tool_continuation: Option<String>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -112,6 +113,7 @@ impl SessionTrackingStream {
             pending_tool_event: None,
             pending_pause_after_tool: None,
             pending_server_tool: None,
+            pending_server_tool_continuation: None,
             dispatch_mode,
             config,
             stores,
@@ -157,6 +159,33 @@ impl SessionTrackingStream {
             );
         });
         self.assistant_synced_to_session = true;
+    }
+
+    fn remove_recent_server_tool_chain_from_session(&self, tool_call_id: &str) {
+        self.store.update(&self.session_key, |session| {
+            let Some(last) = session.messages.last() else {
+                return;
+            };
+            if last.role != "tool" || last.tool_call_id.as_deref() != Some(tool_call_id) {
+                return;
+            }
+            let tool_index = session.messages.len() - 1;
+            if tool_index == 0 {
+                session.messages.pop();
+                return;
+            }
+            let assistant_index = tool_index - 1;
+            let assistant_matches = session.messages[assistant_index].role == "assistant"
+                && session.messages[assistant_index]
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id));
+            if assistant_matches {
+                session.messages.truncate(assistant_index);
+            } else {
+                session.messages.pop();
+            }
+        });
     }
 
     fn persist_outstanding_tools_as_incomplete(&self, reason: &str) {
@@ -397,8 +426,8 @@ impl Stream for SessionTrackingStream {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
                     self.inner = stream;
-                    self.pending_pause_after_tool =
-                        Self::plan_update_event_from_tool_message(&message);
+                    self.pending_pause_after_tool = Self::plan_update_event_from_tool_message(&message);
+                    self.pending_server_tool_continuation = Some(call.id.clone());
                     let finished =
                         tool_call_finished_event_for_content(&call, message.content.as_deref());
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(finished))));
@@ -618,6 +647,19 @@ impl Stream for SessionTrackingStream {
                     RuntimeSemanticEvent::TurnCompleted { turn: None },
                 ))))
             }
+            Poll::Ready(Some(Err(error))) => {
+                if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
+                    tracing::warn!(
+                        acp_session_id = %self.acp_session_id,
+                        tool_call_id = %tool_call_id,
+                        error = %error,
+                        "native runtime server-tool continuation failed; removing recent tool chain from in-memory session"
+                    );
+                    self.remove_recent_server_tool_chain_from_session(&tool_call_id);
+                }
+                self.finished = true;
+                Poll::Ready(Some(Err(error)))
+            }
             Poll::Ready(other) => {
                 if other.is_none() && !self.tool_calls.is_empty() {
                     self.persist_assistant_tool_step();
@@ -639,6 +681,9 @@ impl Stream for SessionTrackingStream {
                     ))) | None
                 ) {
                     self.finished = true;
+                }
+                if other.is_some() {
+                    self.pending_server_tool_continuation = None;
                 }
                 Poll::Ready(other)
             }
@@ -744,6 +789,58 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("checking"));
         assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[tokio::test]
+    async fn server_tool_continuation_cleanup_removes_recent_tool_chain() {
+        let bear_id = uuid::Uuid::new_v4();
+        let mut session = test_session("den-conv-test:acp-test", bear_id);
+        session.messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: Some("continue".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        });
+        session.messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: None,
+            tool_call_id: None,
+            name: None,
+            tool_calls: Some(vec![sample_tool_call("call_1")]),
+        });
+        session.messages.push(ChatMessage {
+            role: "tool".to_string(),
+            content: Some("{}".to_string()),
+            tool_call_id: Some("call_1".to_string()),
+            name: Some("memory_read".to_string()),
+            tool_calls: None,
+        });
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store.clone(),
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "acp-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        stream.remove_recent_server_tool_chain_from_session("call_1");
+
+        let repaired = store.get(&session.session_key).expect("session");
+        assert_eq!(repaired.messages.len(), 1);
+        assert_eq!(repaired.messages[0].role, "user");
     }
 
     #[tokio::test]
