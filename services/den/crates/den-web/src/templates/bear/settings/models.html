@@ -26,6 +26,11 @@
 <form method="post" class="box full-width">
   <h3>Bear default</h3>
   <p class="form-hint">Used when a stance is set to inherit.</p>
+  <p class="form-hint">
+    Bear default status:
+    <strong>{{ bear_default_availability_status | e }}</strong> · metadata <strong>{{ bear_default_metadata_status | e }}</strong>
+  </p>
+  <p class="form-hint">Auto mode is planned for conversation/model routing work and is not available for Bear or stance defaults yet.</p>
   <label for="bear_default_model">Bear default model</label>
   <select id="bear_default_model" name="bear_default_model" required{% if not can_manage_bear %} disabled{% endif %}>
     <option value="" disabled{% if not bear.default_model %} selected{% endif %}>— Choose a model —</option>
@@ -37,7 +42,7 @@
   <h3>Stance defaults</h3>
   <p class="form-hint">Leave a stance set to inherit unless it needs a different tradeoff.</p>
   <table>
-    <thead><tr><th>Stance</th><th>Model setting</th><th>Resolved</th><th>Source</th></tr></thead>
+    <thead><tr><th>Stance</th><th>Model setting</th><th>Resolved</th><th>Status</th><th>Source</th></tr></thead>
     <tbody>
       {% for row in rows %}
       <tr>
@@ -51,6 +56,7 @@
           </select>
         </td>
         <td>{% if row.resolved_model %}<code>{{ row.resolved_model | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+        <td><span title="Bifrost availability">{{ row.availability_status | e }}</span> · <span title="Den metadata overlay">metadata {{ row.metadata_status | e }}</span></td>
         <td>{{ row.source | e }}</td>
       </tr>
       {% endfor %}

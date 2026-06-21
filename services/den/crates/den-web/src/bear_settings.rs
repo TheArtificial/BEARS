@@ -135,6 +135,8 @@ struct BearProfileModelRow {
     configured_model: String,
     resolved_model: String,
     source: String,
+    availability_status: String,
+    metadata_status: String,
 }
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
@@ -864,9 +866,30 @@ fn model_available(options: &[ModelOption], raw: &str) -> bool {
     })
 }
 
+fn model_availability_status(options: &[ModelOption], raw: &str) -> &'static str {
+    if raw.trim().is_empty() {
+        "unset"
+    } else if model_available(options, raw) {
+        "available"
+    } else {
+        "unavailable"
+    }
+}
+
+fn model_metadata_status(raw: &str) -> &'static str {
+    if raw.trim().is_empty() {
+        "unknown"
+    } else if den_runtime::llm::model_registry::entry_for_handle(raw).is_some() {
+        "known"
+    } else {
+        "unknown"
+    }
+}
+
 async fn model_page_rows(
     pool: &sqlx::PgPool,
     bear: &den_runtime::bears::Bear,
+    model_options: &[ModelOption],
 ) -> Result<Vec<BearProfileModelRow>, CustomError> {
     let settings = bears_db::list_profile_model_settings(pool, bear.id).await?;
     let mut rows = Vec::new();
@@ -894,6 +917,8 @@ async fn model_page_rows(
                 "Stance override"
             }
             .to_string(),
+            availability_status: model_availability_status(model_options, resolved).to_string(),
+            metadata_status: model_metadata_status(resolved).to_string(),
         });
     }
     Ok(rows)
@@ -911,7 +936,10 @@ async fn models_view(
     };
     let (model_catalog_configured, model_options, models_fetch_error) =
         model_catalog_select_context(&state).await;
-    let rows = model_page_rows(state.sqlx_pool(), &bear).await?;
+    let rows = model_page_rows(state.sqlx_pool(), &bear, &model_options).await?;
+    let bear_default_model = bear.default_model.as_deref().unwrap_or("");
+    let bear_default_availability_status = model_availability_status(&model_options, bear_default_model);
+    let bear_default_metadata_status = model_metadata_status(bear_default_model);
     web::render_template(
         &state,
         "bear/settings/models.html",
@@ -921,6 +949,8 @@ async fn models_view(
             model_options,
             models_fetch_error,
             rows,
+            bear_default_availability_status,
+            bear_default_metadata_status,
             message => query.message,
             error => query.error,
             can_manage_bear,
@@ -989,9 +1019,9 @@ async fn models_post(
             description: bear.description.as_str(),
             system_prompt: bear.system_prompt.as_str(),
             default_model: default_model.as_deref(),
-            tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(Vec::new()),
+            tools_enabled: bear.tools_enabled.clone(),
+            letta_agent_type: bear.letta_agent_type.as_deref(),
+            letta_tool_ids: bear.letta_tool_ids.clone(),
             context_profile: bear.context_profile.clone(),
         },
     )

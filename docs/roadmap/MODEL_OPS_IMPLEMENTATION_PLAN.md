@@ -92,9 +92,12 @@ Implemented or partially implemented today:
 - Key-memory projection budget can use known model context-window metadata.
 - `/status` includes a Den metadata vs Bifrost availability reconciliation panel.
 
-Known gaps:
+Recently completed:
 
 - Bifrost provider keys are no longer explicitly limited to a manually maintained model allowlist when the desired behavior is all catalog-supported models.
+
+Known gaps:
+
 - Den overlay is still static Rust code rather than a small overlay artifact/cache hydrated from Bifrost catalog data.
 - Den does not yet parse/use the richest Bifrost management catalog endpoints (`/api/models/details`, `/api/models/base`) when management auth/config_store are available.
 - No conversation-level model state/stickiness yet.

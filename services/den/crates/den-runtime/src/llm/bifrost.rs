@@ -96,6 +96,15 @@ struct BifrostLiveModel {
     max_input_tokens: Option<u64>,
     max_output_tokens: Option<u64>,
     top_provider: Option<BifrostLiveTopProvider>,
+    architecture: Option<BifrostLiveArchitecture>,
+    supported_parameters: Option<Vec<String>>,
+    supported_methods: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BifrostLiveArchitecture {
+    input_modalities: Option<Vec<String>>,
+    output_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +138,36 @@ impl BifrostLiveModel {
             .max_output_tokens
             .or_else(|| self.top_provider.and_then(|p| p.max_completion_tokens))
             .and_then(|n| u32::try_from(n).ok());
+        let supports_tools = self.supported_parameters.as_ref().map(|params| {
+            params
+                .iter()
+                .any(|p| matches!(p.as_str(), "tools" | "tool_choice"))
+        });
+        let supports_responses_api = self
+            .supported_methods
+            .as_ref()
+            .map(|methods| methods.iter().any(|m| m.contains("response")));
+        let supports_vision = self.architecture.as_ref().map(|arch| {
+            let input_has_image = arch
+                .input_modalities
+                .as_ref()
+                .map(|modalities| {
+                    modalities
+                        .iter()
+                        .any(|m| matches!(m.as_str(), "image" | "vision"))
+                })
+                .unwrap_or(false);
+            let output_has_image = arch
+                .output_modalities
+                .as_ref()
+                .map(|modalities| {
+                    modalities
+                        .iter()
+                        .any(|m| matches!(m.as_str(), "image" | "vision"))
+                })
+                .unwrap_or(false);
+            input_has_image || output_has_image
+        });
         Some(BifrostModelMetadata {
             handle,
             provider,
@@ -137,9 +176,9 @@ impl BifrostLiveModel {
             context_window,
             max_output_tokens,
             enabled: true,
-            supports_tools: None,
-            supports_responses_api: None,
-            supports_vision: None,
+            supports_tools,
+            supports_responses_api,
+            supports_vision,
         })
     }
 }
@@ -287,7 +326,10 @@ mod tests {
                     "id": "openai/gpt-4.1",
                     "normalized_name": "GPT-4.1",
                     "context_length": 1047576,
-                    "max_output_tokens": 32768
+                    "max_output_tokens": 32768,
+                    "architecture": { "input_modalities": ["text", "image"] },
+                    "supported_parameters": ["tools", "temperature"],
+                    "supported_methods": ["chat_completion", "responses"]
                 }]
             }"#,
         )
@@ -305,6 +347,9 @@ mod tests {
         assert_eq!(model.display_name.as_deref(), Some("GPT-4.1"));
         assert_eq!(model.context_window, 1_047_576);
         assert_eq!(model.max_output_tokens, Some(32_768));
+        assert_eq!(model.supports_tools, Some(true));
+        assert_eq!(model.supports_responses_api, Some(true));
+        assert_eq!(model.supports_vision, Some(true));
     }
 
     #[test]

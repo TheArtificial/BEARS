@@ -742,11 +742,48 @@ pub async fn resolve_model_for_profile(
     profile: BearProfile,
     system_default_model: &str,
 ) -> Result<String, DenError> {
-    if let Some(model) = profile_model_setting(pool, bear.id, profile).await? {
-        return Ok(model);
+    let profile_model = profile_model_setting(pool, bear.id, profile).await?;
+    Ok(resolve_model_from_values(
+        profile_model.as_deref(),
+        bear.default_model.as_deref(),
+        system_default_model,
+    ))
+}
+
+pub fn resolve_model_from_values(
+    profile_model: Option<&str>,
+    bear_default_model: Option<&str>,
+    system_default_model: &str,
+) -> String {
+    profile_model
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| bear_default_model.map(str::trim).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| system_default_model.trim())
+        .to_string()
+}
+
+#[cfg(test)]
+mod model_setting_tests {
+    use super::resolve_model_from_values;
+
+    #[test]
+    fn resolves_profile_override_then_bear_default_then_system_default() {
+        assert_eq!(
+            resolve_model_from_values(
+                Some("openai/gpt-4.1"),
+                Some("openai/gpt-4o-mini"),
+                "openai/gpt-5-mini",
+            ),
+            "openai/gpt-4.1"
+        );
+        assert_eq!(
+            resolve_model_from_values(None, Some("openai/gpt-4o-mini"), "openai/gpt-5-mini"),
+            "openai/gpt-4o-mini"
+        );
+        assert_eq!(
+            resolve_model_from_values(Some("   "), Some(""), "openai/gpt-5-mini"),
+            "openai/gpt-5-mini"
+        );
     }
-    if let Some(model) = bear.default_model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        return Ok(model.to_string());
-    }
-    Ok(system_default_model.trim().to_string())
 }
