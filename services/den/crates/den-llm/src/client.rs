@@ -99,6 +99,14 @@ pub struct ChatCompletionRequest {
     pub telemetry: Option<LlmRequestTelemetry>,
 }
 
+fn log_sample(value: &str, max_chars: usize) -> String {
+    let mut sample = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        sample.push_str("…");
+    }
+    sample
+}
+
 impl LlmRequestTelemetry {
     fn field(&self, name: &str) -> Option<&str> {
         match name {
@@ -458,11 +466,13 @@ impl LlmClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            let response_body_sample = log_sample(&text, 1000);
             tracing::warn!(
                 model = %request.model,
                 http_status,
                 duration_ms = started.elapsed().as_millis(),
                 response_body_len = text.len(),
+                response_body_sample = %response_body_sample,
                 request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
                 run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
                 session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
@@ -536,11 +546,13 @@ impl LlmClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            let response_body_sample = log_sample(&text, 1000);
             tracing::warn!(
                 model = %request.model,
                 http_status,
-                duration_ms = started.elapsed().as_millis(),
+ duration_ms = started.elapsed().as_millis(),
                 response_body_len = text.len(),
+                response_body_sample = %response_body_sample,
                 request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
                 run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
                 session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),

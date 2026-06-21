@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::{
     adapter_contract_context, den_request_context, env_bool, handle_den_event,
-    send_tool_call_update, stream_has_successful_terminal_condition, truncate_for_log,
-    AdapterSharedState, AdapterState, Config, SseFrameOutcome, SseStreamDiagnostics,
-    ToolCallUpdatePayload,
+    send_agent_message_chunk_for_turn, send_tool_call_update,
+    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
+    Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -635,6 +635,34 @@ fn bearwire_plan_update_entries(event: &Value) -> Value {
         .unwrap_or_else(|| json!([]))
 }
 
+fn bearwire_run_failed_user_message(event: &Value) -> String {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    let message = data
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .unwrap_or("BearWire run failed");
+    let reason = data
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty());
+    let run_id = event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("run_id").and_then(Value::as_str));
+    let mut rendered = if let Some(reason) = reason {
+        format!("BEARS run failed ({reason}): {message}")
+    } else {
+        format!("BEARS run failed: {message}")
+    };
+    if let Some(run_id) = run_id {
+        rendered.push_str(&format!("\n\nRun: `{run_id}`"));
+    }
+    rendered
+}
+
 async fn handle_bearwire_tool_call_finished_event(
     session_id: &str,
     event: &Value,
@@ -834,43 +862,35 @@ async fn handle_bearwire_event(
         "run.failed" => {
             outcome.saw_done = true;
             outcome.saw_error = true;
-            let message = event
-                .pointer("/data/message")
-                .and_then(Value::as_str)
-                .unwrap_or("BearWire run failed");
-            let legacy = json!({
-                "type": "error",
-                "message": message,
-                "detail": event.get("data").cloned().unwrap_or(Value::Null),
-                "terminal": { "outcome": "failed" }
-            });
-            handle_den_event(
-                config,
-                adapter_state,
-                shared_state,
+            outcome.saw_visible_output = true;
+            diagnostics.saw_error = true;
+            diagnostics.saw_visible_output = true;
+            let message = bearwire_run_failed_user_message(event);
+            eprintln!(
+                "bear-armature: BearWire run failed session_id={} message={}",
                 session_id,
-                &legacy,
-                turn_token,
-            )
-            .await?;
+                truncate_for_log(&message, 500)
+            );
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                .await?;
         }
         "run.cancelled" => {
             outcome.saw_done = true;
             outcome.saw_error = true;
-            let legacy = json!({
-                "type": "error",
-                "message": "BEARS request was cancelled.",
-                "terminal": { "outcome": "cancelled", "recovery_hint": "none" }
-            });
-            handle_den_event(
-                config,
-                adapter_state,
-                shared_state,
+            outcome.saw_visible_output = true;
+            diagnostics.saw_error = true;
+            diagnostics.saw_visible_output = true;
+            let message = "BEARS request was cancelled.";
+            eprintln!(
+                "bear-armature: BearWire run cancelled session_id={} run_id={}",
                 session_id,
-                &legacy,
-                turn_token,
-            )
-            .await?;
+                event
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown>")
+            );
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
+                .await?;
         }
         "tool_call.requested" => {
             outcome.saw_tool_activity = true;
@@ -1014,6 +1034,33 @@ mod tests {
         assert_eq!(legacy["tool_call_id"], "call-web-1");
         assert_eq!(legacy["tool_name"], "web_fetch");
         assert_eq!(legacy["target"]["url"], "https://example.com/");
+    }
+
+    #[test]
+    fn bearwire_run_failed_user_message_includes_reason_and_run_id() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-123",
+            "data": {
+                "reason": "stream_error",
+                "message": "Letta stopped before producing assistant output: max_steps_exceeded"
+            }
+        });
+
+        let message = bearwire_run_failed_user_message(&event);
+
+        assert!(message.contains("stream_error"));
+        assert!(message.contains("max_steps_exceeded"));
+        assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn bearwire_run_failed_user_message_has_fallback() {
+        let event = json!({ "type": "run.failed" });
+
+        let message = bearwire_run_failed_user_message(&event);
+
+        assert_eq!(message, "BEARS run failed: BearWire run failed");
     }
 
     #[test]

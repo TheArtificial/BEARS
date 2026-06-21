@@ -16,7 +16,7 @@ workspace = true
 [features]
 production = ["den-core/production"]
 # Exposes runtime test helpers (e.g. record normalizers) to downstream crates' tests.
-test-util = []
+test-util = ["den-service/test-util"]
 
 [dependencies]
 den-core = { path = "../den-core" }
