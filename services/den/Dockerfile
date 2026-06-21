@@ -12,25 +12,18 @@ ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app
 RUN apk add --no-cache clang lld musl-dev git
 COPY . .
-# Three BuildKit cache mounts persist Cargo state across deployments:
+# BuildKit cache mounts persist Cargo state across deployments:
 #   registry/git — avoid re-downloading crate sources.
-#   target       — preserve compiled artifacts (external deps + workspace crates).
-#
-# `--config build.checksum-freshness=true` makes Cargo decide freshness from file
-# *content hashes* rather than mtimes. This is the fix for Docker/Coolify builds:
-# every `COPY` rewrites file mtimes, and Coolify builds twice from two different
-# directories (docker compose build from /artifacts/, then up -d from
-# /data/coolify/applications/), so mtime-based freshness forces a full workspace
-# recompile every time. With checksum freshness, identical content is reused and
-# only crates whose source actually changed are rebuilt — correct and granular,
-# with no timestamp normalization needed. Scoped here (not in committed
-# .cargo/config.toml) so local dev tooling is unaffected.
+#   target       — preserve compiled artifacts. External dependencies are reused
+#                  across builds and only recompile when Cargo.lock changes;
+#                  workspace crates recompile each build because COPY rewrites
+#                  source mtimes (Cargo's freshness is mtime-based on stable).
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
     --mount=type=cache,target=/app/target,id=den-build-target,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
     echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && \
-    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --config build.checksum-freshness=true --locked --release --features=production --message-format=short && \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --locked --release --features=production --message-format=short && \
     cp "./target/release/${APP_NAME}" /tmp/server
 
 FROM alpine:3.18 AS final

@@ -149,7 +149,13 @@ services:
             - bears-den-sqlite-data:/backup:ro
 
     bears-den:
-        pull_policy: build
+        # No `pull_policy: build`. Coolify deploys in two phases — `docker compose
+        # build` then `docker compose up -d` — from two different directories.
+        # `pull_policy: build` forces `up` to recompile the image a second time
+        # even though `build` already produced `bears-den:local`. Omitting it lets
+        # `up` reuse the freshly built image (default pull policy reuses a present
+        # local image and never rebuilds without `--build`). The `build` phase
+        # always runs first, so the reused image is always current — no staleness.
         build:
             context: ./services/den
             dockerfile: Dockerfile
