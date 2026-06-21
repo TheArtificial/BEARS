@@ -14,44 +14,40 @@ const WORK_PROFILES: &[&str] = &["work"];
 use crate::BearProfile;
 
 use crate::tools::{
+    constants::{
+        DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
+        DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
+        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_MEMORY_APPLY_CORE_UPDATE,
+        DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
+        DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
+        DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
+        DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_REQUEST_REVIEW,
+        DEN_MEMORY_REQUEST_REVIEW_PROVIDER, DEN_MEMORY_RESOLVE_PROPOSAL,
+        DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER, DEN_MEMORY_SEARCH, DEN_MEMORY_SEARCH_PROVIDER,
+        DEN_MEMORY_STATUS, DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE,
+        DEN_MEMORY_TREE_LEGACY_PROVIDER, DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY,
+        DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL,
+        DEN_PLAN_MODE_CANCEL_PROVIDER, DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_ENTER_PROVIDER,
+        DEN_PLAN_MODE_EXIT, DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL,
+        DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER, DEN_PLAN_MODE_STATUS,
+        DEN_PLAN_MODE_STATUS_PROVIDER, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST,
+        DEN_PROMPT_MEMORY_LIST_PROVIDER, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_PATCH_PROVIDER,
+        DEN_PROMPT_MEMORY_UPSERT, DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUN_WRITE_RESULT,
+        DEN_SITUATION_GET, DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
+        DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT,
+        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER,
+        DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_GET_STATUS,
+        DEN_WORK_PLAN_GET_STATUS_PROVIDER, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_LIST_PROVIDER,
+        DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
+        DEN_WORK_PLAN_UPDATE, DEN_WORK_PLAN_UPDATE_PROVIDER,
+    },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
         render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
         ToolScopeKind, ToolSideEffectKind,
-    },
-    constants::{
-        DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER,
-        DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
-        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
-        DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
-        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
-        DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
-        DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ,
-        DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER,
-        DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_REQUEST_REVIEW_PROVIDER,
-        DEN_MEMORY_RESOLVE_PROPOSAL, DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER,
-        DEN_MEMORY_SEARCH, DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_STATUS,
-        DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE, DEN_MEMORY_TREE_LEGACY_PROVIDER,
-        DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-        DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL, DEN_PLAN_MODE_CANCEL_PROVIDER,
-        DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_ENTER_PROVIDER, DEN_PLAN_MODE_EXIT,
-        DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL,
-        DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER, DEN_PLAN_MODE_STATUS,
-        DEN_PLAN_MODE_STATUS_PROVIDER, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST,
-        DEN_PROMPT_MEMORY_LIST_PROVIDER, DEN_PROMPT_MEMORY_PATCH,
-        DEN_PROMPT_MEMORY_PATCH_PROVIDER, DEN_PROMPT_MEMORY_UPSERT,
-        DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET,
-        DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-        DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT,
-        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER,
-        DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER,
-        DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_GET_STATUS_PROVIDER, DEN_WORK_PLAN_LIST,
-        DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF,
-        DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER, DEN_WORK_PLAN_UPDATE,
-        DEN_WORK_PLAN_UPDATE_PROVIDER,
     },
 };
 
@@ -163,7 +159,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(DEN_SKILL_REJECT_PROPOSAL, "Reject skill proposal", "Reject a pending skill proposal with reviewer metadata and a rejection reason.", "bear.skills", &["skill.proposal.reject"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false})),
         descriptor(DEN_WORK_PLAN_LIST, "List plans", "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available. Call session_info first if current thread/session/work-surface scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_PROFILES, json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false})),
         descriptor(DEN_WORK_PLAN_GET_STATUS, "Get work plan status", "Return current status for one visible Den activity plan or this session's active plan. Use to orient before continuing, updating, or handing off plan work; call session_info first if session scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"source_acp_session_id":{"type":"string"},"source_conversation_id":{"type":"string"}},"additionalProperties":false})),
-        descriptor(DEN_WORK_PLAN_UPDATE, "Update visible plan", "Create or update the current role's live visible activity plan. Use this when the user asks to create, show, update, or execute a plan/task list. This is active work state, not semantic memory; call session_info first if current session/work-surface scope is unclear.", "bear.activity", &["work_plan.write"], WORK_PLAN_UPDATE_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"expected_version":{"type":"integer","minimum":1},"title":{"type":"string"},"summary":{"type":"string"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"status":{"enum":["active","blocked","completed","cancelled","archived"]},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"summary":{"type":"string"},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"blocked_reason":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}}},"required":["id","title","status"],"additionalProperties":false}},"workspace_context":{"type":"object"}},"required":["title","visibility","status","items"],"additionalProperties":false})),
+        descriptor(DEN_WORK_PLAN_UPDATE, "Update visible plan", "Create or update the current role's live visible ACP activity plan. Prefer this whenever you need to remember 3 or more things to do, work has multiple steps, the user asks to create/show/update a plan or task list, or visible progress would help. If you are mentally tracking 3+ pending tasks, put them in this visible plan instead of keeping them only in prose. This is active work state, not semantic memory; do not use memory_write_entry for task lists. Items require title and status; Den auto-generates stable small slug IDs when id is omitted. Keep at most one item in_progress. Call session_info first if current session/work-surface scope is unclear.", "bear.activity", &["work_plan.write"], WORK_PLAN_UPDATE_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"expected_version":{"type":"integer","minimum":1},"title":{"type":"string"},"summary":{"type":"string"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"status":{"enum":["active","blocked","completed","cancelled","archived"]},"items":{"type":"array","description":"Visible task-list items. Each item requires title and status. Optional id may be supplied for meaningful stable identifiers; Den auto-generates stable slug IDs when omitted. Exactly zero or one item should be in_progress.","items":{"type":"object","properties":{"id":{"type":"string","description":"Optional stable identifier. Omit this unless you already have a meaningful item identity; Den will auto-generate a small slug ID from the item content."},"title":{"type":"string"},"summary":{"type":"string"},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"blocked_reason":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}}},"required":["title","status"],"additionalProperties":false}},"workspace_context":{"type":"object"}},"required":["title","visibility","status","items"],"additionalProperties":false})),
         descriptor(DEN_WORK_PLAN_REQUEST_HANDOFF, "Request task handoff", "Request conversion of selected live activity plan items into a schema-validated task intent for curate review.", "bear.activity", &["work_plan.handoff.request"], CHAT_AND_PAIR_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"item_ids":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}}},"required":["plan_id","item_ids","title","summary","requested_outcome"],"additionalProperties":false})),
         descriptor(DEN_PLAN_MODE_ENTER, "Enter planning mode", "Enter ACP pair workplan mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.", "bear.workplan", &["plan_mode.enter"], PAIR_PROFILES, json!({"type":"object","properties":{"reason":{"type":"string"},"previous_permission_mode":{"type":"string"}},"additionalProperties":false})),
         descriptor(DEN_PLAN_MODE_STATUS, "Get plan mode status", "Return the current ACP pair workplan gate for this session, if any.", "bear.workplan", &["plan_mode.read"], PAIR_PROFILES, empty_schema()),
@@ -240,12 +236,16 @@ pub fn builtin_den_tool_descriptors_for_pair_acp_surface() -> Vec<DenToolDescrip
         .collect()
 }
 
-pub fn builtin_den_tool_descriptor_for_provider_name(provider_name: &str) -> Option<DenToolDescriptor> {
-    builtin_den_tool_descriptors().into_iter().find(|descriptor| {
-        descriptor.provider_name == provider_name
-            || descriptor.provider_aliases.contains(&provider_name)
-            || descriptor.name == provider_name
-    })
+pub fn builtin_den_tool_descriptor_for_provider_name(
+    provider_name: &str,
+) -> Option<DenToolDescriptor> {
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| {
+            descriptor.provider_name == provider_name
+                || descriptor.provider_aliases.contains(&provider_name)
+                || descriptor.name == provider_name
+        })
 }
 
 pub fn is_builtin_den_tool(tool_name: &str) -> bool {
@@ -392,10 +392,7 @@ fn display_target_summary(keys: &[&str], args: &Value) -> Option<String> {
     }
 }
 
-pub fn den_tool_display_json_for_provider(
-    provider_name: &str,
-    args: &Value,
-) -> Option<Value> {
+pub fn den_tool_display_json_for_provider(provider_name: &str, args: &Value) -> Option<Value> {
     let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
     let display = den_tool_display(descriptor.name, descriptor.label);
     let target = display_target_summary(display.target_arg_keys, args);
@@ -954,7 +951,9 @@ fn memory_write_entry_schema() -> Value {
 
 impl DenToolDescriptor {
     pub fn allows_profile(&self, role: BearProfile) -> bool {
-        self.allowed_roles.iter().any(|allowed| *allowed == role.as_str())
+        self.allowed_roles
+            .iter()
+            .any(|allowed| *allowed == role.as_str())
     }
 }
 

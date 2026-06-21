@@ -126,6 +126,7 @@ impl fmt::Display for WorkPlanItemStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkPlanItem {
+    #[serde(default)]
     pub id: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,21 +138,116 @@ pub struct WorkPlanItem {
     pub source_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkPlanUpdate {
     pub title: String,
-    #[serde(default)]
     pub summary: String,
     pub visibility: WorkPlanVisibility,
     pub status: WorkPlanStatus,
-    #[serde(default)]
     pub items: Vec<WorkPlanItem>,
-    #[serde(default = "default_json_object")]
     pub workspace_context: serde_json::Value,
+}
+
+impl<'de> Deserialize<'de> for WorkPlanUpdate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawWorkPlanUpdate {
+            title: String,
+            #[serde(default)]
+            summary: String,
+            visibility: WorkPlanVisibility,
+            status: WorkPlanStatus,
+            #[serde(default)]
+            items: Vec<WorkPlanItem>,
+            #[serde(default = "default_json_object")]
+            workspace_context: serde_json::Value,
+        }
+
+        let mut raw = RawWorkPlanUpdate::deserialize(deserializer)?;
+        normalize_work_plan_item_ids(&mut raw.items);
+        Ok(Self {
+            title: raw.title,
+            summary: raw.summary,
+            visibility: raw.visibility,
+            status: raw.status,
+            items: raw.items,
+            workspace_context: raw.workspace_context,
+        })
+    }
 }
 
 fn default_json_object() -> serde_json::Value {
     serde_json::json!({})
+}
+
+pub fn normalize_work_plan_item_ids(items: &mut [WorkPlanItem]) {
+    let mut generated_ids = std::collections::HashSet::new();
+    for item in items {
+        let trimmed = item.id.trim();
+        if trimmed.is_empty() {
+            let mut generated = generated_work_plan_item_id(item, None);
+            if !generated_ids.insert(generated.clone()) {
+                let mut ordinal = 2_u32;
+                loop {
+                    generated = generated_work_plan_item_id(item, Some(ordinal));
+                    if generated_ids.insert(generated.clone()) {
+                        break;
+                    }
+                    ordinal = ordinal.saturating_add(1);
+                }
+            }
+            item.id = generated;
+        } else if trimmed.len() != item.id.len() {
+            item.id = trimmed.to_string();
+        }
+    }
+}
+
+fn generated_work_plan_item_id(item: &WorkPlanItem, ordinal: Option<u32>) -> String {
+    let mut seed = format!(
+        "{}\n{}\n{}",
+        item.title.trim(),
+        item.summary.as_deref().unwrap_or("").trim(),
+        item.status.as_str()
+    );
+    if let Some(ordinal) = ordinal {
+        let _ = write!(seed, "\n{ordinal}");
+    }
+    let prefix = slug_prefix(&item.title).unwrap_or_else(|| "item".to_string());
+    format!("{}_{:06x}", prefix, fnv1a64(seed.as_bytes()) & 0x00ff_ffff)
+}
+
+fn slug_prefix(value: &str) -> Option<String> {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for ch in value.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('_');
+            last_was_separator = true;
+        }
+        if slug.len() >= 32 {
+            break;
+        }
+    }
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+    (!slug.is_empty()).then_some(slug)
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -453,6 +549,56 @@ mod tests {
             item("three", WorkPlanItemStatus::Pending),
         ];
         assert!(validate_work_plan_items(&items).is_ok());
+    }
+
+    #[test]
+    fn deserializes_missing_item_ids_with_stable_generated_slugs() {
+        let update: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+            "title": "Fix ACP plan visibility",
+            "visibility": "private_to_profile",
+            "status": "active",
+            "items": [
+                { "title": "Inspect BearWire logs", "status": "completed" },
+                { "title": "Patch plan projection", "summary": "Surface plan_update in ACP", "status": "in_progress" }
+            ]
+        }))
+        .expect("work plan update should deserialize with generated item ids");
+        let repeated: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+            "title": "Fix ACP plan visibility",
+            "visibility": "private_to_profile",
+            "status": "active",
+            "items": [
+                { "title": "Inspect BearWire logs", "status": "completed" },
+                { "title": "Patch plan projection", "summary": "Surface plan_update in ACP", "status": "in_progress" }
+            ]
+        }))
+        .expect("work plan update should deserialize repeatedly");
+
+        assert_eq!(update.items.len(), 2);
+        assert!(update.items[0].id.starts_with("inspect_bearwire_logs_"));
+        assert!(update.items[1].id.starts_with("patch_plan_projection_"));
+        assert_eq!(update.items[0].id, repeated.items[0].id);
+        assert_eq!(update.items[1].id, repeated.items[1].id);
+        assert!(validate_work_plan_update(&update).is_ok());
+    }
+
+    #[test]
+    fn generated_item_ids_are_unique_for_duplicate_items() {
+        let update: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+            "title": "Duplicate item test",
+            "visibility": "private_to_profile",
+            "status": "active",
+            "items": [
+                { "title": "Do the thing", "status": "pending" },
+                { "title": "Do the thing", "status": "pending" }
+            ]
+        }))
+        .expect("work plan update should deserialize duplicate generated ids");
+
+        assert_ne!(update.items[0].id, update.items[1].id);
+        assert!(update.items[0].id.starts_with("do_the_thing_"));
+        assert!(update.items[1].id.starts_with("do_the_thing_"));
+        assert!(validate_work_plan_update(&update).is_ok());
     }
 
     #[test]

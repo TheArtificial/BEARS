@@ -54,8 +54,9 @@ fn work_plan_update_descriptor_includes_active_work_state_guidance() {
         .description
         .contains("Side effect: updates active work state"));
     assert!(descriptor.description.contains("session_info"));
+    assert!(descriptor.description.contains("3 or more things"));
+    assert!(descriptor.description.contains("auto-generates stable"));
 }
-
 
 #[test]
 fn prompt_memory_upsert_descriptor_mentions_runtime_prompt_memory() {
@@ -64,6 +65,8 @@ fn prompt_memory_upsert_descriptor_mentions_runtime_prompt_memory() {
         .find(|descriptor| descriptor.provider_name == DEN_PROMPT_MEMORY_UPSERT_PROVIDER)
         .expect("upsert_prompt_memory descriptor");
 
-    assert!(descriptor.description.contains("editable runtime prompt memory"));
+    assert!(descriptor
+        .description
+        .contains("editable runtime prompt memory"));
     assert!(descriptor.description.contains("semantic memory"));
 }

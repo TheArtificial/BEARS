@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use crate::{
     adapter_contract_context, den_request_context, env_bool, handle_den_event,
-    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
-    Config, SseFrameOutcome, SseStreamDiagnostics,
+    send_tool_call_update, stream_has_successful_terminal_condition, truncate_for_log,
+    AdapterSharedState, AdapterState, Config, SseFrameOutcome, SseStreamDiagnostics,
+    ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -610,6 +611,63 @@ fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Valu
     })
 }
 
+fn bearwire_plan_update_entries(event: &Value) -> Value {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    data.pointer("/detail/entries")
+        .or_else(|| data.pointer("/detail/plan/items"))
+        .or_else(|| data.pointer("/plan/items"))
+        .or_else(|| data.get("entries"))
+        .cloned()
+        .unwrap_or_else(|| json!([]))
+}
+
+async fn handle_bearwire_tool_call_finished_event(
+    session_id: &str,
+    event: &Value,
+    failed: bool,
+) -> Result<()> {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    let tool_call_id = data
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "tool_call"))
+        .unwrap_or("unknown");
+    let tool_name = data
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    let summary = data
+        .get("error_message")
+        .and_then(Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .or_else(|| data.get("summary").and_then(Value::as_str))
+        .unwrap_or(if failed {
+            "Tool failed."
+        } else {
+            "Tool completed."
+        });
+    let status = if failed { "failed" } else { "completed" };
+    let legacy = json!({
+        "type": "tool_result",
+        "run_id": event.get("run_id").and_then(Value::as_str),
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+    });
+    send_tool_call_update(
+        session_id,
+        tool_call_id,
+        tool_name,
+        ToolCallUpdatePayload {
+            status,
+            text: summary,
+            event: Some(&legacy),
+            raw_output: Some(data.clone()),
+            extra_content: Vec::new(),
+        },
+    )
+    .await
+}
+
 fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
     event
         .get("resource_refs")
@@ -685,13 +743,11 @@ async fn handle_bearwire_event(
                 .and_then(Value::as_str)
                 .unwrap_or("progress");
             if kind == "plan_update" {
-                let entries = data
-                    .get("detail")
-                    .and_then(|detail| detail.get("entries"))
-                    .cloned()
-                    .unwrap_or_else(|| json!([]));
+                let entries = bearwire_plan_update_entries(event);
                 let legacy = json!({ "type": "plan_update", "entries": entries });
                 outcome.saw_visible_output = true;
+                outcome.saw_tool_activity = true;
+                diagnostics.saw_tool_activity = true;
                 handle_den_event(
                     config,
                     adapter_state,
@@ -816,6 +872,18 @@ async fn handle_bearwire_event(
             )
             .await?;
         }
+        "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
+            outcome.saw_tool_activity = true;
+            diagnostics.saw_tool_activity = true;
+            handle_bearwire_tool_call_finished_event(session_id, event, false).await?;
+        }
+        "tool_call.failed" => {
+            outcome.saw_tool_activity = true;
+            outcome.saw_error = true;
+            diagnostics.saw_tool_activity = true;
+            diagnostics.saw_error = true;
+            handle_bearwire_tool_call_finished_event(session_id, event, true).await?;
+        }
         "tool_call.blocked" => {
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
@@ -932,5 +1000,51 @@ mod tests {
         assert_eq!(legacy["tool_call_id"], "call-web-1");
         assert_eq!(legacy["tool_name"], "web_fetch");
         assert_eq!(legacy["target"]["url"], "https://example.com/");
+    }
+
+    #[test]
+    fn bearwire_plan_update_entries_accepts_runtime_progress_detail() {
+        let event = json!({
+            "type": "run.progress",
+            "data": {
+                "kind": "plan_update",
+                "text": null,
+                "phase": "tool_result",
+                "detail": {
+                    "entries": [
+                        { "id": "inspect", "title": "Inspect logs", "status": "completed" },
+                        { "id": "patch", "title": "Patch ACP plan projection", "status": "in_progress" }
+                    ]
+                }
+            }
+        });
+
+        let entries = bearwire_plan_update_entries(&event);
+
+        assert_eq!(entries.as_array().map(Vec::len), Some(2));
+        assert_eq!(entries[0]["title"], "Inspect logs");
+        assert_eq!(entries[1]["status"], "in_progress");
+    }
+
+    #[test]
+    fn bearwire_plan_update_entries_accepts_nested_plan_items() {
+        let event = json!({
+            "type": "run.progress",
+            "data": {
+                "kind": "plan_update",
+                "detail": {
+                    "plan": {
+                        "items": [
+                            { "id": "one", "title": "One", "status": "pending" }
+                        ]
+                    }
+                }
+            }
+        });
+
+        let entries = bearwire_plan_update_entries(&event);
+
+        assert_eq!(entries.as_array().map(Vec::len), Some(1));
+        assert_eq!(entries[0]["id"], "one");
     }
 }

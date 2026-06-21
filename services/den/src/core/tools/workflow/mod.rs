@@ -251,7 +251,8 @@ pub(crate) async fn update_work_plan(
     arguments: Value,
     activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let args: WorkPlanUpdateArguments = serde_json::from_value(arguments)?;
+    let mut args: WorkPlanUpdateArguments = serde_json::from_value(arguments)?;
+    work_plans::normalize_work_plan_item_ids(&mut args.items);
     let row = PgDocketService::from_pool(pool)
         .upsert_work_plan(WorkPlanUpsert {
             bear_id: context.bear_id,
