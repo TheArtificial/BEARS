@@ -43,7 +43,7 @@ const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
 pub(in crate::acp) struct AcpRuntimeSseStream {
     pub(in crate::acp) inner: Pin<
         Box<
-            dyn Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
+            dyn Stream<Item = Result<den_protocol::RuntimeStreamEvent, CustomError>>
                 + Send,
         >,
     >,
@@ -364,7 +364,7 @@ impl AcpRuntimeSseStream {
     }
 
     pub(in crate::acp) fn new(
-        inner: impl Stream<Item = Result<den_runtime::runtime_contracts::RuntimeStreamEvent, CustomError>>
+        inner: impl Stream<Item = Result<den_protocol::RuntimeStreamEvent, CustomError>>
             + Send
             + 'static,
         context: AcpStreamContext,

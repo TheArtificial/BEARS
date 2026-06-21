@@ -1,5 +1,5 @@
 use crate::acp::stream::mapping::runtime_stream_event_to_acp_seed_value;
-use den_runtime::runtime_provider::{
+use den_protocol::{
     RuntimeConversationRef, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 

@@ -1,4 +1,4 @@
-use den_runtime::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[test]
 fn semantic_turn_completed_uses_direct_gateway_projection_shape() {

@@ -5,7 +5,7 @@ use futures::Stream;
 use uuid::Uuid;
 
 use crate::errors::CustomError;
-use den_runtime::runtime_contracts::RuntimeStreamEvent;
+use den_protocol::RuntimeStreamEvent;
 
 pub type WebChatRuntimeStream =
     Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, CustomError>> + Send>>;

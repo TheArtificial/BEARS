@@ -121,8 +121,8 @@ pub(in crate::acp) type AcpFrameResult = Result<
 
 pub(in crate::acp) type AcpContinueToolPrepared = Result<
     (
-        den_runtime::runtime_provider::RuntimeStreamContinuation,
-        den_runtime::runtime_provider::RuntimeEventStream,
+        den_protocol::RuntimeStreamContinuation,
+        den_protocol::RuntimeEventStream,
         std::sync::Arc<std::sync::Mutex<AcpStreamDiagnostics>>,
     ),
     CustomError,

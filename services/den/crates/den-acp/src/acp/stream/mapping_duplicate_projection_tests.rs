@@ -4,7 +4,7 @@ use crate::acp::AcpStreamContext;
 use den_runtime::tool_turns::ToolTurnCoordinator;
 use den_runtime::gateway_events::GatewayEvent;
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
-use den_runtime::runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use uuid::Uuid;

@@ -112,44 +112,44 @@ impl AcpStreamDiagnostics {
 
     pub(in crate::acp) fn observe_runtime_event(
         &mut self,
-        event: &den_runtime::runtime_provider::RuntimeStreamEvent,
+        event: &den_protocol::RuntimeStreamEvent,
     ) {
         self.parsed_events += 1;
         let runtime_type = match event {
-            den_runtime::runtime_provider::RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
+            den_protocol::RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
                 "untranslated_provider_event"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::AssistantTextDelta { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::AssistantTextDelta { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "assistant_text_delta"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::StatusText { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::StatusText { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "status_text"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::RunProgress { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::RunProgress { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "run_progress"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::RunPaused { reason, .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::RunPaused { reason, .. },
             ) => {
                 if reason == "awaiting_approval" || reason == "requires_approval" {
                     self.saw_requires_approval_stop = true;
                 }
                 "run_paused"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id,
                     ..
                 },
@@ -159,22 +159,22 @@ impl AcpStreamDiagnostics {
                 *count += 1;
                 "tool_call_requested"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallFinished { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::ToolCallFinished { .. },
             ) => {
                 self.saw_visible_output = true;
                 self.saw_substantive_output = true;
                 "tool_call_finished"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::Error { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::Error { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "error"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::ConversationResolved {
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::ConversationResolved {
                     conversation,
                 },
             ) => {
@@ -184,21 +184,21 @@ impl AcpStreamDiagnostics {
                 }
                 "conversation_resolved"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCompleted { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::TurnCompleted { .. },
             ) => {
                 self.saw_turn_complete = true;
                 "turn_completed"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnFailed { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::TurnFailed { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;
                 "turn_failed"
             }
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCancelled { .. },
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::TurnCancelled { .. },
             ) => {
                 self.saw_error = true;
                 self.saw_visible_output = true;

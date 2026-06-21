@@ -133,9 +133,9 @@ pub(crate) async fn persist_run_progress(
 }
 
 fn runtime_event_satisfies_eager_prefix(
-    event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
+    event: &den_protocol::RuntimeStreamEvent,
 ) -> bool {
-    use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     matches!(
         event,
         RuntimeStreamEvent::Semantic(
@@ -151,9 +151,9 @@ fn runtime_event_satisfies_eager_prefix(
 }
 
 pub(crate) fn runtime_event_kind(
-    event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
+    event: &den_protocol::RuntimeStreamEvent,
 ) -> &'static str {
-    use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
             "assistant_text_delta"
@@ -188,7 +188,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    runtime_event: den_runtime::runtime_contracts::RuntimeStreamEvent,
+    runtime_event: den_protocol::RuntimeStreamEvent,
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
@@ -274,11 +274,11 @@ async fn update_run_state_for_runtime_event(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    event: &den_runtime::runtime_contracts::RuntimeStreamEvent,
+    event: &den_protocol::RuntimeStreamEvent,
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
-    use den_runtime::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,

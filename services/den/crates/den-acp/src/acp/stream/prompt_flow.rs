@@ -134,7 +134,7 @@ pub(in crate::acp) async fn run_prompt_flow(
     );
     let (conversation_resolution, ensure_conversation_result) = conversation_runtime
         .ensure_prompt_conversation(
-            den_runtime::runtime_contracts::EnsureConversationRequest {
+            den_protocol::EnsureConversationRequest {
                 bear_id: bear.id,
                 role: "pair".to_string(),
                 acp_session_id: session_id.to_string(),

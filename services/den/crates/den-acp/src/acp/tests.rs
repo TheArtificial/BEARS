@@ -767,7 +767,7 @@ use den_runtime::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            den_runtime::runtime::contracts::RuntimeContinuation::ToolResult {
+            den_protocol::RuntimeContinuation::ToolResult {
                 tool_call_id,
                 approval_request_id,
                 status,
@@ -775,7 +775,7 @@ use den_runtime::prompt_memory_blocks::{
             } => {
                 assert_eq!(tool_call_id, "tool-call-timeout");
                 assert_eq!(approval_request_id, None);
-                assert_eq!(status, den_runtime::runtime::contracts::RuntimeToolResultStatus::Timeout);
+                assert_eq!(status, den_protocol::RuntimeToolResultStatus::Timeout);
                 assert_eq!(content, "timed out");
             }
             other => panic!("expected tool-result continuation, got {other:?}"),
@@ -795,8 +795,8 @@ use den_runtime::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            den_runtime::runtime::contracts::RuntimeContinuation::ToolResult { status, .. } => {
-                assert_eq!(status, den_runtime::runtime::contracts::RuntimeToolResultStatus::Timeout);
+            den_protocol::RuntimeContinuation::ToolResult { status, .. } => {
+                assert_eq!(status, den_protocol::RuntimeToolResultStatus::Timeout);
             }
             other => panic!("expected tool-result continuation, got {other:?}"),
         }
@@ -815,7 +815,7 @@ use den_runtime::prompt_memory_blocks::{
         .expect("prepare continuation");
 
         match prepared.continuation {
-            den_runtime::runtime::contracts::RuntimeContinuation::ApprovalDecision {
+            den_protocol::RuntimeContinuation::ApprovalDecision {
                 approval_request_id,
                 tool_call_id,
                 decision,
@@ -823,7 +823,7 @@ use den_runtime::prompt_memory_blocks::{
             } => {
                 assert_eq!(approval_request_id, "approval-123");
                 assert_eq!(tool_call_id.as_deref(), Some("tool-call-approval"));
-                assert_eq!(decision, den_runtime::runtime::contracts::RuntimeApprovalDecision::Deny);
+                assert_eq!(decision, den_protocol::RuntimeApprovalDecision::Deny);
                 assert_eq!(reason.as_deref(), Some("user denied"));
             }
             other => panic!("expected approval-decision continuation, got {other:?}"),
@@ -4928,7 +4928,7 @@ use den_runtime::prompt_memory_blocks::{
     async fn runtime_tool_request_mapping_exposes_continuation_receiver_for_local_tools() {
         use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
         use crate::acp::stream::support::AcpStreamDiagnostics;
-        use den_runtime::runtime_provider::RuntimeStreamEvent;
+        use den_protocol::RuntimeStreamEvent;
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
 
@@ -4968,7 +4968,7 @@ use den_runtime::prompt_memory_blocks::{
             memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let runtime_event = RuntimeStreamEvent::Semantic(
-            den_runtime::runtime_provider::RuntimeSemanticEvent::ToolCallRequested {
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
                 tool_call_id: "call-cont-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 title: Some("Read text file".to_string()),
@@ -5008,10 +5008,10 @@ use den_runtime::prompt_memory_blocks::{
         let session_id = "acp-test-session";
 
         let turn_failed = runtime_terminal_events(
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnFailed {
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::TurnFailed {
                     turn: None,
-                    category: den_runtime::runtime_provider::RuntimeErrorCategory::Internal,
+                    category: den_protocol::RuntimeErrorCategory::Internal,
                     message: "runtime failed".to_string(),
                 },
             ),
@@ -5023,8 +5023,8 @@ use den_runtime::prompt_memory_blocks::{
         assert!(matches!(turn_failed[1], GatewayEvent::TurnResult { .. }));
 
         let turn_cancelled = runtime_terminal_events(
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::TurnCancelled {
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::TurnCancelled {
                     turn: None,
                 },
             ),
@@ -5036,8 +5036,8 @@ use den_runtime::prompt_memory_blocks::{
         assert!(matches!(turn_cancelled[1], GatewayEvent::TurnResult { .. }));
 
         let generic_error = runtime_terminal_events(
-            den_runtime::runtime_provider::RuntimeStreamEvent::Semantic(
-                den_runtime::runtime_provider::RuntimeSemanticEvent::Error {
+            den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::Error {
                     message: "runtime error".to_string(),
                     detail: Some("detail".to_string()),
                     error_type: Some("runtime_error".to_string()),
@@ -6132,7 +6132,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_maps_pending_acp_selection_to_native_runtime_target() {
-        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_protocol::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("runtime:native".to_string()),
         };
@@ -6153,7 +6153,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_routes_explicit_conv_directly_and_requires_bear_check() {
-        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_protocol::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("runtime:native".to_string()),
         };
@@ -6191,7 +6191,7 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_never_archives_pending_or_default_targets() {
-        let binding = den_runtime::runtime_contracts::RoleRuntimeBinding {
+        let binding = den_protocol::RoleRuntimeBinding {
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("runtime:native".to_string()),
         };

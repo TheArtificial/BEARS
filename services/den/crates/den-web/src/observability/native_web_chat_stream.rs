@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{ready, Stream};
 use uuid::Uuid;
 
-use den_runtime::runtime_contracts::{
+use den_protocol::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 

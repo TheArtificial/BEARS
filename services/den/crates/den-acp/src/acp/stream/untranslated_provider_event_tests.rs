@@ -1,5 +1,5 @@
 use crate::acp::stream::mapping::runtime_stream_event_to_acp_seed_value;
-use den_runtime::runtime_provider::RuntimeStreamEvent;
+use den_protocol::RuntimeStreamEvent;
 
 #[test]
 fn untranslated_provider_event_passes_through_seed_value() {

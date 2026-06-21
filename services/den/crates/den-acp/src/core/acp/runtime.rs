@@ -272,7 +272,7 @@ pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     binding: &RoleRuntimeBinding,
     conversation: &RuntimeConversationRef,
-) -> Result<den_runtime::runtime_contracts::RuntimeHistoryPage, CustomError> {
+) -> Result<den_protocol::RuntimeHistoryPage, CustomError> {
     backend.load_history(binding, conversation).await.map_err(CustomError::from)
 }
 
