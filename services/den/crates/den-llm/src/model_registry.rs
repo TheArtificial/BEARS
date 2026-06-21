@@ -182,6 +182,16 @@ where
 pub fn registry_entries() -> Vec<DenModelRegistryEntry> {
     vec![
         openai(
+            "openai/gpt-5.5",
+            "gpt-5.5",
+            "OpenAI GPT-5.5",
+            &["gpt-5.5", "openai:gpt-5.5"],
+            400_000,
+            Some(128_000),
+            true,
+            true,
+        ),
+        openai(
             "openai/gpt-5.1",
             "gpt-5.1",
             "OpenAI GPT-5.1",

@@ -9,12 +9,13 @@ mod stream;
 pub use den_llm::byte_stream_with_idle_timeout;
 pub use den_llm::{
     ChatCompletionRequest, ChatMessage, ChatToolCall, ChatToolCallFunction, EmbeddingClient,
-    LlmClient, LlmRequestTelemetry, LlmToolDefinition,
+    LlmApiStyle, LlmClient, LlmRequestTelemetry, LlmToolDefinition, preferred_api_style_for_model,
 };
 pub use stream::{
     openai_sse_chunk_to_runtime_events, openai_sse_event_body_to_runtime_events,
     openai_sse_frame_to_runtime_events, openai_sse_frame_to_runtime_events_with_diagnostics,
-    OpenAiStreamAccumulator, OpenAiStreamDiagnostics, OpenAiStreamParseResult,
+    responses_sse_frame_to_runtime_events, OpenAiStreamAccumulator, OpenAiStreamDiagnostics,
+    OpenAiStreamParseResult, ResponsesStreamAccumulator,
 };
 
 #[cfg(test)]

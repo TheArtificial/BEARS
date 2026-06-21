@@ -23,6 +23,7 @@ pub use tool_invoker::{RuntimeToolInvoker, set_tool_invoker, tool_invoker};
 
 pub use openai_stream::{
     openai_byte_stream_to_event_stream, openai_byte_stream_to_event_stream_with_telemetry,
+    responses_byte_stream_to_event_stream,
 };
 pub use profile::{NativeCapabilityProfile, is_native_api_direct_role};
 pub use profile_briefing::compose_curate_briefing_prompt;

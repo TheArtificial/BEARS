@@ -398,6 +398,170 @@ impl OpenAiStreamAccumulator {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ResponsesStreamAccumulator {
+    tool_names: HashMap<String, String>,
+    tool_call_ids: HashMap<String, String>,
+    tool_args: HashMap<String, String>,
+    completed: bool,
+    saw_tool_call: bool,
+}
+
+impl ResponsesStreamAccumulator {
+    pub fn ingest_sse_data_line(&mut self, json: &Value) -> OpenAiStreamParseResult {
+        let mut out = OpenAiStreamParseResult::default();
+        if let Some(error) = json.get("error").or_else(|| json.pointer("/response/error")) {
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("LLM responses provider error")
+                .to_string();
+            out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+                message,
+                detail: Some(error.to_string()),
+                error_type: error.get("type").and_then(Value::as_str).map(str::to_string),
+                request_id: None,
+                context: None,
+            }));
+            self.completed = true;
+            return out;
+        }
+        let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
+        match event_type {
+            "response.output_text.delta" | "response.refusal.delta" => {
+                if let Some(delta) = json.get("delta").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                    out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta.to_string() }));
+                }
+            }
+            kind if kind.contains("reasoning") && kind.ends_with(".delta") => {
+                if let Some(delta) = json.get("delta").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                    out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text: delta.to_string() }));
+                }
+            }
+            "response.function_call_arguments.delta" => {
+                let key = response_item_key(json);
+                if let Some(delta) = json.get("delta").and_then(Value::as_str) {
+                    self.tool_args.entry(key).or_default().push_str(delta);
+                }
+            }
+            "response.output_item.added" | "response.output_item.done" => {
+                if let Some(item) = json.get("item") {
+                    if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                        self.saw_tool_call = true;
+                        let key = response_item_key_from_item(json, item);
+                        if let Some(name) = item.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                            self.tool_names.insert(key.clone(), name.to_string());
+                        }
+                        if let Some(call_id) = item
+                            .get("call_id")
+                            .or_else(|| item.get("id"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                        {
+                            self.tool_call_ids.insert(key.clone(), call_id.to_string());
+                        }
+                        if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
+                            self.tool_args.insert(key.clone(), arguments.to_string());
+                        }
+                        if event_type == "response.output_item.done" {
+                            let tool_call_id = self.tool_call_ids.get(&key).cloned().unwrap_or_else(|| key.clone());
+                            let tool_name = self.tool_names.get(&key).cloned().unwrap_or_default();
+                            let arguments = self.tool_args.get(&key).map(|raw| parse_tool_arguments(raw)).unwrap_or_else(|| Value::Object(Default::default()));
+                            out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                                tool_call_id,
+                                tool_name,
+                                title: None,
+                                kind: Some("function".to_string()),
+                                arguments,
+                                approval_request_id: None,
+                                approval_required: false,
+                                approval_reason: None,
+                                run_id: None,
+                            }));
+                        }
+                    }
+                }
+            }
+            "response.completed" => {
+                self.completed = true;
+                out.finish_reason = Some("stop".to_string());
+                if !self.saw_tool_call {
+                    out.events.push(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::TurnCompleted { turn: None },
+                    ));
+                }
+            }
+            "response.failed" | "response.incomplete" => {
+                self.completed = true;
+                let message = json.pointer("/response/error/message").and_then(Value::as_str).unwrap_or("Responses API turn failed").to_string();
+                out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+                    turn: None,
+                    category: RuntimeErrorCategory::BackendProtocol,
+                    message,
+                }));
+            }
+            _ => {}
+        }
+        out
+    }
+
+    pub fn should_detach_upstream(&self) -> bool { self.completed }
+
+    pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
+        if self.completed || self.saw_tool_call {
+            Vec::new()
+        } else {
+            vec![RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCompleted { turn: None },
+            )]
+        }
+    }
+}
+
+fn response_item_key(json: &Value) -> String {
+    json.get("item_id")
+        .or_else(|| json.get("output_index"))
+        .or_else(|| json.get("item_index"))
+        .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn response_item_key_from_item(json: &Value, item: &Value) -> String {
+    item.get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| response_item_key(json))
+}
+
+pub fn responses_sse_frame_to_runtime_events(
+    accumulator: &mut ResponsesStreamAccumulator,
+    body: &[u8],
+) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string()))?;
+    let mut events = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = rest.strip_prefix(' ').unwrap_or(rest).trim();
+        if data.is_empty() { continue; }
+        if data == "[DONE]" {
+            events.extend(accumulator.flush_end_of_stream());
+            continue;
+        }
+        let json = serde_json::from_str::<Value>(data)
+            .map_err(|e| den_core::DenError::System(format!("invalid LLM Responses SSE JSON: {e}")))?;
+        let parsed = accumulator.ingest_sse_data_line(&json);
+        events.extend(parsed.events);
+    }
+    Ok(events)
+}
+
 pub fn openai_sse_chunk_to_runtime_events(
     chunk_body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {

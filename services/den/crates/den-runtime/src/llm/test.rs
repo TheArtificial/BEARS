@@ -1,4 +1,7 @@
-use super::stream::{openai_sse_chunk_to_runtime_events, OpenAiStreamAccumulator};
+use super::stream::{
+    openai_sse_chunk_to_runtime_events, responses_sse_frame_to_runtime_events,
+    OpenAiStreamAccumulator, ResponsesStreamAccumulator,
+};
 use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[test]
@@ -85,4 +88,54 @@ fn stop_finish_emits_turn_completed() {
         event,
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
     )));
+}
+
+#[test]
+fn responses_text_delta_emits_assistant_text_delta() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let frame = br#"data: {"type":"response.output_text.delta","delta":"hello"}
+
+"#;
+    let events = responses_sse_frame_to_runtime_events(&mut acc, frame).expect("parse");
+    assert!(matches!(
+        events.first(),
+        Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }))
+            if text == "hello"
+    ));
+}
+
+#[test]
+fn responses_completed_emits_turn_completed() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let frame = br#"data: {"type":"response.completed","response":{"id":"resp_1"}}
+
+"#;
+    let events = responses_sse_frame_to_runtime_events(&mut acc, frame).expect("parse");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
+    )));
+}
+
+#[test]
+fn responses_function_call_done_emits_tool_call_requested() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let frame = br#"data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"session_info","arguments":"{}"}}
+
+"#;
+    let events = responses_sse_frame_to_runtime_events(&mut acc, frame).expect("parse");
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id,
+            tool_name,
+            arguments,
+            ..
+        }) => {
+            assert_eq!(tool_call_id, "call_1");
+            assert_eq!(tool_name, "session_info");
+            assert_eq!(arguments, &serde_json::json!({}));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 }

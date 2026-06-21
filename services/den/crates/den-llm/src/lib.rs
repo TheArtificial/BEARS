@@ -11,8 +11,8 @@ mod model_options;
 pub mod model_registry;
 
 pub use client::{
-    normalize_llm_model_handle, ChatCompletionRequest, ChatMessage, ChatToolCall,
-    ChatToolCallFunction, LlmClient, LlmRequestTelemetry, LlmToolDefinition,
+    normalize_llm_model_handle, preferred_api_style_for_model, ChatCompletionRequest, ChatMessage,
+        ChatToolCall, ChatToolCallFunction, LlmApiStyle, LlmClient, LlmRequestTelemetry, LlmToolDefinition,
 };
 pub use embeddings::EmbeddingClient;
 pub use idle_byte_stream::byte_stream_with_idle_timeout;

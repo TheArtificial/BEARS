@@ -15,8 +15,13 @@ use crate::{
         overflow_retry::compact_session_messages_for_overflow,
         session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
-    llm::{byte_stream_with_idle_timeout, ChatCompletionRequest, LlmClient},
-    native_runtime::openai_byte_stream_to_event_stream_with_telemetry,
+    llm::{
+        byte_stream_with_idle_timeout, preferred_api_style_for_model, ChatCompletionRequest,
+        LlmApiStyle, LlmClient,
+    },
+    native_runtime::{
+        openai_byte_stream_to_event_stream_with_telemetry, responses_byte_stream_to_event_stream,
+    },
     runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
     runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
 };
@@ -81,18 +86,42 @@ impl LazyAgentStepStream {
     ) -> Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>> {
         Box::pin(async move {
             let started = Instant::now();
+            let api_style = preferred_api_style_for_model(&model);
             tracing::info!(
                 session_key = %session_key,
                 model = %model,
+                api_style = %api_style.as_str(),
                 message_count,
                 tool_count,
                 handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
-                "LLM chat/completions handshake starting"
+                "LLM stream handshake starting"
             );
-            let handshake = timeout(
-                NATIVE_LLM_HANDSHAKE_TIMEOUT,
-                llm.chat_completions_byte_stream(&request),
-            )
+            let handshake = timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, async {
+                match api_style {
+                    LlmApiStyle::ChatCompletionsStream => {
+                        let byte_stream = llm.chat_completions_byte_stream(&request).await?;
+                        Self::connect_byte_stream(
+                            session_key.clone(),
+                            model.clone(),
+                            api_style,
+                            started,
+                            byte_stream,
+                            request.telemetry.clone(),
+                        )
+                    }
+                    LlmApiStyle::ResponsesStream => {
+                        let byte_stream = llm.responses_byte_stream(&request).await?;
+                        Self::connect_byte_stream(
+                            session_key.clone(),
+                            model.clone(),
+                            api_style,
+                            started,
+                            byte_stream,
+                            request.telemetry.clone(),
+                        )
+                    }
+                }
+            })
             .await;
             match handshake {
                 Err(_) => {
@@ -101,10 +130,11 @@ impl LazyAgentStepStream {
                         model = %model,
                         duration_ms = started.elapsed().as_millis(),
                         handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
-                        "LLM chat/completions handshake timed out"
+                        api_style = %api_style.as_str(),
+                        "LLM stream handshake timed out"
                     );
                     Err(DenError::System(format!(
-                        "LLM chat/completions handshake timed out after {}s",
+                        "LLM stream handshake timed out after {}s",
                         NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
                     )))
                 }
@@ -114,7 +144,8 @@ impl LazyAgentStepStream {
                         model = %model,
                         duration_ms = started.elapsed().as_millis(),
                         error = %err,
-                        "LLM chat/completions handshake failed"
+                        api_style = %api_style.as_str(),
+                        "LLM stream handshake failed"
                     );
                     if let Some(ctx) = overflow {
                         if den_error_indicates_context_overflow(&err) {
@@ -124,6 +155,7 @@ impl LazyAgentStepStream {
                                 request,
                                 session_key,
                                 model,
+                                api_style,
                                 started,
                             )
                             .await;
@@ -131,13 +163,7 @@ impl LazyAgentStepStream {
                     }
                     Err(err)
                 }
-                Ok(Ok(byte_stream)) => Self::connect_byte_stream(
-                    session_key,
-                    model,
-                    started,
-                    byte_stream,
-                    request.telemetry.clone(),
-                ),
+                Ok(Ok(stream)) => Ok(stream),
             }
         })
     }
@@ -145,6 +171,7 @@ impl LazyAgentStepStream {
     fn connect_byte_stream(
         session_key: String,
         model: String,
+        api_style: LlmApiStyle,
         started: Instant,
         byte_stream: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
         telemetry: Option<crate::llm::LlmRequestTelemetry>,
@@ -152,17 +179,20 @@ impl LazyAgentStepStream {
         tracing::info!(
             session_key = %session_key,
             model = %model,
+            api_style = %api_style.as_str(),
             duration_ms = started.elapsed().as_millis(),
             idle_timeout_secs = NATIVE_LLM_STREAM_IDLE_TIMEOUT.as_secs(),
-            "LLM chat/completions handshake connected"
+            "LLM stream handshake connected"
         );
         let byte_stream =
             byte_stream_with_idle_timeout(byte_stream, NATIVE_LLM_STREAM_IDLE_TIMEOUT)
                 .map_err(DenError::from);
-        Ok(openai_byte_stream_to_event_stream_with_telemetry(
-            byte_stream,
-            telemetry,
-        ))
+        Ok(match api_style {
+            LlmApiStyle::ChatCompletionsStream => {
+                openai_byte_stream_to_event_stream_with_telemetry(byte_stream, telemetry)
+            }
+            LlmApiStyle::ResponsesStream => responses_byte_stream_to_event_stream(byte_stream),
+        })
     }
 
     async fn recover_from_overflow_and_retry(
@@ -171,6 +201,7 @@ impl LazyAgentStepStream {
         request: ChatCompletionRequest,
         session_key: String,
         model: String,
+        api_style: LlmApiStyle,
         started: Instant,
     ) -> Result<RuntimeEventStream, DenError> {
         let session = ctx.session_store.get(&session_key).ok_or_else(|| {
@@ -229,46 +260,56 @@ impl LazyAgentStepStream {
         tracing::info!(
             session_key = %session_key,
             model = %model,
+            api_style = %api_style.as_str(),
             message_count = retry_request.messages.len(),
-            "retrying LLM chat/completions after emergency compaction"
+            "retrying LLM stream after emergency compaction"
         );
 
-        let handshake = timeout(
-            NATIVE_LLM_HANDSHAKE_TIMEOUT,
-            llm.chat_completions_byte_stream(&retry_request),
-        )
+        let handshake = timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, async {
+            match api_style {
+                LlmApiStyle::ChatCompletionsStream => {
+                    let byte_stream = llm.chat_completions_byte_stream(&retry_request).await?;
+                    Self::connect_byte_stream(
+                        session_key.clone(),
+                        model.clone(),
+                        api_style,
+                        started,
+                        byte_stream,
+                        retry_request.telemetry.clone(),
+                    )
+                }
+                LlmApiStyle::ResponsesStream => {
+                    let byte_stream = llm.responses_byte_stream(&retry_request).await?;
+                    Self::connect_byte_stream(
+                        session_key.clone(),
+                        model.clone(),
+                        api_style,
+                        started,
+                        byte_stream,
+                        retry_request.telemetry.clone(),
+                    )
+                }
+            }
+        })
         .await;
 
         match handshake {
             Err(_) => Err(DenError::System(format!(
-                "LLM chat/completions retry timed out after {}s",
+                "LLM stream retry timed out after {}s",
                 NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
             ))),
             Ok(Err(err)) => {
                 tracing::warn!(
                     session_key = %session_key,
                     model = %model,
+                    api_style = %api_style.as_str(),
                     duration_ms = started.elapsed().as_millis(),
                     error = %err,
-                    "LLM chat/completions retry failed after emergency compaction"
+                    "LLM stream retry failed after emergency compaction"
                 );
                 Err(err)
             }
-            Ok(Ok(byte_stream)) => {
-                tracing::info!(
-                    session_key = %session_key,
-                    model = %model,
-                    duration_ms = started.elapsed().as_millis(),
-                    "LLM chat/completions retry connected after emergency compaction"
-                );
-                Self::connect_byte_stream(
-                    session_key,
-                    model,
-                    started,
-                    byte_stream,
-                    retry_request.telemetry.clone(),
-                )
-            }
+            Ok(Ok(stream)) => Ok(stream),
         }
     }
 }

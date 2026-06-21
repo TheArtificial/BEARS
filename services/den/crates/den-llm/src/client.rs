@@ -72,6 +72,21 @@ pub struct LlmRequestTelemetry {
     pub stance: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmApiStyle {
+    ChatCompletionsStream,
+    ResponsesStream,
+}
+
+impl LlmApiStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LlmApiStyle::ChatCompletionsStream => "chat_completions_stream",
+            LlmApiStyle::ResponsesStream => "responses_stream",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatCompletionRequest {
     pub model: String,
@@ -133,6 +148,85 @@ impl ChatCompletionRequest {
         }
         body
     }
+
+    pub fn to_responses_body(&self) -> Value {
+        let input: Vec<Value> = self
+            .messages
+            .iter()
+            .flat_map(chat_message_to_responses_input_items)
+            .collect();
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })
+            })
+            .collect();
+        let mut body = json!({
+            "model": self.model,
+            "input": input,
+            "stream": self.stream,
+        });
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(tools);
+        }
+        if let Some(tool_choice) = &self.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+        if let Some(temperature) = self.temperature {
+            body["temperature"] = json!(temperature);
+        }
+        if let Some(max_tokens) = self.max_tokens {
+            body["max_output_tokens"] = json!(max_tokens);
+        }
+        body
+    }
+}
+
+fn chat_message_to_responses_input_items(message: &ChatMessage) -> Vec<Value> {
+    let content = message.content.clone().unwrap_or_default();
+    if message.role == "tool" {
+        return vec![json!({
+            "type": "function_call_output",
+            "call_id": message.tool_call_id.clone().unwrap_or_default(),
+            "output": content,
+        })];
+    }
+
+    let mut items = Vec::new();
+    if !content.is_empty() || message.tool_calls.is_none() {
+        items.push(json!({
+            "role": message.role,
+            "content": content,
+        }));
+    }
+
+    if let Some(tool_calls) = &message.tool_calls {
+        for tool_call in tool_calls {
+            items.push(json!({
+                "type": "function_call",
+                "call_id": &tool_call.id,
+                "name": &tool_call.function.name,
+                "arguments": &tool_call.function.arguments,
+            }));
+        }
+    }
+
+    items
+}
+
+pub fn preferred_api_style_for_model(model: &str) -> LlmApiStyle {
+    let model = normalize_llm_model_handle(model);
+    if model == "openai/gpt-5.5" || model.ends_with("/gpt-5.5") {
+        LlmApiStyle::ResponsesStream
+    } else {
+        LlmApiStyle::ChatCompletionsStream
+    }
 }
 
 fn apply_optional_header(
@@ -154,6 +248,7 @@ struct TimedLlmByteStream {
     inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
     telemetry: Option<LlmRequestTelemetry>,
     model: String,
+    api_style: LlmApiStyle,
     request_started_at: Instant,
     headers_received_at: Instant,
     first_byte_received_at: Option<Instant>,
@@ -167,6 +262,7 @@ impl TimedLlmByteStream {
         response: Response,
         telemetry: Option<LlmRequestTelemetry>,
         model: String,
+        api_style: LlmApiStyle,
         request_started_at: Instant,
         headers_received_at: Instant,
     ) -> Self {
@@ -174,6 +270,7 @@ impl TimedLlmByteStream {
             inner: Box::pin(response.bytes_stream()),
             telemetry,
             model,
+            api_style,
             request_started_at,
             headers_received_at,
             first_byte_received_at: None,
@@ -189,6 +286,7 @@ impl TimedLlmByteStream {
             status,
             error,
             model = %self.model,
+            api_style = %self.api_style.as_str(),
             request_id = telemetry.and_then(|t| t.request_id.as_deref()),
             run_id = telemetry.and_then(|t| t.run_id.as_deref()),
             session_id = telemetry.and_then(|t| t.session_id.as_deref()),
@@ -201,7 +299,7 @@ impl TimedLlmByteStream {
             total_ms = self.headers_received_at.elapsed().as_millis() + self.headers_received_at.duration_since(self.request_started_at).as_millis(),
             chunk_count = self.chunk_count,
             byte_count = self.byte_count,
-            "LLM chat/completions stream timing summary"
+            "LLM stream timing summary"
         );
     }
 }
@@ -220,13 +318,14 @@ impl Stream for TimedLlmByteStream {
                     let telemetry = self.telemetry.as_ref();
                     tracing::info!(
                         model = %self.model,
+                        api_style = %self.api_style.as_str(),
                         request_id = telemetry.and_then(|t| t.request_id.as_deref()),
                         run_id = telemetry.and_then(|t| t.run_id.as_deref()),
                         session_id = telemetry.and_then(|t| t.session_id.as_deref()),
                         conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
                         headers_to_first_byte_ms = now.duration_since(self.headers_received_at).as_millis(),
                         request_to_first_byte_ms = now.duration_since(self.request_started_at).as_millis(),
-                        "LLM chat/completions first response byte received"
+                        "LLM first response byte received"
                     );
                 }
                 self.chunk_count = self.chunk_count.saturating_add(1);
@@ -388,6 +487,83 @@ impl LlmClient {
         Ok(resp)
     }
 
+    pub async fn responses_stream(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<Response, DenError> {
+        if !self.is_enabled() {
+            return Err(DenError::System(
+                "LLM API is not configured (set LLM_API_URL or BIFROST_BASE_URL)".to_string(),
+            ));
+        }
+        let url = format!("{}/responses", self.base_url);
+        tracing::info!(
+            model = %request.model,
+            message_count = request.messages.len(),
+            tool_count = request.tools.len(),
+            stream = request.stream,
+            llm_url = %url,
+            request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+            run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
+            session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
+            conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+            "LLM responses request starting"
+        );
+        let started = Instant::now();
+        let mut req = self.http.post(&url).json(&request.to_responses_body());
+        if let Some(telemetry) = request.telemetry.as_ref() {
+            req = apply_optional_header(req, "x-bears-request-id", telemetry.field("request_id"));
+            req = apply_optional_header(req, "x-bears-run-id", telemetry.field("run_id"));
+            req = apply_optional_header(req, "x-bears-session-id", telemetry.field("session_id"));
+            req = apply_optional_header(req, "x-bears-conversation-id", telemetry.field("conversation_id"));
+            req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
+            req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
+            req = apply_optional_header(req, "x-model-affinity", telemetry.field("conversation_id"));
+        }
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let resp = req.send().await.map_err(|e| {
+            tracing::warn!(
+                model = %request.model,
+                duration_ms = started.elapsed().as_millis(),
+                error = %e,
+                "LLM responses request failed"
+            );
+            DenError::System(format!("LLM responses request failed: {e}"))
+        })?;
+        let http_status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                model = %request.model,
+                http_status,
+                duration_ms = started.elapsed().as_millis(),
+                response_body_len = text.len(),
+                request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
+                session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
+                conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                "LLM responses returned error status"
+            );
+            return Err(DenError::System(format!(
+                "LLM responses HTTP {status}: {text}"
+            )));
+        }
+        tracing::info!(
+            model = %request.model,
+            http_status,
+            duration_ms = started.elapsed().as_millis(),
+            request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+            run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
+            session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
+            conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+            "LLM responses headers received"
+        );
+        Ok(resp)
+    }
+
     pub async fn chat_completions_byte_stream(
         &self,
         request: &ChatCompletionRequest,
@@ -399,6 +575,24 @@ impl LlmClient {
             resp,
             request.telemetry.clone(),
             request.model.clone(),
+            LlmApiStyle::ChatCompletionsStream,
+            started,
+            headers_received_at,
+        ))
+    }
+
+    pub async fn responses_byte_stream(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin, DenError> {
+        let started = Instant::now();
+        let resp = self.responses_stream(request).await?;
+        let headers_received_at = Instant::now();
+        Ok(TimedLlmByteStream::new(
+            resp,
+            request.telemetry.clone(),
+            request.model.clone(),
+            LlmApiStyle::ResponsesStream,
             started,
             headers_received_at,
         ))

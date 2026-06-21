@@ -30,7 +30,7 @@ BEARS adopts a **Den-native, in-process agent runtime** as the sole execution su
 2. **One loop primitive** (assemble context → stream model → execute tools → persist), parameterized by a thin **strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), not by forked runtimes or a pluggable "agent-pattern" framework.
 3. **A turn is a Tokio task** owned by Den. Cancellation is a `CancellationToken`, not external run-ids.
 4. **Den owns** conversation identity, transcript, message/context state, approvals, and compaction. No conversation materialization to Letta, no run-ids, no approval-deny recovery against a remote process, no synthetic `TurnCompleted` to paper over provider gaps.
-5. **Bifrost** (`LLM_API_URL`) is the inference substrate (OpenAI-compatible `chat/completions` with tool-calling), called directly by Den.
+5. **Bifrost** (`LLM_API_URL`) is the inference substrate, called directly by Den through model-aware stream adapters. Den prefers the Responses API for models that require or benefit from it (for example GPT-5.5) and retains chat/completions streaming as the compatibility path.
 
 ### Storage boundary
 
