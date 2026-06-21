@@ -879,6 +879,19 @@ fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
         .unwrap_or(custom)
 }
 
+fn is_inherit_model_value(raw: &str) -> bool {
+    raw.trim().eq_ignore_ascii_case("inherit")
+}
+
+fn configured_model_from_form(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || is_inherit_model_value(trimmed) {
+        None
+    } else {
+        canonical_default_model_handle(trimmed)
+    }
+}
+
 fn model_available(options: &[ModelOption], raw: &str) -> bool {
     let requested = raw.trim();
     if requested.is_empty() {
@@ -1048,15 +1061,15 @@ async fn models_post(
 
     let default_trim =
         selected_or_custom_model(&form.bear_default_model, &form.bear_default_model_custom).trim();
-    if default_trim.is_empty() || !model_available(validation_options, default_trim) {
+    if !is_inherit_model_value(default_trim) && !model_available(validation_options, default_trim) {
         return Ok(Redirect::to(&format!(
             "/bear/{}/models?error={}",
             bear.slug,
-            urlencoding::encode("Choose a Bifrost-available Bear default model.")
+            urlencoding::encode("Choose inherit or a Bifrost-available Bear default model.")
         ))
         .into_response());
     }
-    let default_model = canonical_default_model_handle(default_trim);
+    let default_model = configured_model_from_form(default_trim);
 
     for profile in BearProfile::ALL {
         let raw = selected_or_custom_model(
@@ -1064,7 +1077,7 @@ async fn models_post(
             form_profile_model_custom(&form, profile),
         )
         .trim();
-        if !raw.is_empty() && !model_available(validation_options, raw) {
+        if !is_inherit_model_value(raw) && !model_available(validation_options, raw) {
             let message = format!(
                 "{} override must be a Bifrost-available model.",
                 profile_label(profile)
@@ -1101,7 +1114,7 @@ async fn models_post(
             form_profile_model_custom(&form, profile),
         )
         .trim();
-        let model = canonical_default_model_handle(raw);
+        let model = configured_model_from_form(raw);
         bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
             .await?;
     }
