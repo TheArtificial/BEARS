@@ -245,7 +245,7 @@ async fn session_model_payload(
         )
         .await?
         .unwrap_or(base_model);
-    let model_options = match state.bifrost.list_models().await {
+    let model_options = match state.bifrost.list_available_models().await {
         Ok(models) => models
             .into_iter()
             .map(|model| {

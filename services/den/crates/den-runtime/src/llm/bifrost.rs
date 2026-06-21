@@ -220,13 +220,14 @@ impl BifrostClient {
     }
 
     pub async fn list_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
-        match self.list_live_models().await {
+        match self.list_available_models().await {
             Ok(models) if !models.is_empty() => Ok(models),
             Ok(_) | Err(_) => self.list_sidecar_models().await,
         }
     }
 
-    async fn list_live_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
+    /// Live Bifrost availability from `/v1/models`; does not fall back to the legacy BEARS sidecar.
+    pub async fn list_available_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
         if self.llm_api_url.is_empty() {
             return Err(DenError::System(
                 "Bifrost /v1 API is not configured (set LLM_API_URL or BIFROST_BASE_URL)"

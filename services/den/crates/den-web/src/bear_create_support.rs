@@ -270,7 +270,7 @@ pub async fn model_catalog_select_context(
         return (false, Vec::new(), None);
     }
 
-    match state.bifrost.list_models().await {
+    match state.bifrost.list_available_models().await {
         Ok(models) if models.is_empty() => (
             true,
             Vec::new(),
@@ -295,7 +295,7 @@ pub async fn model_catalog_select_context(
             true,
             Vec::new(),
             Some(format!(
-                "Could not load available models from Bifrost: {e}."
+                "Could not load live models from Bifrost /v1/models: {e}."
             )),
         ),
     }

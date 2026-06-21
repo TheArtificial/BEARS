@@ -295,9 +295,12 @@ async fn gather_status(state: &AppState) -> StatusPayload {
 }
 
 async fn gather_model_registry_status(state: &AppState) -> ModelRegistryStatus {
-    match state.bifrost.list_models().await {
+    match state.bifrost.list_available_models().await {
         Ok(models) => {
-            let handles = models.into_iter().map(|model| model.handle).collect::<Vec<_>>();
+            let handles = models
+                .into_iter()
+                .map(|model| model.handle)
+                .collect::<Vec<_>>();
             ModelRegistryStatus {
                 report: model_registry::gateway_compatibility_report(handles),
                 gateway_error: None,
