@@ -283,7 +283,7 @@ pub async fn model_catalog_select_context(
                     den_runtime::llm::model_registry::model_option_for_available_handle(
                         &model.handle,
                         model.display_name.as_deref(),
-                        Some(model.context_window),
+                        (model.context_window > 0).then_some(model.context_window),
                         model.max_output_tokens,
                     )
                 })
