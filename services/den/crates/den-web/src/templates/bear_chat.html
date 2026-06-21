@@ -27,6 +27,14 @@ block head %} {{ super() }}
                 aria-label="Conversations"
             ></ul>
         </div>
+        <label class="form-hint" for="den-model-select">Model</label>
+        <select
+            id="den-model-select"
+            class="den-model-select"
+            aria-label="Conversation model"
+        >
+            <option value="auto">Auto / stance default</option>
+        </select>
         <a class="button-link" href="/bear/{{ bear_slug | e }}/overview"
             >Overview</a
         >
@@ -57,6 +65,7 @@ block head %} {{ super() }}
     var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
     var DEN_CONVERSATIONS = [];
     var DEN_PENDING_CONVERSATION = null;
+    var DEN_MODEL_OPTIONS = [];
     /**
      * Show raw `<system-reminder>…</system-reminder>` in the chat only when
      * `?debug=true` or `?debug=verbose` (no UI toggle).
@@ -74,6 +83,102 @@ block head %} {{ super() }}
     function showErr(msg) {
         errEl.textContent = msg;
         errEl.hidden = false;
+    }
+
+    function currentModelSelect() {
+        return document.getElementById("den-model-select");
+    }
+
+    function renderModelSelector(data) {
+        var select = currentModelSelect();
+        if (!select || !data) return;
+        DEN_MODEL_OPTIONS = data.model_options || [];
+        var mode = data.selection_mode === "explicit" ? "explicit" : "auto";
+        var selected =
+            mode === "explicit"
+                ? data.selected_model || data.requested_model || ""
+                : "auto";
+        var html = [
+            '<option value="auto">Auto / stance default (' +
+                escapeHtml(data.effective_model || "default") +
+                ")</option>",
+        ];
+        for (var i = 0; i < DEN_MODEL_OPTIONS.length; i++) {
+            var m = DEN_MODEL_OPTIONS[i];
+            if (!m || !m.handle) continue;
+            html.push(
+                '<option value="' +
+                    escapeHtml(m.handle) +
+                    '">' +
+                    escapeHtml(m.label || m.handle) +
+                    "</option>",
+            );
+        }
+        select.innerHTML = html.join("");
+        select.value = selected;
+        if (select.value !== selected) select.value = "auto";
+        select.title =
+            mode === "explicit"
+                ? "Conversation model: " + selected
+                : "Using stance/Bear default: " + (data.effective_model || "");
+        select.disabled = String(CONVERSATION_ID || "").indexOf("new-") === 0;
+    }
+
+    function loadConversationModel() {
+        if (!BEAR_ID) return Promise.resolve();
+        var params = new URLSearchParams();
+        params.set("bear_id", BEAR_ID);
+        params.set("conversation_id", CONVERSATION_ID || "default");
+        return fetch("/v1/chat/model?" + params.toString(), {
+            credentials: "same-origin",
+        })
+            .then(function (response) {
+                if (!response.ok)
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                return response.json();
+            })
+            .then(renderModelSelector)
+            .catch(function (err) {
+                showErr(String(err.message || err));
+            });
+    }
+
+    function saveConversationModel(value) {
+        if (
+            !BEAR_ID ||
+            !CONVERSATION_ID ||
+            String(CONVERSATION_ID).indexOf("new-") === 0
+        )
+            return;
+        var body = {
+            bear_id: BEAR_ID,
+            conversation_id: CONVERSATION_ID,
+            selection_mode: value === "auto" ? "auto" : "explicit",
+            model: value === "auto" ? null : value,
+        };
+        return fetch("/v1/chat/model", {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify(body),
+        })
+            .then(function (response) {
+                if (!response.ok)
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                return response.json();
+            })
+            .then(renderModelSelector)
+            .catch(function (err) {
+                showErr(String(err.message || err));
+                loadConversationModel();
+            });
     }
 
     function denLoginRedirectUrl() {
@@ -943,6 +1048,7 @@ block head %} {{ super() }}
                             PREFERRED_CONVERSATION_ID = resolvedId;
                             syncConversationUrl(resolvedId);
                             renderConversationTabs();
+                            loadConversationModel();
                         }
                         return;
                     }
@@ -1141,6 +1247,7 @@ block head %} {{ super() }}
         PREFERRED_CONVERSATION_ID = CONVERSATION_ID;
         syncConversationUrl(CONVERSATION_ID);
         renderConversationTabs();
+        loadConversationModel();
         if (shouldRemount !== false) remountDeepChat();
     }
 
@@ -1383,7 +1490,9 @@ block head %} {{ super() }}
                 CONVERSATION_ID = pick;
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
-                return "ok";
+                return loadConversationModel().then(function () {
+                    return "ok";
+                });
             })
             .catch(function (err) {
                 showErr(String(err.message || err));
@@ -1391,11 +1500,19 @@ block head %} {{ super() }}
                 CONVERSATION_ID = "default";
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
-                return "ok";
+                return loadConversationModel().then(function () {
+                    return "ok";
+                });
             });
     }
 
     function boot() {
+        var modelSelect = currentModelSelect();
+        if (modelSelect) {
+            modelSelect.addEventListener("change", function () {
+                saveConversationModel(modelSelect.value || "auto");
+            });
+        }
         /**
          * Run `loadConversations()` before `configureDenChat()` so `CONVERSATION_ID` and
          * `#den-conv` match `?conversation_id=` and `loadHistory` uses the same id (avoids

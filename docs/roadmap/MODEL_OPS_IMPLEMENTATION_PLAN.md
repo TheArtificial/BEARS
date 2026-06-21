@@ -597,17 +597,23 @@ model_metadata_overrides (
 
 Do not add this until we confirm live Bifrost catalog queries are insufficient for admin/runtime needs.
 
-### Phase 2 — Conversation model state
+### Phase 2 — Conversation model state ✅/partial
 
 - Add `conversation_model_state` table.
 - Add resolver logic for conversation sticky selection.
-- Add web/ACP model selection controls.
-- Display selected and actual model to clients.
+- Add web chat model selection controls.
+- Display selected/effective conversation model in the web chat toolbar.
 
 Exit:
 
-- changing model in one conversation affects subsequent turns only for that conversation,
+- changing model in one web conversation affects subsequent turns only for that conversation,
 - selected model survives page reload/session continuation.
+
+Remaining:
+
+- ACP model selection/display controls,
+- actual model/fallback reporting (Phase 3),
+- explicit auto-mode heuristics beyond inherit stance/Bear default (Phase 6).
 
 ### Phase 3 — Actual model and usage capture
 

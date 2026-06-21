@@ -13,14 +13,14 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        NativeToolDispatchMode, SessionTrackingStream, agent_loop_session_key,
-        assemble_native_turn_for_bear, record_approval_decision, run_agent_step_stream,
+        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
+        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
+        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
     },
     bears::BearProfile,
     conversation_events::{
-        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
-        persist_canonical_conversation_record,
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, ConversationEventProvenance,
     },
     conversation_persistence,
     llm::{ChatMessage, ChatToolCall, LlmClient},
@@ -32,7 +32,7 @@ use crate::{
         RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
     },
     turn_runner::{
-        TurnContinueRequest, TurnStartRequest, materialize_runtime_conversation_if_needed,
+        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
     },
 };
 use den_core::DenError;
@@ -282,13 +282,33 @@ async fn build_session(
     let tools =
         merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
     let session_key = agent_loop_session_key(conversation_id, acp_session_id);
-    let model = crate::bears::db::resolve_model_for_profile(
+    let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
-        &bear,
-        profile.profile,
-        llm.default_model(),
+        bear.id,
+        conversation_id,
     )
-    .await?;
+    .await?
+    {
+        Some(conversation) => {
+            conversation_persistence::resolve_conversation_selected_model(
+                deps.pool,
+                conversation.id,
+            )
+            .await?
+        }
+        None => None,
+    };
+    let model = if let Some(model) = conversation_model {
+        model
+    } else {
+        crate::bears::db::resolve_model_for_profile(
+            deps.pool,
+            &bear,
+            profile.profile,
+            llm.default_model(),
+        )
+        .await?
+    };
     let model = llm.resolve_model(Some(&model));
     let session = AgentLoopSession {
         session_key,

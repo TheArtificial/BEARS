@@ -1,6 +1,6 @@
 use den_core::DenError;
 use serde::Serialize;
-use sqlx::{PgPool, Row};
+use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
 
 use crate::conversation_message_types::{
@@ -16,6 +16,19 @@ pub struct ConversationRecord {
     pub source_acp_session_id: Option<String>,
     pub current_title: Option<String>,
     pub updated_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversationModelState {
+    pub conversation_id: Uuid,
+    pub selection_mode: String,
+    pub requested_model: Option<String>,
+    pub selected_model: Option<String>,
+    pub selected_reason: Option<String>,
+    pub actual_last_model: Option<String>,
+    pub actual_last_provider: Option<String>,
+    pub fallback_count: i32,
+    pub metadata_json: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
@@ -691,4 +704,122 @@ mod tests {
         assert!(workflow.to_model_transcript_message().is_none());
         assert!(workflow.to_user_history_transcript_message().is_none());
     }
+}
+
+pub async fn get_conversation_model_state(
+    pool: &PgPool,
+    conversation_id: Uuid,
+) -> Result<Option<ConversationModelState>, DenError> {
+    let row = sqlx::query(
+        r#"
+        SELECT conversation_id, selection_mode, requested_model, selected_model,
+               selected_reason, actual_last_model, actual_last_provider,
+               fallback_count, metadata_json
+        FROM conversation_model_state
+        WHERE conversation_id = $1
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("get conversation model state: {err}")))?;
+
+    row.map(decode_conversation_model_state).transpose()
+}
+
+pub async fn set_conversation_model_state(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    selection_mode: &str,
+    requested_model: Option<&str>,
+    selected_model: Option<&str>,
+    selected_reason: Option<&str>,
+) -> Result<ConversationModelState, DenError> {
+    let mode = match selection_mode.trim() {
+        "explicit" => "explicit",
+        _ => "auto",
+    };
+    let requested_model = requested_model.map(str::trim).filter(|s| !s.is_empty());
+    let selected_model = selected_model.map(str::trim).filter(|s| !s.is_empty());
+    let selected_reason = selected_reason.map(str::trim).filter(|s| !s.is_empty());
+    let row = sqlx::query(
+        r#"
+        INSERT INTO conversation_model_state (
+            conversation_id, selection_mode, requested_model, selected_model,
+            selected_reason, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (conversation_id) DO UPDATE
+        SET selection_mode = EXCLUDED.selection_mode,
+            requested_model = EXCLUDED.requested_model,
+            selected_model = EXCLUDED.selected_model,
+            selected_reason = EXCLUDED.selected_reason,
+            updated_at = NOW()
+        RETURNING conversation_id, selection_mode, requested_model, selected_model,
+                  selected_reason, actual_last_model, actual_last_provider,
+                  fallback_count, metadata_json
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(mode)
+    .bind(requested_model)
+    .bind(selected_model)
+    .bind(selected_reason)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("set conversation model state: {err}")))?;
+    decode_conversation_model_state(row)
+}
+
+pub async fn resolve_conversation_selected_model(
+    pool: &PgPool,
+    conversation_id: Uuid,
+) -> Result<Option<String>, DenError> {
+    let state = get_conversation_model_state(pool, conversation_id).await?;
+    Ok(state.and_then(|state| {
+        if state.selection_mode == "explicit" {
+            state
+                .selected_model
+                .or(state.requested_model)
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty())
+        } else {
+            state
+                .selected_model
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty())
+        }
+    }))
+}
+
+fn decode_conversation_model_state(row: sqlx::postgres::PgRow) -> Result<ConversationModelState, DenError> {
+    let metadata_json: Json<serde_json::Value> = row
+        .try_get("metadata_json")
+        .map_err(|err| DenError::Database(format!("decode conversation model metadata: {err}")))?;
+    Ok(ConversationModelState {
+        conversation_id: row
+            .try_get("conversation_id")
+            .map_err(|err| DenError::Database(format!("decode conversation model conversation_id: {err}")))?,
+        selection_mode: row
+            .try_get("selection_mode")
+            .map_err(|err| DenError::Database(format!("decode conversation model selection_mode: {err}")))?,
+        requested_model: row
+            .try_get("requested_model")
+            .map_err(|err| DenError::Database(format!("decode conversation model requested_model: {err}")))?,
+        selected_model: row
+            .try_get("selected_model")
+            .map_err(|err| DenError::Database(format!("decode conversation model selected_model: {err}")))?,
+        selected_reason: row
+            .try_get("selected_reason")
+            .map_err(|err| DenError::Database(format!("decode conversation model selected_reason: {err}")))?,
+        actual_last_model: row
+            .try_get("actual_last_model")
+            .map_err(|err| DenError::Database(format!("decode conversation model actual_last_model: {err}")))?,
+        actual_last_provider: row
+            .try_get("actual_last_provider")
+            .map_err(|err| DenError::Database(format!("decode conversation model actual_last_provider: {err}")))?,
+        fallback_count: row
+            .try_get("fallback_count")
+            .map_err(|err| DenError::Database(format!("decode conversation model fallback_count: {err}")))?,
+        metadata_json: metadata_json.0,
+    })
 }

@@ -33,6 +33,8 @@ use crate::{
     web::AppState,
     web_chat_runtime::WebChatRuntimeRequest,
 };
+use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
+use den_runtime::agent_assist::ModelOption;
 use den_runtime::{
     acp_sessions, archived_conversations,
     bears::{
@@ -51,6 +53,7 @@ pub fn router() -> Router<AppState> {
             patch(chat_conversation_patch),
         )
         .route("/chat/history", get(chat_history))
+        .route("/chat/model", get(chat_model_get).patch(chat_model_patch))
         .route("/chat/send", post(chat_send))
         .route_layer(login_required!(Backend, login_url = "/login"))
 }
@@ -151,6 +154,34 @@ pub struct ChatHistoryResponse {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatModelQuery {
+    pub bear_id: Uuid,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatModelPatchBody {
+    pub bear_id: Uuid,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub selection_mode: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ChatModelResponse {
+    pub selection_mode: String,
+    pub requested_model: Option<String>,
+    pub selected_model: Option<String>,
+    pub effective_model: String,
+    pub source: String,
+    pub model_options: Vec<ModelOption>,
 }
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
@@ -551,6 +582,187 @@ async fn web_chat_workboard_prompt_context(
         )
         .await?;
     Ok(work_plans::render_workboard_prompt_context(&plans))
+}
+
+
+fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
+    let requested = raw.trim();
+    if requested.is_empty() {
+        return false;
+    }
+    let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+    options.iter().any(|model| {
+        if model.handle == requested {
+            return true;
+        }
+        let Some(resolved) = requested_resolved else {
+            return false;
+        };
+        resolved == model.handle
+            || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+                == Some(resolved)
+    })
+}
+
+async fn chat_model_response_for(
+    state: &AppState,
+    user_id: i32,
+    bear_id: Uuid,
+    conversation_id: Option<&str>,
+) -> Result<ChatModelResponse, CustomError> {
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let bear = bears_db::get_bear(state.sqlx_pool(), bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let conv_id = normalize_client_conversation_id(conversation_id)?;
+    let (configured, model_options, fetch_error) = model_catalog_select_context(state).await;
+    if !configured || model_options.is_empty() {
+        return Err(CustomError::System(
+            fetch_error.unwrap_or_else(|| "No Bifrost models are available.".to_string()),
+        ));
+    }
+
+    let base_model = bears_db::resolve_model_for_profile(
+        state.sqlx_pool(),
+        &bear,
+        BearProfile::Chat,
+        state.config.default_llm_model.as_str(),
+    )
+    .await?;
+
+    if conv_id.starts_with("new-") {
+        return Ok(ChatModelResponse {
+            selection_mode: "auto".to_string(),
+            requested_model: None,
+            selected_model: None,
+            effective_model: base_model,
+            source: "stance_or_bear_default".to_string(),
+            model_options,
+        });
+    }
+
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    let state_row = conversation_persistence::get_conversation_model_state(
+        state.sqlx_pool(),
+        conversation.id,
+    )
+    .await?;
+    let effective = conversation_persistence::resolve_conversation_selected_model(
+        state.sqlx_pool(),
+        conversation.id,
+    )
+    .await?
+    .unwrap_or(base_model);
+    Ok(ChatModelResponse {
+        selection_mode: state_row
+            .as_ref()
+            .map(|row| row.selection_mode.clone())
+            .unwrap_or_else(|| "auto".to_string()),
+        requested_model: state_row.as_ref().and_then(|row| row.requested_model.clone()),
+        selected_model: state_row.as_ref().and_then(|row| row.selected_model.clone()),
+        effective_model: effective,
+        source: if state_row.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
+            "conversation_explicit".to_string()
+        } else {
+            "stance_or_bear_default".to_string()
+        },
+        model_options,
+    })
+}
+
+async fn chat_model_get(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Query(q): Query<ChatModelQuery>,
+) -> Result<Json<ChatModelResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    Ok(Json(
+        chat_model_response_for(&state, user_id, q.bear_id, q.conversation_id.as_deref()).await?,
+    ))
+}
+
+async fn chat_model_patch(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Json(body): Json<ChatModelPatchBody>,
+) -> Result<Json<ChatModelResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
+    if conv_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "choose a model after the conversation is created".to_string(),
+        ));
+    }
+    let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
+    if !configured || model_options.is_empty() {
+        return Err(CustomError::System(
+            fetch_error.unwrap_or_else(|| "No Bifrost models are available.".to_string()),
+        ));
+    }
+    let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
+    let (selection_mode, requested_model, selected_model, reason) = if mode == "explicit" {
+        let raw = body.model.as_deref().unwrap_or("").trim();
+        if raw.is_empty() || !chat_model_available(&model_options, raw) {
+            return Err(CustomError::ValidationError(
+                "Pick a model currently available in Bifrost.".to_string(),
+            ));
+        }
+        let canonical = canonical_default_model_handle(raw).unwrap_or_else(|| raw.to_string());
+        ("explicit", Some(canonical.clone()), Some(canonical), "human_selected")
+    } else {
+        ("auto", None, None, "inherit_stance_or_bear_default")
+    };
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    conversation_persistence::set_conversation_model_state(
+        state.sqlx_pool(),
+        conversation.id,
+        selection_mode,
+        requested_model.as_deref(),
+        selected_model.as_deref(),
+        Some(reason),
+    )
+    .await?;
+    Ok(Json(
+        chat_model_response_for(&state, user_id, body.bear_id, Some(&conv_id)).await?,
+    ))
 }
 
 async fn chat_send(
