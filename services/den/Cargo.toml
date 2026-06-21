@@ -15,7 +15,7 @@ resolver = "2"
 members = ["crates/den-core", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-acp", "crates/den-api", "crates/den-web", "crates/den-bearwire"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 
 [lints]
 workspace = true
