@@ -12,6 +12,14 @@ ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app
 RUN apk add --no-cache clang lld musl-dev git
 COPY . .
+# Normalize source file timestamps to the HEAD commit time so Cargo fingerprints
+# are stable across builds from different directories (Coolify builds twice: once
+# from /artifacts/ and once from /data/coolify/applications/). Without this,
+# fresh mtimes from COPY cause Cargo to treat all files as changed and recompile
+# everything on the second pass even though the content is identical.
+RUN MTIME=$(git log -1 --format=%ct HEAD) && \
+    find . -not -path "*/target/*" -not -path "./.git/*" -type f \
+    -exec touch -d "@${MTIME}" {} +
 # Registry and git caches avoid re-downloading crates.
 # Target cache preserves Cargo's incremental compilation state between deployments:
 # Cargo's fingerprint system (content hashes) determines what actually needs recompiling,
