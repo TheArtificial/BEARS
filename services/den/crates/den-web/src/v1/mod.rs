@@ -18,13 +18,9 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
-        docket::{DocketService, PgDocketService},
-        tools::{
-            arguments::DenToolChannelContext, constants::DEN_CONVERSATION_SET_TITLE,
-            session::DenToolInvocationContext,
+            docket::{DocketService, PgDocketService},
+            work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
         },
-        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
-    },
     errors::CustomError,
     observability::{
         chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
@@ -35,7 +31,7 @@ use crate::{
 };
 use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
 use den_llm::ModelOption;
-use den_runtime::{acp_sessions, archived_conversations};
+use den_service::{acp_sessions, archived_conversations};
 use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
@@ -804,12 +800,7 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
 
 struct ConversationTitleRequest<'a> {
     bear: &'a den_service::bears::Bear,
-    chat_agent_id: &'a str,
-    user_id: i32,
-    username: Option<&'a str>,
-    membership_role: Option<&'a str>,
     conv_id: &'a str,
-    session_id: &'a str,
     message: &'a str,
     request_id: Uuid,
 }
@@ -819,63 +810,30 @@ async fn maybe_handle_direct_set_conversation_title(
     request: ConversationTitleRequest<'_>,
 ) -> Result<Option<Response>, CustomError> {
     let ConversationTitleRequest {
-        bear,
-        chat_agent_id,
-        user_id,
-        username,
-        membership_role,
-        conv_id,
-        session_id,
-        message,
-        request_id,
-    } = request;
+            bear,
+            conv_id,
+            message,
+            request_id,
+        } = request;
     let Some(title) = parse_set_conversation_title_request(message) else {
         return Ok(None);
     };
-    let context = DenToolInvocationContext {
-        bear_id: bear.id,
-        bear_slug: bear.slug.clone(),
-        binding_id: chat_agent_id.to_string(),
-        profile: Some(BearProfile::Chat),
-        user_id,
-        username: username.map(str::to_string),
-        membership_role: membership_role.map(str::to_string),
-        conversation_id: conv_id.to_string(),
-        session_id: session_id.to_string(),
-        acp_session_id: None,
-        conversation_selection: Some(conv_id.to_string()),
-        runtime_target: Some(conv_id.to_string()),
-        workspace_roots: Vec::new(),
-        session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        request_id: Some(request_id.to_string()),
-        channel: DenToolChannelContext {
-            family: Some("browser_chat".to_string()),
-            client: Some("den_web".to_string()),
-            protocol: Some("den_chat".to_string()),
-        },
-    };
-    let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
-        CustomError::System("builtin Den tool runtime is not initialized".to_string())
-    })?;
-    let value = invoker
-        .invoke(
+    let title = title.chars().take(120).collect::<String>();
+        conversation_persistence::set_conversation_title(
             state.sqlx_pool(),
-            state.config.as_ref(),
-            &stores,
-            DEN_CONVERSATION_SET_TITLE,
-            serde_json::json!({ "title": title }),
-            context,
+            bear.id,
+            conv_id,
+            &title,
         )
-        .await
-        .map_err(CustomError::from)?;
-    let text = value
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Conversation title updated.");
+        .await?;
+        let _ = acp_sessions::set_title_for_bear_conversation(
+            state.sqlx_pool(),
+            bear.id,
+            conv_id,
+            &title,
+        )
+        .await?;
+        let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
@@ -904,13 +862,28 @@ fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, Cu
         .map_err(|err| CustomError::System(format!("response build: {err}")))
 }
 
+fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "list capabilities",
+        "list your capabilities",
+        "list tools",
+        "list your tools",
+        "what tools",
+        "what capabilities",
+        "which tools",
+        "which capabilities",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
 async fn maybe_handle_direct_capabilities_list(
     pool: &sqlx::PgPool,
     canonical_conversation_id: Uuid,
     message: &str,
     request_id: Uuid,
 ) -> Result<Option<Response>, CustomError> {
-    if !den_runtime::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
+    if !chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
     }
     let text = den_core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
@@ -997,13 +970,8 @@ async fn chat_send_native_inner(
         &state,
         ConversationTitleRequest {
             bear: &bear,
-            chat_agent_id: chat_binding_id,
-            user_id,
-            username: Some(username),
-            membership_role: membership_role.as_deref(),
-            conv_id: &conv_id,
-            session_id: &session_id,
-            message: body.message.trim(),
+                        conv_id: &conv_id,
+                        message: body.message.trim(),
             request_id,
         },
     )

@@ -330,7 +330,7 @@ async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
 /// failure that would 503 the whole stack. Idempotently ensures the recall collection so the
 /// status surface self-heals startup races against the `recall` compose profile.
 async fn check_qdrant(config: &Config) -> HealthCheck {
-    let Some(recall) = den_runtime::recall::QdrantRecall::from_config(config) else {
+    let Some(recall) = den_service::recall::QdrantRecall::from_config(config) else {
         return HealthCheck {
             id: "qdrant",
             label: "Qdrant recall",

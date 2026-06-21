@@ -18,6 +18,7 @@ test-util = []
 [dependencies]
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
+den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }

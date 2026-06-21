@@ -34,6 +34,63 @@ use tower_sessions_sqlx_store::PostgresStore;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+#[derive(Debug, Default)]
+struct NativeWebChatRuntime;
+
+impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
+    fn stream_chat(
+        &self,
+        state: &web::AppState,
+        request: web::web_chat_runtime::WebChatRuntimeRequest,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<web::web_chat_runtime::WebChatRuntimeStream, web::errors::CustomError>,
+    > {
+        let pool = state.sqlx_pool().clone();
+        let config = state.config.clone();
+        Box::pin(async move {
+            let stores = den_runtime::memory::MemoryStoreManager::new(config.as_ref());
+            let deps = den_runtime::native_runtime::NativeRuntimeDeps {
+                pool: &pool,
+                config: config.as_ref(),
+                stores: &stores,
+            };
+            let tool_invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
+                web::errors::CustomError::System(
+                    "builtin Den tool runtime is not initialized".to_string(),
+                )
+            })?;
+            let runtime_stream =
+                den_runtime::native_runtime::start_native_web_chat_turn_event_stream(
+                    den_runtime::native_runtime::NativeWebChatTurnParams {
+                        deps: &deps,
+                        bear_id: request.bear_id,
+                        bear_slug: &request.bear_slug,
+                        chat_binding_id: &request.chat_binding_id,
+                        user_id: request.user_id,
+                        username: request.username.as_deref(),
+                        membership_role: request.membership_role.as_deref(),
+                        conversation_id: &request.conversation_id,
+                        session_id: &request.session_id,
+                        prompt: &request.prompt,
+                        request_id: request.request_id,
+                        tool_invoker,
+                    },
+                )
+                .await?;
+
+            let stream = futures::StreamExt::map(runtime_stream, |item| {
+                item.map_err(web::errors::CustomError::from)
+            });
+            Ok(Box::pin(stream) as web::web_chat_runtime::WebChatRuntimeStream)
+        })
+    }
+}
+
+fn native_web_chat_runtime() -> Arc<dyn web::web_chat_runtime::WebChatRuntime> {
+    Arc::new(NativeWebChatRuntime)
+}
+
 /// Run all enabled services until a shutdown signal (Ctrl+C, or SIGTERM on Unix).
 pub async fn run() -> Result<(), StartupError> {
     let mut task_set = JoinSet::new();
@@ -191,12 +248,17 @@ pub async fn run() -> Result<(), StartupError> {
         })?;
 
         let config_web = config.clone();
-        let web_app = web::server_with_state(sqlx_pool.clone(), session_store.clone(), config_web)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create web application: {}", e);
-                std::io::Error::other(e.to_string())
-            })?;
+        let web_app = web::server_with_state_and_runtime(
+            sqlx_pool.clone(),
+            session_store.clone(),
+            config_web,
+            native_web_chat_runtime(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create web application: {}", e);
+            std::io::Error::other(e.to_string())
+        })?;
 
         task_set.spawn(async move {
             tracing::info!("Web service started successfully");

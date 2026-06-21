@@ -26,10 +26,8 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_runtime::{
-    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
-    prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
-};
+use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
+use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::{
     bears::{
         context_profile_from_json, db as bears_db,

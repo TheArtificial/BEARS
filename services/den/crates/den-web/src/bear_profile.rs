@@ -174,9 +174,9 @@ pub(crate) async fn build_role_detail_view(
     let role_row = BearRoleViewRow::from_agent(agent.clone(), role);
 
     let (memory_status_label, memory_file_count) = {
-        let manager = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
+        let manager = den_memory::MemoryStoreManager::new(state.config.as_ref());
         let store = manager.store_for_bear(bear.id).await?;
-        match den_runtime::memory::tools::sqlite_memory_status(&store, role.as_str()).await {
+        match den_memory::tools::sqlite_memory_status(&store, role.as_str()).await {
             Ok(status) => {
                 let available = status
                     .get("ok")

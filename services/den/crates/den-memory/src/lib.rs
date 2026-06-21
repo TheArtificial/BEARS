@@ -4,6 +4,7 @@
 //! depends only on `den-core`. Higher-level curation/tools live in `den`.
 
 pub mod access;
+pub mod admin_inspect;
 pub mod descriptors;
 pub mod entity;
 pub mod import;
@@ -17,11 +18,18 @@ mod records;
 pub mod reflection_outcomes;
 pub mod relations;
 pub mod resolver;
+pub mod tools;
 
 #[cfg(test)]
 mod test_support;
 
 pub use access::{record_visible, AccessContext};
+pub use admin_inspect::{
+    bear_memory_admin_stats, bear_sqlite_db_path, count_records_by_kind, count_records_by_profile,
+    get_memory_record_by_id, get_memory_record_detail, head_entry_count, list_all_logical_paths,
+    list_path_summaries, list_recent_memory_records, search_memory_records, BearMemoryAdminStats,
+    MemoryCountBucket, MemoryRecordDetail, PathSummary,
+};
 pub use descriptors::{EntityTrust, HandleStrength, RecallEffect, RelationClass, ResolutionState};
 pub use entity::{
     attach_handle, create_entity, detach_handle, find_entity_by_handle, get_entity, list_entities,

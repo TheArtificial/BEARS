@@ -21,7 +21,6 @@ production = [
     "den-protocol/production",
         "den-service/production",
         "den-http/production",
-    "den-runtime/production",
     "den-oauth/production",
 ]
 web-ui-fixtures = []
@@ -31,8 +30,8 @@ den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }
+den-memory = { path = "../den-memory" }
 den-http = { path = "../den-http" }
-den-runtime = { path = "../den-runtime" }
 den-docket = { path = "../den-docket" }
 den-oauth = { path = "../den-oauth" }
 ammonia = "4.1.1"

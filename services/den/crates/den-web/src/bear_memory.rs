@@ -26,24 +26,14 @@ use crate::{
     web::{self, AppState},
 };
 use den_service::bears::{db as bears_db, BearProfile};
-use den_runtime::{
-    memory::{
-        admin_inspect::{
-            bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
-            get_memory_record_detail, head_entry_count, list_path_summaries,
-            list_recent_memory_records, search_memory_records, PathSummary,
-        },
-        import_memfs_bundle,
-        store::{
-            self, list_relations_for_entity, list_relations_for_source, MemoryRecordRow,
-            MemoryStoreManager,
-        },
-        MemfsImportOptions,
-    },
-    memory_proposals::{self, CreateMemoryProposal},
-    pair_reflection,
-    recall::{registry as recall_registry, semantic_search_for_bear},
+use den_memory::{
+    self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
+    get_memory_record_detail, head_entry_count, import_memfs_bundle, list_path_summaries,
+    list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
+    search_memory_records, MemfsImportOptions, MemoryRecordRow, MemoryStoreManager, PathSummary,
 };
+use den_service::{memory_proposals::{self, CreateMemoryProposal}, pair_reflection};
+use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
 
 use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
@@ -313,7 +303,7 @@ async fn import_staged_bundle(
     state: &AppState,
     bear_id: Uuid,
     bundle_path: &FsPath,
-) -> Result<den_runtime::memory::MemfsImportReport, CustomError> {
+) -> Result<den_memory::MemfsImportReport, CustomError> {
     let stores = MemoryStoreManager::new(state.config.as_ref());
     let store = stores.store_for_bear(bear_id).await?;
     let record_count: i64 =

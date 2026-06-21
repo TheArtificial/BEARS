@@ -3,6 +3,7 @@
 //! Holds shared configuration, domain types, and errors with third-party
 //! dependencies only. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
+pub mod client_tools;
 pub mod config;
 pub mod error;
 pub mod governance;

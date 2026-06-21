@@ -849,6 +849,7 @@ name = "den-service"
 version = "0.1.2"
 dependencies = [
  "den-core",
+ "den-llm",
  "den-memory",
  "den-protocol",
  "reqwest",
@@ -875,6 +876,7 @@ dependencies = [
  "den-docket",
  "den-http",
  "den-llm",
+ "den-memory",
  "den-oauth",
  "den-protocol",
  "den-runtime",

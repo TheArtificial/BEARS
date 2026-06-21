@@ -33,11 +33,9 @@ use crate::{
         render_template, AppState,
     },
 };
-use den_runtime::{
-    acp_sessions,
-    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
-    memory::tools::sqlite_collect_role_logical_paths,
-};
+use den_core::client_tools::{client_tool_policy_json_for_provider, ClientToolName};
+use den_memory::tools::sqlite_collect_role_logical_paths;
+use den_service::acp_sessions;
 use den_service::bears::{
     db as bears_db,
     db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -362,10 +360,10 @@ struct BearWorkSurfaceRow {
 }
 
 async fn read_native_memory_content(
-    store: &den_runtime::memory::BearMemoryStore,
+    store: &den_memory::BearMemoryStore,
     logical_path: &str,
 ) -> Result<Option<String>, CustomError> {
-    let value = den_runtime::memory::tools::sqlite_memory_read(store, logical_path).await?;
+    let value = den_memory::tools::sqlite_memory_read(store, logical_path).await?;
     let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if !ok {
         return Ok(None);
@@ -419,7 +417,7 @@ async fn bear_work_surface_rows(
     bear_id: Uuid,
 ) -> Result<Vec<BearWorkSurfaceRow>, CustomError> {
     let mut rows = Vec::new();
-    let manager = den_runtime::memory::MemoryStoreManager::new(config);
+    let manager = den_memory::MemoryStoreManager::new(config);
     let store = manager.store_for_bear(bear_id).await?;
 
     let core_paths = sqlite_collect_role_logical_paths(&store, BearProfile::Pair.as_str()).await?;

@@ -127,7 +127,7 @@ impl AppState {
             sqlx_pool,
             template_env,
             config,
-            crate::web_chat_runtime::native_web_chat_runtime(),
+            crate::web_chat_runtime::unavailable_web_chat_runtime(),
         )
     }
 
@@ -194,6 +194,21 @@ pub async fn server_with_state(
     session_store: PostgresStore,
     config: Arc<Config>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    server_with_state_and_runtime(
+        sqlx_pool,
+        session_store,
+        config,
+        crate::web_chat_runtime::unavailable_web_chat_runtime(),
+    )
+    .await
+}
+
+pub async fn server_with_state_and_runtime(
+    sqlx_pool: PgPool,
+    session_store: PostgresStore,
+    config: Arc<Config>,
+    web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
+) -> Result<Router, Box<dyn std::error::Error>> {
     let mut env = Environment::new();
     env.add_filter("hexadecimal", filters::hexadecimal);
     env.add_filter("urlencode", filters::urlencode);
@@ -226,7 +241,7 @@ pub async fn server_with_state(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             bifrost,
-            web_chat_runtime: crate::web_chat_runtime::native_web_chat_runtime(),
+            web_chat_runtime,
             media,
         },
         session_store,

@@ -23,7 +23,7 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_runtime::memory::{
+use den_memory::{
     admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
 };
 use den_service::bears::{

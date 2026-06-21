@@ -5,7 +5,7 @@
 //! `email`), web policy, and ACP tokens live in den-http, work plans / docket in
 //! den-docket, and the tool descriptors/constants in den-core. Only S3 media
 //! storage (`s3`) is web-local. Builtin Den tool *execution* is injected via
-//! `den_runtime::native_runtime::tool_invoker`, so no tool composition lives here.
+//! The root `den` binary injects concrete runtime/tool composition, so no tool composition lives here.
 pub mod s3;
 
 pub use den_http::acp_tokens;
