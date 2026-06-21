@@ -185,9 +185,13 @@ Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) u
 - `/usr/local/cargo/registry` + `/usr/local/cargo/git` — downloaded crate sources.
 - `/app/target` — compiled artifacts.
 
-**What this buys you:** external dependencies are not re-downloaded or recompiled unless `Cargo.lock` changes. This was the main pain point and it is resolved by the `/app/target` mount.
+**External dependencies** are not re-downloaded or recompiled unless `Cargo.lock` changes — resolved by the `/app/target` mount.
 
-**What still recompiles:** the workspace crates (`den-core`, `den-web`, …) rebuild on every deploy. Cargo decides freshness from file **mtimes**, and Docker's `COPY` stamps a fresh mtime on every file each build, so Cargo treats all workspace sources as changed. The content-hash–based fix for this (`cargo`'s `checksum-freshness`) is still [unstable](https://github.com/rust-lang/cargo/issues/14136) and requires a nightly toolchain, so it is not used here while the build pins stable `RUST_VERSION`.
+**Workspace crates** (`den-core`, `den-web`, …) are kept incremental with Cargo's `-Z checksum-freshness`, which decides freshness from file **content hashes** instead of mtimes. Without it, Docker's `COPY` stamps a fresh mtime on every file each build and Cargo recompiles the entire workspace every deploy. The feature is still [unstable](https://github.com/rust-lang/cargo/issues/14136), so the build stage installs a **pinned nightly toolchain** (`RUST_NIGHTLY` in the [`Dockerfile`](Dockerfile)) purely to enable it; the runtime image is unaffected.
+
+> **Reverting to stable:** when `checksum-freshness` stabilizes, set `RUST_NIGHTLY=` (empty) and bump `RUST_VERSION` to the stable release that ships it. The build keeps working on stable with no `-Z` flag — it just loses the optimization until the stabilized config form is wired in.
+>
+> **Caveat:** files read by build scripts (e.g. `minijinja-embed` template embedding) still use mtimes even under `checksum-freshness`, so template-embedding edge crates (`den-web`, `den-http`, `den-api`) may still recompile when any file changes; the leaf crates get the full benefit.
 
 > **Avoiding the double build:** Coolify runs `docker compose build` then `docker compose up -d`, from two different directories. `bears-den` deliberately does **not** set `pull_policy: build` — that flag would force the `up` step to recompile the image a second time even though `build` already produced `bears-den:local`. Without it, `up` reuses the freshly built image. The `build` phase always runs first, so the reused image is always current. (The cache mounts are also shared across passes by `id=`, so even a forced second build reused dependencies — but the workspace would still recompile, which is what removing the flag avoids.)
 
@@ -210,7 +214,7 @@ After deploy:
 | ------- | ------------------------ |
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
 | **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Lower `CARGO_BUILD_JOBS`, add swap/RAM to the deploy host, or temporarily deploy a pinned versioned image from CI. |
-| **Whole workspace recompiles on every deploy** | Expected on stable Rust — see [Build caching](#build-caching-what-is-and-isnt-cached). External dependencies stay cached via the `/app/target` mount; only workspace crates rebuild, because Cargo freshness is mtime-based and `COPY` rewrites mtimes. |
+| **Whole workspace recompiles on every deploy** | Check the `build` log for `FRESHNESS=-Z checksum-freshness` and that the pinned nightly installed. If `RUST_NIGHTLY` is empty (reverted to stable) this is expected. See [Build caching](#build-caching-what-is-and-isnt-cached). |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |

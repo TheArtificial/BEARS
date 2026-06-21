@@ -11,19 +11,43 @@ ARG CARGO_BUILD_JOBS=2
 ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app
 RUN apk add --no-cache clang lld musl-dev git
+
+# Pinned nightly toolchain, used ONLY to enable `-Z checksum-freshness`, which
+# makes Cargo decide rebuilds from file content hashes instead of mtimes. Docker
+# `COPY` rewrites every file's mtime on each build, so on stable Cargo recompiles
+# the entire workspace on every deploy. With checksum freshness, unchanged crates
+# are reused. Tracking issue: https://github.com/rust-lang/cargo/issues/14136
+#
+# REVERT TO STABLE when the feature stabilizes: set RUST_NIGHTLY to an empty
+# string and bump RUST_VERSION to the stable release that ships it. The build
+# then runs on stable with no `-Z` flag and keeps working — it just loses the
+# optimization until the stabilized config form (`[unstable]`/`[build]`
+# checksum-freshness) is wired in. Pinned by date for reproducibility; bump
+# freely, any recent nightly carries the feature.
+#
+# Caveat: files read by build scripts (e.g. minijinja-embed template embedding)
+# still use mtimes even with checksum-freshness, so template-embedding edge
+# crates may still recompile; the leaf crates get the benefit.
+ARG RUST_NIGHTLY=nightly-2026-06-01
+RUN if [ -n "${RUST_NIGHTLY}" ]; then \
+        rustup toolchain install "${RUST_NIGHTLY}" --profile minimal && \
+        rustup default "${RUST_NIGHTLY}"; \
+    fi
+
 COPY . .
 # BuildKit cache mounts persist Cargo state across deployments:
 #   registry/git — avoid re-downloading crate sources.
-#   target       — preserve compiled artifacts. External dependencies are reused
-#                  across builds and only recompile when Cargo.lock changes;
-#                  workspace crates recompile each build because COPY rewrites
-#                  source mtimes (Cargo's freshness is mtime-based on stable).
+#   target       — preserve compiled artifacts. External dependencies recompile
+#                  only when Cargo.lock changes; with `-Z checksum-freshness`
+#                  (above) unchanged workspace crates are reused across builds
+#                  instead of recompiling on every COPY-rewritten mtime.
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
     --mount=type=cache,target=/app/target,id=den-build-target,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
-    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && \
-    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --locked --release --features=production --message-format=short && \
+    if [ -n "${RUST_NIGHTLY}" ]; then FRESHNESS="-Z checksum-freshness"; else FRESHNESS=""; fi && \
+    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && echo "FRESHNESS=${FRESHNESS:-<stable: none>}" && \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build ${FRESHNESS} --locked --release --features=production --message-format=short && \
     cp "./target/release/${APP_NAME}" /tmp/server
 
 FROM alpine:3.18 AS final
