@@ -178,6 +178,30 @@ New versions still apply migrations automatically on first container start again
 
 ---
 
+## Build caching (how the Dockerfile keeps rebuilds fast)
+
+Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) is tuned so that only crates whose source actually changed get recompiled.
+
+Two mechanisms work together:
+
+1. **BuildKit cache mounts** persist Cargo state on the deploy host between builds:
+   - `/usr/local/cargo/registry` + `/usr/local/cargo/git` — downloaded crate sources.
+   - `/app/target` — compiled artifacts for both external dependencies and workspace crates.
+
+   These survive across deployments (until `docker builder prune`), so external dependencies are not re-downloaded or recompiled unless `Cargo.lock` changes.
+
+2. **`cargo build --config build.checksum-freshness=true`** makes Cargo decide what is stale from file **content hashes** instead of mtimes.
+
+Why the second part matters: Cargo's default freshness check is mtime-based, but Docker's `COPY` rewrites every file's mtime on each build. Worse, Coolify builds **twice** from two different directories — `docker compose build` runs from `/artifacts/<id>/`, then `docker compose up -d` runs from `/data/coolify/applications/<id>/`. With mtime-based freshness, Cargo treats every file as changed on each pass and recompiles the entire workspace both times. Checksum freshness ignores mtimes entirely: identical content is reused, only genuinely changed crates rebuild, and the redundant second build becomes near-instant.
+
+The flag is set only on the `cargo build` command line (not in committed `.cargo/config.toml`) so local development tooling is unaffected.
+
+> **Verifying it works:** `build.checksum-freshness` was originally an unstable Cargo feature (`-Z checksum-freshness`). On a deploy, check the build log:
+> - **Working:** only changed crates show `Compiling …`, and the second build pass finishes in seconds.
+> - **Rejected** (`the 'checksum-freshness' feature is unstable`): the feature is not stable in the pinned `RUST_VERSION`. Either pin a nightly toolchain for the build stage, or drop the flag and accept full workspace recompiles (external dependencies stay cached either way via the `/app/target` mount).
+
+---
+
 ## Verify (without the shell)
 
 After deploy:
@@ -195,6 +219,7 @@ After deploy:
 | ------- | ------------------------ |
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
 | **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Lower `CARGO_BUILD_JOBS`, add swap/RAM to the deploy host, or temporarily deploy a pinned versioned image from CI. |
+| **Whole workspace recompiles on every deploy** | Expected to be avoided by `build.checksum-freshness` — see [Build caching](#build-caching-how-the-dockerfile-keeps-rebuilds-fast). If the build log reports the feature as unstable, it is not stabilized in the pinned `RUST_VERSION`; follow the fallback noted there. |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
