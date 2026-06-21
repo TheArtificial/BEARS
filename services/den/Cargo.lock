@@ -543,6 +543,7 @@ dependencies = [
  "den-memory",
  "den-protocol",
  "den-runtime",
+ "den-service",
  "den-web",
  "dotenvy",
  "futures",
@@ -598,6 +599,7 @@ dependencies = [
  "den-oauth",
  "den-protocol",
  "den-runtime",
+ "den-service",
  "dotenvy",
  "futures",
  "jsonwebtoken",
@@ -637,6 +639,7 @@ dependencies = [
  "den-oauth",
  "den-protocol",
  "den-runtime",
+ "den-service",
  "futures",
  "jsonwebtoken",
  "minijinja",
@@ -671,6 +674,7 @@ dependencies = [
  "den-http",
  "den-protocol",
  "den-runtime",
+ "den-service",
  "futures",
  "serde",
  "serde_json",
@@ -820,6 +824,7 @@ dependencies = [
  "den-llm",
  "den-memory",
  "den-protocol",
+ "den-service",
  "futures",
  "indexmap",
  "rand 0.9.4",
@@ -839,6 +844,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "den-service"
+version = "0.1.2"
+dependencies = [
+ "den-core",
+ "den-memory",
+ "den-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "den-web"
 version = "0.1.2"
 dependencies = [
@@ -853,6 +875,7 @@ dependencies = [
  "den-oauth",
  "den-protocol",
  "den-runtime",
+ "den-service",
  "dotenvy",
  "futures",
  "http-body-util",

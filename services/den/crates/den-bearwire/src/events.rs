@@ -104,7 +104,7 @@ mod tests {
         DenState::new(
             pool,
             config.clone(),
-            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
             den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         )
     }

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use den_runtime::DenState;
+use den_service::DenState;
 
 pub(crate) mod client;
 pub(crate) mod resource;

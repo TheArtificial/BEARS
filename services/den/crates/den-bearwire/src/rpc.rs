@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
-use den_runtime::DenState;
+use den_service::DenState;
 
 use crate::methods;
 

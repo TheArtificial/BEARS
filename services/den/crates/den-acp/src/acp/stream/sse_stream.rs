@@ -1029,9 +1029,9 @@ impl Stream for AcpRuntimeSseStream {
                         outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
                         "ACP starting runtime continuation for queued tool result"
                     );
-                    let prepared_continuation = match den_runtime::tool_turns::ToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
+                    let prepared_continuation = match den_service::tool_turns::ToolTurnCoordinator::prepare_runtime_continuation(&tool_result) {
                         Ok(prepared) => prepared,
-                        Err(den_runtime::tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
+                        Err(den_service::tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
                             display_tool_name,
                         }) => {
                             this.pending.push_back(gateway_event_to_adapter_sse(

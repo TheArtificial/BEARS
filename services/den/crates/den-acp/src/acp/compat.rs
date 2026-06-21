@@ -6,7 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::acp::AdapterContract;
-use den_runtime::tool_turns::ToolResultRequest;
+use den_service::tool_turns::ToolResultRequest;
 
 pub(super) const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 pub(super) const BEARS_ACP_ADAPTER_CONTRACT_CURRENT: u32 = 1;

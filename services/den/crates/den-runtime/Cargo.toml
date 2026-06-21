@@ -21,6 +21,7 @@ test-util = []
 [dependencies]
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
+den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
 den-docket = { path = "../den-docket" }

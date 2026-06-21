@@ -1,7 +1,7 @@
 use crate::acp::stream::mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence;
 use crate::acp::stream::support::AcpStreamDiagnostics;
 use crate::acp::AcpStreamContext;
-use den_runtime::tool_turns::ToolTurnCoordinator;
+use den_service::tool_turns::ToolTurnCoordinator;
 use den_runtime::gateway_events::GatewayEvent;
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};

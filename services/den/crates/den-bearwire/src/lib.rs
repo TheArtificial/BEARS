@@ -1,5 +1,5 @@
 use axum::{routing::{get, post}, Router};
-use den_runtime::DenState;
+use den_service::DenState;
 
 mod auth;
 mod events;

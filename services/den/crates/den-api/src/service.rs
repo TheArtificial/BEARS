@@ -34,7 +34,7 @@ use std::sync::Arc;
 // `DenState` lives in `den-runtime` (below every HTTP edge) per ADR-0043, so the
 // JSON/REST edge no longer depends on the ACP edge for shared state. Re-exported
 // so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
-pub use den_runtime::DenState;
+pub use den_service::DenState;
 
 async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, StatusCode> {
     sqlx::query_scalar::<_, i32>("SELECT 1")

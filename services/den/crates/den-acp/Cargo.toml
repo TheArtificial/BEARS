@@ -16,11 +16,12 @@ edition = "2021"
 workspace = true
 
 [features]
-production = ["den-core/production", "den-protocol/production", "den-runtime/production", "den-http/production", "den-oauth/production"]
+production = ["den-core/production", "den-protocol/production", "den-service/production", "den-runtime/production", "den-http/production", "den-oauth/production"]
 
 [dependencies]
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
+den-service = { path = "../den-service" }
 den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
 den-oauth = { path = "../den-oauth" }

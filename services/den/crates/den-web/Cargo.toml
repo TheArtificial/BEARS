@@ -19,7 +19,8 @@ workspace = true
 production = [
     "den-core/production",
     "den-protocol/production",
-    "den-http/production",
+        "den-service/production",
+        "den-http/production",
     "den-runtime/production",
     "den-oauth/production",
 ]
@@ -28,6 +29,7 @@ web-ui-fixtures = []
 [dependencies]
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
+den-service = { path = "../den-service" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
 den-docket = { path = "../den-docket" }

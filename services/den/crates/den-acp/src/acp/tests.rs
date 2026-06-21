@@ -98,9 +98,9 @@ use den_runtime::prompt_memory_blocks::{
         DenState {
             sqlx_pool: pool,
             config: config.clone(),
-            bifrost: Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
+            bifrost: Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
             tool_turns: ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_runtime::turn_controller::ActiveTurnCancelRegistry::new(),
+            acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
@@ -907,7 +907,7 @@ use den_runtime::prompt_memory_blocks::{
         stream.turn_controller.on_tool_request(
             tool_call_id.clone(),
             "functions.fs.read_text_file".to_string(),
-            den_runtime::turn_controller::ToolExecutionRoute::DenServer,
+            den_service::turn_controller::ToolExecutionRoute::DenServer,
         );
         stream.turn_controller.on_stream_end();
 
@@ -2747,9 +2747,9 @@ use den_runtime::prompt_memory_blocks::{
         let state = crate::service::DenState {
             sqlx_pool: pool,
             config: config.clone(),
-            bifrost: std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref())),
-            tool_turns: den_runtime::tool_turns::ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_runtime::turn_controller::ActiveTurnCancelRegistry::new(),
+            bifrost: std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
+            tool_turns: den_service::tool_turns::ToolTurnCoordinator::new(),
+            acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
@@ -3701,7 +3701,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = ToolTurnCoordinator::new();
-        let cancel_registry = den_runtime::turn_controller::ActiveTurnCancelRegistry::new();
+        let cancel_registry = den_service::turn_controller::ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
@@ -3886,7 +3886,7 @@ use den_runtime::prompt_memory_blocks::{
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = ToolTurnCoordinator::new();
-        let cancel_registry = den_runtime::turn_controller::ActiveTurnCancelRegistry::new();
+        let cancel_registry = den_service::turn_controller::ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());

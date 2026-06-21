@@ -5,4 +5,4 @@
 //! ADR-0043 (ACP is an edge adapter; the Den runtime is protocol-agnostic). It is
 //! re-exported here so existing `den_acp::service::DenState` paths keep resolving.
 
-pub use den_runtime::DenState;
+pub use den_service::DenState;

@@ -263,7 +263,7 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
 }
 
 fn model_option_from_bifrost_metadata(
-    model: den_runtime::bifrost::BifrostModelMetadata,
+    model: den_service::bifrost::BifrostModelMetadata,
 ) -> ModelOption {
     den_runtime::llm::model_registry::model_option_for_available_handle(
         &model.handle,

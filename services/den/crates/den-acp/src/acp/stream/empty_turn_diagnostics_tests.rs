@@ -14,7 +14,7 @@ fn test_context() -> AcpStreamContext {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
         .unwrap();
-    let registry = den_runtime::tool_turns::ToolTurnCoordinator::new();
+    let registry = den_service::tool_turns::ToolTurnCoordinator::new();
     let request_id = Uuid::new_v4();
     let role_runtime = RoleRuntime::new(registry.clone());
     let turn_scope = RoleTurnScope::acp_pair(
