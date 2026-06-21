@@ -85,13 +85,20 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 **Design:** [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md).
 
 - Add **`bears-sandbox-runner`** compose service: **`docker_workspace`** backend only (v1); paired **workspace + egress gateway**; **git/gh command bridge** at gateway (defense-in-depth; credential boundary is primary); Den owns policy, runner owns materialized workspaces; **telemetry** to gate warm pool and second backend choice.
+- **Durable workspaces from v1:** introduce Den-owned workspace records for each `work` run/work surface, separate from individual model turns. Track workspace id, Docket run id, origin/work surface, base ref, branch, sandbox backend, materialized path/ref, status, archive state, and recovery/cleanup state. A workspace may eventually host multiple sessions/turn purposes (investigate, implement, review, recap), even if v1 runs one active `work` loop.
+- **Visible branch/worktree lifecycle:** make branch/workspace identity product-visible rather than hiding it inside the runner: base ref, working branch, dirty state, changed files, commits, PR association, last command/check, and review-ready/completed status.
+- **Work canvas / run dashboard:** ship a minimal status surface for active and archived workspaces: queued/planning/running/waiting-for-input-or-approval/review-ready/completed/failed, last activity, diff summary, command/check status, PR link, and Docket task linkage.
+- **Workflow actions, not only free-form shell:** add first-class `work` actions with prompt/model/tool defaults and Docket artifacts: investigate, implement, run checks, summarize diff, draft PR, address review comments, resolve conflicts, and handoff/recap summary.
+- **Output shaping as a tool contract:** fs/shell tools store full raw logs as artifacts but send bounded summaries/excerpts to the model (`summary`, `exit_code`, stdout/stderr excerpts, `artifact_ref`, `truncated`) to control context and cost.
+- **Archive, recovery, and recap lifecycle:** every nontrivial workspace can produce a durable recap artifact; completed workspaces can be archived/restored; orphaned/dirty/stale sandboxes have explicit recovery and cleanup paths.
 - **Pluggable `SandboxBackend`:** second isolation technology (Incus, VM, …) is a **candidate**, not committed — chosen post-v1 from telemetry.
 - **Arbitrary repos:** Den-managed remote origins + configurable **clone depth**; opportunistic toolchain detection — **no required `mise.toml`** or repo scaffold.
 - **`chat` has no sandbox** — delegate to a Docket **`work`** run with phase SSE; **`pair` stays client-armature** (hosted pair → Phase 7.1).
 - Den **bear-level origins** UI/API; **multiple bear service identities** per `(provider, org_scope)`; **Connections** with `owner ∈ {user, bear}`; **`RunAuthContext`** with interactive (requester PR) vs autonomous (bear draft PR) paths.
 - Reuse the native loop; add coding tools (fs, shell) via runner RPC; route `work` memory through per-Bear SQLite, retiring the Letta Code git memory path.
-- Tasks for `work` come from **Docket** (ADR-0034): Den dispatches to the native `work` loop in the Bear's scoped memory context (execution invariant).
+- Tasks for `work` come from **Docket** (ADR-0034): Den dispatches to the native `work` loop in the Bear's scoped memory context (execution invariant). **Auto-sweeps from task sources** (periodic issue/security/Linear intake with filters and run limits) are useful but deferred until after the v1 workspace lifecycle is stable.
 - Land minimal **strategy policy** (`reflect_on_fail?`, `fanout_n`; `plan?` deferred).
+- **Linked projects / linked work surfaces:** read-only cross-repo context is explicitly deferred. V1 writes only to the active workspace and reads only configured task/work-surface context plus Bear memory.
 - Replace Codepool transport with native loop SSE; no warm pool in v1.
 
 ### Phase 8 — Teardown and data migration
@@ -109,7 +116,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - **Recall index (parallel track):** [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + `bears-embed-v1`; not blocking Phase 4 ACP wiring but required for Letta archival parity at scale.
 - **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; data migration of existing MemFS content is deferred to Phase 8.
 - **Cross-store discipline:** Den Postgres (control plane) and per-Bear SQLite (cognition) must not grow a sync seam; control plane references cognition by id only.
-- **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it.
+- **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it. Phase 7 is not only container isolation: durable workspace identity, status/canvas UX, output shaping, recap/archive/recovery, and workflow actions are in-scope from v1.
 - Keep Letta runnable behind `RUNTIME=letta` only until Phase 5 parity is proven, then remove. MemFS coexists with SQLite only transitionally until Phase 7.
 
 ## Non-goals
