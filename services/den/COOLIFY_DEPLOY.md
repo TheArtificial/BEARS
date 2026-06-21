@@ -178,6 +178,30 @@ New versions still apply migrations automatically on first container start again
 
 ---
 
+## Build caching (how the Dockerfile keeps rebuilds fast)
+
+Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) is tuned so that only crates whose source actually changed get recompiled.
+
+Two mechanisms work together:
+
+1. **BuildKit cache mounts** persist Cargo state on the deploy host between builds:
+   - `/usr/local/cargo/registry` + `/usr/local/cargo/git` — downloaded crate sources.
+   - `/app/target` — compiled artifacts for both external dependencies and workspace crates.
+
+   These survive across deployments (until `docker builder prune`), so external dependencies are not re-downloaded or recompiled unless `Cargo.lock` changes.
+
+2. **`cargo build --config build.checksum-freshness=true`** makes Cargo decide what is stale from file **content hashes** instead of mtimes.
+
+Why the second part matters: Cargo's default freshness check is mtime-based, but Docker's `COPY` rewrites every file's mtime on each build. Worse, Coolify builds **twice** from two different directories — `docker compose build` runs from `/artifacts/<id>/`, then `docker compose up -d` runs from `/data/coolify/applications/<id>/`. With mtime-based freshness, Cargo treats every file as changed on each pass and recompiles the entire workspace both times. Checksum freshness ignores mtimes entirely: identical content is reused, only genuinely changed crates rebuild, and the redundant second build becomes near-instant.
+
+The flag is set only on the `cargo build` command line (not in committed `.cargo/config.toml`) so local development tooling is unaffected.
+
+> **Verifying it works:** `build.checksum-freshness` was originally an unstable Cargo feature (`-Z checksum-freshness`). On a deploy, check the build log:
+> - **Working:** only changed crates show `Compiling …`, and the second build pass finishes in seconds.
+> - **Rejected** (`the 'checksum-freshness' feature is unstable`): the feature is not stable in the pinned `RUST_VERSION`. Either pin a nightly toolchain for the build stage, or drop the flag and accept full workspace recompiles (external dependencies stay cached either way via the `/app/target` mount).
+
+---
+
 ## Verify (without the shell)
 
 After deploy:
