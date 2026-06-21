@@ -7,7 +7,7 @@ Status: proposed implementation spec.
 
 ## Objective
 
-Define the first concrete implementation contract for a Den-owned model metadata registry used for validation, display, context-window estimates, and reconciliation with Bifrost. Bifrost remains the source of truth for live model availability, provider keys, execution aliases, and routing.
+Define the first concrete implementation contract for a Den-owned model metadata overlay used for validation, display, context-window estimates, profile/task suitability, and reconciliation with Bifrost. Bifrost's Model Catalog remains the preferred source for live model availability, provider/model mapping, pricing, and provider-reported capability metadata.
 
 This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md`. That planning document explains the project shape and migration strategy. This spec defines the metadata model, source hierarchy, validation behavior, and Den↔Bifrost reconciliation boundary.
 
@@ -51,18 +51,18 @@ So the current architecture is effectively:
 4. Den presents a simplified model list to clients.
 
 The desired architecture in this spec clarifies that ownership:
-1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, and routing.
-2. Den owns metadata estimates and validation context.
-3. Den reconciles configured Bear models against Bifrost availability.
-4. Den reports drift or unknown metadata, but does not have to generate Bifrost configuration as the default path.
+1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, routing, and Model Catalog facts.
+2. Den owns curated overlays and Bear-specific validation context.
+3. Den hydrates/enriches model options from Bifrost Model Catalog surfaces wherever possible.
+4. Den reports unknown metadata or availability mismatches, but does not maintain a duplicate authoritative model catalog.
 
 ---
 
 ## Design goals
 
-1. Give Den a stable metadata registry for model identity, capability estimates, and validation.
-2. Separate Den metadata identity from deployment-specific Bifrost availability and routing.
-3. Preserve enough provenance to distinguish observed, documented, inferred, and manually curated values.
+1. Give Den a stable metadata overlay for model identity, capability corrections, profile/task suitability, and validation.
+2. Use Bifrost Model Catalog as the primary source for availability, pricing, provider mappings, and provider-reported capabilities.
+3. Preserve enough provenance to distinguish Bifrost-observed, provider-documented, inferred, and manually curated values.
 4. Support multiple naming layers:
    - canonical provider-qualified key
    - provider-native model id
@@ -405,9 +405,9 @@ Allowed only for soft assumptions and should not silently override better source
 
 ### First implementation recommendation
 
-Bootstrap from the repo’s existing `services/bifrost/config.json` values as `manual_curated`, then selectively upgrade fields as better evidence is gathered.
+Use Bifrost `/v1/models` as the ordinary live availability source. Use `/api/models/details` and `/api/models/base` when management auth is available and richer catalog data is needed. Keep Den's local registry as a curated overlay/fallback, not as a complete manually maintained catalog.
 
-That is the fastest path to give Den useful metadata without claiming ownership of live Bifrost availability.
+This gives Den useful metadata while allowing Bifrost's Model Catalog and provider list-model APIs to keep the available model set fresh.
 
 ---
 
@@ -458,17 +458,20 @@ The intended pipeline is:
 
 ### Phase 1 recommended implementation split
 
-#### Den-owned metadata artifact
-A checked-in Den-side metadata file or Rust bootstrap, for example:
-- `services/den/model_registry.json`
-- `services/den/config/model_registry.json`
+#### Den-owned metadata overlay
+A checked-in Den-side overlay file or Rust bootstrap, for example:
+- `services/den/model_overrides.json`
+- `services/den/config/model_metadata_overrides.json`
 - or `den-runtime::llm::model_registry` while the shape is still small.
 
-#### Bifrost availability source
+This overlay should contain only Den-specific labels, aliases, suitability hints, and corrections/overrides—not a full copy of the provider catalog.
+
+#### Bifrost catalog and availability source
 Use one or more Bifrost surfaces:
-- `/bears/models` compatibility metadata sidecar
-- `/v1/models` where sufficient
-- management APIs when `config_store` and management auth are enabled
+- `/v1/models` for ordinary live availability
+- `/api/models/details` for richer capability metadata when management auth is enabled
+- `/api/models/base` for base catalog/pricing awareness when management auth is enabled
+- `/bears/models` compatibility metadata sidecar only as a fallback while it exists
 
 #### Reconciliation step
 A small Den-side tool or status helper that:
@@ -479,8 +482,8 @@ A small Den-side tool or status helper that:
 ### Recommended ownership split
 
 The cleanest medium-term split is:
-- Den owns model metadata and validation policy.
-- Bifrost owns provider credentials, provider routing config, gateway-local operational flags, and live availability.
+- Den owns curated overlays and Bear-facing validation policy.
+- Bifrost owns provider credentials, provider routing config, gateway-local operational flags, Model Catalog, pricing, and live availability.
 - Optional sync/export tooling is an audited executor, not the architectural source of truth.
 
 ---

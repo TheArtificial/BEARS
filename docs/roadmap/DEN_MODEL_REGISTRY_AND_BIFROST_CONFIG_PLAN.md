@@ -5,7 +5,7 @@
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
-This document describes a target architecture in which **Bifrost** owns live model availability, provider keys, and routing, while **Den** maintains a model metadata registry for validation, display, context-window estimates, and operational reconciliation. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata projection.
+This document describes a target architecture in which **Bifrost** owns live model availability, provider keys, routing, pricing, and Model Catalog facts, while **Den** maintains a model metadata overlay for validation, display, context-window estimates, profile/task suitability, and operational reconciliation. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata projection.
 
 Related docs:
 
@@ -33,7 +33,7 @@ More specifically:
 
 1. **Bifrost** owns which models are callable in this deployment.
 2. **Bifrost** owns provider keys, allowlists, aliases used for execution, routing, failover, and gateway governance.
-3. **Den** owns metadata estimates such as context window, max output, display labels, and capability hints.
+3. **Den** owns curated overlay metadata such as display corrections, conservative context/max-output overrides, profile/task suitability, and product labels.
 4. **Den** validates Bear configuration by reconciling configured model handles against Bifrost availability plus Den metadata.
 5. **Den** may report or plan sync differences, but it should not assume it is the canonical source for Bifrost provider configuration.
 
@@ -84,9 +84,9 @@ Treat **model capability metadata** as Den-owned validation/planning state, and 
 
 #### Den owns
 
-- known model metadata (display names, context-window and max-output estimates)
+- curated model metadata overlays (display names/notes, conservative context-window and max-output overrides)
 - Den-side aliases for validation and canonicalization
-- capability hints used by Bear Admin and runtime planning
+- profile/task suitability hints used by Bear Admin and runtime planning
 - a simple `selectable` flag for Den UI exposure when needed
 - provenance/confidence where metadata is manually curated or inferred
 - reconciliation reports comparing Den metadata with Bifrost availability
@@ -99,6 +99,7 @@ Treat **model capability metadata** as Den-owned validation/planning state, and 
 - runtime request execution
 - provider key model allowlists and gateway aliases
 - provider routing / failover / weighting where used
+- Bifrost Model Catalog data (availability, provider mapping, pricing, provider-reported capabilities)
 - live model availability for this deployment
 - OpenAI-compatible execution surface
 
@@ -369,7 +370,7 @@ In the revised design, Bifrost's provider config and live metadata remain availa
 
 ### What Den should report
 
-Den should report, conceptually:
+Den should use Bifrost Model Catalog data before manual Den curation wherever possible. Den should report, conceptually:
 
 1. **availability-facing comparison**
    - Bifrost model handles seen live

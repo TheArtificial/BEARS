@@ -21,7 +21,8 @@ Use precise terms instead of overloading “orchestration.”
 | Model selection | Choosing a requested/selected model from policy and intent | Den, optionally delegated to router/selector later |
 | Model routing | Routing the selected request to provider/model/key/fallbacks | Bifrost |
 | Gateway governance | Provider keys, virtual keys, allowed models, routing rules, budgets/rate limits | Bifrost |
-| Model metadata registry | Context windows, max outputs, capability hints, display labels, aliases | Den |
+| Bifrost Model Catalog | Live model availability, provider/model mapping, pricing, provider-reported capabilities | Bifrost |
+| Den model metadata overlay | Bear-facing labels, context/capability overrides, profile/task suitability, validation notes | Den |
 | Requested model | What a human/profile/policy asked for | Den |
 | Selected model | What Den chose for a conversation/turn before gateway execution | Den |
 | Actual model | What Bifrost/provider actually used after routing/fallback | Bifrost reports; Den records |
@@ -30,7 +31,7 @@ Use precise terms instead of overloading “orchestration.”
 
 1. **Bifrost owns live availability and execution.** Den must not duplicate provider-key routing, gateway failover, or low-level budget/rate enforcement when Bifrost can do it.
 2. **Den owns Bear-aware model policy.** Bear defaults, profile overrides, conversation stickiness, intent heuristics, and model-suitability diagnostics are Den concerns.
-3. **Den owns metadata estimates, not provider availability.** Context windows and capability hints are Den metadata; whether a model is currently callable is Bifrost availability.
+3. **Bifrost's Model Catalog is Den's primary source for model facts where available.** Den owns curated overlays and Bear-specific suitability metadata, not a manually duplicated full catalog.
 4. **Requested, selected, and actual model are distinct.** UI, ACP, BearWire, logs, and usage records should preserve the distinction.
 5. **Conversation model selection should stick.** Auto/manual selection should not thrash turn-by-turn unless policy explicitly changes it.
 6. **Auto mode is a policy, not a model.** Auto chooses from candidate sets using heuristics or future model-routing services.
@@ -46,12 +47,12 @@ Use precise terms instead of overloading “orchestration.”
 - Conversation-level model state and stickiness.
 - User-facing model selection/change UI.
 - Auto-mode candidate selection and intent heuristics.
-- Model metadata registry:
-  - context-window estimates,
-  - max-output estimates,
-  - tool/vision/reasoning capability hints,
-  - display labels,
-  - Den-side aliases.
+- Den model metadata overlay:
+  - Bear-facing display labels and notes,
+  - conservative context-window / max-output overrides,
+  - tool/vision/reasoning capability corrections when Bifrost data is missing or wrong,
+  - profile/task suitability hints,
+  - Den-side aliases for validation and user input.
 - Bear-facing validation and diagnostics:
   - configured model unavailable,
   - metadata unknown,
@@ -68,6 +69,11 @@ Use precise terms instead of overloading “orchestration.”
 - Virtual keys and gateway-level governance.
 - Rate limits and budgets where configured.
 - Live model availability for the deployment.
+- Model Catalog data:
+  - provider/model mapping,
+  - provider list-models results,
+  - pricing/cost metadata,
+  - context and modality/capability metadata when available.
 - Provider usage/cost telemetry where available.
 - Low-level retry/cooldown/load-balancing behavior.
 
@@ -76,8 +82,9 @@ Use precise terms instead of overloading “orchestration.”
 Implemented or partially implemented today:
 
 - Den-native runtime calls Bifrost directly for inference (ADR-0035).
-- Den has a static model metadata bootstrap in `den-runtime::llm::model_registry`.
-- Bear Admin model dropdown is Bifrost-availability-first and enriched with Den metadata.
+- Den has a static model metadata overlay bootstrap in `den-runtime::llm::model_registry`.
+- Bear Admin model dropdown is Bifrost-availability-first and enriched with Den overlay metadata.
+- Den's Bifrost client prefers Bifrost `/v1/models` and falls back to the legacy `/bears/models` sidecar.
 - Bear default model exists in `bears.default_model`.
 - Per-profile model overrides exist in `bear_profile_model_settings`:
   - missing/blank profile model means inherit Bear default.
@@ -87,6 +94,9 @@ Implemented or partially implemented today:
 
 Known gaps:
 
+- `services/bifrost/config.json` still contains an explicit provider-key model allowlist; this can prevent Bifrost from exposing newly available provider models.
+- Den overlay is still static Rust code rather than a small overlay artifact/cache hydrated from Bifrost catalog data.
+- Den does not yet parse/use the richest Bifrost management catalog endpoints (`/api/models/details`, `/api/models/base`) when management auth/config_store are available.
 - No conversation-level model state/stickiness yet.
 - No user-facing in-conversation model selector yet.
 - No selected-vs-actual model event stream contract yet.
@@ -193,11 +203,16 @@ Foreground turns should eventually carry intent/task tags such as:
 
 Use Bifrost before implementing Den-local alternatives.
 
-### Availability
+### Availability and catalog data
 
-- `/bears/models` sidecar for current compatibility.
-- `/v1/models` if sufficient.
-- Management APIs when `config_store` is enabled.
+Use Bifrost catalog surfaces in this order:
+
+1. `GET /v1/models` for live availability in ordinary deployments.
+2. `GET /api/models/details` when Bifrost management auth is available, for richer catalog metadata such as context, modalities, supported methods, and accessible keys.
+3. `GET /api/models/base` when Den needs base model/pricing-catalog awareness rather than deployment availability.
+4. `/bears/models` sidecar only as a compatibility fallback while it exists.
+
+Avoid manually enumerating every provider model in Den or in Bifrost provider-key `models` allowlists unless the goal is intentional restriction.
 
 ### Routing and failover
 
@@ -214,15 +229,16 @@ Use Bifrost:
 
 Den should provide useful request metadata/headers where needed so Bifrost routing rules can make decisions.
 
-### Budgets and usage
+### Pricing, budgets, and usage
 
-Prefer Bifrost for hard enforcement:
+Prefer Bifrost's Model Catalog and governance APIs for pricing and hard enforcement:
 
 - virtual-key budgets,
 - provider/model limits,
 - rate limits,
 - budget-aware routing rules,
-- gateway usage/cost telemetry.
+- gateway usage/cost telemetry,
+- Model Catalog pricing data and Bifrost cost calculation where exposed.
 
 Den should mirror or ingest results for Bear-level UX and high-level model policy.
 
@@ -236,6 +252,31 @@ Den should capture actual model/provider used from:
 - request IDs / event IDs for correlation.
 
 ## Data model plan
+
+### Bifrost catalog + Den overlay model
+
+Den should treat effective model metadata as:
+
+```text
+effective_model_metadata = Bifrost catalog/availability facts + Den curated overlay + Bear/profile policy
+```
+
+Bifrost-derived facts include:
+
+- available/routable handles,
+- provider/model mappings,
+- accessible keys where management APIs expose them,
+- pricing/cost metadata,
+- context length and max output where available,
+- modalities and supported methods where available.
+
+Den overlay facts include:
+
+- Bear-facing labels and grouping,
+- conservative overrides/corrections,
+- profile/task suitability tags,
+- UI visibility/selectability hints,
+- Den-side aliases and migration compatibility.
 
 ### Existing / v1
 
@@ -257,6 +298,48 @@ PRIMARY KEY (bear_id, profile)
 ```
 
 `model IS NULL` or blank = inherit Bear default.
+
+### Phase 1.5 — Catalog cache / overlay source
+
+Add a lightweight Den cache/overlay if runtime calls to Bifrost catalog are too expensive or if status/admin pages need stable historical observations.
+
+Possible tables:
+
+```sql
+model_catalog_cache (
+  handle TEXT PRIMARY KEY,
+  provider TEXT NULL,
+  source TEXT NOT NULL, -- bifrost_v1_models | bifrost_api_models_details | bifrost_api_models_base
+  metadata_json JSONB NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NULL
+)
+```
+
+```sql
+model_metadata_overrides (
+  handle TEXT PRIMARY KEY,
+  metadata_json JSONB NOT NULL,
+  notes TEXT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Do not add this until we confirm live Bifrost catalog queries are insufficient for admin/runtime needs.
+
+### Phase 1.5 — Bifrost catalog-first metadata ✅/partial
+
+- Prefer Bifrost `/v1/models` over the legacy BEARS sidecar for availability.
+- Let Bifrost Model Catalog/provider list-model APIs populate available models.
+- Keep Den static registry as overlay/fallback only.
+- Remove or relax explicit key-level model allowlists unless intentionally restricting access.
+- Evaluate `/api/models/details` and `/api/models/base` for richer metadata when management auth is configured.
+
+Exit:
+
+- Bear Admin model selectors reflect Bifrost's current provider catalog without manually editing every model name.
+- Den labels unknown-but-available Bifrost models as metadata gaps rather than hiding them.
+- `/status` reports Bifrost-available-without-Den-overlay and Den-overlay-not-currently-available.
 
 ### Phase 2 — Conversation model state
 
@@ -478,9 +561,39 @@ Future outputs:
 
 Remaining:
 
+- remove stale explicit provider-key model allowlists in Bifrost where the desired behavior is "all catalog-supported models".
 - show model metadata/availability badges on Models page,
+- use richer Bifrost catalog metadata where available,
 - tests for profile override persistence and runtime selection,
 - optional “auto” placeholder in UI.
+
+### Phase 1.5 — Catalog cache / overlay source
+
+Add a lightweight Den cache/overlay if runtime calls to Bifrost catalog are too expensive or if status/admin pages need stable historical observations.
+
+Possible tables:
+
+```sql
+model_catalog_cache (
+  handle TEXT PRIMARY KEY,
+  provider TEXT NULL,
+  source TEXT NOT NULL, -- bifrost_v1_models | bifrost_api_models_details | bifrost_api_models_base
+  metadata_json JSONB NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NULL
+)
+```
+
+```sql
+model_metadata_overrides (
+  handle TEXT PRIMARY KEY,
+  metadata_json JSONB NOT NULL,
+  notes TEXT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Do not add this until we confirm live Bifrost catalog queries are insufficient for admin/runtime needs.
 
 ### Phase 2 — Conversation model state
 
