@@ -107,6 +107,86 @@ fn log_sample(value: &str, max_chars: usize) -> String {
     sample
 }
 
+fn chat_message_chain_diagnostic(messages: &[ChatMessage]) -> Value {
+    let mut assistant_tool_call_blocks = 0_u64;
+    let mut tool_messages = 0_u64;
+    let mut orphan_tool_messages = Vec::<String>::new();
+    let mut unresolved_tool_call_ids = Vec::<String>::new();
+    let mut duplicate_tool_result_ids = Vec::<String>::new();
+    let mut role_tail = Vec::<String>::new();
+    let mut index = 0_usize;
+
+    while index < messages.len() {
+        let message = &messages[index];
+        if message.role == "assistant" {
+            if let Some(calls) = message.tool_calls.as_ref().filter(|calls| !calls.is_empty()) {
+                assistant_tool_call_blocks += 1;
+                let required = calls.iter().map(|call| call.id.clone()).collect::<Vec<_>>();
+                let mut seen = std::collections::HashSet::<String>::new();
+                let mut scan = index + 1;
+                while scan < messages.len() && messages[scan].role == "tool" {
+                    tool_messages += 1;
+                    let tool_call_id = messages[scan]
+                        .tool_call_id
+                        .clone()
+                        .unwrap_or_else(|| "<missing>".to_string());
+                    if !required.iter().any(|id| id == &tool_call_id) {
+                        orphan_tool_messages.push(tool_call_id);
+                    } else if !seen.insert(tool_call_id.clone()) {
+                        duplicate_tool_result_ids.push(tool_call_id);
+                    }
+                    scan += 1;
+                }
+                for required_id in required {
+                    if !seen.contains(&required_id) {
+                        unresolved_tool_call_ids.push(required_id);
+                    }
+                }
+                index = scan;
+                continue;
+            }
+        } else if message.role == "tool" {
+            tool_messages += 1;
+            orphan_tool_messages.push(
+                message
+                    .tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| "<missing>".to_string()),
+            );
+        }
+        index += 1;
+    }
+
+    let tail_start = messages.len().saturating_sub(12);
+    for message in &messages[tail_start..] {
+        let role = if let Some(calls) = message.tool_calls.as_ref().filter(|calls| !calls.is_empty()) {
+            format!("{}[tool_calls:{}]", message.role, calls.len())
+        } else if message.role == "tool" {
+            format!(
+                "tool[{}]",
+                message.tool_call_id.as_deref().unwrap_or("<missing>")
+            )
+        } else {
+            message.role.clone()
+        };
+        role_tail.push(role);
+    }
+
+    let invalid = !orphan_tool_messages.is_empty()
+        || !unresolved_tool_call_ids.is_empty()
+        || !duplicate_tool_result_ids.is_empty();
+    json!({
+        "invalid": invalid,
+        "message_count": messages.len(),
+        "assistant_tool_call_blocks": assistant_tool_call_blocks,
+        "tool_messages": tool_messages,
+        "orphan_tool_messages": orphan_tool_messages,
+        "unresolved_tool_call_ids": unresolved_tool_call_ids,
+        "duplicate_tool_result_ids": duplicate_tool_result_ids,
+        "role_tail": role_tail,
+    })
+}
+
 impl LlmRequestTelemetry {
     fn field(&self, name: &str) -> Option<&str> {
         match name {
@@ -415,6 +495,25 @@ impl LlmClient {
             ));
         }
         let url = format!("{}/chat/completions", self.base_url);
+        let message_chain_diagnostic = chat_message_chain_diagnostic(&request.messages);
+        if message_chain_diagnostic
+            .get("invalid")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            tracing::warn!(
+                model = %request.model,
+                request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
+                session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
+                conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                diagnostic = %message_chain_diagnostic,
+                "LLM chat/completions request preflight rejected invalid tool-call message chain"
+            );
+            return Err(DenError::System(format!(
+                "LLM chat/completions request preflight rejected invalid tool-call message chain: {message_chain_diagnostic}"
+            )));
+        }
         tracing::info!(
             model = %request.model,
             message_count = request.messages.len(),
@@ -428,6 +527,7 @@ impl LlmClient {
             bear_id = request.telemetry.as_ref().and_then(|t| t.bear_id.as_deref()),
             stance = request.telemetry.as_ref().and_then(|t| t.stance.as_deref()),
             x_model_affinity = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+            message_chain_diagnostic = %message_chain_diagnostic,
             "LLM chat/completions request starting"
         );
         let started = Instant::now();
@@ -608,5 +708,73 @@ impl LlmClient {
             started,
             headers_received_at,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_call(id: &str) -> ChatToolCall {
+        ChatToolCall {
+            id: id.to_string(),
+            call_type: "function".to_string(),
+            function: ChatToolCallFunction {
+                name: "memory_read".to_string(),
+                arguments: "{}".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn chat_message_chain_diagnostic_accepts_complete_tool_chain() {
+        let diagnostic = chat_message_chain_diagnostic(&[
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![tool_call("call_1")]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("{}".to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: Some("memory_read".to_string()),
+                tool_calls: None,
+            },
+        ]);
+
+        assert_eq!(diagnostic["invalid"], false);
+        assert_eq!(diagnostic["assistant_tool_call_blocks"], 1);
+        assert_eq!(diagnostic["tool_messages"], 1);
+    }
+
+    #[test]
+    fn chat_message_chain_diagnostic_rejects_unresolved_tool_call() {
+        let diagnostic = chat_message_chain_diagnostic(&[ChatMessage {
+            role: "assistant".to_string(),
+            content: None,
+            tool_call_id: None,
+            name: None,
+            tool_calls: Some(vec![tool_call("call_1")]),
+        }]);
+
+        assert_eq!(diagnostic["invalid"], true);
+        assert_eq!(diagnostic["unresolved_tool_call_ids"][0], "call_1");
+    }
+
+    #[test]
+    fn chat_message_chain_diagnostic_rejects_orphan_tool_message() {
+        let diagnostic = chat_message_chain_diagnostic(&[ChatMessage {
+            role: "tool".to_string(),
+            content: Some("{}".to_string()),
+            tool_call_id: Some("call_orphan".to_string()),
+            name: Some("memory_read".to_string()),
+            tool_calls: None,
+        }]);
+
+        assert_eq!(diagnostic["invalid"], true);
+        assert_eq!(diagnostic["orphan_tool_messages"][0], "call_orphan");
     }
 }

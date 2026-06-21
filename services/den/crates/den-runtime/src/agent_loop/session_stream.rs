@@ -481,6 +481,7 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::AssistantTextDelta { text },
             )))) => {
+                self.pending_server_tool_continuation = None;
                 self.assistant_text.push_str(&text);
                 if self.assistant_synced_to_session && !self.tool_calls.is_empty() {
                     self.sync_assistant_tool_step_to_session();
@@ -497,6 +498,7 @@ impl Stream for SessionTrackingStream {
                     ..
                 },
             )))) => {
+                self.pending_server_tool_continuation = None;
                 self.tool_calls.insert(
                     tool_call_id.clone(),
                     (tool_name.clone(), arguments.to_string()),
@@ -610,6 +612,7 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::TurnCompleted { .. },
             )))) => {
+                self.pending_server_tool_continuation = None;
                 if !self.tool_calls.is_empty() {
                     // Tool-call finishes must not emit TurnCompleted: ACP parks for adapter-local
                     // tool results and continues via /tool-results (same class of bug as
@@ -674,15 +677,25 @@ impl Stream for SessionTrackingStream {
                     );
                     return Poll::Ready(None);
                 }
-                if matches!(
-                    other,
+                let failed_or_empty_continuation = matches!(
+                    &other,
                     Some(Ok(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::TurnFailed { .. }
+                            | RuntimeSemanticEvent::TurnCancelled { .. }
+                            | RuntimeSemanticEvent::Error { .. }
                     ))) | None
-                ) {
+                );
+                if failed_or_empty_continuation {
+                    if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
+                        tracing::warn!(
+                            acp_session_id = %self.acp_session_id,
+                            tool_call_id = %tool_call_id,
+                            "native runtime server-tool continuation ended unsuccessfully; removing recent tool chain from in-memory session"
+                        );
+                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
+                    }
                     self.finished = true;
-                }
-                if other.is_some() {
+                } else if other.is_some() {
                     self.pending_server_tool_continuation = None;
                 }
                 Poll::Ready(other)
