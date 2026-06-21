@@ -33,11 +33,17 @@
   <p class="form-hint">Auto mode is planned for conversation/model routing work and is not available for Bear or stance defaults yet.</p>
   <label for="bear_default_model">Bear default model</label>
   <select id="bear_default_model" name="bear_default_model" required{% if not can_manage_bear %} disabled{% endif %}>
-    <option value="" disabled{% if not bear.default_model %} selected{% endif %}>— Choose a model —</option>
+    <option value="" disabled{% if not bear.default_model %} selected{% endif %}>— Choose a recommended model —</option>
+    {% if bear_default_custom_model %}
+    <option value="{{ bear_default_custom_model | e }}" selected>Custom model — {{ bear_default_custom_model | e }}</option>
+    {% endif %}
     {% for m in model_options %}
     <option value="{{ m.handle | e }}"{% if bear.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
     {% endfor %}
   </select>
+  <label for="bear_default_model_custom">Advanced: other Bifrost model handle</label>
+  <input id="bear_default_model_custom" name="bear_default_model_custom" list="all-bifrost-models" value="{{ bear_default_custom_model | e }}" placeholder="provider/model"{% if not can_manage_bear %} disabled{% endif %}>
+  <p class="form-hint">If this field is filled, it overrides the recommended dropdown and is validated against Bifrost's live model catalog.</p>
 
   <h3>Stance defaults</h3>
   <p class="form-hint">Leave a stance set to inherit unless it needs a different tradeoff.</p>
@@ -50,10 +56,14 @@
         <td>
           <select name="{{ row.profile | e }}_model"{% if not can_manage_bear %} disabled{% endif %}>
             <option value=""{% if not row.configured_model %} selected{% endif %}>Inherit Bear default</option>
+            {% if row.configured_model_custom %}
+            <option value="{{ row.configured_model_custom | e }}" selected>Custom model — {{ row.configured_model_custom | e }}</option>
+            {% endif %}
             {% for m in model_options %}
             <option value="{{ m.handle | e }}"{% if row.configured_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
             {% endfor %}
           </select>
+          <input name="{{ row.profile | e }}_model_custom" list="all-bifrost-models" value="{{ row.configured_model_custom | e }}" placeholder="Advanced: provider/model"{% if not can_manage_bear %} disabled{% endif %}>
         </td>
         <td>{% if row.resolved_model %}<code>{{ row.resolved_model | e }}</code>{% else %}<em>none</em>{% endif %}</td>
         <td><span title="Bifrost availability">{{ row.availability_status | e }}</span> · <span title="Den metadata overlay">metadata {{ row.metadata_status | e }}</span></td>
@@ -62,6 +72,12 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <datalist id="all-bifrost-models">
+    {% for m in all_model_options %}
+    <option value="{{ m.handle | e }}">{{ m.label | e }}</option>
+    {% endfor %}
+  </datalist>
 
   {% if can_manage_bear %}
   <p><button type="submit">Save model settings</button></p>

@@ -84,6 +84,7 @@ struct BifrostModelMetadataResponse {
 #[derive(Debug, Deserialize)]
 struct BifrostLiveModelsResponse {
     data: Vec<BifrostLiveModel>,
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,8 +235,38 @@ impl BifrostClient {
                     .to_string(),
             ));
         }
+        let mut models = Vec::new();
+        let mut page_token: Option<String> = None;
+        for _ in 0..25 {
+            let payload = self.fetch_live_models_page(page_token.as_deref()).await?;
+            models.extend(
+                payload
+                    .data
+                    .into_iter()
+                    .filter_map(BifrostLiveModel::into_metadata),
+            );
+            page_token = payload
+                .next_page_token
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty());
+            if page_token.is_none() {
+                break;
+            }
+        }
+        sort_models(&mut models);
+        models.dedup_by(|a, b| a.handle == b.handle);
+        Ok(models)
+    }
+
+    async fn fetch_live_models_page(
+        &self,
+        page_token: Option<&str>,
+    ) -> Result<BifrostLiveModelsResponse, DenError> {
         let url = format!("{}/models", self.llm_api_url);
-        let mut req = self.http.get(&url);
+        let mut req = self.http.get(&url).query(&[("page_size", "1000")]);
+        if let Some(token) = page_token {
+            req = req.query(&[("page_token", token)]);
+        }
         if !self.api_key.trim().is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
@@ -253,16 +284,8 @@ impl BifrostClient {
                 "Bifrost /v1/models HTTP {status}: {text}"
             )));
         }
-        let payload: BifrostLiveModelsResponse = serde_json::from_str(&text).map_err(|e| {
-            DenError::Parsing(format!("Bifrost /v1/models JSON: {e}; body: {text}"))
-        })?;
-        let mut models = payload
-            .data
-            .into_iter()
-            .filter_map(BifrostLiveModel::into_metadata)
-            .collect::<Vec<_>>();
-        sort_models(&mut models);
-        Ok(models)
+        serde_json::from_str(&text)
+            .map_err(|e| DenError::Parsing(format!("Bifrost /v1/models JSON: {e}; body: {text}")))
     }
 
     async fn list_sidecar_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {

@@ -554,20 +554,17 @@ Future outputs:
 - Clarify Bifrost owns availability/execution; Den owns policy/metadata/validation.
 - Update model registry docs to reconciliation model.
 
-### Phase 1 — Bear/profile model policy ✅/partial
+### Phase 1 — Bear/profile model policy ✅
 
 - Bear default model editable.
 - Per-profile inherit/override table.
 - Models page in Bear Admin.
 - Runtime model resolver uses profile override → Bear default → system default.
 - Lane-specific assignments explicitly TBD.
-
-Remaining:
-
-- show model metadata/availability badges on Models page,
-- use richer Bifrost catalog metadata where available,
-- tests for profile override persistence and runtime selection,
-- optional “auto” placeholder in UI.
+- Models page shows availability and metadata-known/unknown status.
+- Normal dropdowns are curated; advanced custom fields validate against full Bifrost availability with browser autocomplete.
+- Runtime resolver has unit coverage for profile override → Bear default → system default.
+- Auto mode is explicitly noted as planned, not yet available for Bear/stance defaults.
 
 ### Phase 1.5 — Catalog cache / overlay source
 

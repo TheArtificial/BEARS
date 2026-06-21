@@ -46,7 +46,8 @@ use crate::web::admin::bears::{
     BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear_create_support::{
-    canonical_default_model_handle, model_catalog_select_context,
+    all_model_catalog_options_context, canonical_default_model_handle,
+    curated_model_options_from_all,
 };
 use den_runtime::agent_assist::ModelOption;
 
@@ -117,15 +118,27 @@ struct BearModelsForm {
     #[serde(default)]
     bear_default_model: String,
     #[serde(default)]
+    bear_default_model_custom: String,
+    #[serde(default)]
     chat_model: String,
+    #[serde(default)]
+    chat_model_custom: String,
     #[serde(default)]
     pair_model: String,
     #[serde(default)]
+    pair_model_custom: String,
+    #[serde(default)]
     curate_model: String,
+    #[serde(default)]
+    curate_model_custom: String,
     #[serde(default)]
     work_model: String,
     #[serde(default)]
+    work_model_custom: String,
+    #[serde(default)]
     watch_model: String,
+    #[serde(default)]
+    watch_model_custom: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +146,7 @@ struct BearProfileModelRow {
     profile: String,
     label: String,
     configured_model: String,
+    configured_model_custom: String,
     resolved_model: String,
     source: String,
     availability_status: String,
@@ -847,6 +861,24 @@ fn form_profile_model<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a
     }
 }
 
+fn form_profile_model_custom<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a str {
+    match profile {
+        BearProfile::Chat => &form.chat_model_custom,
+        BearProfile::Pair => &form.pair_model_custom,
+        BearProfile::Curate => &form.curate_model_custom,
+        BearProfile::Work => &form.work_model_custom,
+        BearProfile::Watch => &form.watch_model_custom,
+    }
+}
+
+fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
+    custom
+        .trim()
+        .is_empty()
+        .then_some(selected)
+        .unwrap_or(custom)
+}
+
 fn model_available(options: &[ModelOption], raw: &str) -> bool {
     let requested = raw.trim();
     if requested.is_empty() {
@@ -889,7 +921,8 @@ fn model_metadata_status(raw: &str) -> &'static str {
 async fn model_page_rows(
     pool: &sqlx::PgPool,
     bear: &den_runtime::bears::Bear,
-    model_options: &[ModelOption],
+    select_options: &[ModelOption],
+    availability_options: &[ModelOption],
 ) -> Result<Vec<BearProfileModelRow>, CustomError> {
     let settings = bears_db::list_profile_model_settings(pool, bear.id).await?;
     let mut rows = Vec::new();
@@ -910,6 +943,13 @@ async fn model_page_rows(
             profile: profile.as_str().to_string(),
             label: profile_label(profile).to_string(),
             configured_model: configured.to_string(),
+            configured_model_custom: if configured.is_empty()
+                || model_available(select_options, configured)
+            {
+                String::new()
+            } else {
+                configured.to_string()
+            },
             resolved_model: resolved.to_string(),
             source: if configured.is_empty() {
                 "Bear default"
@@ -917,7 +957,8 @@ async fn model_page_rows(
                 "Stance override"
             }
             .to_string(),
-            availability_status: model_availability_status(model_options, resolved).to_string(),
+            availability_status: model_availability_status(availability_options, resolved)
+                .to_string(),
             metadata_status: model_metadata_status(resolved).to_string(),
         });
     }
@@ -934,11 +975,29 @@ async fn models_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let (model_catalog_configured, model_options, models_fetch_error) =
-        model_catalog_select_context(&state).await;
-    let rows = model_page_rows(state.sqlx_pool(), &bear, &model_options).await?;
+    let (model_catalog_configured, all_model_options, models_fetch_error) =
+        all_model_catalog_options_context(&state).await;
+    let mut model_options = curated_model_options_from_all(&all_model_options);
+    let curated_warning =
+        if model_catalog_configured && !all_model_options.is_empty() && model_options.is_empty() {
+            model_options = all_model_options.clone();
+            Some(
+            "No Bifrost models matched Den's curated model overlay; showing all available models."
+                .to_string(),
+        )
+        } else {
+            None
+        };
+    let validation_options = if all_model_options.is_empty() {
+        &model_options
+    } else {
+        &all_model_options
+    };
+    let rows =
+        model_page_rows(state.sqlx_pool(), &bear, &model_options, validation_options).await?;
     let bear_default_model = bear.default_model.as_deref().unwrap_or("");
-    let bear_default_availability_status = model_availability_status(&model_options, bear_default_model);
+    let bear_default_availability_status =
+        model_availability_status(validation_options, bear_default_model);
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
     web::render_template(
         &state,
@@ -947,8 +1006,10 @@ async fn models_view(
         context! {
             model_catalog_configured,
             model_options,
-            models_fetch_error,
+            all_model_options,
+            models_fetch_error => models_fetch_error.or(curated_warning),
             rows,
+            bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
             bear_default_availability_status,
             bear_default_metadata_status,
             message => query.message,
@@ -971,8 +1032,10 @@ async fn models_post(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
-    if !configured || model_options.is_empty() {
+    let (configured, all_model_options, fetch_error) =
+        all_model_catalog_options_context(&state).await;
+    let validation_options = &all_model_options;
+    if !configured || validation_options.is_empty() {
         let message = fetch_error
             .unwrap_or_else(|| "No Bifrost models are available for validation.".to_string());
         return Ok(Redirect::to(&format!(
@@ -983,8 +1046,9 @@ async fn models_post(
         .into_response());
     }
 
-    let default_trim = form.bear_default_model.trim();
-    if default_trim.is_empty() || !model_available(&model_options, default_trim) {
+    let default_trim =
+        selected_or_custom_model(&form.bear_default_model, &form.bear_default_model_custom).trim();
+    if default_trim.is_empty() || !model_available(validation_options, default_trim) {
         return Ok(Redirect::to(&format!(
             "/bear/{}/models?error={}",
             bear.slug,
@@ -995,8 +1059,12 @@ async fn models_post(
     let default_model = canonical_default_model_handle(default_trim);
 
     for profile in BearProfile::ALL {
-        let raw = form_profile_model(&form, profile).trim();
-        if !raw.is_empty() && !model_available(&model_options, raw) {
+        let raw = selected_or_custom_model(
+            form_profile_model(&form, profile),
+            form_profile_model_custom(&form, profile),
+        )
+        .trim();
+        if !raw.is_empty() && !model_available(validation_options, raw) {
             let message = format!(
                 "{} override must be a Bifrost-available model.",
                 profile_label(profile)
@@ -1028,7 +1096,11 @@ async fn models_post(
     .await?;
 
     for profile in BearProfile::ALL {
-        let raw = form_profile_model(&form, profile).trim();
+        let raw = selected_or_custom_model(
+            form_profile_model(&form, profile),
+            form_profile_model_custom(&form, profile),
+        )
+        .trim();
         let model = canonical_default_model_handle(raw);
         bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
             .await?;

@@ -262,8 +262,19 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
     }
 }
 
-/// Bifrost availability list enriched by Den model metadata.
-pub async fn model_catalog_select_context(
+fn model_option_from_bifrost_metadata(
+    model: den_runtime::bifrost::BifrostModelMetadata,
+) -> ModelOption {
+    den_runtime::llm::model_registry::model_option_for_available_handle(
+        &model.handle,
+        model.display_name.as_deref(),
+        (model.context_window > 0).then_some(model.context_window),
+        model.max_output_tokens,
+    )
+}
+
+/// Full Bifrost availability list enriched by Den model metadata where known.
+pub async fn all_model_catalog_options_context(
     state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
     if !state.bifrost.is_enabled() {
@@ -279,14 +290,7 @@ pub async fn model_catalog_select_context(
         Ok(models) => {
             let mut options = models
                 .into_iter()
-                .map(|model| {
-                    den_runtime::llm::model_registry::model_option_for_available_handle(
-                        &model.handle,
-                        model.display_name.as_deref(),
-                        (model.context_window > 0).then_some(model.context_window),
-                        model.max_output_tokens,
-                    )
-                })
+                .map(model_option_from_bifrost_metadata)
                 .collect::<Vec<_>>();
             options.sort_by(|a, b| a.label.cmp(&b.label));
             (true, options, None)
@@ -298,6 +302,38 @@ pub async fn model_catalog_select_context(
                 "Could not load live models from Bifrost /v1/models: {e}."
             )),
         ),
+    }
+}
+
+pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelOption> {
+    all_options
+        .iter()
+        .filter(|option| {
+            den_runtime::llm::model_registry::entry_for_handle(&option.handle)
+                .map(|entry| entry.selectable)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Curated Bifrost availability list for normal Bear Admin dropdowns.
+pub async fn model_catalog_select_context(
+    state: &AppState,
+) -> (bool, Vec<ModelOption>, Option<String>) {
+    let (configured, all_options, error) = all_model_catalog_options_context(state).await;
+    if !configured || all_options.is_empty() {
+        return (configured, all_options, error);
+    }
+    let curated = curated_model_options_from_all(&all_options);
+    if curated.is_empty() {
+        (
+            true,
+            all_options,
+            Some("No Bifrost models matched Den's curated model overlay; showing all available models.".into()),
+        )
+    } else {
+        (true, curated, error)
     }
 }
 
