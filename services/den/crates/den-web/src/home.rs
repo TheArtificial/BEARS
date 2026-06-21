@@ -14,9 +14,7 @@ use crate::{
     web::{self, AppState},
     core::user,
 };
-use den_runtime::{
-    bears::db::{self as bears_db, role_is_bear_admin},
-};
+use den_service::bears::db::{self as bears_db, role_is_bear_admin};
 
 use minijinja::context;
 

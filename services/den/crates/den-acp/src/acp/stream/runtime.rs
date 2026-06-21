@@ -121,11 +121,19 @@ pub(in crate::acp) fn spawn_persist_acp_turn_outcome(
     role_result: &den_runtime::role_runtime::RoleTurnResult,
 ) {
     let provenance = acp_session_provenance(context);
-    den_runtime::conversation_events::spawn_persist_turn_outcome(
-        canonical_persistence_context_from_acp(context),
-        role_result,
-        &provenance,
-    );
+        let outcome = den_service::conversation::events::TurnOutcomeRecord {
+            status: role_result.status.as_str().to_string(),
+            reason: role_result.reason.as_str().to_string(),
+            request_id: role_result.request_id.to_string(),
+            retryable: role_result.retryable,
+            scope: role_result.scope.diagnostic(),
+            diagnostics: role_result.diagnostics.clone(),
+        };
+        den_service::conversation::events::spawn_persist_turn_outcome(
+            canonical_persistence_context_from_acp(context),
+            &outcome,
+            &provenance,
+        );
 }
 
 pub(in crate::acp) fn spawn_persist_acp_tool_result(

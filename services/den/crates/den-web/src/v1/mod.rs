@@ -34,14 +34,14 @@ use crate::{
     web_chat_runtime::WebChatRuntimeRequest,
 };
 use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
-use den_runtime::agent_assist::ModelOption;
-use den_runtime::{
-    acp_sessions, archived_conversations,
+use den_llm::ModelOption;
+use den_runtime::{acp_sessions, archived_conversations};
+use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
         BearProfile,
     },
-    conversation_persistence,
+    conversation::persistence as conversation_persistence,
 };
 
 pub fn router() -> Router<AppState> {
@@ -474,7 +474,7 @@ fn map_persisted_history_page(
                 && storage_role == "assistant"
                 && matches!(
                     row.storage_message_type(),
-                    Ok(den_runtime::conversation_message_types::ConversationMessageType::Assistant)
+                    Ok(den_service::conversation::message_types::ConversationMessageType::Assistant)
                 )
             {
                 last.text.push_str(&row.content_text);
@@ -590,7 +590,7 @@ fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
     if requested.is_empty() {
         return false;
     }
-    let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
     options.iter().any(|model| {
         if model.handle == requested {
             return true;
@@ -599,7 +599,7 @@ fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
             return false;
         };
         resolved == model.handle
-            || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+            || den_llm::model_registry::resolve_model_handle(&model.handle)
                 == Some(resolved)
     })
 }
@@ -803,7 +803,7 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
 }
 
 struct ConversationTitleRequest<'a> {
-    bear: &'a den_runtime::bears::Bear,
+    bear: &'a den_service::bears::Bear,
     chat_agent_id: &'a str,
     user_id: i32,
     username: Option<&'a str>,
@@ -917,7 +917,7 @@ async fn maybe_handle_direct_capabilities_list(
     conversation_persistence::append_message(
         pool,
         canonical_conversation_id,
-        &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+        &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
             text.clone(),
             serde_json::json!({
                 "type": "assistant_output",
@@ -977,7 +977,7 @@ async fn chat_send_native_inner(
     request_id: Uuid,
     user_id: i32,
     username: &str,
-    bear: den_runtime::bears::Bear,
+    bear: den_service::bears::Bear,
     chat_binding_id: &str,
     conv_id: String,
 ) -> Result<Response, CustomError> {
@@ -1028,7 +1028,7 @@ async fn chat_send_native_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        &den_runtime::conversation_message_types::ConversationMessageWrite::user_turn(
+        &den_service::conversation::message_types::ConversationMessageWrite::user_turn(
             body.message.trim(),
             serde_json::json!({
                 "type": "user_input",
@@ -1135,7 +1135,7 @@ async fn chat_send_inner(
 #[cfg(test)]
 mod chat_history_map_tests {
     use super::*;
-    use den_runtime::conversation_persistence::PersistedConversationMessage;
+    use den_service::conversation::persistence::PersistedConversationMessage;
 
     fn persisted_row(
         sequence_no: i64,

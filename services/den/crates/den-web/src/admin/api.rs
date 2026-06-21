@@ -10,17 +10,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
-use crate::{
-    errors::CustomError,
-    web::AppState,
-    core::user::db as user_db,
-};
-use den_runtime::{
-    bears::{
-            db::{self as bears_db, BearParams, MembershipRow},
-            model::Bear,
-            provision,
-        },
+use crate::{core::user::db as user_db, errors::CustomError, web::AppState};
+use den_service::bears::{
+    db::{self as bears_db, BearParams, MembershipRow},
+    model::Bear,
+    provision,
 };
 
 pub fn router() -> Router<AppState> {

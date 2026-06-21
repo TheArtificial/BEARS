@@ -25,8 +25,8 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
+use den_service::bears::{db as bears_db, BearProfile};
 use den_runtime::{
-    bears::{db as bears_db, BearProfile},
     memory::{
         admin_inspect::{
             bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,

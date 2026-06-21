@@ -11,7 +11,7 @@ use axum::{
 use reqwest::header::{HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::Deserialize;
 
-use den_runtime::llm::model_registry::{self, ModelGatewayCompatibilityReport};
+use den_llm::model_registry::{self, ModelGatewayCompatibilityReport};
 
 use crate::build_info;
 use crate::web::stack_health::{self, CheckState, StackHealthReport, StackHealthTemplateRow};

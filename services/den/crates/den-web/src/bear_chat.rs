@@ -13,7 +13,7 @@ use crate::{
     web::{self, AppState},
     core::user,
 };
-use den_runtime::bears::db as bears_db;
+use den_service::bears::db as bears_db;
 
 /// Deep Chat view for one bear (`/bear/{slug}`); membership-checked.
 pub async fn bear_page(

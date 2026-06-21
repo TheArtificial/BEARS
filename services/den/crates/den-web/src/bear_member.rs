@@ -8,7 +8,7 @@ use crate::{
     core::user,
     errors::CustomError,
 };
-use den_runtime::bears::{
+use den_service::bears::{
     db as bears_db,
     db::role_is_bear_admin,
     Bear,

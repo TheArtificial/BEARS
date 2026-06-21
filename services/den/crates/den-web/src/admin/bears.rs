@@ -23,9 +23,11 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_runtime::{
-    bears::{db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding},
-    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
+use den_runtime::memory::{
+    admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
+};
+use den_service::bears::{
+    db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding,
 };
 
 use crate::web::bear_create_support::{

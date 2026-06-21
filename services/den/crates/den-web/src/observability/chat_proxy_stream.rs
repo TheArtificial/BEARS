@@ -11,7 +11,7 @@ use futures::{Future, Stream};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_runtime::conversation_persistence::{append_message, ensure_conversation_for_external_id};
+use den_service::conversation::persistence::{append_message, ensure_conversation_for_external_id};
 
 use super::metrics;
 
@@ -341,7 +341,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
                     &self.reasoning_text,
                     serde_json::json!({
                         "type": "reasoning_delta_coalesced",
@@ -362,7 +362,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
                     &self.status_text,
                     serde_json::json!({
                         "type": "status_message_coalesced",
@@ -383,7 +383,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
                     &self.assistant_text,
                     serde_json::json!({
                         "type": "assistant_delta_coalesced",
@@ -404,7 +404,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+                &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
                     &self.error_text,
                     serde_json::json!({
                         "type": "error_message_coalesced",
@@ -425,7 +425,7 @@ impl PendingConversationPersistence {
             if let Err(err) = append_message(
                 pool,
                 canonical.id,
-                &den_runtime::conversation_message_types::ConversationMessageWrite::workflow_diagnostic(
+                &den_service::conversation::message_types::ConversationMessageWrite::workflow_diagnostic(
                     "Conversation resolved",
                     event,
                 ),

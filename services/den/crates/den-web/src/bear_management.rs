@@ -35,13 +35,13 @@ use crate::{
 };
 use den_runtime::{
     acp_sessions,
-    bears::{
-        db as bears_db,
-        db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-        provision, Bear, BearProfile,
-    },
     client_tools::{client_tool_policy_json_for_provider, ClientToolName},
     memory::tools::sqlite_collect_role_logical_paths,
+};
+use den_service::bears::{
+    db as bears_db,
+    db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
+    provision, Bear, BearProfile,
 };
 
 pub(crate) use super::bear_member::{

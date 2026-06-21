@@ -208,7 +208,7 @@ async fn verify_email_process(
         verify_outcome.status,
         VerifyAttemptStatus::Success | VerifyAttemptStatus::Redundant
     ) {
-        let bears = den_runtime::bears::db::list_bears_for_user(&sqlx_pool, user_id).await?;
+        let bears = den_service::bears::db::list_bears_for_user(&sqlx_pool, user_id).await?;
         if bears.is_empty() {
             return Ok(Redirect::to("/onboarding/first-bear").into_response());
         }

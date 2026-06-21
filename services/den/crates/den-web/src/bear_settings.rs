@@ -27,6 +27,10 @@ use crate::{
 };
 use den_core::DenError;
 use den_runtime::{
+    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
+    prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
+};
+use den_service::{
     bears::{
         context_profile_from_json, db as bears_db,
         db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -34,9 +38,7 @@ use den_runtime::{
         managed_blocks::BearCompiledConfigRow,
         provision, BearProfile,
     },
-    conversation_persistence::{self, list_messages_page},
-    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
-    prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
+    conversation::persistence::{self as conversation_persistence, list_messages_page},
 };
 
 use crate::web::admin::bears::{
@@ -49,7 +51,7 @@ use crate::web::bear_create_support::{
     all_model_catalog_options_context, canonical_default_model_handle,
     curated_model_options_from_all,
 };
-use den_runtime::agent_assist::ModelOption;
+use den_llm::ModelOption;
 
 use super::{
     bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
@@ -233,7 +235,7 @@ struct CompiledRolePromptRow {
     char_count: usize,
 }
 
-pub(crate) fn bear_nav_context(bear: &den_runtime::bears::Bear, active: &str) -> minijinja::Value {
+pub(crate) fn bear_nav_context(bear: &den_service::bears::Bear, active: &str) -> minijinja::Value {
     context! {
         bear,
         bear_nav_active => active,
@@ -251,7 +253,7 @@ pub(crate) async fn load_session_bear(
     state: &AppState,
     auth_session: &AuthSession,
     slug: &str,
-) -> Result<Result<(den_runtime::bears::Bear, bool), Redirect>, CustomError> {
+) -> Result<Result<(den_service::bears::Bear, bool), Redirect>, CustomError> {
     let user = session_user(auth_session).await?;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
         return Ok(Err(r));
@@ -265,7 +267,7 @@ pub(crate) async fn load_session_bear_manage(
     state: &AppState,
     auth_session: &AuthSession,
     slug: &str,
-) -> Result<Result<den_runtime::bears::Bear, Redirect>, CustomError> {
+) -> Result<Result<den_service::bears::Bear, Redirect>, CustomError> {
     let (bear, can_manage) = match load_session_bear(state, auth_session, slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(Err(r)),
@@ -328,7 +330,7 @@ async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<Stri
     ))
 }
 
-fn manifest_for_bear(bear: &den_runtime::bears::Bear) -> Result<BearBundleManifest, CustomError> {
+fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManifest, CustomError> {
     let exported_birthdate = match bear.birthday {
         Some(date) => date.to_string(),
         None => bear
@@ -897,7 +899,7 @@ fn model_available(options: &[ModelOption], raw: &str) -> bool {
     if requested.is_empty() {
         return false;
     }
-    let requested_resolved = den_runtime::llm::model_registry::resolve_model_handle(requested);
+    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
     options.iter().any(|model| {
         if model.handle == requested {
             return true;
@@ -906,7 +908,7 @@ fn model_available(options: &[ModelOption], raw: &str) -> bool {
             return false;
         };
         resolved == model.handle
-            || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+            || den_llm::model_registry::resolve_model_handle(&model.handle)
                 == Some(resolved)
     })
 }
@@ -924,7 +926,7 @@ fn model_availability_status(options: &[ModelOption], raw: &str) -> &'static str
 fn model_metadata_status(raw: &str) -> &'static str {
     if raw.trim().is_empty() {
         "unknown"
-    } else if den_runtime::llm::model_registry::entry_for_handle(raw).is_some() {
+    } else if den_llm::model_registry::entry_for_handle(raw).is_some() {
         "known"
     } else {
         "unknown"
@@ -933,7 +935,7 @@ fn model_metadata_status(raw: &str) -> &'static str {
 
 async fn model_page_rows(
     pool: &sqlx::PgPool,
-    bear: &den_runtime::bears::Bear,
+    bear: &den_service::bears::Bear,
     select_options: &[ModelOption],
     availability_options: &[ModelOption],
 ) -> Result<Vec<BearProfileModelRow>, CustomError> {

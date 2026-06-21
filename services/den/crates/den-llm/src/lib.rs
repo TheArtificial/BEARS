@@ -7,6 +7,8 @@
 mod client;
 mod embeddings;
 mod idle_byte_stream;
+mod model_options;
+pub mod model_registry;
 
 pub use client::{
     normalize_llm_model_handle, ChatCompletionRequest, ChatMessage, ChatToolCall,
@@ -14,3 +16,4 @@ pub use client::{
 };
 pub use embeddings::EmbeddingClient;
 pub use idle_byte_stream::byte_stream_with_idle_timeout;
+pub use model_options::{ModelOption, ToolOption};

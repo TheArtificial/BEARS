@@ -7,18 +7,15 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{errors::CustomError, web::AppState};
-use den_runtime::{
-    agent_assist::{ModelOption, ToolOption},
-    bears::{
-        context_composition::{
-            BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION,
-            DEFAULT_ROLE_CONTRACT_VERSION,
-        },
-        context_profile_from_json, context_profile_to_json, db as bears_db,
-        db::BearParams,
-        templates::first_bear_template,
-        Bear, BearProfile,
+use den_llm::{ModelOption, ToolOption};
+use den_service::bears::{
+    context_composition::{
+        BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION, DEFAULT_ROLE_CONTRACT_VERSION,
     },
+    context_profile_from_json, context_profile_to_json, db as bears_db,
+    db::BearParams,
+    templates::first_bear_template,
+    Bear, BearProfile,
 };
 
 /// Deprecated legacy provider agent-type rows kept only for old template compatibility.
@@ -265,7 +262,7 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
 fn model_option_from_bifrost_metadata(
     model: den_service::bifrost::BifrostModelMetadata,
 ) -> ModelOption {
-    den_runtime::llm::model_registry::model_option_for_available_handle(
+    den_llm::model_registry::model_option_for_available_handle(
         &model.handle,
         model.display_name.as_deref(),
         (model.context_window > 0).then_some(model.context_window),
@@ -309,7 +306,7 @@ pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelO
     all_options
         .iter()
         .filter(|option| {
-            den_runtime::llm::model_registry::entry_for_handle(&option.handle)
+            den_llm::model_registry::entry_for_handle(&option.handle)
                 .map(|entry| entry.selectable)
                 .unwrap_or(false)
         })
@@ -373,7 +370,7 @@ pub fn validate_default_model_for_catalog(
             }
             let requested = default_model_trim.trim();
             let requested_resolved =
-                den_runtime::llm::model_registry::resolve_model_handle(requested);
+                den_llm::model_registry::resolve_model_handle(requested);
             let available = models.iter().any(|model| {
                 if model.handle == requested {
                     return true;
@@ -382,7 +379,7 @@ pub fn validate_default_model_for_catalog(
                     return false;
                 };
                 resolved == model.handle
-                    || den_runtime::llm::model_registry::resolve_model_handle(&model.handle)
+                    || den_llm::model_registry::resolve_model_handle(&model.handle)
                         == Some(resolved)
             });
             if !available {
@@ -401,7 +398,7 @@ pub fn canonical_default_model_handle(raw: &str) -> Option<String> {
         None
     } else {
         Some(
-            den_runtime::llm::model_registry::resolve_model_handle(trimmed)
+            den_llm::model_registry::resolve_model_handle(trimmed)
                 .unwrap_or(trimmed)
                 .to_string(),
         )
@@ -616,7 +613,7 @@ pub fn composed_system_prompt_for_profile_json(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    den_runtime::bears::compose_role_context(&bear, BearProfile::Chat, None)
+    den_service::bears::compose_role_context(&bear, BearProfile::Chat, None)
         .map(|context| context.composed_prompt)
         .map_err(CustomError::from)
 }

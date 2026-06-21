@@ -249,7 +249,7 @@ async fn session_model_payload(
         Ok(models) => models
             .into_iter()
             .map(|model| {
-                den_runtime::llm::model_registry::model_option_for_available_handle(
+                den_llm::model_registry::model_option_for_available_handle(
                     &model.handle,
                     model.display_name.as_deref(),
                     (model.context_window > 0).then_some(model.context_window),
@@ -304,12 +304,12 @@ pub(crate) async fn session_model_set_result(
             .ok_or_else(|| {
                 CustomError::ValidationError("model is required for explicit selection".to_string())
             })?;
-        let resolved = den_runtime::llm::model_registry::resolve_model_handle(raw);
+        let resolved = den_llm::model_registry::resolve_model_handle(raw);
         let available = options.iter().any(|option| {
             let handle = option.get("handle").and_then(Value::as_str).unwrap_or("");
             handle == raw
                 || resolved == Some(handle)
-                || den_runtime::llm::model_registry::resolve_model_handle(handle) == resolved
+                || den_llm::model_registry::resolve_model_handle(handle) == resolved
         });
         if !available {
             return Err(CustomError::ValidationError(

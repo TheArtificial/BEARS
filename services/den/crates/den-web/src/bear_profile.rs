@@ -2,10 +2,8 @@
 
 use serde::Serialize;
 use crate::{errors::CustomError, web::AppState};
-use den_runtime::bears::{
-    db as bears_db,
-    compose_role_context,
-    Bear, BearProfile, BearProfileBinding,
+use den_service::bears::{
+    compose_role_context, db as bears_db, Bear, BearProfile, BearProfileBinding,
 };
 
 #[derive(Serialize)]

@@ -30,6 +30,7 @@ web-ui-fixtures = []
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-service = { path = "../den-service" }
+den-llm = { path = "../den-llm" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
 den-docket = { path = "../den-docket" }
