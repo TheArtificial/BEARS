@@ -341,7 +341,12 @@ struct LocalToolError {
 
 fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
     let mode = normalize_mode(mode);
-    vec![SessionConfigOption::select(
+    vec![mode_config_option(mode)]
+}
+
+fn mode_config_option(mode: &str) -> SessionConfigOption {
+    let mode = normalize_mode(mode);
+    SessionConfigOption::select(
         "mode",
         "Session Mode",
         mode,
@@ -357,7 +362,62 @@ fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
         ],
     )
     .description("Reflects trusted Den session policy for mutation-gate state.")
-    .category(SessionConfigOptionCategory::Mode)]
+    .category(SessionConfigOptionCategory::Mode)
+}
+
+fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
+    let effective = model_state
+        .get("effective_model")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    let selected = if model_state.get("selection_mode").and_then(Value::as_str) == Some("explicit")
+    {
+        model_state
+            .get("selected_model")
+            .or_else(|| model_state.get("requested_model"))
+            .and_then(Value::as_str)
+            .unwrap_or("auto")
+            .to_string()
+    } else {
+        "auto".to_string()
+    };
+    let mut options = vec![SessionConfigSelectOption::new(
+        "auto",
+        format!("Auto / stance default ({effective})"),
+    )
+    .description("Inherit the current stance/Bear model policy for this ACP conversation.")];
+    if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
+        for item in items {
+            let Some(handle) = item.get("handle").and_then(Value::as_str) else {
+                continue;
+            };
+            let label = item.get("label").and_then(Value::as_str).unwrap_or(handle);
+            options.push(SessionConfigSelectOption::new(
+                handle.to_string(),
+                label.to_string(),
+            ));
+        }
+    }
+    Some(
+        SessionConfigOption::select("model", "Model", selected, options)
+            .description(
+                "Conversation-scoped model selection. Auto inherits the stance/Bear default.",
+            )
+            .category(SessionConfigOptionCategory::Mode),
+    )
+}
+
+fn session_config_options_for_context(
+    context: Option<&SessionContext>,
+    mode: &str,
+) -> Vec<SessionConfigOption> {
+    let mut options = vec![mode_config_option(mode)];
+    if let Some(model_state) = context.and_then(|ctx| ctx.raw.get("model_selection")) {
+        if let Some(option) = model_config_option(model_state) {
+            options.push(option);
+        }
+    }
+    options
 }
 
 fn normalize_mode(mode: &str) -> &'static str {
@@ -444,6 +504,19 @@ fn session_id_from_config_params(params: &Value) -> Result<&str> {
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session config params missing sessionId"))
+}
+
+fn config_value_from_params(params: &Value) -> Result<&str> {
+    params
+        .get("value")
+        .and_then(|value| {
+            if let Some(raw) = value.as_str() {
+                Some(raw)
+            } else {
+                value.get("value").and_then(Value::as_str)
+            }
+        })
+        .ok_or_else(|| anyhow!("session config params missing value"))
 }
 
 fn mode_value_from_config_params(params: &Value) -> Result<&str> {
@@ -802,6 +875,77 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
         );
     }
     Ok(())
+}
+
+async fn remember_session_model(
+    shared_state: &AdapterSharedState,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    model_state: Value,
+) {
+    if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+        context.raw["model_selection"] = model_state.clone();
+    }
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.raw["model_selection"] = model_state;
+    }
+}
+
+async fn notify_config_options_for_session(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Result<()> {
+    let context = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get(session_id)
+        .cloned();
+    let mode = context
+        .as_ref()
+        .and_then(|ctx| ctx.current_mode.as_deref())
+        .map(normalize_mode)
+        .unwrap_or(MODE_ASK);
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::ConfigOptionUpdate(
+                ConfigOptionUpdate::new(session_config_options_for_context(context.as_ref(), mode))
+            ))?,
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn sync_session_model_from_den(
+    http: &reqwest::Client,
+    config: Option<&Config>,
+    shared_state: &AdapterSharedState,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+) -> Result<Option<Value>> {
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let result = bearwire::rpc_call(
+        http,
+        config,
+        "session.model.get",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+        }),
+    )
+    .await?;
+    remember_session_model(shared_state, adapter_state, session_id, result.clone()).await;
+    notify_config_options_for_session(shared_state, session_id).await?;
+    Ok(Some(result))
 }
 
 async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
@@ -2085,7 +2229,7 @@ async fn handle_request(
                     .get("configId")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                if config_id != "mode" {
+                if config_id != "mode" && config_id != "model" {
                     write_response(
                         id,
                         Err(json_rpc_error(
@@ -2112,6 +2256,79 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
+                if config_id == "model" {
+                    let requested_model = match config_value_from_params(&request.params) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32602,
+                                    "Invalid session config params",
+                                    Some(json!({ "message": format!("{err:#}") })),
+                                )),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    let config = match runtime.config.as_ref() {
+                        Some(config) => config,
+                        None => {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(-32002, "Den is not configured", None)),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    let selection_mode = if requested_model == "auto" {
+                        "auto"
+                    } else {
+                        "explicit"
+                    };
+                    let den_response = bearwire::rpc_call(
+                        http,
+                        config,
+                        "session.model.set",
+                        json!({
+                            "bear_slug": config.bear,
+                            "session_id": session_id,
+                            "selection_mode": selection_mode,
+                            "model": if requested_model == "auto" { Value::Null } else { json!(requested_model) },
+                        }),
+                    )
+                    .await?;
+                    remember_session_model(
+                        shared_state,
+                        adapter_state,
+                        session_id,
+                        den_response.clone(),
+                    )
+                    .await;
+                    notify_config_options_for_session(shared_state, session_id).await?;
+                    let context = shared_state
+                        .session_contexts
+                        .lock()
+                        .await
+                        .get(session_id)
+                        .cloned();
+                    let mode = context
+                        .as_ref()
+                        .and_then(|ctx| ctx.current_mode.as_deref())
+                        .unwrap_or(MODE_ASK);
+                    write_response(
+                        id,
+                        Ok(json!({
+                            "configOptions": session_config_options_for_context(context.as_ref(), mode),
+                            "_meta": { "bears": { "model": den_response } }
+                        })),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+
                 let requested_mode = match mode_value_from_config_params(&request.params) {
                     Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => {
                         mode_value_from_config_params(&request.params)?

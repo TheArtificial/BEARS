@@ -191,6 +191,20 @@ pub(crate) async fn handle_prompt(
         session_id,
         truncate_for_log(&session_result.to_string(), 360)
     );
+    if let Err(err) = crate::sync_session_model_from_den(
+        http,
+        Some(config),
+        shared_state,
+        adapter_state,
+        session_id,
+    )
+    .await
+    {
+        eprintln!(
+            "bear-armature: failed to sync model config after session.open session_id={} error={err:#}",
+            session_id
+        );
+    }
 
     let run_result = rpc_call(
         http,
@@ -458,7 +472,7 @@ pub(crate) async fn try_handle_prompt(
     }
 }
 
-async fn rpc_call(
+pub(crate) async fn rpc_call(
     http: &reqwest::Client,
     config: &Config,
     method: &str,

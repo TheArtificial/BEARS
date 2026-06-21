@@ -297,6 +297,21 @@ Use when the session is bound to a backing runtime context.
 }
 ```
 
+#### `model.selection.changed`
+
+Emitted when the conversation-scoped model selection for a BearWire/ACP session changes.
+
+```json
+{
+  "session_id": "ses_123",
+  "conversation_id": "den-conv-123",
+  "selection_mode": "explicit",
+  "selected_model": "openai/gpt-4.1"
+}
+```
+
+`selection_mode = "auto"` means the session inherits Den's Bear/profile model policy for the conversation. `selected_model` may be `null` in auto mode.
+
 #### `session.closed`
 
 ```json
@@ -751,7 +766,33 @@ session.open
 session.resume
 session.close
 session.state
+session.model.get
+session.model.set
 ```
+
+`session.model.get` returns conversation-scoped model state for the session, including `selection_mode`, `requested_model`, `selected_model`, `effective_model`, and `model_options` for ACP UI controls.
+
+`session.model.set` accepts:
+
+```json
+{
+  "session_id": "ses_123",
+  "selection_mode": "explicit",
+  "model": "openai/gpt-4.1"
+}
+```
+
+or auto/inherit mode:
+
+```json
+{
+  "session_id": "ses_123",
+  "selection_mode": "auto",
+  "model": null
+}
+```
+
+Den validates explicit models against Bifrost availability. The selected model is conversation-scoped and should stick for subsequent turns in that session/conversation.
 
 ### Run methods
 

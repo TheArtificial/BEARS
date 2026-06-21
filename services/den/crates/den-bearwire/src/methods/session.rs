@@ -3,7 +3,8 @@ use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions, bearwire_events, runtime::bearwire_projection::wire::BearWireEvent, DenState,
+    acp_sessions, bears::BearProfile, bearwire_events,
+    runtime::bearwire_projection::wire::BearWireEvent, DenState,
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
@@ -200,4 +201,184 @@ pub(crate) async fn session_state_result(
         "bear_slug": bear_slug,
         "sessions": sessions,
     }))
+}
+
+async fn session_model_payload(
+    state: &DenState,
+    user_id: i32,
+    bear: &den_runtime::bears::Bear,
+    session_id: &str,
+) -> Result<Value, CustomError> {
+    let session =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        &state.sqlx_pool,
+        bear.id,
+        Some(user_id),
+        conversation_id,
+        Some(&session.acp_session_id),
+        None,
+    )
+    .await?;
+    let base_model = den_runtime::bears::db::resolve_model_for_profile(
+        &state.sqlx_pool,
+        bear,
+        BearProfile::Pair,
+        state.config.default_llm_model.as_str(),
+    )
+    .await?;
+    let model_state = den_runtime::conversation_persistence::get_conversation_model_state(
+        &state.sqlx_pool,
+        conversation.id,
+    )
+    .await?;
+    let effective_model =
+        den_runtime::conversation_persistence::resolve_conversation_selected_model(
+            &state.sqlx_pool,
+            conversation.id,
+        )
+        .await?
+        .unwrap_or(base_model);
+    let model_options = match state.bifrost.list_models().await {
+        Ok(models) => models
+            .into_iter()
+            .map(|model| {
+                den_runtime::llm::model_registry::model_option_for_available_handle(
+                    &model.handle,
+                    model.display_name.as_deref(),
+                    (model.context_window > 0).then_some(model.context_window),
+                    model.max_output_tokens,
+                )
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+    Ok(json!({
+        "ok": true,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "selection_mode": model_state.as_ref().map(|s| s.selection_mode.as_str()).unwrap_or("auto"),
+        "requested_model": model_state.as_ref().and_then(|s| s.requested_model.clone()),
+        "selected_model": model_state.as_ref().and_then(|s| s.selected_model.clone()),
+        "effective_model": effective_model,
+        "model_options": model_options,
+    }))
+}
+
+pub(crate) async fn session_model_get_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    session_model_payload(state, user_id, &bear, &session_id).await
+}
+
+pub(crate) async fn session_model_set_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    let mode = param_string(params, "selection_mode").unwrap_or_else(|| "auto".to_string());
+    let requested_model = param_string(params, "model");
+    let payload = session_model_payload(state, user_id, &bear, &session_id).await?;
+    let options = payload
+        .get("model_options")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected = if mode.trim() == "explicit" {
+        let raw = requested_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CustomError::ValidationError("model is required for explicit selection".to_string())
+            })?;
+        let resolved = den_runtime::llm::model_registry::resolve_model_handle(raw);
+        let available = options.iter().any(|option| {
+            let handle = option.get("handle").and_then(Value::as_str).unwrap_or("");
+            handle == raw
+                || resolved == Some(handle)
+                || den_runtime::llm::model_registry::resolve_model_handle(handle) == resolved
+        });
+        if !available {
+            return Err(CustomError::ValidationError(
+                "model must be available in Bifrost".to_string(),
+            ));
+        }
+        Some(resolved.unwrap_or(raw).to_string())
+    } else {
+        None
+    };
+    let session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        &state.sqlx_pool,
+        bear.id,
+        Some(user_id),
+        conversation_id,
+        Some(&session.acp_session_id),
+        None,
+    )
+    .await?;
+    den_runtime::conversation_persistence::set_conversation_model_state(
+        &state.sqlx_pool,
+        conversation.id,
+        if selected.is_some() {
+            "explicit"
+        } else {
+            "auto"
+        },
+        selected.as_deref(),
+        selected.as_deref(),
+        Some(if selected.is_some() {
+            "acp_selected"
+        } else {
+            "inherit_stance_or_bear_default"
+        }),
+    )
+    .await?;
+
+    let mut event = BearWireEvent::ephemeral(
+        "model.selection.changed",
+        json!({
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "selection_mode": if selected.is_some() { "explicit" } else { "auto" },
+            "selected_model": selected,
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    let _ = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+
+    session_model_payload(state, user_id, &bear, &session_id).await
 }

@@ -45,7 +45,12 @@ impl JsonRpcResponse {
         }
     }
 
-    fn error(id: Option<Value>, code: i64, message: impl Into<String>, data: Option<Value>) -> Self {
+    fn error(
+        id: Option<Value>,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -75,62 +80,57 @@ pub(crate) async fn rpc(
 
     let response = match request.method.as_str() {
         "initialize" => JsonRpcResponse::ok(request.id, methods::initialize_result(&state)),
-        "session.open" | "session.resume" => {
-            method_response(
-                request.id,
-                methods::session::session_open_result(&state, &headers, &request.params).await,
-                format!("BearWire {} failed", request.method),
-            )
-        }
-        "session.close" => {
-            method_response(
-                request.id,
-                methods::session::session_close_result(&state, &headers, &request.params).await,
-                "BearWire session.close failed",
-            )
-        }
-        "session.state" => {
-            method_response(
-                request.id,
-                methods::session::session_state_result(&state, &headers, &request.params).await,
-                "BearWire session.state failed",
-            )
-        }
-        "run.cancel" => {
-            method_response(
-                request.id,
-                methods::run::run_cancel_result(&state, &headers, &request.params).await,
-                "BearWire run.cancel failed",
-            )
-        }
-        "resource.update" => {
-            method_response(
-                request.id,
-                methods::resource::resource_update_result(&state, &headers, &request.params).await,
-                "BearWire resource.update failed",
-            )
-        }
-        "run.start" => {
-            method_response(
-                request.id,
-                methods::run::run_start_result(&state, &headers, &request.params).await,
-                "BearWire run.start failed",
-            )
-        }
-        "client.tool.result" => {
-            method_response(
-                request.id,
-                methods::client::client_tool_result_result(&state, &headers, &request.params).await,
-                "BearWire client.tool.result failed",
-            )
-        }
-        "client.permission.result" => {
-            method_response(
-                request.id,
-                methods::client::client_permission_result_result(&state, &headers, &request.params).await,
-                "BearWire client.permission.result failed",
-            )
-        }
+        "session.open" | "session.resume" => method_response(
+            request.id,
+            methods::session::session_open_result(&state, &headers, &request.params).await,
+            format!("BearWire {} failed", request.method),
+        ),
+        "session.close" => method_response(
+            request.id,
+            methods::session::session_close_result(&state, &headers, &request.params).await,
+            "BearWire session.close failed",
+        ),
+        "session.state" => method_response(
+            request.id,
+            methods::session::session_state_result(&state, &headers, &request.params).await,
+            "BearWire session.state failed",
+        ),
+        "session.model.get" => method_response(
+            request.id,
+            methods::session::session_model_get_result(&state, &headers, &request.params).await,
+            "BearWire session.model.get failed",
+        ),
+        "session.model.set" => method_response(
+            request.id,
+            methods::session::session_model_set_result(&state, &headers, &request.params).await,
+            "BearWire session.model.set failed",
+        ),
+        "run.cancel" => method_response(
+            request.id,
+            methods::run::run_cancel_result(&state, &headers, &request.params).await,
+            "BearWire run.cancel failed",
+        ),
+        "resource.update" => method_response(
+            request.id,
+            methods::resource::resource_update_result(&state, &headers, &request.params).await,
+            "BearWire resource.update failed",
+        ),
+        "run.start" => method_response(
+            request.id,
+            methods::run::run_start_result(&state, &headers, &request.params).await,
+            "BearWire run.start failed",
+        ),
+        "client.tool.result" => method_response(
+            request.id,
+            methods::client::client_tool_result_result(&state, &headers, &request.params).await,
+            "BearWire client.tool.result failed",
+        ),
+        "client.permission.result" => method_response(
+            request.id,
+            methods::client::client_permission_result_result(&state, &headers, &request.params)
+                .await,
+            "BearWire client.permission.result failed",
+        ),
         other => JsonRpcResponse::error(
             request.id,
             -32601,
