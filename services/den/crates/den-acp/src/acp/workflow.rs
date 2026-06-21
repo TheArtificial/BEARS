@@ -1,5 +1,5 @@
-use crate::acp::workflow_guidance::render_turn_state_summary;
-use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
+use crate::acp::workflow_guidance::{render_turn_state_summary, ActivityStatusSyncSummary};
+use den_docket::WorkPlanProjection;
 use den_runtime::{client_tools::ResolvedSessionPolicy, turn_state};
 
 pub(crate) fn workflow_state_json(policy: &ResolvedSessionPolicy) -> serde_json::Value {
@@ -38,7 +38,25 @@ pub(super) fn render_turn_state_summary_with_activity(
     let current_item = turn_state["activity"]["current_item"]["title"]
         .as_str()
         .unwrap_or("none");
-    let mut summary = render_turn_state_summary(
+    let pending_count = turn_state["activity"]["counts"]["pending"]
+        .as_u64()
+        .unwrap_or(0);
+    let in_progress_count = turn_state["activity"]["counts"]["in_progress"]
+        .as_u64()
+        .unwrap_or(0);
+    let blocked_count = turn_state["activity"]["counts"]["blocked"]
+        .as_u64()
+        .unwrap_or(0);
+    let activity_status_sync = ActivityStatusSyncSummary {
+        required: turn_state["activity"]["status_sync_required"]
+            .as_bool()
+            .unwrap_or(false),
+        outstanding_items: pending_count + in_progress_count + blocked_count,
+        completed_items: turn_state["activity"]["counts"]["completed"]
+            .as_u64()
+            .unwrap_or(0),
+    };
+    render_turn_state_summary(
         session_id,
         roots,
         local_tool_names,
@@ -55,60 +73,25 @@ pub(super) fn render_turn_state_summary_with_activity(
         activity_plan_id,
         current_item,
         execution_unlocked,
-    );
-    if let Some(reminder) = active_activity_plan_status_reminder(activity_plan) {
-        summary.push(' ');
-        summary.push_str(&reminder);
-    }
-    summary
-}
-
-fn active_activity_plan_status_reminder(
-    activity_plan: Option<&WorkPlanProjection>,
-) -> Option<String> {
-    let plan = activity_plan?;
-    if matches!(plan.status.as_str(), "completed" | "cancelled" | "archived") {
-        return None;
-    }
-    let outstanding_count = plan
-        .items
-        .iter()
-        .filter(|item| {
-            matches!(
-                item.status,
-                WorkPlanItemStatus::Pending
-                    | WorkPlanItemStatus::InProgress
-                    | WorkPlanItemStatus::Blocked
-            )
-        })
-        .count();
-    let completed_count = plan
-        .items
-        .iter()
-        .filter(|item| item.status == WorkPlanItemStatus::Completed)
-        .count();
-    let current_item = plan
-        .current_item
-        .as_ref()
-        .map(|item| item.title.as_str())
-        .unwrap_or("none");
-    Some(format!(
-        "ACTIVE TASK LIST REMINDER: `{}` is frontmost for this ACP session (plan_id={}, status={}, outstanding_items={}, completed_items={}, current_item=`{}`). Keep it current on every turn: when you finish or abandon an item, call `update_plan` promptly to mark it `completed`, `blocked`, or `cancelled` and move the next item to `in_progress` before or while reporting progress. Do not claim a task is complete while the visible task list still shows it pending/in_progress.",
-        plan.title,
-        plan.id,
-        plan.status,
-        outstanding_count,
-        completed_count,
-        current_item,
-    ))
+        activity_status_sync,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_docket::WorkPlanItem;
+    use den_docket::{WorkPlanItem, WorkPlanItemStatus};
+    use den_runtime::client_tools::ToolEnablementState;
     use time::OffsetDateTime;
     use uuid::Uuid;
+
+    fn policy() -> ResolvedSessionPolicy {
+        ResolvedSessionPolicy {
+            mode_label: "Write",
+            tool_enablement: ToolEnablementState::AllTools,
+            plan_mode_state: Some("approved".to_string()),
+        }
+    }
 
     fn item(id: &str, title: &str, status: WorkPlanItemStatus) -> WorkPlanItem {
         WorkPlanItem {
@@ -152,23 +135,47 @@ mod tests {
     }
 
     #[test]
-    fn active_activity_plan_reminder_marks_task_list_frontmost() {
+    fn active_activity_plan_projects_status_sync_requirement_from_turn_state() {
         let plan = plan("active");
-        let reminder = active_activity_plan_status_reminder(Some(&plan)).expect("reminder");
+        let summary = render_turn_state_summary_with_activity(
+            "acp-test",
+            &["/workspace".to_string()],
+            &[],
+            &["update_plan"],
+            &policy(),
+            Some(&plan),
+        );
 
-        assert!(reminder.contains("ACTIVE TASK LIST REMINDER"));
-        assert!(reminder.contains("frontmost for this ACP session"));
-        assert!(reminder.contains("call `update_plan` promptly"));
-        assert!(reminder.contains("Do not claim a task is complete"));
-        assert!(reminder.contains("outstanding_items=2"));
-        assert!(reminder.contains("completed_items=1"));
+        assert!(summary.contains("activity.status_sync_required=true"));
+        assert!(summary.contains("activity.status_update_tool=`update_plan`"));
+        assert!(summary.contains("activity.outstanding_items=2"));
+        assert!(summary.contains("activity.completed_items=1"));
+        assert!(summary.contains("completion_claim_requires_status_update=true"));
     }
 
     #[test]
-    fn terminal_activity_plan_does_not_emit_status_reminder() {
+    fn terminal_or_absent_activity_plan_projects_no_status_sync_requirement() {
         let plan = plan("completed");
+        let terminal = render_turn_state_summary_with_activity(
+            "acp-test",
+            &["/workspace".to_string()],
+            &[],
+            &["update_plan"],
+            &policy(),
+            Some(&plan),
+        );
+        let absent = render_turn_state_summary_with_activity(
+            "acp-test",
+            &["/workspace".to_string()],
+            &[],
+            &["update_plan"],
+            &policy(),
+            None,
+        );
 
-        assert!(active_activity_plan_status_reminder(Some(&plan)).is_none());
-        assert!(active_activity_plan_status_reminder(None).is_none());
+        assert!(terminal.contains("activity.status_sync_required=false"));
+        assert!(absent.contains("activity.status_sync_required=false"));
+        assert!(!terminal.contains("completion_claim_requires_status_update=true"));
+        assert!(!absent.contains("completion_claim_requires_status_update=true"));
     }
 }

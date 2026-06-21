@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::{plan_mode, client_tools::ResolvedSessionPolicy};
+use crate::{client_tools::ResolvedSessionPolicy, plan_mode};
 use den_docket::WorkPlanProjection;
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
@@ -106,24 +106,33 @@ fn workplan_domain_json(
 
 fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
     match plan {
-        Some(plan) => json!({
-            "domain": "activity",
-            "plan_id": plan.id,
-            "id": plan.id,
-            "root_id": plan.id,
-            "parent_id": Value::Null,
-            "relation": "root",
-            "status": plan.status,
-            "title": plan.title,
-            "summary": plan.summary,
-            "current_item": plan.current_item.as_ref().map(activity_item_json).unwrap_or(Value::Null),
-            "counts": activity_item_counts(plan),
-            "toward_workplan_id": Value::Null,
-            "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
-            "visibility": plan.visibility,
-            "owner_profile": plan.owner_profile,
-            "version": plan.version,
-        }),
+        Some(plan) => {
+            let counts = activity_item_counts(plan);
+            let status_sync_required =
+                !matches!(plan.status.as_str(), "completed" | "cancelled" | "archived");
+            json!({
+                "domain": "activity",
+                "plan_id": plan.id,
+                "id": plan.id,
+                "root_id": plan.id,
+                "parent_id": Value::Null,
+                "relation": "root",
+                "frontmost": true,
+                "status": plan.status,
+                "title": plan.title,
+                "summary": plan.summary,
+                "current_item": plan.current_item.as_ref().map(activity_item_json).unwrap_or(Value::Null),
+                "counts": counts,
+                "status_sync_required": status_sync_required,
+                "completion_claim_requires_status_update": status_sync_required,
+                "status_update_tool": if status_sync_required { Value::from("update_plan") } else { Value::Null },
+                "toward_workplan_id": Value::Null,
+                "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
+                "visibility": plan.visibility,
+                "owner_profile": plan.owner_profile,
+                "version": plan.version,
+            })
+        }
         None => json!({
             "domain": "activity",
             "plan_id": Value::Null,
@@ -131,6 +140,7 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
             "root_id": Value::Null,
             "parent_id": Value::Null,
             "relation": "none",
+            "frontmost": false,
             "status": "inactive",
             "title": Value::Null,
             "summary": Value::Null,
@@ -142,6 +152,9 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
                 "completed": 0,
                 "cancelled": 0
             },
+            "status_sync_required": false,
+            "completion_claim_requires_status_update": false,
+            "status_update_tool": Value::Null,
             "toward_workplan_id": Value::Null,
             "handoff_requested": false
         }),
