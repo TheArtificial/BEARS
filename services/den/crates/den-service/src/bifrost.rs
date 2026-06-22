@@ -289,6 +289,24 @@ impl BifrostClient {
         Ok(models)
     }
 
+    /// Eagerly fetch the model catalog at startup so `preferred_api_style_for_model`
+    /// reflects gateway-advertised Responses-API support from the first request,
+    /// rather than the static fallback used before the catalog is first listed.
+    /// Best-effort: logs and returns on failure instead of blocking startup.
+    pub async fn warm_model_catalog(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        match self.list_models().await {
+            Ok(models) => {
+                tracing::info!(count = models.len(), "Warmed Bifrost model catalog");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to warm Bifrost model catalog at startup");
+            }
+        }
+    }
+
     pub async fn get_model(&self, handle: &str) -> Result<Option<BifrostModelMetadata>, DenError> {
         let handle = handle.trim();
         if handle.is_empty() {
