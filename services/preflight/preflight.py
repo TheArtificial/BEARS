@@ -154,14 +154,12 @@ def validate_bifrost_model_metadata_config() -> None:
         for key in provider.get("keys", []) or []:
             if not isinstance(key, dict):
                 continue
+            key_name = str(key.get("name", "<unnamed>")).strip() or "<unnamed>"
             key_models = key.get("models")
-            # A key with no explicit model allowlist (field absent or empty list)
-            # serves every model of its provider in Bifrost, so treat it like the
-            # "*" wildcard. Without this, removing an allowlist from a provider key
-            # makes preflight reject every model that key is meant to serve.
-            if not key_models:
-                wildcard_providers.add(provider_name)
-                continue
+            if not isinstance(key_models, list) or not key_models:
+                fail(
+                    f"providers.{provider_name}.keys[{key_name}] must declare models explicitly; use ['*'] for provider-wide routing"
+                )
             for model in key_models:
                 if model == "*":
                     wildcard_providers.add(provider_name)
@@ -216,8 +214,8 @@ def validate_bifrost_model_metadata_config() -> None:
         fail("Bifrost config bears.models has no enabled models")
     if wildcard_providers:
         warn(
-            "Bifrost provider keys serve all models (models: ['*'] or no models list); "
-            "explicit provider model lists are recommended so preflight can validate availability"
+            "Bifrost provider keys serve all models (models: ['*']); "
+            "explicit provider model lists are recommended when you want preflight to validate exact availability"
         )
 
     info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
