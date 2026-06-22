@@ -1,11 +1,11 @@
 use crate::{
-    client_supports_terminal, paths::ensure_path_allowed_for_session,
-    send_terminal_tool_call_update, AdapterState, CreateTerminalRequest, CreateTerminalResponse,
-    EnvVariable, ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest,
-    TerminalOutputResponse, ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
+    ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse,
+    ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse, client_supports_terminal,
+    paths::ensure_path_allowed_for_session, send_terminal_tool_call_update,
 };
-use anyhow::{anyhow, Context};
-use serde_json::{json, Value};
+use anyhow::{Context, anyhow};
+use serde_json::{Value, json};
 use std::{fmt, time::Duration};
 
 pub(crate) fn command_line(command: &str, args: &[String]) -> String {

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{client_tools::ResolvedSessionPolicy, plan_mode};
 use den_docket::WorkPlanProjection;
@@ -125,7 +125,7 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
                 "counts": counts,
                 "status_sync_required": status_sync_required,
                 "completion_claim_requires_status_update": status_sync_required,
-                "status_update_tool": if status_sync_required { Value::from("update_plan") } else { Value::Null },
+                "status_update_tool": if status_sync_required { Value::from("update_task_list") } else { Value::Null },
                 "toward_workplan_id": Value::Null,
                 "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
                 "visibility": plan.visibility,

@@ -31,17 +31,14 @@ use crate::core::{
         },
         descriptor::builtin_den_tool_descriptor_for_provider_name,
         memory_write::MemoryWriteEntryArguments,
-        session::{invoke_den_tool, DenToolInvocationContext},
+        session::{DenToolInvocationContext, invoke_den_tool},
         support::validate_memory_write_entry_semantics,
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
 use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
-use den_runtime::{
-    plan_mode::PlanModeSessionRow,
-    client_tools::ClientToolName,
-};
-use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
+use den_runtime::{client_tools::ClientToolName, plan_mode::PlanModeSessionRow};
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
@@ -49,7 +46,7 @@ fn descriptor_exposes_turn_state_domain_metadata() {
     assert_eq!(descriptor.domain, "workplan");
     assert_eq!(descriptor.content_class, Some("workplan_artifact"));
 
-    let descriptor = builtin_den_tool_descriptor_for_provider_name("update_plan").unwrap();
+    let descriptor = builtin_den_tool_descriptor_for_provider_name("update_task_list").unwrap();
     assert_eq!(descriptor.domain, "activity");
     assert_eq!(descriptor.content_class, Some("activity_status"));
 
@@ -166,7 +163,7 @@ fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
     let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }
 
 #[test]
@@ -345,7 +342,7 @@ fn memory_write_entry_semantics_reject_activity_content_class_before_db_access()
     let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }
 
 #[tokio::test]
@@ -391,5 +388,5 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }

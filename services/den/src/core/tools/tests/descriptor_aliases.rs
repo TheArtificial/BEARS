@@ -1,7 +1,10 @@
 use crate::core::tools::{
     aliases::is_builtin_den_tool,
     constants::*,
-    descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
+    descriptor::{
+        builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
+        builtin_den_tool_descriptors_for_profile,
+    },
 };
 use den_runtime::bears::BearProfile;
 use std::collections::HashSet;
@@ -97,12 +100,21 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
         .expect("memory write descriptor exists");
     assert_eq!(memory.provider_name, DEN_MEMORY_WRITE_ENTRY_PROVIDER);
 
-    let update_plan = descriptors
+    let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
         .expect("work plan update descriptor exists");
-    assert_eq!(update_plan.provider_name, DEN_WORK_PLAN_UPDATE_PROVIDER);
-    assert_eq!(update_plan.provider_name, "update_plan");
+    assert_eq!(
+        update_task_list.provider_name,
+        DEN_WORK_PLAN_UPDATE_PROVIDER
+    );
+    assert_eq!(update_task_list.provider_name, "update_task_list");
+    assert_eq!(
+        builtin_den_tool_descriptor_for_provider_name("update_plan")
+            .expect("legacy update_plan alias resolves")
+            .name,
+        DEN_WORK_PLAN_UPDATE
+    );
 
     let enter_plan_mode = descriptors
         .iter()
@@ -124,7 +136,7 @@ fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
     assert!(provider_names.contains("web_search"));
     assert!(provider_names.contains("memory_browse"));
     assert!(provider_names.contains("memory_read"));
-    assert!(provider_names.contains("update_plan"));
+    assert!(provider_names.contains("update_task_list"));
     assert!(provider_names.contains("enter_plan_mode"));
     assert!(provider_names.contains("record_plan_approval"));
     assert!(provider_names.contains("exit_plan_mode"));
@@ -168,10 +180,12 @@ fn den_tool_display_json_includes_memory_titles() {
         &serde_json::json!({ "title": "Saved fact", "path": "pair/notes/mem_1.md" }),
     )
     .expect("memory_write_entry display");
-    assert!(write["title"]
-        .as_str()
-        .unwrap_or("")
-        .starts_with("Writing memory entry"));
+    assert!(
+        write["title"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Writing memory entry")
+    );
     assert_eq!(write["progress"], "Writing memory entry");
 
     let policy = den_tool_policy_json_for_provider("memory_read").expect("memory_read policy");

@@ -8,6 +8,7 @@ use futures::Stream;
 
 use crate::{
     agent_loop::{
+        AgentStepOverflowContext,
         approvals::create_native_approval,
         run_agent_step_stream,
         session_store::AgentLoopSessionStore,
@@ -16,7 +17,6 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
-        AgentStepOverflowContext,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     memory::MemoryStoreManager,
@@ -27,7 +27,7 @@ use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
 };
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{DenError, config::Config, profile::BearProfile};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -426,7 +426,8 @@ impl Stream for SessionTrackingStream {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
                     self.inner = stream;
-                    self.pending_pause_after_tool = Self::plan_update_event_from_tool_message(&message);
+                    self.pending_pause_after_tool =
+                        Self::plan_update_event_from_tool_message(&message);
                     self.pending_server_tool_continuation = Some(call.id.clone());
                     let finished =
                         tool_call_finished_event_for_content(&call, message.content.as_deref());
@@ -710,8 +711,8 @@ mod tests {
     use super::*;
     use std::{
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
         task::{RawWaker, RawWakerVTable, Waker},
     };
@@ -880,6 +881,7 @@ mod tests {
             NativeToolDispatchMode::DeferToClient,
         );
 
+        assert!(stream.should_execute_den_tool_server_side("list_task_lists"));
         assert!(stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
         assert!(stream.should_request_den_tool_permission("web_fetch"));

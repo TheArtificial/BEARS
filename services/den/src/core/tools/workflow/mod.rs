@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ use crate::{
 };
 use den_runtime::{
     bears::BearProfile,
-    memory::{tools as sqlite_memory, MemoryStoreManager},
+    memory::{MemoryStoreManager, tools as sqlite_memory},
     plan_mode,
 };
 
@@ -209,7 +209,7 @@ pub(crate) async fn list_work_plans(
         "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_plans is a Bear-level planning view. It includes live activity plans, submitted/active workplan gates, and saved pair workplan artifacts when available.",
+            "list_task_lists is a Bear-level task-list/planning view. It includes live session task lists, submitted/active workplan gates, and saved pair workplan artifacts when available.",
             "A workplan artifact in pair/plans/ may exist even when there is no active live activity plan; this is workplan-domain state, not semantic memory.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],

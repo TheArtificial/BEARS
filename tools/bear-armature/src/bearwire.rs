@@ -1,15 +1,15 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
-use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::{json, Value};
-use tokio::time::{sleep, Duration, Instant};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use serde_json::{Value, json};
+use tokio::time::{Duration, Instant, sleep};
 use uuid::Uuid;
 
 use crate::{
-    adapter_contract_context, den_request_context, env_bool, handle_den_event,
-    send_agent_message_chunk_for_turn, send_tool_call_update,
-    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
-    Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
+    AdapterSharedState, AdapterState, Config, SseFrameOutcome, SseStreamDiagnostics,
+    ToolCallUpdatePayload, adapter_contract_context, den_request_context, env_bool,
+    handle_den_event, send_agent_message_chunk_for_turn, send_tool_call_update,
+    stream_has_successful_terminal_condition, truncate_for_log,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -186,11 +186,13 @@ pub(crate) async fn handle_prompt(
     .await
     .context("BearWire session.open failed")?;
 
-    eprintln!(
-        "bear-armature: BearWire session.open ok session_id={} result={}",
-        session_id,
-        truncate_for_log(&session_result.to_string(), 360)
-    );
+    if crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: BearWire session.open ok session_id={} result={}",
+            session_id,
+            truncate_for_log(&session_result.to_string(), 360)
+        );
+    }
     if let Err(err) = crate::sync_session_model_from_den(
         http,
         Some(config),
@@ -233,10 +235,12 @@ pub(crate) async fn handle_prompt(
         .get("event_sequence")
         .and_then(Value::as_i64)
         .map(|sequence| sequence.saturating_sub(1));
-    eprintln!(
-        "bear-armature: BearWire run.start accepted session_id={} run_id={} after={:?}",
-        session_id, run_id, after
-    );
+    if crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: BearWire run.start accepted session_id={} run_id={} after={:?}",
+            session_id, run_id, after
+        );
+    }
 
     let mut diagnostics = SseStreamDiagnostics::default();
     let mut saw_done = false;
@@ -278,12 +282,14 @@ pub(crate) async fn handle_prompt(
         }
         after = max_sequence;
         if saw_done {
-            eprintln!(
-                "bear-armature: BearWire run terminal event received session_id={} run_id={} diagnostics={}",
-                session_id,
-                run_id,
-                diagnostics.summary()
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: BearWire run terminal event received session_id={} run_id={} diagnostics={}",
+                    session_id,
+                    run_id,
+                    diagnostics.summary()
+                );
+            }
             break;
         }
         if !logged_initial_wait
@@ -293,14 +299,16 @@ pub(crate) async fn handle_prompt(
             && !saw_error
         {
             logged_initial_wait = true;
-            eprintln!(
-                "bear-armature: BearWire still waiting for first visible/tool event session_id={} run_id={} after={:?} elapsed_ms={} diagnostics={}",
-                session_id,
-                run_id,
-                after,
-                started.elapsed().as_millis(),
-                diagnostics.summary()
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: BearWire still waiting for first visible/tool event session_id={} run_id={} after={:?} elapsed_ms={} diagnostics={}",
+                    session_id,
+                    run_id,
+                    after,
+                    started.elapsed().as_millis(),
+                    diagnostics.summary()
+                );
+            }
         }
         if crate::bear_debug_verbose() && last_poll_log.elapsed() >= Duration::from_secs(5) {
             eprintln!(
@@ -804,14 +812,21 @@ async fn handle_bearwire_event(
             let elapsed_ms = data.get("elapsed_ms").and_then(Value::as_u64);
             // Progress is observability, not model-visible output. Do not let it satisfy
             // prompt completion checks or suppress first-assistant/tool-event diagnostics.
-            eprintln!(
-                "bear-armature: BearWire progress session_id={} run_id={} kind={} elapsed_ms={} text={}",
-                session_id,
-                event.get("run_id").and_then(Value::as_str).unwrap_or("<unknown>"),
-                kind,
-                elapsed_ms.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()),
-                if text.is_empty() { "<empty>" } else { text }
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: BearWire progress session_id={} run_id={} kind={} elapsed_ms={} text={}",
+                    session_id,
+                    event
+                        .get("run_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<unknown>"),
+                    kind,
+                    elapsed_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    if text.is_empty() { "<empty>" } else { text }
+                );
+            }
             if !text.is_empty() {
                 let legacy = json!({ "type": "status_text", "text": text });
                 handle_den_event(

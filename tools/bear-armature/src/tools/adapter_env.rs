@@ -1,11 +1,11 @@
 use crate::{
-    adapter_capabilities_context, adapter_version, browser_tool_source_summary,
-    direct_tools_context, session_context, AdapterState, Config, SessionContext,
+    AdapterState, Config, SessionContext, adapter_capabilities_context, adapter_version,
+    browser_tool_source_summary, direct_tools_context, session_context,
 };
 use anyhow::Result;
-use reqwest::header::{HeaderValue, AUTHORIZATION};
-use serde_json::{json, Value};
-use tokio::time::{timeout, Duration};
+use reqwest::header::{AUTHORIZATION, HeaderValue};
+use serde_json::{Value, json};
+use tokio::time::{Duration, timeout};
 
 use super::mcp::host_browser_bridge_env_summary;
 

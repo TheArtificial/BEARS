@@ -21,46 +21,45 @@ use agent_client_protocol::schema::{
     ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 use approvals::{
-    approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
-    permission_options_for_context, ApprovalCache, ApprovalScope, ApprovalTarget,
-    PermissionDecision,
+    ApprovalCache, ApprovalScope, ApprovalTarget, PermissionDecision, approval_url_host_scope,
+    parse_permission_decision, permission_class_for_tool, permission_options_for_context,
 };
 use axum::{extract::State, response::IntoResponse};
 use futures_util::StreamExt;
 use http::StatusCode;
-use json_rpc::{id_key, write_json, JsonRpcTransport};
+use json_rpc::{JsonRpcTransport, id_key, write_json};
 use paths::{
     file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path,
     resolve_requested_tool_path,
 };
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use rmcp::{
     handler::server::{
-        common::{schema_for_type, FromContextPart},
+        ServerHandler,
+        common::{FromContextPart, schema_for_type},
         router::Router as McpRouter,
         wrapper::Parameters,
-        ServerHandler,
     },
     model::{
         CallToolResult, Content, Implementation as McpImplementation, ServerCapabilities,
         ServerInfo, Tool as McpTool,
     },
     transport::{
-        streamable_http_server::session::local::LocalSessionManager, StreamableHttpServerConfig,
-        StreamableHttpService,
+        StreamableHttpServerConfig, StreamableHttpService,
+        streamable_http_server::session::local::LocalSessionManager,
     },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 #[cfg(test)]
 use std::fs;
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{HashMap, hash_map::DefaultHasher},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -69,10 +68,10 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
-    sync::{broadcast, mpsc, Mutex as TokioMutex},
-    time::{timeout, Duration},
+    sync::{Mutex as TokioMutex, broadcast, mpsc},
+    time::{Duration, timeout},
 };
-use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
+use tool_tasks::{ToolTaskPhase, ToolTaskRegistry, log_tool_task_phase};
 use tools::chrome::{
     chrome_capability_status_line, chrome_tools_available, handle_chrome_console_messages,
     handle_chrome_network_requests, handle_chrome_open, handle_chrome_screenshot,
@@ -84,23 +83,23 @@ use tools::adapter_env::{
     collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
 };
 use tools::fs::{
-    handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
-    handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
-    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
-    ReplaceTextPlan,
+    ReplaceTextArgs, ReplaceTextPlan, handle_apply_patch, handle_copy_path,
+    handle_create_directory, handle_create_text_file, handle_delete_path, handle_find_paths,
+    handle_list_directory, handle_move_path, handle_read_text_file, handle_replace_text,
+    handle_search_files, handle_stat,
 };
 use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::mcp::{
-    host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
-    summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
+    McpRegistry, McpSourceConfig, host_browser_bridge_config_from_env,
+    host_browser_bridge_env_summary, parse_acp_mcp_servers, summarize_acp_mcp_servers_param,
 };
 use tools::process::handle_process_run;
 use tools::terminal::handle_terminal_run_command;
 use tools::web::handle_local_web_fetch;
-use update::{run_update_command, update_doctor_line, UpdateCommand, UpdateOptions};
+use update::{UpdateCommand, UpdateOptions, run_update_command, update_doctor_line};
 
 use uuid::Uuid;
 
@@ -381,11 +380,10 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     } else {
         "auto".to_string()
     };
-    let mut options = vec![SessionConfigSelectOption::new(
-        "auto",
-        format!("Auto / stance default ({effective})"),
-    )
-    .description("Inherit the current stance/Bear model policy for this ACP conversation.")];
+    let mut options = vec![
+        SessionConfigSelectOption::new("auto", format!("Auto / stance default ({effective})"))
+            .description("Inherit the current stance/Bear model policy for this ACP conversation."),
+    ];
     if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
         for item in items {
             let Some(handle) = item.get("handle").and_then(Value::as_str) else {
@@ -818,7 +816,7 @@ async fn send_session_info_update(
     .await
 }
 
-async fn send_DEN_runtime_session_info_update(
+async fn send_den_runtime_session_info_update(
     session_id: &str,
     runtime: Option<Value>,
     context_budget: Option<Value>,
@@ -1248,8 +1246,8 @@ fn browser_bridge_router(
     service: BrowserBridgeHttpService,
 ) -> axum::Router {
     use axum::{
-        routing::{any, get},
         Router,
+        routing::{any, get},
     };
 
     let mcp_path = config.path.clone();
@@ -1377,8 +1375,8 @@ fn route_browser_snapshot() -> rmcp::handler::server::router::tool::ToolRoute<Br
     )
 }
 
-fn route_browser_console_messages(
-) -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+fn route_browser_console_messages()
+-> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
     rmcp::handler::server::router::tool::ToolRoute::new_dyn(
         browser_tool(
             "browser_console_messages",
@@ -1402,8 +1400,8 @@ fn route_browser_console_messages(
     )
 }
 
-fn route_browser_network_requests(
-) -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+fn route_browser_network_requests()
+-> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
     rmcp::handler::server::router::tool::ToolRoute::new_dyn(
         browser_tool(
             "browser_network_requests",
@@ -1610,12 +1608,16 @@ impl BrowserBridgeConfig {
                 "--bind" => bind = require_arg_value("--bind", args.next())?,
                 "--token" => token = require_arg_value("--token", args.next())?,
                 "--path" => path = require_arg_value("--path", args.next())?,
-                "--allow-origin" => allowed_origins.push(require_arg_value("--allow-origin", args.next())?),
+                "--allow-origin" => {
+                    allowed_origins.push(require_arg_value("--allow-origin", args.next())?)
+                }
                 "--help" | "-h" => {
                     print_browser_bridge_help_to_stderr();
                     std::process::exit(0);
                 }
-                unknown => bail!("unknown browser-bridge argument {unknown:?}; use `bear-armature browser-bridge --help`"),
+                unknown => bail!(
+                    "unknown browser-bridge argument {unknown:?}; use `bear-armature browser-bridge --help`"
+                ),
             }
         }
 
@@ -1625,7 +1627,9 @@ impl BrowserBridgeConfig {
             bail!("browser-bridge requires a non-empty bind address; pass --bind <host:port>");
         }
         if token.is_empty() {
-            bail!("browser-bridge requires a bearer token; set DEN_HOST_BROWSER_MCP_TOKEN or pass --token <token>");
+            bail!(
+                "browser-bridge requires a bearer token; set DEN_HOST_BROWSER_MCP_TOKEN or pass --token <token>"
+            );
         }
         path = normalize_browser_bridge_path(&path);
         allowed_origins.retain(|origin| !origin.trim().is_empty());
@@ -1712,7 +1716,7 @@ fn parse_acp_connection_args(mut args: impl Iterator<Item = String>) -> Result<A
             unknown => {
                 return Err(anyhow!(
                     "unknown ACP argument {unknown:?}; use `bear-armature acp --help`"
-                ))
+                ));
             }
         }
     }
@@ -2177,18 +2181,20 @@ async fn handle_request(
                 let mut context = context;
                 context.raw["mcp"] = mcp_context;
                 ensure_session_context_capabilities(&mut context);
-                eprintln!(
-                    "bear-armature: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
-                    session_id,
-                    context.cwd,
-                    context.roots.join(","),
-                    context
-                        .raw
-                        .get("direct_tools")
-                        .cloned()
-                        .unwrap_or(Value::Null),
-                    summarize_mcp_for_log(context.raw.get("mcp"))
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
+                        session_id,
+                        context.cwd,
+                        context.roots.join(","),
+                        context
+                            .raw
+                            .get("direct_tools")
+                            .cloned()
+                            .unwrap_or(Value::Null),
+                        summarize_mcp_for_log(context.raw.get("mcp"))
+                    );
+                }
                 shared_state
                     .session_contexts
                     .lock()
@@ -2382,16 +2388,18 @@ async fn handle_request(
                     pending_den_sync,
                 )
                 .await;
-                eprintln!(
-                    "bear-armature: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
-                    session_id,
-                    requested_mode,
-                    mode,
-                    den_response
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<none>")
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                        session_id,
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                    );
+                }
                 if requested_mode != mode {
                     eprintln!(
                         "bear-armature: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
@@ -2481,16 +2489,18 @@ async fn handle_request(
                     pending_den_sync,
                 )
                 .await;
-                eprintln!(
-                    "bear-armature: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
-                    session_id,
-                    requested_mode,
-                    mode,
-                    den_response
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<none>")
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                        session_id,
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                    );
+                }
                 if requested_mode != mode {
                     eprintln!(
                         "bear-armature: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
@@ -2785,7 +2795,11 @@ async fn handle_request(
                     } else {
                         eprintln!(
                             "bear-armature: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
-                            session_id, previous.token, turn_token, previous.conversation_id, conversation_id_for_turn
+                            session_id,
+                            previous.token,
+                            turn_token,
+                            previous.conversation_id,
+                            conversation_id_for_turn
                         );
                     }
                 }
@@ -3081,10 +3095,12 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
 }
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
-    eprintln!(
-        "bear-armature: session_context_from_params mcp_summary={}",
-        summarize_acp_mcp_servers_param(params)
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session_context_from_params mcp_summary={}",
+            summarize_acp_mcp_servers_param(params)
+        );
+    }
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
     if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
         mcp_sources.push(host_browser_bridge);
@@ -3094,7 +3110,11 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         .transpose()?
         .or_else(|| fallback_cwd_from_params(params))
         .or_else(|| roots.first().cloned())
-        .ok_or_else(|| anyhow!("ACP session requires an absolute cwd; provide params.cwd as an absolute local path"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "ACP session requires an absolute cwd; provide params.cwd as an absolute local path"
+            )
+        })?;
     if !is_absolute_local_path(&cwd) {
         return Err(anyhow!(
             "ACP session cwd must be an absolute local path; got {cwd:?}"
@@ -3238,7 +3258,9 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
         ));
     }
     if token.is_empty() {
-        return Err(anyhow!("Missing DEN_TOKEN. Paste a Den Code token when prompted, or configure DEN_TOKEN in Zed."));
+        return Err(anyhow!(
+            "Missing DEN_TOKEN. Paste a Den Code token when prompted, or configure DEN_TOKEN in Zed."
+        ));
     }
     Ok(Config {
         api_url,
@@ -3872,10 +3894,12 @@ fn session_params_have_cwd_hint(params: &Value) -> bool {
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
-    eprintln!(
-        "bear-armature: session_context_from_den_session mcp_summary={}",
-        summarize_acp_mcp_servers_param(params)
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session_context_from_den_session mcp_summary={}",
+            summarize_acp_mcp_servers_param(params)
+        );
+    }
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
     if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
         mcp_sources.push(host_browser_bridge);
@@ -4083,12 +4107,14 @@ async fn request_den_session_mode(
         ));
     }
     let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
-    eprintln!(
-        "bear-armature: Den mode response session_id={} requested_mode={} response={}",
-        session_id,
-        requested_mode,
-        serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: Den mode response session_id={} requested_mode={} response={}",
+            session_id,
+            requested_mode,
+            serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
+        );
+    }
     let effective = value
         .get("effective_mode")
         .and_then(Value::as_str)
@@ -4243,15 +4269,17 @@ async fn fetch_conversation_history_chronological(
             .and_then(|m| m.id.as_deref())
             .unwrap_or("<none>")
             .to_string();
-        eprintln!(
-            "bear-armature: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
-            conversation_id,
-            page_idx,
-            before,
-            page.len(),
-            first_id,
-            last_id
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
+                conversation_id,
+                page_idx,
+                before,
+                page.len(),
+                first_id,
+                last_id
+            );
+        }
         pages_newest_first.push(page);
         let has_more = body
             .get("has_more")
@@ -4287,22 +4315,24 @@ async fn replay_history_for_den_session(
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
         let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
-        eprintln!(
-            "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
-            lifecycle_method,
-            session_id,
-            messages.len(),
-            conv
-        );
-        eprintln!(
-            "bear-armature: {} session_id={} history_ids={:?}",
-            lifecycle_method,
-            session_id,
-            messages
-                .iter()
-                .map(|m| m.id.as_deref().unwrap_or("<none>").to_string())
-                .collect::<Vec<_>>()
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
+                lifecycle_method,
+                session_id,
+                messages.len(),
+                conv
+            );
+            eprintln!(
+                "bear-armature: {} session_id={} history_ids={:?}",
+                lifecycle_method,
+                session_id,
+                messages
+                    .iter()
+                    .map(|m| m.id.as_deref().unwrap_or("<none>").to_string())
+                    .collect::<Vec<_>>()
+            );
+        }
         for message in messages {
             match message.role.as_str() {
                 "user" => send_user_message_chunk(session_id, &message.text).await?,
@@ -4311,11 +4341,12 @@ async fn replay_history_for_den_session(
             }
         }
     } else {
-        eprintln!(
-            "bear-armature: {} session_id={} has no conv-/den-conv-/default history yet (pending new- thread); skipping replay",
-            lifecycle_method,
-            session_id
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: {} session_id={} has no conv-/den-conv-/default history yet (pending new- thread); skipping replay",
+                lifecycle_method, session_id
+            );
+        }
     }
     Ok(())
 }
@@ -4355,18 +4386,20 @@ async fn restore_session_from_den(
     let mut context = context;
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
-    eprintln!(
-        "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
-        session_id,
-        context.cwd,
-        context.roots.join(","),
-        context
-            .raw
-            .get("direct_tools")
-            .cloned()
-            .unwrap_or(Value::Null),
-        summarize_mcp_for_log(context.raw.get("mcp"))
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
+            session_id,
+            context.cwd,
+            context.roots.join(","),
+            context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            summarize_mcp_for_log(context.raw.get("mcp"))
+        );
+    }
     shared_state
         .session_contexts
         .lock()
@@ -4427,18 +4460,20 @@ async fn handle_session_load(
     let mut context = context;
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
-    eprintln!(
-        "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
-        session_id,
-        context.cwd,
-        context.roots.join(","),
-        context
-            .raw
-            .get("direct_tools")
-            .cloned()
-            .unwrap_or(Value::Null),
-        summarize_mcp_for_log(context.raw.get("mcp"))
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
+            session_id,
+            context.cwd,
+            context.roots.join(","),
+            context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            summarize_mcp_for_log(context.raw.get("mcp"))
+        );
+    }
     shared_state
         .session_contexts
         .lock()
@@ -4564,19 +4599,20 @@ async fn post_session_lifecycle_action_with_payload(
         if let Some(result) = result {
             match result {
                 Ok(value) => {
-                    eprintln!(
-                        "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
-                        action,
-                        session_id,
-                        truncate_for_log(&value.to_string(), 360)
-                    );
+                    if bear_debug_verbose() {
+                        eprintln!(
+                            "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
+                            action,
+                            session_id,
+                            truncate_for_log(&value.to_string(), 360)
+                        );
+                    }
                     return Ok(());
                 }
                 Err(err) if bearwire::required() => return Err(err),
                 Err(err) => eprintln!(
                     "bear-armature: BearWire session lifecycle action={} failed; falling back to legacy ACP HTTP session_id={} error={err:#}",
-                    action,
-                    session_id
+                    action, session_id
                 ),
             }
         }
@@ -4799,31 +4835,35 @@ async fn handle_prompt_with_retry(
     let prompt = require_human_prompt_text(prompt_context.human_message.clone())?;
     let den_prompt = prompt_den_message_from_context(&prompt_context)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
-    eprintln!(
-        "bear-armature: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
-        session_id,
-        prompt.len(),
-        den_prompt.len(),
-        display_prompt.len(),
-        prompt_shape.text,
-        prompt_shape.resource,
-        prompt_shape.resource_link,
-        prompt_shape.other,
-        prompt_shape.human_text,
-        prompt_shape.human_pasted_debug_text,
-        prompt_shape.client_resource,
-        prompt_shape.client_synthetic_context,
-        prompt_shape.unsupported,
-        prompt_context.resource_references.len(),
-        prompt_context.diagnostics.synthetic_context_omitted,
-        prompt_context.diagnostics.resource_bodies_not_in_human_message,
-        prompt.contains("Trusted ACP session mode this turn:"),
-        den_prompt.contains("Trusted ACP session mode this turn:"),
-        display_prompt.contains("Trusted ACP session mode this turn:"),
-        prompt.contains("<system-reminder>"),
-        den_prompt.contains("<system-reminder>"),
-        display_prompt.contains("<system-reminder>"),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
+            session_id,
+            prompt.len(),
+            den_prompt.len(),
+            display_prompt.len(),
+            prompt_shape.text,
+            prompt_shape.resource,
+            prompt_shape.resource_link,
+            prompt_shape.other,
+            prompt_shape.human_text,
+            prompt_shape.human_pasted_debug_text,
+            prompt_shape.client_resource,
+            prompt_shape.client_synthetic_context,
+            prompt_shape.unsupported,
+            prompt_context.resource_references.len(),
+            prompt_context.diagnostics.synthetic_context_omitted,
+            prompt_context
+                .diagnostics
+                .resource_bodies_not_in_human_message,
+            prompt.contains("Trusted ACP session mode this turn:"),
+            den_prompt.contains("Trusted ACP session mode this turn:"),
+            display_prompt.contains("Trusted ACP session mode this turn:"),
+            prompt.contains("<system-reminder>"),
+            den_prompt.contains("<system-reminder>"),
+            display_prompt.contains("<system-reminder>"),
+        );
+    }
     if let Some(command) = parse_local_slash_command(&prompt) {
         send_user_message_chunk(session_id, &display_prompt).await?;
         let report = handle_local_slash_command(
@@ -4878,17 +4918,27 @@ async fn handle_prompt_with_retry(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    eprintln!(
-        "bear-armature: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
-        session_id,
-        config.bear,
-        conversation_log,
-        config.client,
-        client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null),
-        client_context.raw.pointer("/mcp/servers").cloned().unwrap_or(Value::Null),
-        prompt_mcp_tool_names.len(),
-        prompt_mcp_tool_names
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
+            session_id,
+            config.bear,
+            conversation_log,
+            config.client,
+            client_context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            client_context
+                .raw
+                .pointer("/mcp/servers")
+                .cloned()
+                .unwrap_or(Value::Null),
+            prompt_mcp_tool_names.len(),
+            prompt_mcp_tool_names
+        );
+    }
 
     if should_echo_user_message_chunk(&prompt_context) {
         send_user_message_chunk(session_id, &display_prompt).await?;
@@ -5349,9 +5399,16 @@ fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String
     format!(
         "BEARS ACP conversation\n\n- ACP session: {session_id}\n- cwd: {}\n- roots: {}\n- conversation_id: {}\n- resolved_conversation_id: {}",
         context.cwd,
-        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
+        if context.roots.is_empty() {
+            "<none>".to_string()
+        } else {
+            context.roots.join(", ")
+        },
         context.conversation_id.as_deref().unwrap_or("<none>"),
-        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+        context
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or("<none>"),
     )
 }
 
@@ -5693,8 +5750,16 @@ fn debug_report(arg: Option<&str>) -> String {
         "{message}BEARS debug\n\n- BEAR_DEBUG env default: {}\n- current mode: {}\n- thought messages: {}\n- verbose adapter logs: {}\n\nUse `/debug off`, `/debug on`, or `/debug verbose`.",
         env::var("BEAR_DEBUG").unwrap_or_else(|_| "<unset>".to_string()),
         current.as_str(),
-        if current.shows_thoughts() { "shown" } else { "hidden" },
-        if current.is_verbose() { "enabled" } else { "disabled" },
+        if current.shows_thoughts() {
+            "shown"
+        } else {
+            "hidden"
+        },
+        if current.is_verbose() {
+            "enabled"
+        } else {
+            "disabled"
+        },
     )
 }
 
@@ -5743,10 +5808,18 @@ async fn acp_doctor_report(
         den_status,
         token_status,
         bearwire_status,
-        serde_json::to_string_pretty(&adapter_state.client_capabilities).unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
+        serde_json::to_string_pretty(&adapter_state.client_capabilities)
+            .unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
         context.cwd,
-        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
-        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+        if context.roots.is_empty() {
+            "<none>".to_string()
+        } else {
+            context.roots.join(", ")
+        },
+        context
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or("<none>"),
         serde_json::to_string_pretty(&direct_tools_context())
             .unwrap_or_else(|_| direct_tools_context().to_string()),
         serde_json::to_string_pretty(&browser_tool_source_summary(context))
@@ -5827,7 +5900,9 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     }
 
     if runtime.client.trim().is_empty() {
-        eprintln!("• Client label is empty; ACP protocol still works, but set DEN_ACP_CLIENT if you want labeled requests");
+        eprintln!(
+            "• Client label is empty; ACP protocol still works, but set DEN_ACP_CLIENT if you want labeled requests"
+        );
     } else {
         eprintln!("✓ Client label: {}", runtime.client);
     }
@@ -5893,7 +5968,9 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     eprintln!();
 
     if failed {
-        eprintln!("Doctor found setup problems. Fix the items marked ✗ above, then run `bear-armature doctor` again.");
+        eprintln!(
+            "Doctor found setup problems. Fix the items marked ✗ above, then run `bear-armature doctor` again."
+        );
         std::process::exit(2);
     }
 
@@ -6004,13 +6081,25 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
         return message;
     }
     let hint = match status.as_u16() {
-        401 => "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
-        403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes.",
-        404 => "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
-        405 => "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
+        401 => {
+            "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token."
+        }
+        403 => {
+            "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes."
+        }
+        404 => {
+            "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service."
+        }
+        405 => {
+            "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions."
+        }
         429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
-        500..=599 => "The Den API returned a server error. Check Den service logs for the request failure.",
-        _ => "The Den API rejected the prompt request. Check the response body and Den logs for details.",
+        500..=599 => {
+            "The Den API returned a server error. Check Den service logs for the request failure."
+        }
+        _ => {
+            "The Den API rejected the prompt request. Check the response body and Den logs for details."
+        }
     };
 
     if body.is_empty() {
@@ -7339,10 +7428,7 @@ async fn handle_tool_request_event(
             if is_turn_missing_error(&err) {
                 eprintln!(
                     "bear-armature: late unexpected server-tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    err
+                    session_id, tool_call_id, tool_name, err
                 );
                 return Ok(());
             }
@@ -7412,7 +7498,7 @@ async fn handle_tool_request_event(
     match result {
         Ok(value) => {
             status = "ok";
-            if tool_name == "update_plan" {
+            if matches!(tool_name, "update_task_list" | "update_plan") {
                 let entries = value
                     .get("plan")
                     .map(plan_entries_from_work_plan_args)
@@ -7504,10 +7590,7 @@ async fn handle_tool_request_event(
         if is_turn_missing_error(&err) {
             eprintln!(
                 "bear-armature: late local tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
-                session_id,
-                tool_call_id,
-                tool_name,
-                err
+                session_id, tool_call_id, tool_name, err
             );
             return Ok(());
         }
@@ -7617,7 +7700,10 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         return text;
     }
 
-    if matches!(tool_name, "update_plan" | "request_work_handoff") {
+    if matches!(
+        tool_name,
+        "update_task_list" | "update_plan" | "request_task_list_handoff" | "request_work_handoff"
+    ) {
         return String::new();
     }
 
@@ -7969,11 +8055,13 @@ async fn post_adapter_environment(
     if bearwire::enabled() {
         match bearwire::post_resource_update(config, session_id, resource).await {
             Ok(value) => {
-                eprintln!(
-                    "bear-armature: posted BearWire resource.update session_id={} response={}",
-                    session_id,
-                    truncate_for_log(&value.to_string(), 360)
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: posted BearWire resource.update session_id={} response={}",
+                        session_id,
+                        truncate_for_log(&value.to_string(), 360)
+                    );
+                }
                 return Ok(());
             }
             Err(err) if bearwire::required() => return Err(err),
@@ -8156,17 +8244,19 @@ async fn handle_den_event(
                 .and_then(Value::as_str)
                 .map(str::to_string);
             send_session_info_update(session_id, title, updated_at).await?;
-            let runtime = event
-                .pointer("/meta/bears/runtime")
-                .cloned()
-                .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
-                .or_else(|| event.get("runtime").cloned());
-            let context_budget = event
-                .pointer("/meta/bears/context_budget")
-                .cloned()
-                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
-                .or_else(|| event.get("context_budget").cloned());
-            send_DEN_runtime_session_info_update(session_id, runtime, context_budget).await?;
+            if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
+                let runtime = event
+                    .pointer("/meta/bears/runtime")
+                    .cloned()
+                    .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
+                    .or_else(|| event.get("runtime").cloned());
+                let context_budget = event
+                    .pointer("/meta/bears/context_budget")
+                    .cloned()
+                    .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
+                    .or_else(|| event.get("context_budget").cloned());
+                send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
+            }
             Ok(false)
         }
         "plan_update" => {
@@ -8527,7 +8617,7 @@ async fn handle_permission_request_event(
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
-                if tool_name == "update_plan" {
+                if matches!(tool_name, "update_task_list" | "update_plan") {
                     let entries = value
                         .get("plan")
                         .map(plan_entries_from_work_plan_args)
@@ -9154,12 +9244,16 @@ async fn send_tool_call_update(
         if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
-        if let Some(args) = event.get("args") {
-            tool_call = tool_call.raw_input(Some(args.clone()));
+        if bear_debug_verbose() {
+            if let Some(args) = event.get("args") {
+                tool_call = tool_call.raw_input(Some(args.clone()));
+            }
         }
     }
-    if let Some(raw_output) = raw_output {
-        tool_call = tool_call.raw_output(Some(raw_output));
+    if bear_debug_verbose() {
+        if let Some(raw_output) = raw_output {
+            tool_call = tool_call.raw_output(Some(raw_output));
+        }
     }
     write_notification(
         "session/update",
@@ -9328,7 +9422,9 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
         "message": format!("BEARS Code token authentication failed: {message}"),
     });
     if message.contains("diagnostics:") {
-        data["hint"] = json!("Den returned token diagnostics. Inspect token_found, bear_found, token_bound_to_bear, token_owner_is_bear_member, and required_scope_present to identify whether DEN_API_URL, BEAR_SLUG, token value, Bear grant, or membership is wrong.");
+        data["hint"] = json!(
+            "Den returned token diagnostics. Inspect token_found, bear_found, token_bound_to_bear, token_owner_is_bear_member, and required_scope_present to identify whether DEN_API_URL, BEAR_SLUG, token value, Bear grant, or membership is wrong."
+        );
     } else if let Some(hint) = token_hint {
         data["hint"] = json!(hint);
     }
@@ -9829,12 +9925,14 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(shared
-            .active_prompts
-            .lock()
-            .await
-            .get("acp-session")
-            .is_none());
+        assert!(
+            shared
+                .active_prompts
+                .lock()
+                .await
+                .get("acp-session")
+                .is_none()
+        );
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -9934,12 +10032,14 @@ mod tests {
             request_line.starts_with("POST /acp/bears/test-bear/sessions/acp-session/close "),
             "request_line={request_line:?}"
         );
-        assert!(shared
-            .active_prompts
-            .lock()
-            .await
-            .get("acp-session")
-            .is_none());
+        assert!(
+            shared
+                .active_prompts
+                .lock()
+                .await
+                .get("acp-session")
+                .is_none()
+        );
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -10026,12 +10126,14 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(shared
-            .active_prompts
-            .lock()
-            .await
-            .get("acp-session")
-            .is_none());
+        assert!(
+            shared
+                .active_prompts
+                .lock()
+                .await
+                .get("acp-session")
+                .is_none()
+        );
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -10636,15 +10738,21 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             PlanEntryPriority::Medium,
             PlanEntryStatus::Completed,
         )];
-        assert!(should_send_plan_update(&shared, "session-a", &entries)
-            .await
-            .expect("first update check"));
-        assert!(!should_send_plan_update(&shared, "session-a", &entries)
-            .await
-            .expect("duplicate update check"));
-        assert!(should_send_plan_update(&shared, "session-b", &entries)
-            .await
-            .expect("different session update check"));
+        assert!(
+            should_send_plan_update(&shared, "session-a", &entries)
+                .await
+                .expect("first update check")
+        );
+        assert!(
+            !should_send_plan_update(&shared, "session-a", &entries)
+                .await
+                .expect("duplicate update check")
+        );
+        assert!(
+            should_send_plan_update(&shared, "session-b", &entries)
+                .await
+                .expect("different session update check")
+        );
     }
 
     #[test]
@@ -10848,8 +10956,9 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
-    fn update_plan_completion_preview_is_suppressed() {
-        let value = json!({ "content": "Local tool update_plan completed." });
+    fn update_task_list_completion_preview_is_suppressed() {
+        let value = json!({ "content": "Local tool update_task_list completed." });
+        assert_eq!(tool_completion_preview("update_task_list", &value), "");
         assert_eq!(tool_completion_preview("update_plan", &value), "");
     }
 
@@ -10915,8 +11024,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", result.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", result.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -10985,8 +11096,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let limited = handle_direct_find_paths(
             &state,
             "session-1",
@@ -11038,8 +11151,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11057,8 +11172,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", result.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", result.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11280,8 +11397,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11414,8 +11533,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11525,8 +11646,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11836,16 +11959,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .await
         .unwrap();
         assert_eq!(status["clean"], false);
-        assert!(status["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["path"] == "tracked.txt"));
-        assert!(status["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["path"] == "untracked.txt"));
+        assert!(
+            status["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["path"] == "tracked.txt")
+        );
+        assert!(
+            status["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["path"] == "untracked.txt")
+        );
 
         let diff = handle_git_diff(
             context,
@@ -11928,11 +12055,13 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             status["repo_path"].as_str().unwrap(),
             root.to_string_lossy()
         );
-        assert!(status["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["path"] == "nested/file.txt"));
+        assert!(
+            status["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["path"] == "nested/file.txt")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -12109,16 +12238,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_log.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_log.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let outside_show = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": outside.join("x.txt").to_string_lossy() }),
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_show.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_show.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let bad_revision = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "--help" }),
@@ -12169,8 +12302,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", denied.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", denied.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let diff = handle_git_diff(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "max_bytes": 10 }),
@@ -12242,9 +12377,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let plan = ReplaceTextPlan::preflight(context, args, &policy).unwrap();
         assert!(plan.preview.contains("--- before"));
         assert!(plan.preview.contains("+++ after"));
-        assert!(plan
-            .permission_prompt("fs_replace_text", "approve?")
-            .contains("hello old world"));
+        assert!(
+            plan.permission_prompt("fs_replace_text", "approve?")
+                .contains("hello old world")
+        );
         fs::write(&file, "hello changed world\n").unwrap();
         let result = plan.apply(context, &policy);
         assert!(format!("{:#}", result.unwrap_err()).contains("stale preflight"));
@@ -12414,8 +12550,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &json!({ "repo_path": root.to_string_lossy(), "paths": [outside.join("x.txt").to_string_lossy()] }),
             &ToolPolicy::default(),
         ).await;
-        assert!(format!("{:#}", outside_path.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_path.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
         let bad_commit = handle_git_commit(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "message": "" }),
@@ -12523,8 +12661,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_cwd.unwrap_err())
-            .contains("outside the ACP session workspace roots"));
+        assert!(
+            format!("{:#}", outside_cwd.unwrap_err())
+                .contains("outside the ACP session workspace roots")
+        );
 
         let shell_string = handle_process_run(
             context,
@@ -12561,7 +12701,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 let body = "hello world";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
             }

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -350,7 +350,9 @@ async fn download_update_pkg(
     if let Some(expected_size) = platform.size {
         let actual_size = bytes.len() as u64;
         if actual_size != expected_size {
-            bail!("downloaded package size mismatch: expected {expected_size} bytes, got {actual_size}");
+            bail!(
+                "downloaded package size mismatch: expected {expected_size} bytes, got {actual_size}"
+            );
         }
     }
     fs::write(&pkg_path, &bytes)

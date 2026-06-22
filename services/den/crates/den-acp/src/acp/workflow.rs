@@ -1,4 +1,4 @@
-use crate::acp::workflow_guidance::{render_turn_state_summary, ActivityStatusSyncSummary};
+use crate::acp::workflow_guidance::{ActivityStatusSyncSummary, render_turn_state_summary};
 use den_docket::WorkPlanProjection;
 use den_runtime::{client_tools::ResolvedSessionPolicy, turn_state};
 
@@ -141,13 +141,13 @@ mod tests {
             "acp-test",
             &["/workspace".to_string()],
             &[],
-            &["update_plan"],
+            &["update_task_list"],
             &policy(),
             Some(&plan),
         );
 
         assert!(summary.contains("activity.status_sync_required=true"));
-        assert!(summary.contains("activity.status_update_tool=`update_plan`"));
+        assert!(summary.contains("activity.status_update_tool=`update_task_list`"));
         assert!(summary.contains("activity.outstanding_items=2"));
         assert!(summary.contains("activity.completed_items=1"));
         assert!(summary.contains("completion_claim_requires_status_update=true"));
@@ -160,7 +160,7 @@ mod tests {
             "acp-test",
             &["/workspace".to_string()],
             &[],
-            &["update_plan"],
+            &["update_task_list"],
             &policy(),
             Some(&plan),
         );
@@ -168,7 +168,7 @@ mod tests {
             "acp-test",
             &["/workspace".to_string()],
             &[],
-            &["update_plan"],
+            &["update_task_list"],
             &policy(),
             None,
         );

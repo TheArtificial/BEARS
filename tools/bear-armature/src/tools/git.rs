@@ -1,12 +1,12 @@
 use crate::{
+    SessionContext, ToolPolicy,
     paths::{
         ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path,
         session_workspace_roots,
     },
-    SessionContext, ToolPolicy,
 };
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     process::Command,

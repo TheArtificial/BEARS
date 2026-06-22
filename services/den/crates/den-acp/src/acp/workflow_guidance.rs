@@ -22,9 +22,8 @@ pub(super) fn render_turn_state_summary(
 ) -> String {
     let activity_status_sync_text = if activity_status_sync.required {
         format!(
-            " activity.status_sync_required=true; activity.status_update_tool=`update_plan`; activity.outstanding_items={}; activity.completed_items={}; completion_claim_requires_status_update=true. When you finish, block, or abandon an activity item, update the visible task list promptly with `update_plan` before claiming that item is complete; move the next item to `in_progress` when appropriate.",
-            activity_status_sync.outstanding_items,
-            activity_status_sync.completed_items,
+            " activity.status_sync_required=true; activity.status_update_tool=`update_task_list`; activity.outstanding_items={}; activity.completed_items={}; completion_claim_requires_status_update=true. When you finish, block, or abandon an activity item, update the visible task list promptly with `update_task_list` before claiming that item is complete; move the next item to `in_progress` when appropriate.",
+            activity_status_sync.outstanding_items, activity_status_sync.completed_items,
         )
     } else {
         " activity.status_sync_required=false;".to_string()

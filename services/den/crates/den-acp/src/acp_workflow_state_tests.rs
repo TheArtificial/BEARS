@@ -1,18 +1,15 @@
-use crate::core::{
-    tools::{
-        descriptor::builtin_den_tool_descriptor_for_provider_name,
-        memory_write::MemoryWriteEntryArguments,
-        support::validate_memory_write_entry_semantics,
-    },
+use crate::core::tools::{
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
+    memory_write::MemoryWriteEntryArguments, support::validate_memory_write_entry_semantics,
 };
 use den_runtime::{
-    plan_mode::PlanModeSessionRow,
     client_tools::{ResolvedSessionPolicy, ToolEnablementState},
+    plan_mode::PlanModeSessionRow,
     turn_state::{approval_status_label, workflow_state_label},
 };
 
-use super::acp::{acp_pair_den_tool_descriptors, resolve_acp_turn_context, workflow_state_json};
 use super::acp::prompt_context::acp_direct_tool_prompt_context;
+use super::acp::{acp_pair_den_tool_descriptors, resolve_acp_turn_context, workflow_state_json};
 
 #[test]
 fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
@@ -24,9 +21,7 @@ fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
         state: "submitted".to_string(),
         approval_status: "awaiting_human_approval".to_string(),
     };
-    assert!(den_runtime::gateway_events::gateway_event_has_visible_output(
-        &event
-    ));
+    assert!(den_runtime::gateway_events::gateway_event_has_visible_output(&event));
     let frame = den_runtime::gateway_events::gateway_event_to_adapter_sse(event);
     let raw = std::str::from_utf8(&frame).expect("utf8 sse frame");
     let payload: serde_json::Value =
@@ -73,8 +68,10 @@ fn acp_prompt_includes_authoritative_workflow_state_summary() {
         &policy,
     );
     assert!(prompt.contains("AUTHORITATIVE WORKFLOW STATE for this turn"));
-    assert!(prompt
-        .contains("state_authority=current turn capabilities override prior-turn assumptions"));
+    assert!(
+        prompt
+            .contains("state_authority=current turn capabilities override prior-turn assumptions")
+    );
     assert!(prompt.contains("workplan.state=`approved`"));
     assert!(prompt.contains("workplan.approval_status=approved_execution_unlocked"));
     assert!(prompt.contains("activity.status=`inactive`"));
@@ -129,8 +126,8 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             .domain,
         "workplan"
     );
-    assert_eq!(domain_for("update_plan"), "activity");
-    assert_eq!(domain_for("get_plan_status"), "activity");
+    assert_eq!(domain_for("update_task_list"), "activity");
+    assert_eq!(domain_for("get_task_list_status"), "activity");
     assert_eq!(domain_for("memory_write_entry"), "memory");
     assert_eq!(domain_for("web_fetch"), "execution");
 
@@ -166,7 +163,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
     );
     if let Err(err) = err {
         let err = err.to_string();
-        assert!(err.contains("update_plan") || err.contains("task"));
+        assert!(err.contains("update_task_list") || err.contains("task"));
     }
 }
 
@@ -184,8 +181,10 @@ fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
         true,
         &policy,
     );
-    assert!(prompt
-        .contains("state_authority=current turn capabilities override prior-turn assumptions"));
+    assert!(
+        prompt
+            .contains("state_authority=current turn capabilities override prior-turn assumptions")
+    );
     assert!(prompt.contains("tool_classes=read_only, workspace_mutation, execution, browser"));
 }
 
@@ -406,7 +405,6 @@ fn resolve_turn_context_returns_matching_policy_and_turn_state() {
         true
     );
 }
-
 
 #[test]
 fn acp_prompt_guidance_distinguishes_prompt_memory_from_semantic_memory() {

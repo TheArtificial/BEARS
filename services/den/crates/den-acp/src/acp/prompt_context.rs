@@ -2,31 +2,29 @@ use uuid::Uuid;
 
 use crate::{
     acp::{
-        acp_pair_den_tool_descriptors, provider_tool_names_for_client_context,
-        history::{
-            runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
-        },
+        acp_pair_den_tool_descriptors,
+        history::{runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction},
+        provider_tool_names_for_client_context,
     },
     service::DenState,
 };
-use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
+use den_http::errors::CustomError;
 use den_runtime::{
-    plan_mode,
     client_tools::ResolvedSessionPolicy,
+    plan_mode,
     prompt_memory_block_store::{
-            select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
-            PromptMemoryRuntimeSelection,
-        },
+        PromptMemoryBlockQuery, PromptMemoryRuntimeSelection,
+        select_prompt_memory_blocks_for_runtime,
+    },
     prompt_memory_blocks::{
-            compile_prompt_memory_blocks, render_prompt_memory_block_context,
-            PromptMemoryCompilationInput,
-        },
-    runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
+        PromptMemoryCompilationInput, compile_prompt_memory_blocks,
+        render_prompt_memory_block_context,
+    },
+    runtime_compaction::{RuntimeContextEnvelopeInput, build_runtime_context_envelope},
     runtime_compaction_observability::RuntimeCompactionEventStatus,
     runtime_conversations::RuntimeCompactionTriggerKind,
 };
-
 
 use super::{
     prompt_guidance::{
@@ -34,7 +32,6 @@ use super::{
     },
     workflow::render_turn_state_summary_with_activity,
 };
-
 
 pub(crate) fn render_prompt_memory_runtime_selection(
     selection: &PromptMemoryRuntimeSelection,
@@ -66,7 +63,9 @@ fn runtime_compaction_prompt_context(
             .iter()
             .any(|value| value == &format!("workplan:{}", plan.title))
         {
-            merged.active_user_goals.push(format!("workplan:{}", plan.title));
+            merged
+                .active_user_goals
+                .push(format!("workplan:{}", plan.title));
         }
         if !merged
             .important_constraints
@@ -82,7 +81,9 @@ fn runtime_compaction_prompt_context(
             .iter()
             .any(|value| value == &format!("plan_id:{}", plan.id))
         {
-            merged.workflow_state_refs.push(format!("plan_id:{}", plan.id));
+            merged
+                .workflow_state_refs
+                .push(format!("plan_id:{}", plan.id));
         }
         Some(merged)
     } else {
@@ -136,11 +137,14 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
     auto_title_guidance: Option<&str>,
 ) -> Result<(String, serde_json::Value), CustomError> {
     if !tools_enabled {
-        return Ok((String::new(), serde_json::json!({
-            "source": "disabled_tools",
-            "persisted": false,
-            "matched_count": 0
-        })));
+        return Ok((
+            String::new(),
+            serde_json::json!({
+                "source": "disabled_tools",
+                "persisted": false,
+                "matched_count": 0
+            }),
+        ));
     }
     let roots = client_context
         .get("workspace_roots")
@@ -219,7 +223,11 @@ pub(super) async fn acp_direct_tool_prompt_context_with_activity(
         session_id,
         &roots,
     ));
-    guidance.push(runtime_compaction_prompt_context(session_id, client_context, activity_plan));
+    guidance.push(runtime_compaction_prompt_context(
+        session_id,
+        client_context,
+        activity_plan,
+    ));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());
     guidance.push(tool_loop_rule_guidance());
@@ -253,7 +261,7 @@ pub(super) async fn acp_plan_mode_prompt_context(
     };
     let execution_unlocked = plan_mode.state == "approved";
     Ok(format!(
-        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is controlled by the user or ACP client UI, not by model tool calls. Keep planning visible with `update_plan` and concise prose. If implementation is requested but write tools are not callable this turn, explain that the user can switch the session to Write mode. Artifact path remains available for audit when needed: {}.</system-reminder>",
+        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is controlled by the user or ACP client UI, not by model tool calls. Keep the visible session task list current with `update_task_list` and concise prose. If implementation is requested but write tools are not callable this turn, explain that the user can switch the session to Write mode. Artifact path remains available for audit when needed: {}.</system-reminder>",
         plan_mode.id,
         plan_mode.state,
         submitted_plan_present,
@@ -329,7 +337,11 @@ pub(crate) fn acp_direct_tool_prompt_context(
         session_id,
         &roots,
     ));
-    guidance.push(runtime_compaction_prompt_context(session_id, client_context, None));
+    guidance.push(runtime_compaction_prompt_context(
+        session_id,
+        client_context,
+        None,
+    ));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());
     guidance.push(tool_loop_rule_guidance());

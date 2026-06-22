@@ -1,16 +1,16 @@
 use crate::ToolPolicy;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::{
     collections::VecDeque,
     net::TcpListener,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -19,7 +19,7 @@ use tokio::{
     process::{Child, Command},
     sync::Mutex as TokioMutex,
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static CHROME_STATE: OnceLock<Arc<TokioMutex<ChromeState>>> = OnceLock::new();

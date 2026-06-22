@@ -1,12 +1,13 @@
 use crate::{
+    SessionContext, ToolPolicy,
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
         resolve_requested_tool_path, session_workspace_roots,
     },
-    truncate_for_log, SessionContext, ToolPolicy,
+    truncate_for_log,
 };
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     fs,

@@ -1,7 +1,7 @@
 use crate::ToolPolicy;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::Url;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -85,7 +85,7 @@ fn validate_local_fetch_url(url: &Url) -> Result<()> {
         other => {
             return Err(anyhow!(
                 "local_web_fetch only supports http and https URLs, got {other:?}"
-            ))
+            ));
         }
     }
     let host = url
@@ -110,7 +110,7 @@ fn validate_fetch_url(url: &Url) -> Result<()> {
         other => {
             return Err(anyhow!(
                 "web_fetch only supports http and https URLs, got {other:?}"
-            ))
+            ));
         }
     }
     let host = url

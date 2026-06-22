@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use tokio::{
     io::{self, AsyncWriteExt},
     sync::Mutex as TokioMutex,

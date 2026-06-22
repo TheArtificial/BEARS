@@ -77,7 +77,7 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - Channels such as Slack, WhatsApp, web chat, and macOS app chat are conversation surfaces, not armatures by default. They should not inherit ACP/local-workspace assumptions unless they explicitly expose a trusted work-surface tool boundary.
 - Keep Pair/ACP tool surfaces stable across turns. Do not hide filesystem, git, terminal, MCP, or Den-hosted tools based on prompt heuristics; that causes models to learn false per-turn capabilities.
 - Tool ownership must be descriptor-owned:
-  - Den-hosted tools (`session_info`, `memory_*`, `web_fetch`, `web_search`, `list_plans`, `get_plan_status`, `update_plan`, `request_work_handoff`, etc.) execute inside Den.
+  - Den-hosted tools (`session_info`, `memory_*`, `web_fetch`, `web_search`, `list_task_lists`, `get_task_list_status`, `update_task_list`, `request_task_list_handoff`, etc.) execute inside Den.
   - Armature-local tools (`fs_*`, `git_*`, `terminal_run_command`, `process_run`, forwarded MCP tools) execute through the armature/client.
   - Do not route Den-hosted tools to `bear-armature` for local execution.
 - If adding, renaming, or aliasing tools, update descriptors/resolvers first. Avoid scattered string `match` arms or hardcoded allowlists except at narrow routing boundaries.

@@ -51,10 +51,10 @@ Den-native Pair sessions expose a stable mixed tool surface:
   - `memory_request_review`
   - `web_fetch`
   - `web_search`
-  - `list_plans`
-  - `get_plan_status`
-  - `update_plan`
-  - `request_work_handoff`
+  - `list_task_lists`
+  - `get_task_list_status`
+  - `update_task_list`
+  - `request_task_list_handoff`
   - `set_conversation_title`
 - Armature-local/client tools:
   - `fs_*`
@@ -69,8 +69,8 @@ Rules:
 - Route by descriptor ownership, not by ad hoc tool-name matches:
   - Den-hosted tools execute in Den through the Den tool dispatcher/invoker.
   - Armature-local and forwarded MCP tools are emitted to the armature/client.
-- If the model sees a Den-hosted tool such as `list_plans`, Den must be able to execute it server-side. It must not reach `bear-armature` as an unsupported local tool request.
-- Keep model-facing names descriptor-owned and concise; do not advertise legacy `den_*`, `situation_get`, `memory_tree`, or implementation-branded names.
+- If the model sees a Den-hosted tool such as `list_task_lists`, Den must be able to execute it server-side. It must not reach `bear-armature` as an unsupported local tool request.
+- Keep model-facing names descriptor-owned and concise; do not advertise legacy `den_*`, `situation_get`, `memory_tree`, `list_plans`, `get_plan_status`, `update_plan`, `request_work_handoff`, or implementation-branded names.
 
 ## Conversation history
 
