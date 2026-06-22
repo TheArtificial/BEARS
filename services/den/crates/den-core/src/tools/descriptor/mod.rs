@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const ALL_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
 const WORK_PLAN_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
@@ -40,14 +40,16 @@ use crate::tools::{
         DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT,
         DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER,
         DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_GET_STATUS,
-        DEN_WORK_PLAN_GET_STATUS_PROVIDER, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_LIST_PROVIDER,
-        DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
-        DEN_WORK_PLAN_UPDATE, DEN_WORK_PLAN_UPDATE_PROVIDER,
+        DEN_WORK_PLAN_GET_STATUS_LEGACY_PROVIDER, DEN_WORK_PLAN_GET_STATUS_PROVIDER,
+        DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_LIST_LEGACY_PROVIDER, DEN_WORK_PLAN_LIST_PROVIDER,
+        DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_REQUEST_HANDOFF_LEGACY_PROVIDER,
+        DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER, DEN_WORK_PLAN_UPDATE,
+        DEN_WORK_PLAN_UPDATE_LEGACY_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
-        ToolDescriptorGuidance, ToolOrientationPolicy, ToolScopeKind, ToolSideEffectKind,
-        render_tool_descriptor_guidance,
+        render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
+        ToolScopeKind, ToolSideEffectKind,
     },
 };
 
@@ -609,6 +611,10 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER],
         DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER],
+        DEN_WORK_PLAN_LIST => &[DEN_WORK_PLAN_LIST_LEGACY_PROVIDER],
+        DEN_WORK_PLAN_GET_STATUS => &[DEN_WORK_PLAN_GET_STATUS_LEGACY_PROVIDER],
+        DEN_WORK_PLAN_UPDATE => &[DEN_WORK_PLAN_UPDATE_LEGACY_PROVIDER],
+        DEN_WORK_PLAN_REQUEST_HANDOFF => &[DEN_WORK_PLAN_REQUEST_HANDOFF_LEGACY_PROVIDER],
         _ => &[],
     }
 }
@@ -829,7 +835,8 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             complete_verb: "Checked session info",
             target_arg_keys: &[],
             sensitive_arg_keys: &[],
-            approval_summary: "Read trusted session, Bear, human, policy, and workspace orientation.",
+            approval_summary:
+                "Read trusted session, Bear, human, policy, and workspace orientation.",
         },
         DEN_MEMORY_WRITE_ENTRY => ToolDisplayDescriptor {
             label,

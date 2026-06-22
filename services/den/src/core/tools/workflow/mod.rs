@@ -179,6 +179,10 @@ pub(crate) async fn list_work_plans(
         .iter()
         .map(|plan| activity_payload(Some(plan)))
         .collect::<Vec<_>>();
+    let task_lists = activity_rows
+        .iter()
+        .map(work_plans::task_list_projection_from_work_plan)
+        .collect::<Vec<_>>();
     let workplans = plan_mode_gates
         .iter()
         .map(plan_mode_workplan_payload)
@@ -200,6 +204,7 @@ pub(crate) async fn list_work_plans(
                 "channel": context.channel,
             }
         },
+        "task_lists": task_lists,
         "activities": activity_plans,
         "activity_plans": activity_plans,
         "plans": activity_rows,
@@ -236,9 +241,13 @@ pub(crate) async fn get_work_plan_status(
     let plan = PgDocketService::from_pool(pool)
         .get_visible_work_plan(context.bear_id, role, context.user_id, lookup)
         .await?;
+    let task_list = plan
+        .as_ref()
+        .map(work_plans::task_list_projection_from_work_plan);
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
+        "task_list": task_list,
         "activity": activity_payload(plan.as_ref()),
         "plan": plan,
     }))
@@ -279,9 +288,11 @@ pub(crate) async fn update_work_plan(
         .ok_or_else(|| {
             CustomError::System("updated work plan was not visible to its owner".to_string())
         })?;
+    let task_list = work_plans::task_list_projection_from_work_plan(&plan);
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
+        "task_list": task_list,
         "activity": activity_payload(Some(&plan)),
         "plan": plan,
     }))

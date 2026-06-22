@@ -12,7 +12,9 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    BearWorkPlanRow, WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
+    BearWorkPlanRow, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
 };
 
 /// Orchestration API for Docket work plans. The only public entry point to the
@@ -40,6 +42,24 @@ pub trait DocketService: Send + Sync {
         user_id: i32,
         lookup: WorkPlanLookup,
     ) -> Result<Option<WorkPlanProjection>, DenError>;
+
+    async fn checkout_task_list(
+        &self,
+        bear_id: Uuid,
+        viewer_role: BearProfile,
+        user_id: i32,
+        request: TaskListCheckoutRequest,
+    ) -> Result<Option<TaskListProjection>, DenError>;
+
+    async fn sync_task_list(
+        &self,
+        request: TaskListSyncRequest,
+    ) -> Result<TaskListSyncOutcome, DenError>;
+
+    async fn request_task_list_handoff(
+        &self,
+        request: TaskListHandoffRequest,
+    ) -> Result<TaskListHandoffOutcome, DenError>;
 }
 
 /// Postgres-backed `DocketService`. Holds the shared Den pool (cheap to clone —
@@ -83,5 +103,41 @@ impl DocketService for PgDocketService {
         lookup: WorkPlanLookup,
     ) -> Result<Option<WorkPlanProjection>, DenError> {
         db::get_visible_work_plan(&self.pool, bear_id, viewer_role, user_id, lookup).await
+    }
+
+    async fn checkout_task_list(
+        &self,
+        bear_id: Uuid,
+        viewer_role: BearProfile,
+        user_id: i32,
+        request: TaskListCheckoutRequest,
+    ) -> Result<Option<TaskListProjection>, DenError> {
+        match request.source {
+            TaskListCheckoutSource::LegacyWorkPlan(lookup) => Ok(self
+                .get_visible_work_plan(bear_id, viewer_role, user_id, lookup)
+                .await?
+                .map(|plan| plan.to_task_list_projection())),
+            TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(task_list)),
+        }
+    }
+
+    async fn sync_task_list(
+        &self,
+        request: TaskListSyncRequest,
+    ) -> Result<TaskListSyncOutcome, DenError> {
+        Ok(TaskListSyncOutcome::review_required(
+            request.task_list,
+            "Task-list sync seam is present; direct Docket sync awaits relational Docket backing.",
+        ))
+    }
+
+    async fn request_task_list_handoff(
+        &self,
+        request: TaskListHandoffRequest,
+    ) -> Result<TaskListHandoffOutcome, DenError> {
+        Ok(TaskListHandoffOutcome::review_required(
+            &request,
+            "Task-list handoff seam is present; durable Docket promotion awaits relational Docket backing.",
+        ))
     }
 }

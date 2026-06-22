@@ -13,11 +13,13 @@ pub mod model;
 pub mod service;
 
 pub use model::{
-    normalize_work_plan_item_ids, render_workboard_prompt_context, role_can_read_work_plan,
-    role_can_request_work_handoff, role_can_update_work_plan, validate_work_plan_items,
-    validate_work_plan_update,
-    BearWorkPlanRow, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanLookup,
-    WorkPlanProjection, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert, WorkPlanValidationError,
-    WorkPlanVisibility,
+    BearWorkPlanRow, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListItem, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanItem, WorkPlanItemStatus,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpdate,
+    WorkPlanUpsert, WorkPlanValidationError, WorkPlanVisibility, normalize_work_plan_item_ids,
+    render_workboard_prompt_context, role_can_read_work_plan, role_can_request_work_handoff,
+    role_can_update_work_plan, task_list_item_from_work_plan_item,
+    task_list_projection_from_work_plan, validate_work_plan_items, validate_work_plan_update,
 };
 pub use service::{DocketService, PgDocketService};

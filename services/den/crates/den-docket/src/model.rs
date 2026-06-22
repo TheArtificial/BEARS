@@ -9,8 +9,8 @@
 //! and `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`).
 
 use serde::{Deserialize, Serialize};
-use sqlx::types::Json;
 use sqlx::FromRow;
+use sqlx::types::Json;
 use std::fmt::{self, Write as _};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -322,6 +322,113 @@ pub struct WorkPlanProjection {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskListSyncState {
+    LocalOnly,
+    CheckedOut,
+    Clean,
+    Dirty,
+    Syncing,
+    Synced,
+    Conflict,
+    ReviewRequired,
+}
+
+impl TaskListSyncState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LocalOnly => "local_only",
+            Self::CheckedOut => "checked_out",
+            Self::Clean => "clean",
+            Self::Dirty => "dirty",
+            Self::Syncing => "syncing",
+            Self::Synced => "synced",
+            Self::Conflict => "conflict",
+            Self::ReviewRequired => "review_required",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListSourceRef {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_plan_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docket_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docket_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<String>,
+}
+
+impl TaskListSourceRef {
+    pub fn legacy_work_plan(work_plan_id: Uuid) -> Self {
+        Self {
+            kind: "legacy_work_plan".to_string(),
+            work_plan_id: Some(work_plan_id),
+            docket_job_id: None,
+            docket_task_id: None,
+            refs: Vec::new(),
+        }
+    }
+
+    pub fn local(refs: Vec<String>) -> Self {
+        Self {
+            kind: "local".to_string(),
+            work_plan_id: None,
+            docket_job_id: None,
+            docket_task_id: None,
+            refs,
+        }
+    }
+
+    pub fn docket_task(job_id: Option<String>, task_id: String, refs: Vec<String>) -> Self {
+        Self {
+            kind: "docket_task".to_string(),
+            work_plan_id: None,
+            docket_job_id: job_id,
+            docket_task_id: Some(task_id),
+            refs,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskListItem {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub status: WorkPlanItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    pub source_ref: TaskListSourceRef,
+    pub sync_state: TaskListSyncState,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskListProjection {
+    pub id: Uuid,
+    pub bear_id: Uuid,
+    pub title: String,
+    pub summary: String,
+    pub owner_profile: String,
+    pub visibility: String,
+    pub status: String,
+    pub version: i32,
+    pub source_ref: TaskListSourceRef,
+    pub items: Vec<TaskListItem>,
+    pub current_item: Option<TaskListItem>,
+    pub source_conversation_id: Option<String>,
+    pub source_acp_session_id: Option<String>,
+    pub handoff_intent_path: Option<String>,
+    pub handoff_task_id: Option<String>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkPlanValidationError {
     EmptyTitle,
@@ -357,6 +464,147 @@ impl std::error::Error for WorkPlanValidationError {}
 impl From<WorkPlanValidationError> for DenError {
     fn from(err: WorkPlanValidationError) -> Self {
         DenError::ValidationError(err.to_string())
+    }
+}
+
+fn parse_docket_source_refs(refs: &[String]) -> Option<TaskListSourceRef> {
+    let mut job_id = None;
+    let mut task_id = None;
+    for raw in refs {
+        let value = raw.trim();
+        if let Some(rest) = value.strip_prefix("docket_job:") {
+            if !rest.trim().is_empty() {
+                job_id = Some(rest.trim().to_string());
+            }
+        } else if let Some(rest) = value.strip_prefix("docket_task:") {
+            if !rest.trim().is_empty() {
+                task_id = Some(rest.trim().to_string());
+            }
+        }
+    }
+    task_id.map(|task_id| TaskListSourceRef::docket_task(job_id, task_id, refs.to_vec()))
+}
+
+pub fn task_list_item_from_work_plan_item(item: &WorkPlanItem) -> TaskListItem {
+    let source_ref = parse_docket_source_refs(&item.source_refs)
+        .unwrap_or_else(|| TaskListSourceRef::local(item.source_refs.clone()));
+    let sync_state = if source_ref.kind == "docket_task" {
+        TaskListSyncState::CheckedOut
+    } else {
+        TaskListSyncState::LocalOnly
+    };
+    TaskListItem {
+        id: item.id.clone(),
+        title: item.title.clone(),
+        summary: item.summary.clone(),
+        status: item.status,
+        blocked_reason: item.blocked_reason.clone(),
+        source_ref,
+        sync_state,
+    }
+}
+
+pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskListProjection {
+    let items = plan
+        .items
+        .iter()
+        .map(task_list_item_from_work_plan_item)
+        .collect::<Vec<_>>();
+    let current_item = plan
+        .current_item
+        .as_ref()
+        .map(task_list_item_from_work_plan_item);
+    TaskListProjection {
+        id: plan.id,
+        bear_id: plan.bear_id,
+        title: plan.title.clone(),
+        summary: plan.summary.clone(),
+        owner_profile: plan.owner_profile.clone(),
+        visibility: plan.visibility.clone(),
+        status: plan.status.clone(),
+        version: plan.version,
+        source_ref: TaskListSourceRef::legacy_work_plan(plan.id),
+        items,
+        current_item,
+        source_conversation_id: plan.source_conversation_id.clone(),
+        source_acp_session_id: plan.source_acp_session_id.clone(),
+        handoff_intent_path: plan.handoff_intent_path.clone(),
+        handoff_task_id: plan.handoff_task_id.clone(),
+        created_at: plan.created_at,
+        updated_at: plan.updated_at,
+    }
+}
+
+impl WorkPlanProjection {
+    pub fn to_task_list_projection(&self) -> TaskListProjection {
+        task_list_projection_from_work_plan(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TaskListCheckoutSource {
+    LegacyWorkPlan(WorkPlanLookup),
+    LocalProjection(TaskListProjection),
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskListCheckoutRequest {
+    pub source: TaskListCheckoutSource,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskListSyncRequest {
+    pub task_list: TaskListProjection,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskListSyncOutcome {
+    pub task_list: TaskListProjection,
+    pub applied: bool,
+    pub review_required: bool,
+    pub conflicts: Vec<String>,
+    pub message: String,
+}
+
+impl TaskListSyncOutcome {
+    pub fn review_required(task_list: TaskListProjection, message: impl Into<String>) -> Self {
+        Self {
+            task_list,
+            applied: false,
+            review_required: true,
+            conflicts: Vec::new(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskListHandoffRequest {
+    pub task_list: TaskListProjection,
+    pub item_ids: Vec<String>,
+    pub title: String,
+    pub summary: String,
+    pub requested_outcome: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskListHandoffOutcome {
+    pub accepted: bool,
+    pub review_required: bool,
+    pub message: String,
+    pub task_list_id: Uuid,
+    pub item_ids: Vec<String>,
+}
+
+impl TaskListHandoffOutcome {
+    pub fn review_required(request: &TaskListHandoffRequest, message: impl Into<String>) -> Self {
+        Self {
+            accepted: true,
+            review_required: true,
+            message: message.into(),
+            task_list_id: request.task_list.id,
+            item_ids: request.item_ids.clone(),
+        }
     }
 }
 
@@ -664,6 +912,62 @@ mod tests {
         assert!(role_can_request_work_handoff(BearProfile::Pair));
         assert!(!role_can_request_work_handoff(BearProfile::Work));
         assert!(!role_can_request_work_handoff(BearProfile::Curate));
+    }
+
+    fn projection_fixture(items: Vec<WorkPlanItem>) -> WorkPlanProjection {
+        WorkPlanProjection {
+            id: Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap(),
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            title: "Build task system".to_string(),
+            summary: "Keep status current".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "bear_visible".to_string(),
+            status: "active".to_string(),
+            version: 1,
+            current_item: current_item(&items).cloned(),
+            items,
+            source_conversation_id: Some("den-conv-test".to_string()),
+            source_acp_session_id: Some("acp-test".to_string()),
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn task_list_projection_wraps_legacy_work_plan_without_relabeling_as_docket() {
+        let plan = projection_fixture(vec![item("one", WorkPlanItemStatus::InProgress)]);
+
+        let task_list = plan.to_task_list_projection();
+
+        assert_eq!(task_list.source_ref.kind, "legacy_work_plan");
+        assert_eq!(task_list.source_ref.work_plan_id, Some(plan.id));
+        assert_eq!(task_list.items.len(), 1);
+        assert_eq!(task_list.items[0].source_ref.kind, "local");
+        assert_eq!(task_list.items[0].sync_state, TaskListSyncState::LocalOnly);
+        assert_eq!(
+            task_list.current_item.as_ref().map(|item| item.id.as_str()),
+            Some("one")
+        );
+    }
+
+    #[test]
+    fn task_list_projection_preserves_docket_backing_refs_when_present() {
+        let mut backed = item("backed", WorkPlanItemStatus::Pending);
+        backed.source_refs = vec![
+            "docket_job:job-123".to_string(),
+            "docket_task:task-456".to_string(),
+        ];
+        let plan = projection_fixture(vec![backed]);
+
+        let task_list = task_list_projection_from_work_plan(&plan);
+        let item = &task_list.items[0];
+
+        assert_eq!(item.source_ref.kind, "docket_task");
+        assert_eq!(item.source_ref.docket_job_id.as_deref(), Some("job-123"));
+        assert_eq!(item.source_ref.docket_task_id.as_deref(), Some("task-456"));
+        assert_eq!(item.sync_state, TaskListSyncState::CheckedOut);
     }
 
     #[test]
