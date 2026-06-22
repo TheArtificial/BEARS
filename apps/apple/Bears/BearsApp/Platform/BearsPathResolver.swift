@@ -20,7 +20,7 @@ struct BearsPathResolver: AdapterPathProviding {
     }
 
     var managedAdapterPath: URL {
-        URL(fileURLWithPath: "/Library/Application Support/Bears/adapter/bears-acp-adapter", isDirectory: false)
+        URL(fileURLWithPath: "/usr/local/bin/bear-armature", isDirectory: false)
     }
 
     var installStatePath: URL {

@@ -12,7 +12,7 @@ struct OverviewView: View {
                 .font(.largeTitle)
                 .bold()
 
-            GroupBox("Adapter Status") {
+            GroupBox("Armature Status") {
                 VStack(alignment: .leading, spacing: 10) {
                     statusRow(
                         value: viewModel.statusText,
@@ -99,7 +99,7 @@ struct OverviewView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .help(path + "\n\nClick to copy managed adapter path to clipboard.")
+            .help(path + "\n\nClick to copy managed armature path to clipboard.")
         }
     }
 

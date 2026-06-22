@@ -191,7 +191,7 @@ final class OverviewViewModel: ObservableObject {
         if previous.version != current.version, let version = current.version {
             message = "Installed version updated to \(version)."
         } else if let version = current.version {
-            message = "Adapter reinstalled. Installed version remains \(version)."
+            message = "Armature reinstalled. Installed version remains \(version)."
         } else {
             message = "Installation detected."
         }

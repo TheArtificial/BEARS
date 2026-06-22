@@ -10,15 +10,15 @@ enum GitHubReleaseAdapterSourceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL(let urlString):
-            return "Invalid adapter download URL: \(urlString)"
+            return "Invalid armature download URL: \(urlString)"
         case .manifestNotFound(let details):
-            return "macOS adapter manifest not found: \(details)"
+            return "macOS armature manifest not found: \(details)"
         case .manifestUnavailable(let details):
-            return "Failed to load macOS adapter manifest: \(details)"
+            return "Failed to load macOS armature manifest: \(details)"
         case .invalidManifestJSON(let details):
-            return "Failed to decode macOS adapter manifest JSON: \(details)"
+            return "Failed to decode macOS armature manifest JSON: \(details)"
         case .missingPackageURL:
-            return "The macOS adapter manifest does not contain a pkg_url value."
+            return "The macOS armature manifest does not contain a pkg_url value."
         }
     }
 }
@@ -45,7 +45,9 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
     }
 
     func latestMacOSArtifactSource() throws -> AdapterArtifactSource {
-        if let configuredDownloadURLString = environment.environment["BEARS_ADAPTER_DOWNLOAD_URL"] {
+        let configuredDownloadURLString = environment.environment["BEARS_ARMATURE_DOWNLOAD_URL"]
+            ?? environment.environment["BEARS_ADAPTER_DOWNLOAD_URL"]
+        if let configuredDownloadURLString {
             return try adapterSource(from: configuredDownloadURLString, versionHint: nil)
         }
 
@@ -65,7 +67,8 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
     }
 
     private func manifestURL() throws -> URL {
-        let manifestURLString = environment.environment["BEARS_ADAPTER_MANIFEST_URL"]
+        let manifestURLString = environment.environment["BEARS_ARMATURE_MANIFEST_URL"]
+            ?? environment.environment["BEARS_ADAPTER_MANIFEST_URL"]
             ?? "https://bears-ai.github.io/bear-den/bear-armature/stable/macos.json"
 
         guard let manifestURL = URL(string: manifestURLString) else {

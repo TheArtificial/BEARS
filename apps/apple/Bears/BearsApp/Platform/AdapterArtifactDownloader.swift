@@ -16,7 +16,7 @@ enum AdapterArtifactDownloadError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingDownloadedFile(let url):
-            return "Downloaded adapter artifact could not be found at \(url.path)."
+            return "Downloaded armature artifact could not be found at \(url.path)."
         case .invalidExecutableFormat(let details):
             return details
         }
@@ -101,7 +101,7 @@ struct URLSessionAdapterArtifactDownloader: AdapterArtifactDownloading {
     private func validateDownloadedBinary(at url: URL) throws {
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         guard data.count >= 4 else {
-            throw AdapterArtifactDownloadError.invalidExecutableFormat("Downloaded adapter artifact is too small to be a valid executable.")
+            throw AdapterArtifactDownloadError.invalidExecutableFormat("Downloaded armature artifact is too small to be a valid executable.")
         }
 
         let bytes = [UInt8](data.prefix(4))
@@ -113,7 +113,7 @@ struct URLSessionAdapterArtifactDownloader: AdapterArtifactDownloading {
 
         guard isMachO else {
             throw AdapterArtifactDownloadError.invalidExecutableFormat(
-                "Downloaded adapter artifact is not a macOS Mach-O executable. Build and publish a macOS adapter binary, or set BEARS_ADAPTER_DOWNLOAD_URL to a valid macOS artifact."
+                "Downloaded armature artifact is not a macOS Mach-O executable. Build and publish a macOS armature binary, or set BEARS_ARMATURE_DOWNLOAD_URL to a valid macOS artifact."
             )
         }
     }
