@@ -14,6 +14,8 @@ use serde_json::{json, Value};
 
 use den_core::{config::Config, DenError};
 
+use crate::model_registry;
+
 /// Bifrost expects `provider/model`; bare OpenAI-style ids get an `openai/` prefix.
 pub fn normalize_llm_model_handle(model: &str) -> String {
     let trimmed = model.trim();
@@ -25,6 +27,12 @@ pub fn normalize_llm_model_handle(model: &str) -> String {
     } else {
         format!("openai/{trimmed}")
     }
+}
+
+fn responses_api_model_id(model: &str) -> String {
+    model_registry::provider_model_id_for_handle(model)
+        .unwrap_or(model.trim())
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +127,11 @@ fn chat_message_chain_diagnostic(messages: &[ChatMessage]) -> Value {
     while index < messages.len() {
         let message = &messages[index];
         if message.role == "assistant" {
-            if let Some(calls) = message.tool_calls.as_ref().filter(|calls| !calls.is_empty()) {
+            if let Some(calls) = message
+                .tool_calls
+                .as_ref()
+                .filter(|calls| !calls.is_empty())
+            {
                 assistant_tool_call_blocks += 1;
                 let required = calls.iter().map(|call| call.id.clone()).collect::<Vec<_>>();
                 let mut seen = std::collections::HashSet::<String>::new();
@@ -159,7 +171,11 @@ fn chat_message_chain_diagnostic(messages: &[ChatMessage]) -> Value {
 
     let tail_start = messages.len().saturating_sub(12);
     for message in &messages[tail_start..] {
-        let role = if let Some(calls) = message.tool_calls.as_ref().filter(|calls| !calls.is_empty()) {
+        let role = if let Some(calls) = message
+            .tool_calls
+            .as_ref()
+            .filter(|calls| !calls.is_empty())
+        {
             format!("{}[tool_calls:{}]", message.role, calls.len())
         } else if message.role == "tool" {
             format!(
@@ -256,7 +272,7 @@ impl ChatCompletionRequest {
             })
             .collect();
         let mut body = json!({
-            "model": self.model,
+            "model": responses_api_model_id(&self.model),
             "input": input,
             "stream": self.stream,
         });
@@ -625,10 +641,15 @@ impl LlmClient {
             req = apply_optional_header(req, "x-bears-request-id", telemetry.field("request_id"));
             req = apply_optional_header(req, "x-bears-run-id", telemetry.field("run_id"));
             req = apply_optional_header(req, "x-bears-session-id", telemetry.field("session_id"));
-            req = apply_optional_header(req, "x-bears-conversation-id", telemetry.field("conversation_id"));
+            req = apply_optional_header(
+                req,
+                "x-bears-conversation-id",
+                telemetry.field("conversation_id"),
+            );
             req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
             req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
-            req = apply_optional_header(req, "x-model-affinity", telemetry.field("conversation_id"));
+            req =
+                apply_optional_header(req, "x-model-affinity", telemetry.field("conversation_id"));
         }
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -650,7 +671,7 @@ impl LlmClient {
             tracing::warn!(
                 model = %request.model,
                 http_status,
- duration_ms = started.elapsed().as_millis(),
+                duration_ms = started.elapsed().as_millis(),
                 response_body_len = text.len(),
                 response_body_sample = %response_body_sample,
                 request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
@@ -724,6 +745,41 @@ mod tests {
                 arguments: "{}".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn responses_api_model_id_uses_provider_model_id_for_den_handles() {
+        assert_eq!(responses_api_model_id("openai/gpt-5.5"), "gpt-5.5");
+        assert_eq!(responses_api_model_id("gpt-5.5"), "gpt-5.5");
+        assert_eq!(
+            responses_api_model_id("custom/provider-model"),
+            "custom/provider-model"
+        );
+    }
+
+    #[test]
+    fn responses_body_sends_provider_model_id() {
+        let request = ChatCompletionRequest {
+            model: "openai/gpt-5.5".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("ping".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            }],
+            tools: Vec::new(),
+            stream: true,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            telemetry: None,
+        };
+
+        let body = request.to_responses_body();
+
+        assert_eq!(body["model"], "gpt-5.5");
+        assert_eq!(body["stream"], true);
     }
 
     #[test]
