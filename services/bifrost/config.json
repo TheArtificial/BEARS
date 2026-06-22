@@ -187,5 +187,8 @@
                 }
             ]
         }
+    },
+    "config_store": {
+        "enabled": false
     }
 }

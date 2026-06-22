@@ -6,7 +6,7 @@
 
 [Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. **Letta** calls Bifrost using `LLM_API_URL` (see `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`).
 
-This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is mounted read-only into the container. There is **no `config_store`** block in that file, so Bifrost’s **built-in admin UI stays off** and the process does not rely on SQLite for gateway config—see [Bifrost “Two Configuration Modes”](https://docs.getbifrost.ai/quickstart/gateway/setting-up).
+This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is baked into the configured Bifrost image and split at startup into upstream runtime config plus BEARS metadata. The file sets `config_store.enabled: false`, so Bifrost treats `config.json` as the source of truth instead of reconciling through its SQLite/UI-backed config database. This prevents stale DB-backed provider/key rows from shadowing the checked-in provider configuration.
 
 ## Prerequisites
 
