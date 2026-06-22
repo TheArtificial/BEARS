@@ -849,6 +849,10 @@ impl Stream for AcpRuntimeSseStream {
                                 let pair_agent_id = this.context.pair_agent_id.clone();
                                 let run_ids = this.diagnostics.run_ids.clone();
                                 let request_id = this.context.request_id;
+                                // Cleanup-only state: `acp_cleanup_stale_runtime_state` never reads
+                                // the model catalog, so an empty (unwarmed) store is intentional
+                                // here. If catalog reads are ever added to this path, thread the
+                                // shared store through `AcpStreamContext` instead of allocating one.
                                 let cleanup_state = DenState {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),

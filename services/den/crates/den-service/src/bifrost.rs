@@ -57,19 +57,37 @@ impl Default for BifrostCatalogSnapshot {
     }
 }
 
+/// Canonical catalog key for a model handle.
+///
+/// Prefers the Den registry's canonical key. For handles unknown to the
+/// registry, returns a slash-qualified handle as-is; for a bare handle, builds
+/// `provider/model` when those are known (insert time) and otherwise falls back
+/// to `openai/<handle>` (resolve time, where only the handle string is
+/// available). The two call sites converge for registry-known and
+/// slash-qualified handles; they can differ only for a registry-unknown *bare*
+/// handle whose provider is not `openai`, which `/v1/models` does not produce.
+pub fn canonical_catalog_key(handle: &str, provider: Option<&str>, model: Option<&str>) -> String {
+    if let Some(key) = den_llm::model_registry::resolve_model_handle(handle) {
+        return key.to_string();
+    }
+    let trimmed = handle.trim();
+    if trimmed.contains('/') {
+        return trimmed.to_string();
+    }
+    match (provider, model) {
+        (Some(p), Some(m)) if !p.trim().is_empty() && !m.trim().is_empty() => {
+            format!("{}/{}", p.trim(), m.trim())
+        }
+        _ => format!("openai/{trimmed}"),
+    }
+}
+
 impl BifrostCatalogSnapshot {
     pub fn from_available_models(models: Vec<BifrostModelMetadata>) -> Self {
         let mut entries = HashMap::new();
         for model in models {
-            let canonical = den_llm::model_registry::resolve_model_handle(&model.handle)
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    if model.handle.contains('/') {
-                        model.handle.clone()
-                    } else {
-                        format!("{}/{}", model.provider, model.model)
-                    }
-                });
+            let canonical =
+                canonical_catalog_key(&model.handle, Some(&model.provider), Some(&model.model));
             entries.insert(
                 canonical,
                 BifrostCatalogEntry {
@@ -95,17 +113,7 @@ impl BifrostCatalogSnapshot {
     }
 
     pub fn resolve(&self, handle: &str) -> Option<&BifrostCatalogEntry> {
-        let key = den_llm::model_registry::resolve_model_handle(handle)
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                let trimmed = handle.trim();
-                if trimmed.contains('/') {
-                    trimmed.to_string()
-                } else {
-                    format!("openai/{trimmed}")
-                }
-            });
-        self.models.get(&key)
+        self.models.get(&canonical_catalog_key(handle, None, None))
     }
 
     pub fn models_vec(&self) -> Vec<BifrostModelMetadata> {
@@ -134,6 +142,25 @@ pub type BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>;
 
 pub fn new_catalog_store() -> BifrostCatalogStore {
     Arc::new(RwLock::new(BifrostCatalogSnapshot::default()))
+}
+
+/// Spawn a background task that warms `store` immediately and then refreshes it
+/// every `refresh_secs`. Failed refreshes keep the last good snapshot and flag
+/// it `stale`. A `refresh_secs` of `0` warms once with no periodic refresh.
+pub fn spawn_catalog_refresh(
+    client: Arc<BifrostClient>,
+    store: BifrostCatalogStore,
+    refresh_secs: u64,
+) {
+    tokio::spawn(async move {
+        loop {
+            client.warm_model_catalog(&store).await;
+            if refresh_secs == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(refresh_secs)).await;
+        }
+    });
 }
 
 fn default_enabled() -> bool {
@@ -407,13 +434,17 @@ impl BifrostClient {
         }
         match self.refresh_catalog_snapshot(store).await {
             Ok(snapshot) => {
-                tracing::info!(count = snapshot.models.len(), "Warmed Bifrost model catalog snapshot");
+                tracing::info!(
+                    count = snapshot.models.len(),
+                    "Refreshed Bifrost model catalog snapshot"
+                );
             }
             Err(err) => {
+                // Keep the last good snapshot but flag it stale for operators.
                 if let Ok(mut guard) = store.write() {
                     guard.stale = true;
                 }
-                tracing::warn!(error = %err, "Failed to warm Bifrost model catalog snapshot at startup");
+                tracing::warn!(error = %err, "Failed to refresh Bifrost model catalog snapshot");
             }
         }
     }

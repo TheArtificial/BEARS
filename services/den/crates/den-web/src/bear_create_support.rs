@@ -278,8 +278,8 @@ pub async fn all_model_catalog_options_context(
         return (false, Vec::new(), None);
     }
 
-    let snapshot = match state.bifrost_catalog.read() {
-        Ok(snapshot) => snapshot.clone(),
+    let models = match state.bifrost_catalog.read() {
+        Ok(snapshot) => snapshot.models_vec(),
         Err(_) => {
             return (
                 true,
@@ -288,7 +288,6 @@ pub async fn all_model_catalog_options_context(
             );
         }
     };
-    let models = snapshot.models_vec();
     if models.is_empty() {
         return (
             true,

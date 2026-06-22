@@ -114,6 +114,11 @@ pub struct Config {
     /// Empty = derive from `bifrost_base_url` where possible or skip Bifrost metadata.
     pub bifrost_metadata_url: String,
 
+    /// Seconds between background Bifrost model-catalog refreshes
+    /// (`BIFROST_CATALOG_REFRESH_SECS`, default 300). `0` warms once at startup
+    /// with no periodic refresh.
+    pub bifrost_catalog_refresh_secs: u64,
+
     /// OpenAI-compatible inference API (no trailing slash), e.g. `http://bears-bifrost:8080/v1`.
     /// Used by the Den-native agent loop. Defaults from `LLM_API_URL`, then `BIFROST_BASE_URL/v1`.
     pub llm_api_url: String,
@@ -354,6 +359,11 @@ impl Config {
             .trim()
             .to_string();
 
+        let bifrost_catalog_refresh_secs = std::env::var("BIFROST_CATALOG_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(300);
+
         let llm_api_url = std::env::var("LLM_API_URL")
             .ok()
             .map(|v| v.trim_end_matches('/').to_string())
@@ -498,6 +508,7 @@ impl Config {
             den_internal_token,
             bifrost_base_url,
             bifrost_metadata_url,
+            bifrost_catalog_refresh_secs,
             llm_api_url,
             llm_api_key,
             default_llm_model,
@@ -574,6 +585,7 @@ impl Config {
             den_internal_token: String::new(),
             bifrost_base_url: String::new(),
             bifrost_metadata_url: String::new(),
+            bifrost_catalog_refresh_secs: 300,
             llm_api_url: String::new(),
             llm_api_key: String::new(),
             default_llm_model: "gpt-4.1".into(),

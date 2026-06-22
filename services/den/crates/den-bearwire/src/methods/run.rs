@@ -86,9 +86,15 @@ fn runtime_upstream_target(
 struct ResolvedRunModel {
     handle: String,
     provider_model_id: String,
+    /// Set authoritatively by `preflight_pair_run_model` from the catalog
+    /// snapshot; `resolve_pair_run_model` leaves it at a placeholder.
     api_style: den_llm::LlmApiStyle,
     source: &'static str,
 }
+
+/// Placeholder used while resolving model identity; overwritten by preflight.
+const RESOLVE_PLACEHOLDER_API_STYLE: den_llm::LlmApiStyle =
+    den_llm::LlmApiStyle::ChatCompletionsStream;
 
 fn provider_model_id_for_den_handle(handle: &str) -> String {
     den_llm::model_registry::provider_model_id_for_handle(handle)
@@ -146,7 +152,7 @@ async fn resolve_pair_run_model(
                     let handle = den_llm::normalize_llm_model_handle(&model);
                     let provider_model_id = provider_model_id_for_den_handle(&handle);
                     return Ok(ResolvedRunModel {
-                        api_style: den_llm::preferred_api_style_for_model(&handle),
+                        api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                         provider_model_id,
                         handle,
                         source: "conversation_explicit",
@@ -160,7 +166,7 @@ async fn resolve_pair_run_model(
                 let handle = den_llm::normalize_llm_model_handle(&model);
                 let provider_model_id = provider_model_id_for_den_handle(&handle);
                 return Ok(ResolvedRunModel {
-                    api_style: den_llm::preferred_api_style_for_model(&handle),
+                    api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                     provider_model_id,
                     handle,
                     source: "conversation_auto",
@@ -175,7 +181,7 @@ async fn resolve_pair_run_model(
         let handle = den_llm::normalize_llm_model_handle(&model);
         let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
-            api_style: den_llm::preferred_api_style_for_model(&handle),
+            api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
             source: "profile_default",
@@ -191,7 +197,7 @@ async fn resolve_pair_run_model(
         let handle = den_llm::normalize_llm_model_handle(model);
         let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
-            api_style: den_llm::preferred_api_style_for_model(&handle),
+            api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
             source: "bear_default",
@@ -201,7 +207,7 @@ async fn resolve_pair_run_model(
     let handle = den_llm::normalize_llm_model_handle(&state.config.default_llm_model);
     let provider_model_id = provider_model_id_for_den_handle(&handle);
     Ok(ResolvedRunModel {
-        api_style: den_llm::preferred_api_style_for_model(&handle),
+        api_style: RESOLVE_PLACEHOLDER_API_STYLE,
         provider_model_id,
         handle,
         source: "system_default",
@@ -215,6 +221,27 @@ async fn preflight_pair_run_model(
     conversation_id: &str,
 ) -> Result<ResolvedRunModel, CustomError> {
     let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
+    // Cold start: if the background warm has not landed a snapshot yet, fetch
+    // inline so early runs validate against live availability instead of failing
+    // against an empty snapshot. `fetched_at.is_none()` means never fetched (a
+    // failed-but-previously-good snapshot keeps its timestamp and is left alone).
+    let never_fetched = state
+        .bifrost_catalog
+        .read()
+        .map(|snapshot| snapshot.fetched_at.is_none())
+        .unwrap_or(true);
+    if never_fetched {
+        if let Err(err) = state
+            .bifrost
+            .refresh_catalog_snapshot(&state.bifrost_catalog)
+            .await
+        {
+            tracing::warn!(
+                error = %err,
+                "inline Bifrost catalog refresh before Pair preflight failed; proceeding with current snapshot"
+            );
+        }
+    }
     let snapshot = state.bifrost_catalog.read().map_err(|_| {
         CustomError::System(
             "could not read Bifrost model catalog snapshot before starting Pair run".to_string(),

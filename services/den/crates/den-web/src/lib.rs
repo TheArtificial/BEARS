@@ -235,13 +235,11 @@ pub async fn server_with_state_and_runtime(
 
     let bifrost = std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref()));
     let bifrost_catalog = den_service::bifrost::new_catalog_store();
-    {
-        let bifrost = bifrost.clone();
-        let catalog = bifrost_catalog.clone();
-        tokio::spawn(async move {
-            bifrost.warm_model_catalog(&catalog).await;
-        });
-    }
+    den_service::bifrost::spawn_catalog_refresh(
+        bifrost.clone(),
+        bifrost_catalog.clone(),
+        config.bifrost_catalog_refresh_secs,
+    );
 
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
