@@ -73,9 +73,14 @@ pub fn resolve_model_handle(handle: &str) -> Option<&'static str> {
     entry_for_handle(handle).map(|entry| entry.key)
 }
 
+pub fn is_routing_wildcard_model_handle(handle: &str) -> bool {
+    let trimmed = handle.trim();
+    trimmed == "*" || trimmed.ends_with("/*")
+}
+
 pub fn entry_for_handle(handle: &str) -> Option<DenModelRegistryEntry> {
     let trimmed = handle.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || is_routing_wildcard_model_handle(trimmed) {
         return None;
     }
     registry_entries()
@@ -94,6 +99,7 @@ pub fn model_option_for_available_handle(
     }
 
     let trimmed = handle.trim();
+    debug_assert!(!is_routing_wildcard_model_handle(trimmed));
     let label_base = fallback_label
         .map(str::trim)
         .filter(|label| !label.is_empty())
@@ -134,7 +140,7 @@ where
     let gateway = gateway_handles
         .into_iter()
         .map(|handle| handle.as_ref().trim().to_string())
-        .filter(|handle| !handle.is_empty())
+        .filter(|handle| !handle.is_empty() && !is_routing_wildcard_model_handle(handle))
         .collect::<BTreeSet<_>>();
 
     let available_with_metadata = gateway

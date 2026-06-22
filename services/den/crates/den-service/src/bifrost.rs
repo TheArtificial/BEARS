@@ -69,7 +69,7 @@ struct BifrostLiveTopProvider {
 impl BifrostLiveModel {
     fn into_metadata(self) -> Option<BifrostModelMetadata> {
         let handle = self.id.trim().to_string();
-        if handle.is_empty() {
+        if handle.is_empty() || den_llm::model_registry::is_routing_wildcard_model_handle(&handle) {
             return None;
         }
         let provider = handle

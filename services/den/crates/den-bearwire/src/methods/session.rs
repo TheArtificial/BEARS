@@ -248,6 +248,9 @@ async fn session_model_payload(
     let model_options = match state.bifrost.list_available_models().await {
         Ok(models) => models
             .into_iter()
+            .filter(|model| {
+                !den_llm::model_registry::is_routing_wildcard_model_handle(&model.handle)
+            })
             .map(|model| {
                 den_llm::model_registry::model_option_for_available_handle(
                     &model.handle,
@@ -304,6 +307,11 @@ pub(crate) async fn session_model_set_result(
             .ok_or_else(|| {
                 CustomError::ValidationError("model is required for explicit selection".to_string())
             })?;
+        if den_llm::model_registry::is_routing_wildcard_model_handle(raw) {
+            return Err(CustomError::ValidationError(
+                "routing wildcards are not selectable models".to_string(),
+            ));
+        }
         let resolved = den_llm::model_registry::resolve_model_handle(raw);
         let available = options.iter().any(|option| {
             let handle = option.get("handle").and_then(Value::as_str).unwrap_or("");
