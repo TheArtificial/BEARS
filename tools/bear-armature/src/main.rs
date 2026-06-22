@@ -4203,6 +4203,25 @@ fn flatten_history_pages_chronological(
     pages_newest_first.into_iter().rev().flatten().collect()
 }
 
+fn history_replay_chunks_with_boundaries(
+    messages: Vec<ReloadHistoryMessage>,
+) -> Vec<ReloadHistoryMessage> {
+    let mut previous_role: Option<String> = None;
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if previous_role.as_deref() == Some(message.role.as_str())
+                && matches!(message.role.as_str(), "user" | "assistant")
+                && !message.text.starts_with("\n")
+            {
+                message.text = format!("\n\n{}", message.text);
+            }
+            previous_role = Some(message.role.clone());
+            message
+        })
+        .collect()
+}
+
 async fn fetch_conversation_history_chronological(
     http: &reqwest::Client,
     config: &Config,
@@ -4333,7 +4352,7 @@ async fn replay_history_for_den_session(
                     .collect::<Vec<_>>()
             );
         }
-        for message in messages {
+        for message in history_replay_chunks_with_boundaries(messages) {
             match message.role.as_str() {
                 "user" => send_user_message_chunk(session_id, &message.text).await?,
                 "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
@@ -9662,6 +9681,51 @@ mod tests {
         assert_eq!(shape.text, 1);
         assert_eq!(shape.human_pasted_debug_text, 1);
         assert!(prompt.contains("system_alert"));
+    }
+
+    #[test]
+    fn history_replay_boundaries_separate_adjacent_user_messages() {
+        let messages = history_replay_chunks_with_boundaries(vec![
+            ReloadHistoryMessage {
+                id: Some("1".to_string()),
+                role: "user".to_string(),
+                text: "first prompt".to_string(),
+            },
+            ReloadHistoryMessage {
+                id: Some("2".to_string()),
+                role: "user".to_string(),
+                text: "second prompt after failed turn".to_string(),
+            },
+        ]);
+
+        assert_eq!(messages[0].text, "first prompt");
+        assert_eq!(messages[1].text, "\n\nsecond prompt after failed turn");
+    }
+
+    #[test]
+    fn history_replay_boundaries_do_not_modify_alternating_roles() {
+        let messages = history_replay_chunks_with_boundaries(vec![
+            ReloadHistoryMessage {
+                id: Some("1".to_string()),
+                role: "user".to_string(),
+                text: "prompt".to_string(),
+            },
+            ReloadHistoryMessage {
+                id: Some("2".to_string()),
+                role: "assistant".to_string(),
+                text: "reply".to_string(),
+            },
+            ReloadHistoryMessage {
+                id: Some("3".to_string()),
+                role: "user".to_string(),
+                text: "follow-up".to_string(),
+            },
+        ]);
+
+        assert_eq!(
+            messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            vec!["prompt", "reply", "follow-up"]
+        );
     }
 
     #[test]
