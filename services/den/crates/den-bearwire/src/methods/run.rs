@@ -82,6 +82,168 @@ fn runtime_upstream_target(
         .to_string()
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedRunModel {
+    handle: String,
+    provider_model_id: String,
+    source: &'static str,
+}
+
+fn provider_model_id_for_den_handle(handle: &str) -> String {
+    den_llm::model_registry::provider_model_id_for_handle(handle)
+        .unwrap_or(handle.trim())
+        .to_string()
+}
+
+fn available_model_matches(
+    model: &den_service::bifrost::BifrostModelMetadata,
+    resolved: &ResolvedRunModel,
+) -> bool {
+    model.handle == resolved.handle
+        || model.handle == resolved.provider_model_id
+        || model.model == resolved.handle
+        || model.model == resolved.provider_model_id
+}
+
+fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata]) -> String {
+    let mut handles = models
+        .iter()
+        .map(|model| model.handle.as_str())
+        .take(20)
+        .collect::<Vec<_>>();
+    handles.sort_unstable();
+    handles.join(", ")
+}
+
+async fn resolve_pair_run_model(
+    state: &DenState,
+    bear: &den_runtime::bears::Bear,
+    conversation_id: &str,
+) -> Result<ResolvedRunModel, CustomError> {
+    if let Some(conversation) =
+        den_runtime::conversation_persistence::get_conversation_for_external_id(
+            &state.sqlx_pool,
+            bear.id,
+            conversation_id,
+        )
+        .await?
+    {
+        if let Some(model_state) =
+            den_runtime::conversation_persistence::get_conversation_model_state(
+                &state.sqlx_pool,
+                conversation.id,
+            )
+            .await?
+        {
+            if model_state.selection_mode == "explicit" {
+                if let Some(model) = model_state
+                    .selected_model
+                    .or(model_state.requested_model)
+                    .map(|model| model.trim().to_string())
+                    .filter(|model| !model.is_empty())
+                {
+                    let handle = den_llm::normalize_llm_model_handle(&model);
+                    return Ok(ResolvedRunModel {
+                        provider_model_id: provider_model_id_for_den_handle(&handle),
+                        handle,
+                        source: "conversation_explicit",
+                    });
+                }
+            } else if let Some(model) = model_state
+                .selected_model
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty())
+            {
+                let handle = den_llm::normalize_llm_model_handle(&model);
+                return Ok(ResolvedRunModel {
+                    provider_model_id: provider_model_id_for_den_handle(&handle),
+                    handle,
+                    source: "conversation_auto",
+                });
+            }
+        }
+    }
+
+    if let Some(model) =
+        bears_db::profile_model_setting(&state.sqlx_pool, bear.id, BearProfile::Pair).await?
+    {
+        let handle = den_llm::normalize_llm_model_handle(&model);
+        return Ok(ResolvedRunModel {
+            provider_model_id: provider_model_id_for_den_handle(&handle),
+            handle,
+            source: "profile_default",
+        });
+    }
+
+    if let Some(model) = bear
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        let handle = den_llm::normalize_llm_model_handle(model);
+        return Ok(ResolvedRunModel {
+            provider_model_id: provider_model_id_for_den_handle(&handle),
+            handle,
+            source: "bear_default",
+        });
+    }
+
+    let handle = den_llm::normalize_llm_model_handle(&state.config.default_llm_model);
+    Ok(ResolvedRunModel {
+        provider_model_id: provider_model_id_for_den_handle(&handle),
+        handle,
+        source: "system_default",
+    })
+}
+
+async fn preflight_pair_run_model(
+    state: &DenState,
+    bear: &den_runtime::bears::Bear,
+    session_id: &str,
+    conversation_id: &str,
+) -> Result<ResolvedRunModel, CustomError> {
+    let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
+    let available = state.bifrost.list_available_models().await.map_err(|err| {
+        CustomError::System(format!(
+            "could not verify Bifrost model availability before starting Pair run: {err}"
+        ))
+    })?;
+    if available
+        .iter()
+        .any(|model| available_model_matches(model, &resolved))
+    {
+        tracing::info!(
+            session_id,
+            bear_id = %bear.id,
+            conversation_id,
+            model_handle = %resolved.handle,
+            provider_model_id = %resolved.provider_model_id,
+            model_selection_source = resolved.source,
+            "BearWire model preflight passed"
+        );
+        return Ok(resolved);
+    }
+
+    tracing::warn!(
+        session_id,
+        bear_id = %bear.id,
+        conversation_id,
+        model_handle = %resolved.handle,
+        provider_model_id = %resolved.provider_model_id,
+        model_selection_source = resolved.source,
+        available_models = %available_model_sample(&available),
+        "BearWire model preflight failed"
+    );
+    Err(CustomError::ValidationError(format!(
+        "selected Pair model {} is not currently available from Bifrost for BearWire runs (provider model id: {}; selection source: {}; available sample: {})",
+        resolved.handle,
+        resolved.provider_model_id,
+        resolved.source,
+        available_model_sample(&available),
+    )))
+}
+
 fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
     client_context
         .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
@@ -542,6 +704,8 @@ pub(crate) async fn run_start_result(
         binding_id,
         compatibility_backend: Some("native".to_string()),
     };
+    let _resolved_model =
+        preflight_pair_run_model(&state, &bear, &session_id, &upstream_target).await?;
     acp_sessions::upsert_session(
         &state.sqlx_pool,
         acp_sessions::UpsertAcpSession {
@@ -916,6 +1080,43 @@ mod tests {
             runtime_upstream_target("conv-existing", Some("   ")),
             "conv-existing"
         );
+    }
+
+    fn available_model(handle: &str, model: &str) -> den_service::bifrost::BifrostModelMetadata {
+        den_service::bifrost::BifrostModelMetadata {
+            handle: handle.to_string(),
+            provider: "openai".to_string(),
+            model: model.to_string(),
+            display_name: None,
+            context_window: 0,
+            max_output_tokens: None,
+            enabled: true,
+            supports_tools: None,
+            supports_responses_api: None,
+            supports_vision: None,
+        }
+    }
+
+    #[test]
+    fn available_model_matches_den_handle_or_provider_model_id() {
+        let resolved = ResolvedRunModel {
+            handle: "openai/gpt-5.5".to_string(),
+            provider_model_id: "gpt-5.5".to_string(),
+            source: "conversation_explicit",
+        };
+
+        assert!(available_model_matches(
+            &available_model("openai/gpt-5.5", "gpt-5.5"),
+            &resolved
+        ));
+        assert!(available_model_matches(
+            &available_model("gpt-5.5", "gpt-5.5"),
+            &resolved
+        ));
+        assert!(!available_model_matches(
+            &available_model("openai/gpt-5.1", "gpt-5.1"),
+            &resolved
+        ));
     }
 
     #[test]

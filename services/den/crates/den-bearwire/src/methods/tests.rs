@@ -6,17 +6,17 @@ use std::{
 };
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
+    Json,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::acp_tokens;
 use den_runtime::{
-    DenState, acp_sessions,
+    acp_sessions,
     bears::{db as bears_db, db::BearParams},
     bearwire_obligations, bearwire_runs,
     conversation_message_types::{
@@ -26,11 +26,12 @@ use den_runtime::{
     conversation_persistence::{append_message, ensure_conversation_for_external_id},
     native_runtime::NativeRuntimeConversationBackend,
     runtime_contracts::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
+    DenState,
 };
 
 use crate::{
-    events::{EventStreamQuery, events},
-    rpc::{JsonRpcRequest, rpc},
+    events::{events, EventStreamQuery},
+    rpc::{rpc, JsonRpcRequest},
 };
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
@@ -274,10 +275,25 @@ fn start_mock_openai_sse_server_asserting_requests(
     let addr = listener.local_addr().expect("mock LLM local addr");
     thread::spawn(move || {
         for assertion in request_assertions {
-            let Ok((mut stream, _)) = listener.accept() else {
-                break;
+            let (request, mut stream) = loop {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let request = read_http_request(&mut stream);
+                if request.starts_with("GET /models") {
+                    let body = r#"{"data":[{"id":"gpt-4.1","name":"GPT-4.1","owned_by":"openai","context_length":1047576,"max_output_tokens":32768,"supported_parameters":["tools"],"supported_methods":["chat_completion"]},{"id":"openai/bearwire-test-model","name":"BearWire test model","owned_by":"openai","context_length":128000,"max_output_tokens":4096,"supported_parameters":["tools"],"supported_methods":["chat_completion"]}]}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("write mock models response");
+                    continue;
+                }
+                break (request, stream);
             };
-            let request = read_http_request(&mut stream);
             assert!(
                 request.starts_with("POST /chat/completions "),
                 "unexpected LLM request: {request}"
@@ -1395,12 +1411,10 @@ async fn assert_method_requires_bearer_token(method: &str, params: Value) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["error"]["code"], -32001);
-    assert!(
-        value["error"]["data"]["error"]
-            .as_str()
-            .unwrap()
-            .contains("missing Authorization")
-    );
+    assert!(value["error"]["data"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("missing Authorization"));
 }
 
 #[tokio::test]
