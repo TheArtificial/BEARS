@@ -21,6 +21,19 @@ use crate::auth::authenticated_bear;
 use crate::methods::{param_string, required_param_string};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_000);
+const BEARWIRE_LOG_SAMPLE_CHARS: usize = 2_000;
+
+fn log_sample(value: impl AsRef<str>) -> String {
+    let value = value.as_ref();
+    let mut out = value
+        .chars()
+        .take(BEARWIRE_LOG_SAMPLE_CHARS)
+        .collect::<String>();
+    if value.chars().count() > BEARWIRE_LOG_SAMPLE_CHARS {
+        out.push_str("…");
+    }
+    out
+}
 
 fn client_tool_descriptors_from_context(
     client_context: Option<&Value>,
@@ -132,9 +145,7 @@ pub(crate) async fn persist_run_progress(
     }
 }
 
-fn runtime_event_satisfies_eager_prefix(
-    event: &den_protocol::RuntimeStreamEvent,
-) -> bool {
+fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     matches!(
         event,
@@ -150,9 +161,7 @@ fn runtime_event_satisfies_eager_prefix(
     )
 }
 
-pub(crate) fn runtime_event_kind(
-    event: &den_protocol::RuntimeStreamEvent,
-) -> &'static str {
+pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'static str {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
@@ -233,6 +242,15 @@ pub(crate) async fn persist_run_failed(
     reason: &str,
     message: String,
 ) {
+    tracing::warn!(
+        session_id,
+        run_id,
+        bear_id = %bear_id,
+        user_id,
+        reason,
+        message = %log_sample(&message),
+        "BearWire run failed"
+    );
     let _ = bearwire_runs::transition_run(
         pool,
         run_id,
@@ -397,8 +415,23 @@ async fn update_run_state_for_runtime_event(
             )
             .await;
         }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { category, .. }) => {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+            category,
+            message,
+            ..
+        }) => {
             let reason = format!("{:?}", category);
+            tracing::warn!(
+                session_id,
+                run_id,
+                bear_id = %bear_id,
+                user_id,
+                %request_id,
+                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
+                reason = %reason,
+                message = %log_sample(message),
+                "BearWire runtime turn failed"
+            );
             let _ = bearwire_runs::transition_run(
                 pool,
                 run_id,
@@ -428,7 +461,27 @@ async fn update_run_state_for_runtime_event(
             )
             .await;
         }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { error_type, .. }) => {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+            message,
+            detail,
+            error_type,
+            request_id: event_request_id,
+            context,
+        }) => {
+            tracing::warn!(
+                session_id,
+                run_id,
+                bear_id = %bear_id,
+                user_id,
+                %request_id,
+                event_request_id = event_request_id.as_deref(),
+                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
+                error_type = error_type.as_deref(),
+                message = %log_sample(message),
+                detail = detail.as_deref().map(log_sample),
+                context = context.as_ref().map(|value| log_sample(value.to_string())),
+                "BearWire runtime emitted error event"
+            );
             let _ = bearwire_runs::transition_run(
                 pool,
                 run_id,

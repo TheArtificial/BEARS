@@ -1,15 +1,15 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
-use serde_json::{Value, json};
-use tokio::time::{Duration, Instant, sleep};
+use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::{json, Value};
+use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
 use crate::{
-    AdapterSharedState, AdapterState, Config, SseFrameOutcome, SseStreamDiagnostics,
-    ToolCallUpdatePayload, adapter_contract_context, den_request_context, env_bool,
-    handle_den_event, send_agent_message_chunk_for_turn, send_tool_call_update,
-    stream_has_successful_terminal_condition, truncate_for_log,
+    adapter_contract_context, den_request_context, env_bool, handle_den_event,
+    send_agent_message_chunk_for_turn, send_tool_call_update,
+    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
+    Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -656,6 +656,20 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|reason| !reason.is_empty());
+    let error_type = data
+        .get("error_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|error_type| !error_type.is_empty());
+    let detail = data
+        .get("detail")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty() && *detail != message);
+    let context = data
+        .get("context")
+        .filter(|context| !context.is_null())
+        .map(Value::to_string);
     let run_id = event
         .get("run_id")
         .and_then(Value::as_str)
@@ -665,6 +679,18 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
     } else {
         format!("BEARS run failed: {message}")
     };
+    if let Some(error_type) = error_type {
+        rendered.push_str(&format!("\n\nError type: `{error_type}`"));
+    }
+    if let Some(detail) = detail {
+        rendered.push_str(&format!("\n\nDetail: {}", truncate_for_log(detail, 1200)));
+    }
+    if let Some(context) = context {
+        rendered.push_str(&format!(
+            "\n\nContext: {}",
+            truncate_for_log(&context, 1200)
+        ));
+    }
     if let Some(run_id) = run_id {
         rendered.push_str(&format!("\n\nRun: `{run_id}`"));
     }
@@ -1067,6 +1093,27 @@ mod tests {
         assert!(message.contains("stream_error"));
         assert!(message.contains("max_steps_exceeded"));
         assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn bearwire_run_failed_user_message_includes_error_detail() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-err",
+            "data": {
+                "message": "LLM responses provider error",
+                "error_type": "invalid_request_error",
+                "detail": "{\"code\":\"unsupported_parameter\",\"message\":\"tools[64].name is invalid\"}"
+            }
+        });
+
+        let message = bearwire_run_failed_user_message(&event);
+
+        assert!(message.contains("LLM responses provider error"));
+        assert!(message.contains("invalid_request_error"));
+        assert!(message.contains("unsupported_parameter"));
+        assert!(message.contains("tools[64].name is invalid"));
+        assert!(message.contains("run-err"));
     }
 
     #[test]
