@@ -33,6 +33,88 @@ Land Docket as a self-contained module within the existing `den` crate, with a t
 - Bear-facing tools in `core/tools/` call `docket::DocketService`, never `docket::db`. Enforce with module privacy now; a lint/import-restriction check can be added later.
 - Migrate `bear_work_plans` + JSONB `items` → the ADR-0034 relational schema; rename `bear_work_plan_events` → `bear_job_events`; retire `den.work_plan.*` tools in favor of `den.job.*` / `den.task.*`.
 
+## Implementation ordering
+
+The implementation should not jump directly from the current legacy activity board to the full relational Docket schema. Do the task-list compatibility/projection slice first so models and UI stop learning overloaded “plan” terminology while storage still remains honest about the legacy shape.
+
+### Phase 0 — Task-list language over current activity-board storage
+
+**Goal:** Make the current visible session work surface model-facing as a **task list**, without yet claiming it is the relational Docket jobs/tasks model.
+
+| Task | Done when |
+| --- | --- |
+| Rename model-facing provider names | Descriptors advertise `list_task_lists`, `get_task_list_status`, `update_task_list`, and `request_task_list_handoff`; legacy aliases (`list_plans`, `get_plan_status`, `update_plan`, `request_work_handoff`) remain accepted at routing boundaries. |
+| Update prompt/tool guidance | Model environment clearly distinguishes session task lists, Docket jobs/tasks, workplan artifacts, and roadmaps. |
+| Keep internal canonical names honest | Existing `den.work_plan.*`, `bear_work_plans`, and `WorkPlan*` names may remain internally until the relational Docket schema lands. |
+| Preserve ACP plan UI compatibility | ACP clients may still receive `plan` updates, but Den/armature copy should present them as task-list/focus-list updates where possible. |
+
+**Exit gate:** Pair/ACP can list/update a visible task list using task-list provider names; old provider aliases still work; no relational Docket migration required.
+
+### Phase 1 — Task-list projection and source metadata
+
+**Goal:** Introduce an explicit projection layer over the current `bear_work_plans.items` JSONB shape.
+
+| Task | Done when |
+| --- | --- |
+| Add task-list projection types | Code has `TaskListProjection`, `TaskListItem`, `TaskListSourceRef`, and `TaskListSyncState` (or equivalent) wrapping legacy rows. |
+| Represent local-only vs backed items | Items can say `source_ref.kind = "local"` or `"docket_task"` even if only local/legacy sources are supported initially. |
+| Preserve sync metadata | Projection includes `sync.state` such as `local_only`, `checked_out`, `dirty`, `synced`, `conflict`, or `review_required`. |
+| Update Den tool payloads | `list_task_lists` / `get_task_list_status` / `update_task_list` return task-list-shaped payloads while compatibility fields remain available. |
+
+**Exit gate:** Model-facing tools and ACP/BearWire plan UI consume task-list projection payloads, not raw `bear_work_plans.items` semantics.
+
+### Phase 2 — Checkout/sync service seams
+
+**Goal:** Define the operations that make session task lists effective working projections, before backing them with the full Docket relational schema.
+
+| Task | Done when |
+| --- | --- |
+| Add checkout seam | `checkout_task_list` service/API shape can create or refresh a session task list from a local checklist, legacy activity board, roadmap section, or future Docket job/task subtree. |
+| Add sync seam | `sync_task_list` service/API shape can apply authorized item changes to backing records or surface conflicts/review requirements. |
+| Add handoff/review seam | `request_task_list_handoff` can request review/promotion of local-only items or unsynced edits into durable Docket work. |
+| Define conflict behavior | Stale backed items surface `sync.state = "conflict"` rather than silently overwriting Docket or session state. |
+
+**Exit gate:** Interfaces exist and are testable against local/legacy task-list state, even if Docket-backed checkout is still stubbed.
+
+### Phase 3 — Relational Docket schema
+
+**Goal:** Land ADR-0034’s durable Docket model.
+
+| Task | Done when |
+| --- | --- |
+| Add Docket schema | `bear_jobs`, `bear_tasks`, `bear_job_runs`, `bear_task_run_state`, `bear_job_criteria`, `bear_job_criteria_state`, and events exist in the Docket namespace. |
+| Add Docket service methods | `DocketService` exposes job/task CRUD, task hierarchy reads, checkout inputs, sync targets, run state, and criteria state through a public trait/API. |
+| Keep table access internal | Bear-facing tools call `DocketService`, not Docket DB modules. |
+| Preserve execution invariant | Docket dispatches ready tasks to runtime-owned `TaskDispatcher`; it never executes task bodies itself. |
+
+**Exit gate:** Docket jobs/tasks can be created/read/updated through the service API with tests; no runtime dispatch requirement yet.
+
+### Phase 4 — Legacy activity-board migration
+
+**Goal:** Migrate current `bear_work_plans` activity board data and tools into the task-list/Docket model without false naming.
+
+| Task | Done when |
+| --- | --- |
+| Backfill legacy rows | Existing `bear_work_plans` become session task lists, Docket jobs/tasks, or archived legacy projections according to migration rules. |
+| Retire legacy provider names from advertisement | Model-facing descriptors advertise task-list/Docket names; old `*_plan*` names remain aliases only where needed for compatibility. |
+| Rename events carefully | `bear_work_plan_events` are either migrated to Docket events or retained as archived legacy activity events. |
+| Update UI and operator copy | “Plan” copy remains only for plan mode/workplan artifacts/roadmaps; visible session checklists use task-list language. |
+
+**Exit gate:** New turns no longer create raw legacy work-plan rows except via compatibility shims.
+
+### Phase 5 — Runtime dispatch and operator UX
+
+**Goal:** Use Docket jobs/tasks for durable execution while keeping session task lists as the working view.
+
+| Task | Done when |
+| --- | --- |
+| Implement `TaskDispatcher` integration | Docket can dispatch ready tasks to `work` runtime through the runtime-owned dispatch trait. |
+| Checkout Docket tasks into sessions | `pair`/`work` can check out a Docket job/task subtree into a session task list. |
+| Sync task-list changes to Docket | Authorized completion, edits, new subtasks, blockers, and evidence update Docket task/run state. |
+| Operator UI reflects both views | Operators can see Docket job/task state and current session task-list projections without confusing their ownership. |
+
+**Exit gate:** A Bear can check out a Docket parent task’s children, work them in-session, and sync authorized changes back to Docket.
+
 ### Session task-list checkout and sync
 
 A session **task list** is the Bear/human working view used by `pair` or `work` stance during a session/run. It is not merely scratch state and not automatically a Docket task table row. It can contain:
