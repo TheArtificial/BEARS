@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
+use sqlx::{PgPool, Row as SqlxRow, postgres::PgRow};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -50,9 +50,7 @@ pub struct AcpSessionRow {
     pub updated_at: OffsetDateTime,
 }
 
-pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<(), DenError> {
-    sqlx::query(
-        r"
+const UPSERT_SESSION_SQL: &str = r"
         INSERT INTO acp_sessions (
             user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
             conversation_id, resolved_conversation_id, client, cwd, current_mode
@@ -66,21 +64,25 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
             client = EXCLUDED.client,
             cwd = COALESCE(EXCLUDED.cwd, acp_sessions.cwd),
             current_mode = COALESCE(acp_sessions.current_mode, EXCLUDED.current_mode),
+            closed_at = NULL,
+            archived_at = NULL,
             updated_at = NOW()
-        ",
-    )
-    .bind(session.user_id)
-    .bind(session.bear_id)
-    .bind(session.bear_slug)
-    .bind(session.acp_session_id)
-    .bind(session.runtime_session_id)
-    .bind(session.conversation_id)
-    .bind(session.resolved_conversation_id)
-    .bind(session.client)
-    .bind(session.cwd)
-    .bind(session.current_mode)
-    .execute(pool)
-    .await?;
+        ";
+
+pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<(), DenError> {
+    sqlx::query(UPSERT_SESSION_SQL)
+        .bind(session.user_id)
+        .bind(session.bear_id)
+        .bind(session.bear_slug)
+        .bind(session.acp_session_id)
+        .bind(session.runtime_session_id)
+        .bind(session.conversation_id)
+        .bind(session.resolved_conversation_id)
+        .bind(session.client)
+        .bind(session.cwd)
+        .bind(session.current_mode)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -390,4 +392,21 @@ pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     .execute(pool)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UPSERT_SESSION_SQL;
+
+    #[test]
+    fn upsert_session_reopens_poisoned_closed_or_archived_rows() {
+        assert!(
+            UPSERT_SESSION_SQL.contains("closed_at = NULL"),
+            "session.open/run.start upsert must clear closed_at so a previously closed ACP session can be reused"
+        );
+        assert!(
+            UPSERT_SESSION_SQL.contains("archived_at = NULL"),
+            "session.open/run.start upsert must clear archived_at so archived session rows cannot poison future turns"
+        );
+    }
 }
