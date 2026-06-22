@@ -4,7 +4,8 @@
 **Date:** 2026-06-16  
 **Last updated:** 2026-06-19  
 **Decision:** [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md)  
-**Specs:** [BearWire JSON specification](../architecture/bearwire-json-spec.md), [BearWire Rust design](../architecture/bearwire-rust-design.md)
+**Specs:** [BearWire JSON specification](../architecture/bearwire-json-spec.md), [BearWire Rust design](../architecture/bearwire-rust-design.md)  
+**Refinement roadmap:** [BearWire v1 protocol refinement roadmap](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md)
 
 ## Purpose
 
