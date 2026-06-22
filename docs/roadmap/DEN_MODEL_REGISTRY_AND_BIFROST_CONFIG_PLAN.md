@@ -420,6 +420,47 @@ That config is useful as a seed source for the Den registry, but it should not r
 
 ---
 
+## Runtime catalog awareness: implemented baseline and plan (2026-06)
+
+This section records what is actually built today (after the `den-service` / `den-llm` crate split) and the near-term plan for how Den holds the Bifrost catalog in memory at runtime. It complements the metadata-overlay design above: that design is about *what Den knows about a model*; this is about *how Den keeps the live catalog and derives runtime decisions (e.g. API-style routing) from it*.
+
+### As-built (2026-06)
+
+Code has moved since the earlier sections were written. Current locations:
+
+- Live catalog client: `services/den/crates/den-service/src/bifrost.rs` — `BifrostClient::list_available_models()` calls `/v1/models` (paginated), with `list_sidecar_models()` falling back to the legacy `bears.models` sidecar.
+- Static registry + reconciliation: `services/den/crates/den-llm/src/model_registry.rs` — `registry_entries()`, `selectable_model_options()`, `model_option_for_available_handle()`, `gateway_compatibility_report()`.
+- Handle normalization + API-style routing: `services/den/crates/den-llm/src/client.rs` — `DenModelHandle` / `ProviderModelId`, `preferred_api_style_for_model()`.
+
+Current flow:
+
+- The static registry is a hardcoded, OpenAI-only `selectable` overlay (curated labels, aliases, capability fields).
+- Consumers fetch the live catalog **per request** and none memoize: session model list (`den-bearwire/methods/session.rs`), run preflight validation (`den-bearwire/methods/run.rs`), `/status` drift report (`den-web/status.rs`), and bear create/edit forms (`den-web/bear_create_support.rs`).
+- API-style routing (Chat Completions vs Responses streaming) is resolved from the gateway's advertised `supported_methods`, cached in a **process-global map** in `model_registry.rs` written as a side effect of `list_available_models()` and seeded by a best-effort startup warm-up in `den::run()`.
+
+### Assessment
+
+The two-tier split (Bifrost = availability + live capability; Den registry = curated overlay + UI) is the right direction and is partially realized. Four gaps are worth fixing deliberately:
+
+1. **One capability fact, three sources of truth.** "Does this model support the Responses API?" is encoded in (a) the static `supports_responses_api` field on every registry entry — currently hardcoded `true` and now *unused* for routing, so actively misleading; (b) the live catalog's `supported_methods`; and (c) a `gpt-5.5` literal fallback in `preferred_api_style_for_model`. The catalog must be the single authority; the static field should be dropped or demoted to a documented fallback, and the literal removed once the snapshot is reliable.
+2. **No shared catalog cache.** Every consumer hits Bifrost fresh; run dispatch makes a synchronous `/v1/models` round-trip just to validate a handle, with no TTL. If Bifrost is slow or down, dispatch and UI degrade together. The only in-memory state is the narrow routing cache, which no consumer reads.
+3. **The routing cache is a global side-channel.** `preferred_api_style_for_model(model)` reads like a pure function but depends on a `static RwLock<HashMap>` mutated by a query method in another crate. It is hard to test and reason about; it exists only because `den-runtime` cannot see `den-service` directly.
+4. **Validation logic is duplicated.** Three slightly different "is this model available?" implementations (session, run preflight, bear create) plus unvalidated persistence (`set_conversation_model_state` / `resolve_conversation_selected_model`). This is an implicit, emergent consistency model rather than a designed one.
+
+### Plan: a single shared catalog snapshot
+
+Introduce one authoritative in-memory catalog snapshot and make everything read from it. This subsumes the routing cache (item 3) and closes items 1, 2, and 4. The concrete shape and caching contract live in [`DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md`](DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md) (`BifrostCatalogSnapshot`).
+
+- **Type:** a `BifrostCatalogSnapshot` held on shared application state as `Arc<ArcSwap<BifrostCatalogSnapshot>>` (or `Arc<RwLock<…>>`). Keyed by canonical handle; each entry carries availability + gateway-reported capabilities (including `supports_responses_api`).
+- **Refresh:** a single background task refreshes on a TTL (replacing the fire-and-forget warm-up), retaining last-good on fetch failure and exposing `fetched_at` / `stale` for `/status`. No per-request gateway calls on hot paths.
+- **Routing:** `preferred_api_style_for_model` takes the snapshot (or a small capability view) as an argument instead of reading global state; capability becomes a derived property of the snapshot entry. The process-global map in `model_registry.rs` is deleted.
+- **Validation:** one helper resolves+validates a requested handle against the snapshot (reusing `resolve_model_handle`); session, run preflight, and bear create call it. The TOCTOU window (valid at selection, gone at run time) becomes an explicit, documented preflight failure rather than emergent behavior.
+- **Reconciliation:** `gateway_compatibility_report()` reads the snapshot instead of issuing its own fetch.
+
+Sequencing: this is a small refactor that can land **before** the larger Den-owned registry-table work in the migration phases below. Treat the shared snapshot as the runtime substrate those phases build on, and delete the routing cache as part of it.
+
+---
+
 ## Migration plan
 
 Use a staged migration rather than a flag day.

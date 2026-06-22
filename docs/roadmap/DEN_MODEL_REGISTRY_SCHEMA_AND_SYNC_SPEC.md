@@ -351,6 +351,60 @@ The exact shape can come from Bifrost `/bears/models`, `/v1/models`, or manageme
 
 ---
 
+## Runtime catalog snapshot (caching contract)
+
+The reconciliation pipeline's runtime index (see [Reconciliation pipeline](#reconciliation-pipeline)) should be a concrete, shared, refreshable in-memory object rather than an ad-hoc per-request fetch.
+
+As built (2026-06), Den consumers each call `/v1/models` per request (`BifrostClient::list_available_models` in `services/den/crates/den-service/src/bifrost.rs`), and a separate process-global map in `den-llm::model_registry` caches only API-style routing, written as a side effect of those fetches. This section defines the target that replaces both: one snapshot, read by every consumer.
+
+## `BifrostCatalogSnapshot`
+
+```json
+{
+  "fetched_at": "2026-06-22T00:00:00Z",
+  "source": "v1_models",
+  "stale": false,
+  "models": {
+    "openai/gpt-4.1": {
+      "available": true,
+      "provider": "openai",
+      "provider_model_id": "gpt-4.1",
+      "gateway_handle": "gpt-4.1",
+      "display_name": "OpenAI GPT-4.1",
+      "context_window": 1047576,
+      "max_output_tokens": 32768,
+      "supports_tools": true,
+      "supports_responses_api": true,
+      "supports_vision": true
+    }
+  }
+}
+```
+
+### Contract
+
+- Keyed by canonical Den key (`resolve_model_handle` applied to each Bifrost handle); the raw `gateway_handle` is retained for execution.
+- Held once on shared application state (e.g. `Arc<ArcSwap<BifrostCatalogSnapshot>>`), not refetched per request.
+- Refreshed by a single background task on a TTL. On fetch failure the last good snapshot is retained and `stale` is set `true`; startup primes it once (best-effort).
+- Live capability flags (`supports_responses_api`, `supports_tools`, `supports_vision`, token limits) are read from this snapshot, **not** from the static registry. The registry supplies these only as a documented fallback when a model is absent from the snapshot, at lower confidence.
+
+### Capability resolution precedence (runtime hot path)
+
+For a capability needed during request handling (e.g. API-style routing via `preferred_api_style_for_model`):
+
+1. snapshot value for the resolved key, when the snapshot is fresh
+2. snapshot value for the resolved key, when `stale` (logged)
+3. static registry overlay value (documented fallback)
+4. conservative default
+
+This replaces the current global-map-plus-`gpt-5.5`-literal arrangement: the routing function should take the snapshot (or a small capability view) as an input and contain no hidden global state.
+
+### Single validation entry point
+
+All "is this model usable?" checks — session model set, run preflight, bear default validation — should resolve and validate against the same snapshot through one helper, so the three current implementations converge and a persisted-but-now-unavailable model fails at preflight in one well-defined place rather than via three slightly different paths.
+
+---
+
 ## Alias resolution behavior
 
 Den should resolve model requests using a deterministic precedence order.
@@ -452,7 +506,7 @@ The intended pipeline is:
 2. Merge data-source overlays if configured.
 3. Validate metadata entries and alias uniqueness.
 4. Fetch or observe Bifrost-available model handles.
-5. Produce runtime index for Den validation and UI enrichment.
+5. Produce the runtime index — a shared `BifrostCatalogSnapshot` (see [Runtime catalog snapshot](#runtime-catalog-snapshot-caching-contract)) — for Den validation, capability/API-style routing, and UI enrichment.
 6. Surface reconciliation differences in status/admin views.
 7. Optionally expose Den-native registry read APIs.
 
