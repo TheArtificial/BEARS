@@ -16,23 +16,69 @@ use den_core::{config::Config, DenError};
 
 use crate::model_registry;
 
-/// Bifrost expects `provider/model`; bare OpenAI-style ids get an `openai/` prefix.
-pub fn normalize_llm_model_handle(model: &str) -> String {
-    let trimmed = model.trim();
-    if trimmed.is_empty() {
-        return "openai/gpt-4o-mini".to_string();
+/// Canonical Den model handle used in product/UI/DB/policy state, e.g. `openai/gpt-5.5`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DenModelHandle(String);
+
+impl DenModelHandle {
+    pub fn normalize(model: &str) -> Self {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            return Self("openai/gpt-4o-mini".to_string());
+        }
+        if trimmed.contains('/') {
+            Self(trimmed.to_string())
+        } else {
+            Self(format!("openai/{trimmed}"))
+        }
     }
-    if trimmed.contains('/') {
-        trimmed.to_string()
-    } else {
-        format!("openai/{trimmed}")
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
     }
 }
 
-fn responses_api_model_id(model: &str) -> String {
-    model_registry::provider_model_id_for_handle(model)
-        .unwrap_or(model.trim())
-        .to_string()
+impl std::fmt::Display for DenModelHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Provider/Bifrost request model id, e.g. `gpt-5.5` for Den handle `openai/gpt-5.5`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderModelId(String);
+
+impl ProviderModelId {
+    pub fn for_den_handle(handle: &DenModelHandle) -> Self {
+        Self(
+            model_registry::provider_model_id_for_handle(handle.as_str())
+                .unwrap_or(handle.as_str())
+                .to_string(),
+        )
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ProviderModelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Bifrost expects `provider/model`; bare OpenAI-style ids get an `openai/` prefix.
+pub fn normalize_llm_model_handle(model: &str) -> String {
+    DenModelHandle::normalize(model).into_string()
+}
+
+fn responses_api_model_id(model: &str) -> ProviderModelId {
+    ProviderModelId::for_den_handle(&DenModelHandle::normalize(model))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,8 +317,9 @@ impl ChatCompletionRequest {
                 })
             })
             .collect();
+        let provider_model_id = responses_api_model_id(&self.model);
         let mut body = json!({
-            "model": responses_api_model_id(&self.model),
+            "model": provider_model_id.as_str(),
             "input": input,
             "stream": self.stream,
         });
@@ -623,8 +670,12 @@ impl LlmClient {
             ));
         }
         let url = format!("{}/responses", self.base_url);
+        let model_handle = DenModelHandle::normalize(&request.model);
+        let provider_model_id = ProviderModelId::for_den_handle(&model_handle);
         tracing::info!(
-            model = %request.model,
+            model_handle = %model_handle,
+            provider_model_id = %provider_model_id,
+            api_style = %LlmApiStyle::ResponsesStream.as_str(),
             message_count = request.messages.len(),
             tool_count = request.tools.len(),
             stream = request.stream,
@@ -656,7 +707,9 @@ impl LlmClient {
         }
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(
-                model = %request.model,
+                model_handle = %model_handle,
+                provider_model_id = %provider_model_id,
+                api_style = %LlmApiStyle::ResponsesStream.as_str(),
                 duration_ms = started.elapsed().as_millis(),
                 error = %e,
                 "LLM responses request failed"
@@ -669,7 +722,9 @@ impl LlmClient {
             let text = resp.text().await.unwrap_or_default();
             let response_body_sample = log_sample(&text, 1000);
             tracing::warn!(
-                model = %request.model,
+                model_handle = %model_handle,
+                provider_model_id = %provider_model_id,
+                api_style = %LlmApiStyle::ResponsesStream.as_str(),
                 http_status,
                 duration_ms = started.elapsed().as_millis(),
                 response_body_len = text.len(),
@@ -685,7 +740,9 @@ impl LlmClient {
             )));
         }
         tracing::info!(
-            model = %request.model,
+            model_handle = %model_handle,
+            provider_model_id = %provider_model_id,
+            api_style = %LlmApiStyle::ResponsesStream.as_str(),
             http_status,
             duration_ms = started.elapsed().as_millis(),
             request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
@@ -748,11 +805,20 @@ mod tests {
     }
 
     #[test]
+    fn model_identity_wrappers_separate_den_handle_from_provider_id() {
+        let handle = DenModelHandle::normalize("gpt-5.5");
+        let provider = ProviderModelId::for_den_handle(&handle);
+
+        assert_eq!(handle.as_str(), "openai/gpt-5.5");
+        assert_eq!(provider.as_str(), "gpt-5.5");
+    }
+
+    #[test]
     fn responses_api_model_id_uses_provider_model_id_for_den_handles() {
-        assert_eq!(responses_api_model_id("openai/gpt-5.5"), "gpt-5.5");
-        assert_eq!(responses_api_model_id("gpt-5.5"), "gpt-5.5");
+        assert_eq!(responses_api_model_id("openai/gpt-5.5").as_str(), "gpt-5.5");
+        assert_eq!(responses_api_model_id("gpt-5.5").as_str(), "gpt-5.5");
         assert_eq!(
-            responses_api_model_id("custom/provider-model"),
+            responses_api_model_id("custom/provider-model").as_str(),
             "custom/provider-model"
         );
     }
