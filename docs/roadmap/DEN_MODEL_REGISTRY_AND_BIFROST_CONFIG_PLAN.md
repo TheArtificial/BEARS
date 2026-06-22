@@ -428,36 +428,39 @@ This section records what is actually built today (after the `den-service` / `de
 
 Code has moved since the earlier sections were written. Current locations:
 
-- Live catalog client: `services/den/crates/den-service/src/bifrost.rs` — `BifrostClient::list_available_models()` calls `/v1/models` (paginated), with `list_sidecar_models()` falling back to the legacy `bears.models` sidecar.
-- Static registry + reconciliation: `services/den/crates/den-llm/src/model_registry.rs` — `registry_entries()`, `selectable_model_options()`, `model_option_for_available_handle()`, `gateway_compatibility_report()`.
-- Handle normalization + API-style routing: `services/den/crates/den-llm/src/client.rs` — `DenModelHandle` / `ProviderModelId`, `preferred_api_style_for_model()`.
+- Live catalog client and snapshot substrate: `services/den/crates/den-service/src/bifrost.rs` — `BifrostClient::list_available_models()` calls `/v1/models` (paginated), `BifrostCatalogSnapshot` stores the runtime catalog keyed by canonical Den handle, and `warm_model_catalog(&store)` primes the snapshot.
+- Shared state ownership: `services/den/crates/den-service/src/state.rs` — `DenState` carries `bifrost_catalog: BifrostCatalogStore` beside the `BifrostClient`.
+- Static registry + reconciliation overlay: `services/den/crates/den-llm/src/model_registry.rs` — `registry_entries()`, `selectable_model_options()`, `model_option_for_available_handle()`, `gateway_compatibility_report()`. The previous process-global routing map has been removed.
+- Handle normalization + API-style routing: `services/den/crates/den-llm/src/client.rs` — `DenModelHandle` / `ProviderModelId`, `preferred_api_style_for_model_with_catalog_support(model, supports_responses_api)`.
 
 Current flow:
 
-- The static registry is a hardcoded, OpenAI-only `selectable` overlay (curated labels, aliases, capability fields).
-- Consumers fetch the live catalog **per request** and none memoize: session model list (`den-bearwire/methods/session.rs`), run preflight validation (`den-bearwire/methods/run.rs`), `/status` drift report (`den-web/status.rs`), and bear create/edit forms (`den-web/bear_create_support.rs`).
-- API-style routing (Chat Completions vs Responses streaming) is resolved from the gateway's advertised `supported_methods`, cached in a **process-global map** in `model_registry.rs` written as a side effect of `list_available_models()` and seeded by a best-effort startup warm-up in `den::run()`.
+- The static registry remains a hardcoded, OpenAI-oriented `selectable` overlay (curated labels, aliases, fallback capability fields).
+- API and web composition roots create state-owned catalog snapshots and warm them best-effort at startup.
+- BearWire run preflight and session model-list payloads read from `DenState.bifrost_catalog`; they no longer make a hot-path `/v1/models` request.
+- Web model status and bear create/edit model option context read from `AppState.bifrost_catalog`; JSON bear create now validates `default_model` against the same snapshot-derived model options.
+- API-style routing for BearWire native runs is derived from the snapshot entry's `supports_responses_api` and passed into the runtime turn as an explicit `LlmApiStyle` override. The LLM crate no longer reads hidden process-global catalog state.
 
 ### Assessment
 
-The two-tier split (Bifrost = availability + live capability; Den registry = curated overlay + UI) is the right direction and is partially realized. Four gaps are worth fixing deliberately:
+The two-tier split (Bifrost = availability + live capability; Den registry = curated overlay + UI) is now realized as an initial runtime snapshot substrate. Four gaps from the prior assessment have been reduced:
 
-1. **One capability fact, three sources of truth.** "Does this model support the Responses API?" is encoded in (a) the static `supports_responses_api` field on every registry entry — currently hardcoded `true` and now *unused* for routing, so actively misleading; (b) the live catalog's `supported_methods`; and (c) a `gpt-5.5` literal fallback in `preferred_api_style_for_model`. The catalog must be the single authority; the static field should be dropped or demoted to a documented fallback, and the literal removed once the snapshot is reliable.
-2. **No shared catalog cache.** Every consumer hits Bifrost fresh; run dispatch makes a synchronous `/v1/models` round-trip just to validate a handle, with no TTL. If Bifrost is slow or down, dispatch and UI degrade together. The only in-memory state is the narrow routing cache, which no consumer reads.
-3. **The routing cache is a global side-channel.** `preferred_api_style_for_model(model)` reads like a pure function but depends on a `static RwLock<HashMap>` mutated by a query method in another crate. It is hard to test and reason about; it exists only because `den-runtime` cannot see `den-service` directly.
-4. **Validation logic is duplicated.** Three slightly different "is this model available?" implementations (session, run preflight, bear create) plus unvalidated persistence (`set_conversation_model_state` / `resolve_conversation_selected_model`). This is an implicit, emergent consistency model rather than a designed one.
+1. **Capability source consolidation — partially complete.** Runtime routing for BearWire reads `supports_responses_api` from the snapshot when available. The static `supports_responses_api` field remains as a fallback/overlay field and should be demoted or removed in the later registry-table phase.
+2. **Shared catalog cache — implemented baseline.** Hot BearWire run/session paths and web model UI/status paths now read a state-owned `BifrostCatalogSnapshot`. The current implementation warms on startup but does not yet run a periodic TTL refresh loop.
+3. **Global routing cache — removed.** The `den-llm::model_registry` process-global routing cache and side-effect writes from `BifrostClient::list_available_models()` have been deleted. Routing is explicit input to the runtime where the snapshot is available.
+4. **Validation convergence — partial.** HTML bear create/edit, JSON bear create, BearWire session model selection, and BearWire run preflight all validate against snapshot-derived availability. A single cross-crate validation API is still a remaining cleanup; today there are small edge-local helpers over the same snapshot data.
 
-### Plan: a single shared catalog snapshot
+### Implemented baseline: shared catalog snapshot
 
-Introduce one authoritative in-memory catalog snapshot and make everything read from it. This subsumes the routing cache (item 3) and closes items 1, 2, and 4. The concrete shape and caching contract live in [`DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md`](DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md) (`BifrostCatalogSnapshot`).
+The concrete shape and caching contract live in [`DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md`](DEN_MODEL_REGISTRY_SCHEMA_AND_SYNC_SPEC.md) (`BifrostCatalogSnapshot`). Current implementation status:
 
-- **Type:** a `BifrostCatalogSnapshot` held on shared application state as `Arc<ArcSwap<BifrostCatalogSnapshot>>` (or `Arc<RwLock<…>>`). Keyed by canonical handle; each entry carries availability + gateway-reported capabilities (including `supports_responses_api`).
-- **Refresh:** a single background task refreshes on a TTL (replacing the fire-and-forget warm-up), retaining last-good on fetch failure and exposing `fetched_at` / `stale` for `/status`. No per-request gateway calls on hot paths.
-- **Routing:** `preferred_api_style_for_model` takes the snapshot (or a small capability view) as an argument instead of reading global state; capability becomes a derived property of the snapshot entry. The process-global map in `model_registry.rs` is deleted.
-- **Validation:** one helper resolves+validates a requested handle against the snapshot (reusing `resolve_model_handle`); session, run preflight, and bear create call it. The TOCTOU window (valid at selection, gone at run time) becomes an explicit, documented preflight failure rather than emergent behavior.
-- **Reconciliation:** `gateway_compatibility_report()` reads the snapshot instead of issuing its own fetch.
+- **Type:** implemented as `BifrostCatalogSnapshot` / `BifrostCatalogEntry` held in `Arc<RwLock<BifrostCatalogSnapshot>>` (`BifrostCatalogStore`) on `DenState` / `AppState`.
+- **Refresh:** startup warm-up is best-effort and retains an initialized empty/stale snapshot on failure. Periodic TTL refresh and last-good error metadata remain to be implemented.
+- **Routing:** BearWire resolves API style from the snapshot and passes `api_style: Option<LlmApiStyle>` through `TurnStartRequest` into `AgentLoopSession`; runtime step execution uses that override and no hidden global cache.
+- **Validation:** BearWire run preflight, BearWire session model selection, HTML bear create/edit, and JSON bear create read snapshot-derived availability. Persisted conversation model state remains validated at selection/preflight time rather than on raw persistence writes.
+- **Reconciliation:** `/status` reads the snapshot for `gateway_compatibility_report()` rather than issuing its own `/v1/models` fetch.
 
-Sequencing: this is a small refactor that can land **before** the larger Den-owned registry-table work in the migration phases below. Treat the shared snapshot as the runtime substrate those phases build on, and delete the routing cache as part of it.
+Remaining sequencing before the larger registry-table phases: add periodic TTL refresh with last-good retention/error metadata, consolidate the edge-local validation helpers into one shared API, and decide whether API/web should share one process-wide catalog store rather than separate edge-owned stores.
 
 ---
 

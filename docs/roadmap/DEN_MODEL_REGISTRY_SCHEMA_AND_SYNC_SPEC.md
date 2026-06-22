@@ -355,7 +355,7 @@ The exact shape can come from Bifrost `/bears/models`, `/v1/models`, or manageme
 
 The reconciliation pipeline's runtime index (see [Reconciliation pipeline](#reconciliation-pipeline)) should be a concrete, shared, refreshable in-memory object rather than an ad-hoc per-request fetch.
 
-As built (2026-06), Den consumers each call `/v1/models` per request (`BifrostClient::list_available_models` in `services/den/crates/den-service/src/bifrost.rs`), and a separate process-global map in `den-llm::model_registry` caches only API-style routing, written as a side effect of those fetches. This section defines the target that replaces both: one snapshot, read by every consumer.
+Implemented baseline (2026-06): `services/den/crates/den-service/src/bifrost.rs` defines `BifrostCatalogSnapshot` / `BifrostCatalogEntry` and `BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>`. API and web state own snapshot stores and warm them best-effort at startup. BearWire run/session paths and web model UI/status paths now read the snapshot instead of fetching `/v1/models` per request. The former `den-llm::model_registry` process-global routing cache has been removed.
 
 ## `BifrostCatalogSnapshot`
 
@@ -384,9 +384,9 @@ As built (2026-06), Den consumers each call `/v1/models` per request (`BifrostCl
 ### Contract
 
 - Keyed by canonical Den key (`resolve_model_handle` applied to each Bifrost handle); the raw `gateway_handle` is retained for execution.
-- Held once on shared application state (e.g. `Arc<ArcSwap<BifrostCatalogSnapshot>>`), not refetched per request.
-- Refreshed by a single background task on a TTL. On fetch failure the last good snapshot is retained and `stale` is set `true`; startup primes it once (best-effort).
-- Live capability flags (`supports_responses_api`, `supports_tools`, `supports_vision`, token limits) are read from this snapshot, **not** from the static registry. The registry supplies these only as a documented fallback when a model is absent from the snapshot, at lower confidence.
+- Held on shared edge application state (`DenState.bifrost_catalog` / `AppState.bifrost_catalog`) as `Arc<RwLock<BifrostCatalogSnapshot>>`, not refetched per request on the BearWire/web hot paths.
+- Startup primes it once (best-effort). Periodic TTL refresh and explicit last-good error metadata remain to be implemented. On warm-up failure the initialized empty snapshot remains `stale`.
+- Live capability flags (`supports_responses_api`, `supports_tools`, `supports_vision`, token limits) are read from this snapshot where the snapshot is available. The registry supplies these only as a documented fallback when a model is absent from the snapshot, at lower confidence.
 
 ### Capability resolution precedence (runtime hot path)
 
@@ -397,11 +397,13 @@ For a capability needed during request handling (e.g. API-style routing via `pre
 3. static registry overlay value (documented fallback)
 4. conservative default
 
-This replaces the current global-map-plus-`gpt-5.5`-literal arrangement: the routing function should take the snapshot (or a small capability view) as an input and contain no hidden global state.
+Implemented baseline: BearWire run preflight reads the snapshot entry's `supports_responses_api`, derives `LlmApiStyle`, and passes it explicitly through `TurnStartRequest` / `AgentLoopSession`. `den-llm` exposes `preferred_api_style_for_model_with_catalog_support(model, supports_responses_api)` and contains no hidden global catalog state. The older pure `preferred_api_style_for_model(model)` remains only as a fallback for call sites that have not yet been handed a snapshot view.
 
 ### Single validation entry point
 
 All "is this model usable?" checks — session model set, run preflight, bear default validation — should resolve and validate against the same snapshot through one helper, so the three current implementations converge and a persisted-but-now-unavailable model fails at preflight in one well-defined place rather than via three slightly different paths.
+
+Implemented baseline: BearWire run preflight, BearWire session model selection, HTML bear create/edit, JSON bear create, and `/status` reconciliation read snapshot-derived availability. Remaining cleanup: extract the edge-local validation helpers into one shared cross-crate validation API and decide whether API/web should share one process-wide snapshot store rather than separate edge-owned stores.
 
 ---
 
