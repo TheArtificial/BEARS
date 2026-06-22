@@ -248,7 +248,7 @@ pub(crate) async fn persist_run_failed(
         bear_id = %bear_id,
         user_id,
         reason,
-        message = %log_sample(&message),
+        error_message = %log_sample(&message),
         "BearWire run failed"
     );
     let _ = bearwire_runs::transition_run(
@@ -429,7 +429,7 @@ async fn update_run_state_for_runtime_event(
                 %request_id,
                 elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
                 reason = %reason,
-                message = %log_sample(message),
+                error_message = %log_sample(message),
                 "BearWire runtime turn failed"
             );
             let _ = bearwire_runs::transition_run(
@@ -477,7 +477,7 @@ async fn update_run_state_for_runtime_event(
                 event_request_id = event_request_id.as_deref(),
                 elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
                 error_type = error_type.as_deref(),
-                message = %log_sample(message),
+                error_message = %log_sample(message),
                 detail = detail.as_deref().map(log_sample),
                 context = context.as_ref().map(|value| log_sample(value.to_string())),
                 "BearWire runtime emitted error event"

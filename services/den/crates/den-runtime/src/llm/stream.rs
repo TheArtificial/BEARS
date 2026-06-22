@@ -410,32 +410,59 @@ pub struct ResponsesStreamAccumulator {
 impl ResponsesStreamAccumulator {
     pub fn ingest_sse_data_line(&mut self, json: &Value) -> OpenAiStreamParseResult {
         let mut out = OpenAiStreamParseResult::default();
-        if let Some(error) = json.get("error").or_else(|| json.pointer("/response/error")) {
+        if let Some(error) = json
+            .get("error")
+            .filter(|value| !value.is_null())
+            .or_else(|| {
+                json.pointer("/response/error")
+                    .filter(|value| !value.is_null())
+            })
+        {
             let message = error
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("LLM responses provider error")
                 .to_string();
-            out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-                message,
-                detail: Some(error.to_string()),
-                error_type: error.get("type").and_then(Value::as_str).map(str::to_string),
-                request_id: None,
-                context: None,
-            }));
+            out.events
+                .push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+                    message,
+                    detail: Some(error.to_string()),
+                    error_type: error
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    request_id: None,
+                    context: None,
+                }));
             self.completed = true;
             return out;
         }
         let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
         match event_type {
             "response.output_text.delta" | "response.refusal.delta" => {
-                if let Some(delta) = json.get("delta").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                    out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text: delta.to_string() }));
+                if let Some(delta) = json
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    out.events.push(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::AssistantTextDelta {
+                            text: delta.to_string(),
+                        },
+                    ));
                 }
             }
             kind if kind.contains("reasoning") && kind.ends_with(".delta") => {
-                if let Some(delta) = json.get("delta").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                    out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text: delta.to_string() }));
+                if let Some(delta) = json
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    out.events.push(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::StatusText {
+                            text: delta.to_string(),
+                        },
+                    ));
                 }
             }
             "response.function_call_arguments.delta" => {
@@ -449,7 +476,11 @@ impl ResponsesStreamAccumulator {
                     if item.get("type").and_then(Value::as_str) == Some("function_call") {
                         self.saw_tool_call = true;
                         let key = response_item_key_from_item(json, item);
-                        if let Some(name) = item.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                        if let Some(name) = item
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                        {
                             self.tool_names.insert(key.clone(), name.to_string());
                         }
                         if let Some(call_id) = item
@@ -464,20 +495,30 @@ impl ResponsesStreamAccumulator {
                             self.tool_args.insert(key.clone(), arguments.to_string());
                         }
                         if event_type == "response.output_item.done" {
-                            let tool_call_id = self.tool_call_ids.get(&key).cloned().unwrap_or_else(|| key.clone());
+                            let tool_call_id = self
+                                .tool_call_ids
+                                .get(&key)
+                                .cloned()
+                                .unwrap_or_else(|| key.clone());
                             let tool_name = self.tool_names.get(&key).cloned().unwrap_or_default();
-                            let arguments = self.tool_args.get(&key).map(|raw| parse_tool_arguments(raw)).unwrap_or_else(|| Value::Object(Default::default()));
-                            out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                                tool_call_id,
-                                tool_name,
-                                title: None,
-                                kind: Some("function".to_string()),
-                                arguments,
-                                approval_request_id: None,
-                                approval_required: false,
-                                approval_reason: None,
-                                run_id: None,
-                            }));
+                            let arguments = self
+                                .tool_args
+                                .get(&key)
+                                .map(|raw| parse_tool_arguments(raw))
+                                .unwrap_or_else(|| Value::Object(Default::default()));
+                            out.events.push(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::ToolCallRequested {
+                                    tool_call_id,
+                                    tool_name,
+                                    title: None,
+                                    kind: Some("function".to_string()),
+                                    arguments,
+                                    approval_request_id: None,
+                                    approval_required: false,
+                                    approval_reason: None,
+                                    run_id: None,
+                                },
+                            ));
                         }
                     }
                 }
@@ -493,19 +534,27 @@ impl ResponsesStreamAccumulator {
             }
             "response.failed" | "response.incomplete" => {
                 self.completed = true;
-                let message = json.pointer("/response/error/message").and_then(Value::as_str).unwrap_or("Responses API turn failed").to_string();
-                out.events.push(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-                    turn: None,
-                    category: RuntimeErrorCategory::BackendProtocol,
-                    message,
-                }));
+                let message = json
+                    .pointer("/response/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Responses API turn failed")
+                    .to_string();
+                out.events.push(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnFailed {
+                        turn: None,
+                        category: RuntimeErrorCategory::BackendProtocol,
+                        message,
+                    },
+                ));
             }
             _ => {}
         }
         out
     }
 
-    pub fn should_detach_upstream(&self) -> bool { self.completed }
+    pub fn should_detach_upstream(&self) -> bool {
+        self.completed
+    }
 
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
         if self.completed || self.saw_tool_call {
@@ -522,7 +571,11 @@ fn response_item_key(json: &Value) -> String {
     json.get("item_id")
         .or_else(|| json.get("output_index"))
         .or_else(|| json.get("item_index"))
-        .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .and_then(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+        })
         .unwrap_or_else(|| "0".to_string())
 }
 
@@ -537,8 +590,9 @@ pub fn responses_sse_frame_to_runtime_events(
     accumulator: &mut ResponsesStreamAccumulator,
     body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
-    let text = std::str::from_utf8(body)
-        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string()))?;
+    let text = std::str::from_utf8(body).map_err(|_| {
+        den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string())
+    })?;
     let mut events = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -549,13 +603,16 @@ pub fn responses_sse_frame_to_runtime_events(
             continue;
         };
         let data = rest.strip_prefix(' ').unwrap_or(rest).trim();
-        if data.is_empty() { continue; }
+        if data.is_empty() {
+            continue;
+        }
         if data == "[DONE]" {
             events.extend(accumulator.flush_end_of_stream());
             continue;
         }
-        let json = serde_json::from_str::<Value>(data)
-            .map_err(|e| den_core::DenError::System(format!("invalid LLM Responses SSE JSON: {e}")))?;
+        let json = serde_json::from_str::<Value>(data).map_err(|e| {
+            den_core::DenError::System(format!("invalid LLM Responses SSE JSON: {e}"))
+        })?;
         let parsed = accumulator.ingest_sse_data_line(&json);
         events.extend(parsed.events);
     }
@@ -662,4 +719,65 @@ fn parse_tool_arguments(raw: &str) -> Value {
             Value::String(raw.to_string())
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn responses_stream_ignores_null_top_level_error() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        let parsed = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.created",
+            "error": null,
+            "response": {
+                "id": "resp_1",
+                "error": null,
+            }
+        }));
+
+        assert!(parsed.events.is_empty());
+        assert!(!accumulator.should_detach_upstream());
+    }
+
+    #[test]
+    fn responses_stream_ignores_null_nested_response_error() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        let parsed = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.in_progress",
+            "response": {
+                "id": "resp_1",
+                "error": null,
+            }
+        }));
+
+        assert!(parsed.events.is_empty());
+        assert!(!accumulator.should_detach_upstream());
+    }
+
+    #[test]
+    fn responses_stream_maps_non_null_error() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        let parsed = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.created",
+            "response": {
+                "id": "resp_1",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "bad request"
+                }
+            }
+        }));
+
+        assert!(accumulator.should_detach_upstream());
+        assert!(matches!(
+            parsed.events.as_slice(),
+            [RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+                message,
+                error_type: Some(error_type),
+                ..
+            })] if message == "bad request" && error_type == "invalid_request_error"
+        ));
+    }
 }
