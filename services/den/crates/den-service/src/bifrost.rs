@@ -18,7 +18,6 @@ pub struct BifrostModelMetadata {
     pub enabled: bool,
     #[allow(dead_code)]
     pub supports_tools: Option<bool>,
-    #[allow(dead_code)]
     pub supports_responses_api: Option<bool>,
     #[allow(dead_code)]
     pub supports_vision: Option<bool>,
@@ -136,6 +135,17 @@ impl BifrostLiveModel {
     }
 }
 
+/// Feed gateway-advertised Responses-API support into the den-llm routing
+/// cache so `preferred_api_style_for_model` tracks the live catalog.
+fn record_responses_api_support(models: &[BifrostModelMetadata]) {
+    for model in models {
+        den_llm::model_registry::record_catalog_responses_api_support(
+            &model.handle,
+            model.supports_responses_api,
+        );
+    }
+}
+
 fn sort_models(models: &mut [BifrostModelMetadata]) {
     models.sort_by(|a, b| {
         a.display_name
@@ -207,6 +217,7 @@ impl BifrostClient {
         }
         sort_models(&mut models);
         models.dedup_by(|a, b| a.handle == b.handle);
+        record_responses_api_support(&models);
         Ok(models)
     }
 
@@ -274,6 +285,7 @@ impl BifrostClient {
             .filter(|m| m.enabled && !m.handle.trim().is_empty())
             .collect();
         sort_models(&mut models);
+        record_responses_api_support(&models);
         Ok(models)
     }
 

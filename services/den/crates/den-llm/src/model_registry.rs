@@ -4,7 +4,8 @@
 //! Admin. Bifrost remains the execution gateway, but its metadata sidecar is no
 //! longer the UI source of truth.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{OnceLock, RwLock};
 
 use serde::Serialize;
 
@@ -75,6 +76,62 @@ pub fn resolve_model_handle(handle: &str) -> Option<&'static str> {
 
 pub fn provider_model_id_for_handle(handle: &str) -> Option<&'static str> {
     entry_for_handle(handle).map(|entry| entry.provider_model_id)
+}
+
+/// Gateway-advertised Responses-API support, keyed by canonical handle.
+///
+/// Populated from the live Bifrost `/v1/models` catalog (`supported_methods`)
+/// rather than the static registry, so routing tracks whatever the gateway
+/// currently serves. Empty until the catalog has been observed at least once.
+fn catalog_responses_api_support() -> &'static RwLock<HashMap<String, bool>> {
+    static CACHE: OnceLock<RwLock<HashMap<String, bool>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Canonical cache key for a handle: the registry `key` when known, otherwise
+/// the `provider/model`-normalized form (mirrors `DenModelHandle::normalize`).
+fn catalog_cache_key(handle: &str) -> String {
+    let trimmed = handle.trim();
+    if let Some(entry) = entry_for_handle(trimmed) {
+        return entry.key.to_string();
+    }
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.contains('/') {
+        trimmed.to_string()
+    } else {
+        format!("openai/{trimmed}")
+    }
+}
+
+/// Record what the Bifrost catalog advertised for a model's Responses-API
+/// support. `None` (catalog stated nothing) leaves any prior record untouched.
+pub fn record_catalog_responses_api_support(handle: &str, supports: Option<bool>) {
+    let Some(supports) = supports else {
+        return;
+    };
+    let key = catalog_cache_key(handle);
+    if key.is_empty() {
+        return;
+    }
+    if let Ok(mut cache) = catalog_responses_api_support().write() {
+        cache.insert(key, supports);
+    }
+}
+
+/// Gateway-advertised Responses-API support for a handle, if the catalog has
+/// been observed for it; `None` before the catalog is loaded or for unknown
+/// handles, so callers can fall back to a static default.
+pub fn catalog_supports_responses_api(handle: &str) -> Option<bool> {
+    let key = catalog_cache_key(handle);
+    if key.is_empty() {
+        return None;
+    }
+    catalog_responses_api_support()
+        .read()
+        .ok()
+        .and_then(|cache| cache.get(&key).copied())
 }
 
 pub fn is_routing_wildcard_model_handle(handle: &str) -> bool {
@@ -450,6 +507,27 @@ mod tests {
         assert_eq!(option.handle, "gpt-4.1");
         assert!(option.label.contains("OpenAI GPT-4.1"));
         assert_eq!(option.context_window, Some(1_047_576));
+    }
+
+    #[test]
+    fn catalog_responses_api_support_records_and_reads_by_canonical_key() {
+        // Unique synthetic handles avoid colliding with other tests' global state.
+        record_catalog_responses_api_support("vendor/resp-yes", Some(true));
+        record_catalog_responses_api_support("vendor/resp-no", Some(false));
+
+        assert_eq!(
+            catalog_supports_responses_api("vendor/resp-yes"),
+            Some(true)
+        );
+        assert_eq!(catalog_supports_responses_api("vendor/resp-no"), Some(false));
+        assert_eq!(catalog_supports_responses_api("vendor/unobserved"), None);
+
+        // `None` (catalog stated nothing) must not overwrite a prior record.
+        record_catalog_responses_api_support("vendor/resp-yes", None);
+        assert_eq!(
+            catalog_supports_responses_api("vendor/resp-yes"),
+            Some(true)
+        );
     }
 
     #[test]

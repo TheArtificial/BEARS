@@ -373,6 +373,15 @@ fn chat_message_to_responses_input_items(message: &ChatMessage) -> Vec<Value> {
 
 pub fn preferred_api_style_for_model(model: &str) -> LlmApiStyle {
     let model = normalize_llm_model_handle(model);
+    // Prefer the gateway's live capability from the Bifrost `/v1/models` catalog.
+    if let Some(supports_responses) = model_registry::catalog_supports_responses_api(&model) {
+        return if supports_responses {
+            LlmApiStyle::ResponsesStream
+        } else {
+            LlmApiStyle::ChatCompletionsStream
+        };
+    }
+    // Fallback before the catalog has been observed (e.g. early startup).
     if model == "openai/gpt-5.5" || model.ends_with("/gpt-5.5") {
         LlmApiStyle::ResponsesStream
     } else {
@@ -811,6 +820,35 @@ mod tests {
 
         assert_eq!(handle.as_str(), "openai/gpt-5.5");
         assert_eq!(provider.as_str(), "gpt-5.5");
+    }
+
+    #[test]
+    fn preferred_api_style_uses_catalog_when_observed() {
+        // Synthetic handles keep this independent of other tests' global state.
+        model_registry::record_catalog_responses_api_support("vendor/style-yes", Some(true));
+        model_registry::record_catalog_responses_api_support("vendor/style-no", Some(false));
+
+        assert_eq!(
+            preferred_api_style_for_model("vendor/style-yes"),
+            LlmApiStyle::ResponsesStream
+        );
+        assert_eq!(
+            preferred_api_style_for_model("vendor/style-no"),
+            LlmApiStyle::ChatCompletionsStream
+        );
+    }
+
+    #[test]
+    fn preferred_api_style_falls_back_to_literal_before_catalog() {
+        // A handle the catalog has not advertised falls back to the static rule.
+        assert_eq!(
+            preferred_api_style_for_model("vendor/never-observed-5.5-like"),
+            LlmApiStyle::ChatCompletionsStream
+        );
+        assert_eq!(
+            preferred_api_style_for_model("gpt-5.5"),
+            LlmApiStyle::ResponsesStream
+        );
     }
 
     #[test]
