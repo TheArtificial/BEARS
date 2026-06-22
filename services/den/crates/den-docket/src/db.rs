@@ -4,6 +4,8 @@
 //! outside `core::docket` go through the service, never here. Storage is still
 //! the legacy `bear_work_plans` + `bear_work_plan_events` tables (pre-ADR-0034).
 
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -11,9 +13,448 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use super::model::{
-    validate_work_plan_update, BearWorkPlanRow, WorkPlanListFilter, WorkPlanLookup,
-    WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
+    validate_docket_job_create, validate_docket_task_create, validate_work_plan_update,
+    BearWorkPlanRow, DocketJobCreate, DocketJobCriterionRow, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketTaskCreate, DocketTaskInput,
+    DocketTaskRow, DocketTaskRunStateRow, WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection,
+    WorkPlanStatus, WorkPlanUpsert,
 };
+
+pub(super) async fn create_job(
+    pool: &PgPool,
+    create: DocketJobCreate,
+) -> Result<DocketJobProjection, DenError> {
+    validate_docket_job_create(&create)?;
+
+    let mut tx = pool.begin().await?;
+    let job = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        INSERT INTO bear_jobs (
+            bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+            commit_policy, status, visibility
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+        ",
+    )
+    .bind(create.bear_id)
+    .bind(create.created_by_user_id)
+    .bind(create.created_by_role.trim())
+    .bind(create.goal.trim())
+    .bind(create.work_surface_ref.as_deref())
+    .bind(create.commit_policy.map(|policy| policy.as_str()))
+    .bind(create.status.as_str())
+    .bind(create.visibility.as_str())
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let run = sqlx::query_as::<_, DocketJobRunRow>(
+        r"
+        INSERT INTO bear_job_runs (job_id, trigger, state)
+        VALUES ($1, 'manual', 'dispatched')
+        RETURNING id, job_id, trigger, schedule_ref, state, started_at, finished_at,
+                  outcome, created_at, updated_at
+        ",
+    )
+    .bind(job.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let job = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        UPDATE bear_jobs
+        SET current_run_id = $2, updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+        ",
+    )
+    .bind(job.id)
+    .bind(run.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let mut criteria = Vec::new();
+    for criterion in &create.criteria {
+        let row = sqlx::query_as::<_, DocketJobCriterionRow>(
+            r"
+            INSERT INTO bear_job_criteria (job_id, kind, description, spec, sibling_order)
+            VALUES ($1, $2, $3, $4::jsonb, $5)
+            RETURNING id, job_id, kind, description, spec, sibling_order, created_at, updated_at
+            ",
+        )
+        .bind(job.id)
+        .bind(criterion.kind.as_str())
+        .bind(criterion.description.trim())
+        .bind(criterion.spec.as_ref())
+        .bind(criterion.sibling_order)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+            INSERT INTO bear_job_criteria_state (run_id, criterion_id, status)
+            VALUES ($1, $2, 'unmet')
+            ",
+        )
+        .bind(run.id)
+        .bind(row.id)
+        .execute(&mut *tx)
+        .await?;
+        criteria.push(row);
+    }
+
+    let mut task_ids_by_client_key = HashMap::new();
+    let mut tasks = Vec::new();
+    for task in &create.tasks {
+        let parent_task_id = resolve_parent_task_id(task, &task_ids_by_client_key)?;
+        let row = insert_task_for_job(&mut tx, &create, job.id, &run, task, parent_task_id).await?;
+        if let Some(key) = task.client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+            task_ids_by_client_key.insert(key.to_string(), row.id);
+        }
+        tasks.push(row);
+    }
+
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'job_created', $3, $4, $5::jsonb)
+        ",
+    )
+    .bind(job.id)
+    .bind(run.id)
+    .bind(create.created_by_role.trim())
+    .bind(create.created_by_user_id)
+    .bind(json!({
+        "criteria_count": criteria.len(),
+        "task_count": tasks.len(),
+        "status": job.status,
+        "visibility": job.visibility,
+    }))
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    let task_states = list_task_run_states(pool, run.id).await?;
+    Ok(DocketJobProjection {
+        job,
+        current_run: Some(run),
+        criteria,
+        tasks,
+        task_states,
+    })
+}
+
+fn resolve_parent_task_id(
+    task: &DocketTaskInput,
+    task_ids_by_client_key: &HashMap<String, Uuid>,
+) -> Result<Option<Uuid>, DenError> {
+    if let Some(parent_task_id) = task.parent_task_id {
+        return Ok(Some(parent_task_id));
+    }
+    if let Some(parent_key) = task
+        .parent_client_key
+        .as_ref()
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+    {
+        return task_ids_by_client_key
+            .get(parent_key)
+            .copied()
+            .map(Some)
+            .ok_or_else(|| {
+                DenError::ValidationError(format!(
+                    "Docket task parent_client_key `{parent_key}` must refer to an earlier task"
+                ))
+            });
+    }
+    Ok(None)
+}
+
+async fn insert_task_for_job(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    create: &DocketJobCreate,
+    job_id: Uuid,
+    run: &DocketJobRunRow,
+    task: &DocketTaskInput,
+    parent_task_id: Option<Uuid>,
+) -> Result<DocketTaskRow, DenError> {
+    let row = sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        INSERT INTO bear_tasks (
+            bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body,
+            difficulty, effort_hint, assigned_to_role, created_by_role, created_by_user_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                  kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  created_at, updated_at
+        ",
+    )
+    .bind(create.bear_id)
+    .bind(job_id)
+    .bind(parent_task_id)
+    .bind(task.sibling_order)
+    .bind(task.kind.as_str())
+    .bind(task.scope.as_str())
+    .bind(task.title.trim())
+    .bind(task.body.trim())
+    .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
+    .bind(task.effort_hint.map(|effort| effort.as_str()))
+    .bind(task.assigned_to_role.map(|role| role.as_str()))
+    .bind(create.created_by_role.trim())
+    .bind(create.created_by_user_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r"
+        INSERT INTO bear_task_run_state (run_id, task_id, status)
+        VALUES ($1, $2, 'pending')
+        ",
+    )
+    .bind(run.id)
+    .bind(row.id)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r"
+        INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'created', $3, $4, $5::jsonb)
+        ",
+    )
+    .bind(row.id)
+    .bind(run.id)
+    .bind(create.created_by_role.trim())
+    .bind(create.created_by_user_id)
+    .bind(json!({
+        "job_id": row.job_id,
+        "parent_task_id": row.parent_task_id,
+        "scope": row.scope,
+    }))
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'task_added', $3, $4, $5, $6::jsonb)
+        ",
+    )
+    .bind(job_id)
+    .bind(run.id)
+    .bind(row.id)
+    .bind(create.created_by_role.trim())
+    .bind(create.created_by_user_id)
+    .bind(json!({
+        "title": row.title,
+        "parent_task_id": row.parent_task_id,
+        "scope": row.scope,
+    }))
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(row)
+}
+
+pub(super) async fn create_task(
+    pool: &PgPool,
+    create: DocketTaskCreate,
+) -> Result<DocketTaskRow, DenError> {
+    validate_docket_task_create(&create)?;
+    let mut tx = pool.begin().await?;
+    let row = insert_task(&mut tx, &create).await?;
+    if let Some(run_id) = create.created_in_run_id {
+        sqlx::query(
+            r"
+            INSERT INTO bear_task_run_state (run_id, task_id, status)
+            VALUES ($1, $2, 'pending')
+            ON CONFLICT (run_id, task_id) DO NOTHING
+            ",
+        )
+        .bind(run_id)
+        .bind(row.id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(row)
+}
+
+async fn insert_task(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    create: &DocketTaskCreate,
+) -> Result<DocketTaskRow, DenError> {
+    sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        INSERT INTO bear_tasks (
+            bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
+            title, body, difficulty, effort_hint, assigned_to_role, created_by_role,
+            created_by_user_id, created_by_agent_id, created_in_run_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                  kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  created_at, updated_at
+        ",
+    )
+    .bind(create.bear_id)
+    .bind(create.job_id)
+    .bind(create.session_anchor_id)
+    .bind(create.parent_task_id)
+    .bind(create.sibling_order)
+    .bind(create.kind.as_str())
+    .bind(create.scope.as_str())
+    .bind(create.title.trim())
+    .bind(create.body.trim())
+    .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
+    .bind(create.effort_hint.map(|effort| effort.as_str()))
+    .bind(create.assigned_to_role.map(|role| role.as_str()))
+    .bind(create.created_by_role.trim())
+    .bind(create.created_by_user_id)
+    .bind(create.created_by_agent_id.as_deref())
+    .bind(create.created_in_run_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(Into::into)
+}
+
+pub(super) async fn list_jobs(
+    pool: &PgPool,
+    bear_id: Uuid,
+    filter: DocketJobListFilter,
+) -> Result<Vec<DocketJobRow>, DenError> {
+    let limit = if filter.limit <= 0 { 50 } else { filter.limit.min(200) };
+    let rows = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+               commit_policy, status, visibility, current_run_id, created_at, updated_at
+        FROM bear_jobs
+        WHERE bear_id = $1
+        ORDER BY updated_at DESC
+        LIMIT $2
+        ",
+    )
+    .bind(bear_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|job| filter.include_cancelled || job.status != "cancelled")
+        .filter(|job| {
+            filter
+                .statuses
+                .as_ref()
+                .map(|statuses| statuses.iter().any(|status| job.status == status.as_str()))
+                .unwrap_or(true)
+        })
+        .collect())
+}
+
+pub(super) async fn get_job(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Uuid,
+) -> Result<Option<DocketJobProjection>, DenError> {
+    let Some(job) = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+               commit_policy, status, visibility, current_run_id, created_at, updated_at
+        FROM bear_jobs
+        WHERE bear_id = $1 AND id = $2
+        ",
+    )
+    .bind(bear_id)
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    let current_run = if let Some(run_id) = job.current_run_id {
+        sqlx::query_as::<_, DocketJobRunRow>(
+            r"
+            SELECT id, job_id, trigger, schedule_ref, state, started_at, finished_at,
+                   outcome, created_at, updated_at
+            FROM bear_job_runs
+            WHERE job_id = $1 AND id = $2
+            ",
+        )
+        .bind(job.id)
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await?
+    } else {
+        None
+    };
+
+    let criteria = sqlx::query_as::<_, DocketJobCriterionRow>(
+        r"
+        SELECT id, job_id, kind, description, spec, sibling_order, created_at, updated_at
+        FROM bear_job_criteria
+        WHERE job_id = $1
+        ORDER BY sibling_order, created_at
+        ",
+    )
+    .bind(job.id)
+    .fetch_all(pool)
+    .await?;
+
+    let tasks = sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+               kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               created_at, updated_at
+        FROM bear_tasks
+        WHERE bear_id = $1 AND job_id = $2
+        ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
+        ",
+    )
+    .bind(bear_id)
+    .bind(job.id)
+    .fetch_all(pool)
+    .await?;
+
+    let task_states = if let Some(run) = current_run.as_ref() {
+        list_task_run_states(pool, run.id).await?
+    } else {
+        Vec::new()
+    };
+
+    Ok(Some(DocketJobProjection {
+        job,
+        current_run,
+        criteria,
+        tasks,
+        task_states,
+    }))
+}
+
+async fn list_task_run_states(
+    pool: &PgPool,
+    run_id: Uuid,
+) -> Result<Vec<DocketTaskRunStateRow>, DenError> {
+    sqlx::query_as::<_, DocketTaskRunStateRow>(
+        r"
+        SELECT run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+        FROM bear_task_run_state
+        WHERE run_id = $1
+        ORDER BY updated_at DESC
+        ",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
 
 pub(super) async fn create_or_update_work_plan(
     pool: &PgPool,

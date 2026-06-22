@@ -384,6 +384,16 @@ impl TaskListSourceRef {
         }
     }
 
+    pub fn docket_job(job_id: String, refs: Vec<String>) -> Self {
+        Self {
+            kind: "docket_job".to_string(),
+            work_plan_id: None,
+            docket_job_id: Some(job_id),
+            docket_task_id: None,
+            refs,
+        }
+    }
+
     pub fn docket_task(job_id: Option<String>, task_id: String, refs: Vec<String>) -> Self {
         Self {
             kind: "docket_task".to_string(),
@@ -544,6 +554,10 @@ impl WorkPlanProjection {
 #[derive(Debug, Clone)]
 pub enum TaskListCheckoutSource {
     LegacyWorkPlan(WorkPlanLookup),
+    DocketJob {
+        job_id: Uuid,
+        parent_task_id: Option<Uuid>,
+    },
     LocalProjection(TaskListProjection),
 }
 
@@ -606,6 +620,575 @@ impl TaskListHandoffOutcome {
             item_ids: request.item_ids.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketJobStatus {
+    Draft,
+    Ready,
+    Running,
+    Blocked,
+    Completed,
+    Cancelled,
+}
+
+impl DocketJobStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Blocked => "blocked",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl fmt::Display for DocketJobStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketCommitPolicy {
+    None,
+    PerTask,
+    PerJob,
+    ProposeOnly,
+}
+
+impl DocketCommitPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::PerTask => "per_task",
+            Self::PerJob => "per_job",
+            Self::ProposeOnly => "propose_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketCriterionKind {
+    Narrative,
+    Command,
+    CheckRef,
+}
+
+impl DocketCriterionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Narrative => "narrative",
+            Self::Command => "command",
+            Self::CheckRef => "check_ref",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketRunTrigger {
+    Manual,
+    Scheduled,
+    Event,
+}
+
+impl DocketRunTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Scheduled => "scheduled",
+            Self::Event => "event",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketRunState {
+    Dispatched,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl DocketRunState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dispatched => "dispatched",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketTaskKind {
+    Execution,
+    Investigation,
+    Decision,
+}
+
+impl DocketTaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Execution => "execution",
+            Self::Investigation => "investigation",
+            Self::Decision => "decision",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketTaskScope {
+    Template,
+    Run,
+}
+
+impl DocketTaskScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Template => "template",
+            Self::Run => "run",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketTaskDifficulty {
+    Trivial,
+    Moderate,
+    Hard,
+    Unknown,
+}
+
+impl DocketTaskDifficulty {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Trivial => "trivial",
+            Self::Moderate => "moderate",
+            Self::Hard => "hard",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketEffortHint {
+    Low,
+    Medium,
+    High,
+}
+
+impl DocketEffortHint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketTaskStatus {
+    Pending,
+    InProgress,
+    Done,
+    Blocked,
+    Cancelled,
+}
+
+impl DocketTaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Blocked => "blocked",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketCriterionStatus {
+    Unmet,
+    Met,
+    Waived,
+}
+
+impl DocketCriterionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unmet => "unmet",
+            Self::Met => "met",
+            Self::Waived => "waived",
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketJobRow {
+    pub id: Uuid,
+    pub bear_id: Uuid,
+    pub created_by_user_id: i32,
+    pub created_by_role: String,
+    pub goal: String,
+    pub work_surface_ref: Option<String>,
+    pub commit_policy: Option<String>,
+    pub status: String,
+    pub visibility: String,
+    pub current_run_id: Option<Uuid>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketJobCriterionRow {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub kind: String,
+    pub description: String,
+    pub spec: Option<Json<serde_json::Value>>,
+    pub sibling_order: i32,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketJobRunRow {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub trigger: String,
+    pub schedule_ref: Option<String>,
+    pub state: String,
+    pub started_at: Option<OffsetDateTime>,
+    pub finished_at: Option<OffsetDateTime>,
+    pub outcome: Option<Json<serde_json::Value>>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketTaskRow {
+    pub id: Uuid,
+    pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub session_anchor_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    pub sibling_order: i32,
+    pub kind: String,
+    pub scope: String,
+    pub title: String,
+    pub body: String,
+    pub difficulty: Option<String>,
+    pub effort_hint: Option<String>,
+    pub assigned_to_role: Option<String>,
+    pub created_by_role: String,
+    pub created_by_user_id: Option<i32>,
+    pub created_by_agent_id: Option<String>,
+    pub created_in_run_id: Option<Uuid>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketTaskRunStateRow {
+    pub run_id: Uuid,
+    pub task_id: Uuid,
+    pub status: String,
+    pub result_refs: Option<Json<serde_json::Value>>,
+    pub result_summary: Option<String>,
+    pub started_at: Option<OffsetDateTime>,
+    pub finished_at: Option<OffsetDateTime>,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocketJobProjection {
+    pub job: DocketJobRow,
+    pub current_run: Option<DocketJobRunRow>,
+    pub criteria: Vec<DocketJobCriterionRow>,
+    pub tasks: Vec<DocketTaskRow>,
+    pub task_states: Vec<DocketTaskRunStateRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketJobCriterionInput {
+    pub kind: DocketCriterionKind,
+    pub description: String,
+    pub spec: Option<serde_json::Value>,
+    pub sibling_order: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketTaskInput {
+    pub client_key: Option<String>,
+    pub parent_client_key: Option<String>,
+    pub parent_task_id: Option<Uuid>,
+    pub sibling_order: i32,
+    pub kind: DocketTaskKind,
+    pub scope: DocketTaskScope,
+    pub title: String,
+    pub body: String,
+    pub difficulty: Option<DocketTaskDifficulty>,
+    pub effort_hint: Option<DocketEffortHint>,
+    pub assigned_to_role: Option<BearProfile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketJobCreate {
+    pub bear_id: Uuid,
+    pub created_by_user_id: i32,
+    pub created_by_role: String,
+    pub goal: String,
+    pub work_surface_ref: Option<String>,
+    pub commit_policy: Option<DocketCommitPolicy>,
+    pub status: DocketJobStatus,
+    pub visibility: WorkPlanVisibility,
+    pub criteria: Vec<DocketJobCriterionInput>,
+    pub tasks: Vec<DocketTaskInput>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DocketJobListFilter {
+    pub statuses: Option<Vec<DocketJobStatus>>,
+    pub include_cancelled: bool,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketTaskCreate {
+    pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub session_anchor_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    pub sibling_order: i32,
+    pub kind: DocketTaskKind,
+    pub scope: DocketTaskScope,
+    pub title: String,
+    pub body: String,
+    pub difficulty: Option<DocketTaskDifficulty>,
+    pub effort_hint: Option<DocketEffortHint>,
+    pub assigned_to_role: Option<BearProfile>,
+    pub created_by_role: String,
+    pub created_by_user_id: Option<i32>,
+    pub created_by_agent_id: Option<String>,
+    pub created_in_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocketValidationError {
+    EmptyGoal,
+    InvalidJobCreatorRole { role: String },
+    EmptyCriterionDescription,
+    EmptyTaskTitle,
+    EmptyTaskBody,
+    TaskMissingAnchor,
+    DuplicateTaskClientKey { client_key: String },
+    MissingParentClientKey { client_key: String },
+}
+
+impl fmt::Display for DocketValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyGoal => f.write_str("Docket job goal must not be empty"),
+            Self::InvalidJobCreatorRole { role } => {
+                write!(f, "Docket jobs must be human-created via chat, pair, or ui, not `{role}`")
+            }
+            Self::EmptyCriterionDescription => {
+                f.write_str("Docket job criterion description must not be empty")
+            }
+            Self::EmptyTaskTitle => f.write_str("Docket task title must not be empty"),
+            Self::EmptyTaskBody => f.write_str("Docket task body must not be empty"),
+            Self::TaskMissingAnchor => {
+                f.write_str("Docket task must be anchored to either a job or an ACP session")
+            }
+            Self::DuplicateTaskClientKey { client_key } => {
+                write!(f, "Docket task client_key `{client_key}` is duplicated")
+            }
+            Self::MissingParentClientKey { client_key } => {
+                write!(f, "Docket task parent_client_key `{client_key}` does not exist")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DocketValidationError {}
+
+impl From<DocketValidationError> for DenError {
+    fn from(err: DocketValidationError) -> Self {
+        DenError::ValidationError(err.to_string())
+    }
+}
+
+pub fn task_list_projection_from_docket_job(
+    projection: &DocketJobProjection,
+    parent_task_id: Option<Uuid>,
+) -> TaskListProjection {
+    let states_by_task_id = projection
+        .task_states
+        .iter()
+        .map(|state| (state.task_id, state))
+        .collect::<std::collections::HashMap<_, _>>();
+    let items = projection
+        .tasks
+        .iter()
+        .filter(|task| task.parent_task_id == parent_task_id)
+        .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
+        .collect::<Vec<_>>();
+    let current_item = current_task_list_item(&items).cloned();
+
+    TaskListProjection {
+        id: projection.job.id,
+        bear_id: projection.job.bear_id,
+        title: projection.job.goal.clone(),
+        summary: projection
+            .job
+            .work_surface_ref
+            .as_ref()
+            .map(|surface| format!("Docket job on work surface `{surface}`"))
+            .unwrap_or_else(|| "Docket job checkout".to_string()),
+        owner_profile: projection.job.created_by_role.clone(),
+        visibility: projection.job.visibility.clone(),
+        status: projection.job.status.clone(),
+        version: 1,
+        source_ref: TaskListSourceRef::docket_job(
+            projection.job.id.to_string(),
+            vec![format!("docket_job:{}", projection.job.id)],
+        ),
+        items,
+        current_item,
+        source_conversation_id: None,
+        source_acp_session_id: None,
+        handoff_intent_path: None,
+        handoff_task_id: None,
+        created_at: projection.job.created_at,
+        updated_at: projection.job.updated_at,
+    }
+}
+
+fn task_list_item_from_docket_task(
+    task: &DocketTaskRow,
+    state: Option<&DocketTaskRunStateRow>,
+) -> TaskListItem {
+    let status = state
+        .map(|state| work_plan_status_from_docket_task_status(&state.status))
+        .unwrap_or(WorkPlanItemStatus::Pending);
+    TaskListItem {
+        id: task.id.to_string(),
+        title: task.title.clone(),
+        summary: Some(task.body.clone()),
+        status,
+        blocked_reason: (status == WorkPlanItemStatus::Blocked)
+            .then(|| state.and_then(|state| state.result_summary.clone()))
+            .flatten(),
+        source_ref: TaskListSourceRef::docket_task(
+            task.job_id.map(|job_id| job_id.to_string()),
+            task.id.to_string(),
+            vec![
+                task.job_id
+                    .map(|job_id| format!("docket_job:{job_id}"))
+                    .unwrap_or_else(|| "docket_job:<none>".to_string()),
+                format!("docket_task:{}", task.id),
+            ],
+        ),
+        sync_state: TaskListSyncState::Clean,
+    }
+}
+
+fn work_plan_status_from_docket_task_status(status: &str) -> WorkPlanItemStatus {
+    match status {
+        "in_progress" => WorkPlanItemStatus::InProgress,
+        "done" => WorkPlanItemStatus::Completed,
+        "blocked" => WorkPlanItemStatus::Blocked,
+        "cancelled" => WorkPlanItemStatus::Cancelled,
+        _ => WorkPlanItemStatus::Pending,
+    }
+}
+
+fn current_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
+    items
+        .iter()
+        .find(|item| item.status == WorkPlanItemStatus::InProgress)
+        .or_else(|| items.iter().find(|item| item.status == WorkPlanItemStatus::Blocked))
+        .or_else(|| items.iter().find(|item| item.status == WorkPlanItemStatus::Pending))
+}
+
+pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), DocketValidationError> {
+    if create.goal.trim().is_empty() {
+        return Err(DocketValidationError::EmptyGoal);
+    }
+    if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
+        return Err(DocketValidationError::InvalidJobCreatorRole {
+            role: create.created_by_role.clone(),
+        });
+    }
+    for criterion in &create.criteria {
+        if criterion.description.trim().is_empty() {
+            return Err(DocketValidationError::EmptyCriterionDescription);
+        }
+    }
+    validate_docket_task_inputs(&create.tasks)
+}
+
+pub fn validate_docket_task_create(create: &DocketTaskCreate) -> Result<(), DocketValidationError> {
+    if create.job_id.is_none() && create.session_anchor_id.is_none() {
+        return Err(DocketValidationError::TaskMissingAnchor);
+    }
+    if create.title.trim().is_empty() {
+        return Err(DocketValidationError::EmptyTaskTitle);
+    }
+    if create.body.trim().is_empty() {
+        return Err(DocketValidationError::EmptyTaskBody);
+    }
+    Ok(())
+}
+
+fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketValidationError> {
+    let mut keys = std::collections::HashSet::new();
+    for task in tasks {
+        if task.title.trim().is_empty() {
+            return Err(DocketValidationError::EmptyTaskTitle);
+        }
+        if task.body.trim().is_empty() {
+            return Err(DocketValidationError::EmptyTaskBody);
+        }
+        if let Some(key) = task.client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+            if !keys.insert(key.to_string()) {
+                return Err(DocketValidationError::DuplicateTaskClientKey {
+                    client_key: key.to_string(),
+                });
+            }
+        }
+    }
+    for task in tasks {
+        if let Some(parent_key) = task.parent_client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+            if !keys.contains(parent_key) {
+                return Err(DocketValidationError::MissingParentClientKey {
+                    client_key: parent_key.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 impl BearWorkPlanRow {
@@ -968,6 +1551,186 @@ mod tests {
         assert_eq!(item.source_ref.docket_job_id.as_deref(), Some("job-123"));
         assert_eq!(item.source_ref.docket_task_id.as_deref(), Some("task-456"));
         assert_eq!(item.sync_state, TaskListSyncState::CheckedOut);
+    }
+
+    #[test]
+    fn validates_docket_job_created_by_human_surface() {
+        let create = DocketJobCreate {
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            created_by_user_id: 42,
+            created_by_role: "work".to_string(),
+            goal: "Ship Docket".to_string(),
+            work_surface_ref: None,
+            commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            status: DocketJobStatus::Ready,
+            visibility: WorkPlanVisibility::BearVisible,
+            criteria: Vec::new(),
+            tasks: Vec::new(),
+        };
+
+        assert_eq!(
+            validate_docket_job_create(&create),
+            Err(DocketValidationError::InvalidJobCreatorRole {
+                role: "work".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn validates_docket_task_client_key_hierarchy() {
+        let create = DocketJobCreate {
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            created_by_user_id: 42,
+            created_by_role: "pair".to_string(),
+            goal: "Ship Docket".to_string(),
+            work_surface_ref: None,
+            commit_policy: None,
+            status: DocketJobStatus::Ready,
+            visibility: WorkPlanVisibility::BearVisible,
+            criteria: Vec::new(),
+            tasks: vec![DocketTaskInput {
+                client_key: Some("child".to_string()),
+                parent_client_key: Some("missing-parent".to_string()),
+                parent_task_id: None,
+                sibling_order: 0,
+                kind: DocketTaskKind::Execution,
+                scope: DocketTaskScope::Template,
+                title: "Implement child".to_string(),
+                body: "Do the child task.".to_string(),
+                difficulty: Some(DocketTaskDifficulty::Moderate),
+                effort_hint: Some(DocketEffortHint::Medium),
+                assigned_to_role: Some(BearProfile::Work),
+            }],
+        };
+
+        assert_eq!(
+            validate_docket_job_create(&create),
+            Err(DocketValidationError::MissingParentClientKey {
+                client_key: "missing-parent".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn validates_session_anchored_or_job_anchored_task_create() {
+        let create = DocketTaskCreate {
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            job_id: None,
+            session_anchor_id: None,
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: DocketTaskKind::Investigation,
+            scope: DocketTaskScope::Run,
+            title: "Investigate".to_string(),
+            body: "Find the relevant facts.".to_string(),
+            difficulty: Some(DocketTaskDifficulty::Unknown),
+            effort_hint: None,
+            assigned_to_role: Some(BearProfile::Pair),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(42),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        };
+
+        assert_eq!(
+            validate_docket_task_create(&create),
+            Err(DocketValidationError::TaskMissingAnchor)
+        );
+    }
+
+    #[test]
+    fn task_list_projection_from_docket_job_checks_out_root_children() {
+        let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
+        let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
+        let child_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap();
+        let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000abc").unwrap();
+        let projection = DocketJobProjection {
+            job: DocketJobRow {
+                id: job_id,
+                bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                created_by_user_id: 42,
+                created_by_role: "pair".to_string(),
+                goal: "Ship Docket".to_string(),
+                work_surface_ref: Some("zed".to_string()),
+                commit_policy: Some("propose_only".to_string()),
+                status: "running".to_string(),
+                visibility: "bear_visible".to_string(),
+                current_run_id: Some(run_id),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            current_run: None,
+            criteria: Vec::new(),
+            tasks: vec![
+                DocketTaskRow {
+                    id: root_task_id,
+                    bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                    job_id: Some(job_id),
+                    session_anchor_id: None,
+                    parent_task_id: None,
+                    sibling_order: 0,
+                    kind: "execution".to_string(),
+                    scope: "template".to_string(),
+                    title: "Root task".to_string(),
+                    body: "Do root work.".to_string(),
+                    difficulty: None,
+                    effort_hint: None,
+                    assigned_to_role: Some("work".to_string()),
+                    created_by_role: "pair".to_string(),
+                    created_by_user_id: Some(42),
+                    created_by_agent_id: None,
+                    created_in_run_id: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                },
+                DocketTaskRow {
+                    id: child_task_id,
+                    bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                    job_id: Some(job_id),
+                    session_anchor_id: None,
+                    parent_task_id: Some(root_task_id),
+                    sibling_order: 0,
+                    kind: "execution".to_string(),
+                    scope: "template".to_string(),
+                    title: "Child task".to_string(),
+                    body: "Do child work.".to_string(),
+                    difficulty: None,
+                    effort_hint: None,
+                    assigned_to_role: Some("work".to_string()),
+                    created_by_role: "pair".to_string(),
+                    created_by_user_id: Some(42),
+                    created_by_agent_id: None,
+                    created_in_run_id: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                },
+            ],
+            task_states: vec![DocketTaskRunStateRow {
+                run_id,
+                task_id: root_task_id,
+                status: "in_progress".to_string(),
+                result_refs: None,
+                result_summary: None,
+                started_at: None,
+                finished_at: None,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+        };
+
+        let root_checkout = task_list_projection_from_docket_job(&projection, None);
+        assert_eq!(root_checkout.source_ref.kind, "docket_job");
+        assert_eq!(root_checkout.items.len(), 1);
+        assert_eq!(root_checkout.items[0].id, root_task_id.to_string());
+        assert_eq!(root_checkout.items[0].sync_state, TaskListSyncState::Clean);
+        assert_eq!(root_checkout.items[0].status, WorkPlanItemStatus::InProgress);
+
+        let child_checkout = task_list_projection_from_docket_job(&projection, Some(root_task_id));
+        assert_eq!(child_checkout.items.len(), 1);
+        assert_eq!(child_checkout.items[0].id, child_task_id.to_string());
+        assert_eq!(
+            child_checkout.items[0].source_ref.docket_task_id.as_deref(),
+            Some(child_task_id.to_string().as_str())
+        );
     }
 
     #[test]

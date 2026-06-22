@@ -12,9 +12,11 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    BearWorkPlanRow, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
-    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
+    BearWorkPlanRow, DocketJobCreate, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    task_list_projection_from_docket_job, DocketTaskCreate, DocketTaskRow,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest,
+    TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest, WorkPlanListFilter,
+    WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
 };
 
 /// Orchestration API for Docket work plans. The only public entry point to the
@@ -25,6 +27,22 @@ use super::model::{
 // bounds flow through monomorphization and async-trait boxing is unnecessary.
 #[allow(async_fn_in_trait)]
 pub trait DocketService: Send + Sync {
+    async fn create_job(&self, create: DocketJobCreate) -> Result<DocketJobProjection, DenError>;
+
+    async fn list_jobs(
+        &self,
+        bear_id: Uuid,
+        filter: DocketJobListFilter,
+    ) -> Result<Vec<DocketJobRow>, DenError>;
+
+    async fn get_job(
+        &self,
+        bear_id: Uuid,
+        job_id: Uuid,
+    ) -> Result<Option<DocketJobProjection>, DenError>;
+
+    async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
+
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError>;
 
     async fn list_visible_work_plans(
@@ -81,6 +99,30 @@ impl PgDocketService {
 }
 
 impl DocketService for PgDocketService {
+    async fn create_job(&self, create: DocketJobCreate) -> Result<DocketJobProjection, DenError> {
+        db::create_job(&self.pool, create).await
+    }
+
+    async fn list_jobs(
+        &self,
+        bear_id: Uuid,
+        filter: DocketJobListFilter,
+    ) -> Result<Vec<DocketJobRow>, DenError> {
+        db::list_jobs(&self.pool, bear_id, filter).await
+    }
+
+    async fn get_job(
+        &self,
+        bear_id: Uuid,
+        job_id: Uuid,
+    ) -> Result<Option<DocketJobProjection>, DenError> {
+        db::get_job(&self.pool, bear_id, job_id).await
+    }
+
+    async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {
+        db::create_task(&self.pool, create).await
+    }
+
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError> {
         db::create_or_update_work_plan(&self.pool, params).await
     }
@@ -117,6 +159,13 @@ impl DocketService for PgDocketService {
                 .get_visible_work_plan(bear_id, viewer_role, user_id, lookup)
                 .await?
                 .map(|plan| plan.to_task_list_projection())),
+            TaskListCheckoutSource::DocketJob {
+                job_id,
+                parent_task_id,
+            } => Ok(self
+                .get_job(bear_id, job_id)
+                .await?
+                .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(task_list)),
         }
     }
