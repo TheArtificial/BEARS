@@ -80,11 +80,12 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(web_server_url_shape(cfg));
 
     let den_pg = check_den_postgres(state.sqlx_pool()).await;
-    let bifrost_h =
-        check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url).await;
+    let bifrost_h = check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url).await;
+    let bifrost_models = check_bifrost_live_models(&cfg.llm_api_url).await;
 
     checks.push(den_pg);
     checks.push(bifrost_h);
+    checks.push(bifrost_models);
     checks.push(check_qdrant(cfg).await);
 
     StackHealthReport::from_checks(checks)
@@ -325,6 +326,125 @@ async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
     }
 }
 
+async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
+    let base = llm_api_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Skipped,
+            detail: "LLM_API_URL unset — cannot probe Bifrost /v1/models".into(),
+        };
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(HTTP_PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthCheck {
+                id: "bifrost_models",
+                label: "Bifrost models",
+                state: CheckState::Fail,
+                detail: format!("reqwest client: {e}"),
+            };
+        }
+    };
+
+    let url = format!("{base}/models");
+    match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
+        Err(_) => HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Fail,
+            detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
+        },
+        Ok(Err(e)) => HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Fail,
+            detail: e.to_string(),
+        },
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            let text = match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_models",
+                        label: "Bifrost models",
+                        state: CheckState::Fail,
+                        detail: format!("/v1/models body failed: {e}"),
+                    };
+                }
+            };
+            if !status.is_success() {
+                return HealthCheck {
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Fail,
+                    detail: format!("HTTP {status} from {url}: {text}"),
+                };
+            }
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_models",
+                        label: "Bifrost models",
+                        state: CheckState::Fail,
+                        detail: format!("/v1/models JSON parse failed: {e}; body: {text}"),
+                    };
+                }
+            };
+            let (usable_count, wildcard_count) = count_usable_bifrost_models(&value);
+            if usable_count == 0 {
+                HealthCheck {
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Fail,
+                    detail: format!(
+                        "/v1/models returned no concrete usable models (wildcard entries filtered: {wildcard_count})"
+                    ),
+                }
+            } else {
+                HealthCheck {
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Ok,
+                    detail: format!(
+                        "/v1/models advertises {usable_count} concrete usable model(s); wildcard entries filtered: {wildcard_count}"
+                    ),
+                }
+            }
+        }
+    }
+}
+
+fn count_usable_bifrost_models(value: &serde_json::Value) -> (usize, usize) {
+    let Some(items) = value.get("data").and_then(|data| data.as_array()) else {
+        return (0, 0);
+    };
+    let mut usable = 0;
+    let mut wildcard = 0;
+    for item in items {
+        let Some(id) = item.get("id").and_then(|id| id.as_str()).map(str::trim) else {
+            continue;
+        };
+        if id.is_empty() {
+            continue;
+        }
+        if den_llm::model_registry::is_routing_wildcard_model_handle(id) {
+            wildcard += 1;
+        } else {
+            usable += 1;
+        }
+    }
+    (usable, wildcard)
+}
+
 /// Probe the derived recall index (Qdrant). Recall is optional and derived (ADR-0038), so an
 /// unreachable store is a **warning** (Den degrades to keyword search) rather than a hard
 /// failure that would 503 the whole stack. Idempotently ensures the recall collection so the
@@ -435,5 +555,36 @@ async fn check_bifrost_metadata(
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_usable_bifrost_models;
+
+    #[test]
+    fn bifrost_model_count_filters_routing_wildcards() {
+        let value = serde_json::json!({
+            "data": [
+                { "id": "openai/*" },
+                { "id": "*" },
+                { "id": "openai/gpt-5.5" },
+                { "id": "openai/gpt-4.1" }
+            ]
+        });
+
+        assert_eq!(count_usable_bifrost_models(&value), (2, 2));
+    }
+
+    #[test]
+    fn bifrost_model_count_treats_wildcard_only_as_no_usable_models() {
+        let value = serde_json::json!({
+            "data": [
+                { "id": "openai/*" },
+                { "id": "*" }
+            ]
+        });
+
+        assert_eq!(count_usable_bifrost_models(&value), (0, 2));
     }
 }
