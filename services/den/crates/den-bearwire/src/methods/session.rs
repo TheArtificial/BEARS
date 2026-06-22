@@ -245,23 +245,25 @@ async fn session_model_payload(
         )
         .await?
         .unwrap_or(base_model);
-    let model_options = match state.bifrost.list_available_models().await {
-        Ok(models) => models
-            .into_iter()
-            .filter(|model| {
-                !den_llm::model_registry::is_routing_wildcard_model_handle(&model.handle)
-            })
-            .map(|model| {
-                den_llm::model_registry::model_option_for_available_handle(
-                    &model.handle,
-                    model.display_name.as_deref(),
-                    (model.context_window > 0).then_some(model.context_window),
-                    model.max_output_tokens,
-                )
-            })
-            .collect::<Vec<_>>(),
-        Err(_) => Vec::new(),
-    };
+    let model_options = state
+        .bifrost_catalog
+        .read()
+        .ok()
+        .map(|snapshot| snapshot.models_vec())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|model| {
+            !den_llm::model_registry::is_routing_wildcard_model_handle(&model.handle)
+        })
+        .map(|model| {
+            den_llm::model_registry::model_option_for_available_handle(
+                &model.handle,
+                model.display_name.as_deref(),
+                (model.context_window > 0).then_some(model.context_window),
+                model.max_output_tokens,
+            )
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
         "ok": true,
         "session_id": session_id,

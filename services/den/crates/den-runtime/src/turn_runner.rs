@@ -12,6 +12,7 @@ use den_core::{config::Config, DenError};
 use crate::{
     acp_sessions,
     conversation_ids::is_native_runtime_conversation_id,
+    llm::LlmApiStyle,
     memory::MemoryStoreManager,
     runtime_contracts::{
         RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef,
@@ -41,6 +42,7 @@ pub struct TurnStartRequest<'a> {
     pub runtime_context: Option<&'a str>,
     pub runtime_context_len: usize,
     pub stream_tokens: bool,
+    pub api_style: Option<LlmApiStyle>,
 }
 
 pub struct TurnContinueRequest<'a> {

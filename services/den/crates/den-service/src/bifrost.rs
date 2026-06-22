@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{collections::HashMap, sync::{Arc, RwLock}, time::Duration};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use den_core::{config::Config, DenError};
 
@@ -21,6 +22,118 @@ pub struct BifrostModelMetadata {
     pub supports_responses_api: Option<bool>,
     #[allow(dead_code)]
     pub supports_vision: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BifrostCatalogEntry {
+    pub available: bool,
+    pub provider: String,
+    pub provider_model_id: String,
+    pub gateway_handle: String,
+    pub display_name: Option<String>,
+    pub context_window: u32,
+    pub max_output_tokens: Option<u32>,
+    pub supports_tools: Option<bool>,
+    pub supports_responses_api: Option<bool>,
+    pub supports_vision: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BifrostCatalogSnapshot {
+    pub fetched_at: Option<OffsetDateTime>,
+    pub source: String,
+    pub stale: bool,
+    pub models: HashMap<String, BifrostCatalogEntry>,
+}
+
+impl Default for BifrostCatalogSnapshot {
+    fn default() -> Self {
+        Self {
+            fetched_at: None,
+            source: "uninitialized".to_string(),
+            stale: true,
+            models: HashMap::new(),
+        }
+    }
+}
+
+impl BifrostCatalogSnapshot {
+    pub fn from_available_models(models: Vec<BifrostModelMetadata>) -> Self {
+        let mut entries = HashMap::new();
+        for model in models {
+            let canonical = den_llm::model_registry::resolve_model_handle(&model.handle)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if model.handle.contains('/') {
+                        model.handle.clone()
+                    } else {
+                        format!("{}/{}", model.provider, model.model)
+                    }
+                });
+            entries.insert(
+                canonical,
+                BifrostCatalogEntry {
+                    available: true,
+                    provider: model.provider,
+                    provider_model_id: model.model,
+                    gateway_handle: model.handle,
+                    display_name: model.display_name,
+                    context_window: model.context_window,
+                    max_output_tokens: model.max_output_tokens,
+                    supports_tools: model.supports_tools,
+                    supports_responses_api: model.supports_responses_api,
+                    supports_vision: model.supports_vision,
+                },
+            );
+        }
+        Self {
+            fetched_at: Some(OffsetDateTime::now_utc()),
+            source: "v1_models".to_string(),
+            stale: false,
+            models: entries,
+        }
+    }
+
+    pub fn resolve(&self, handle: &str) -> Option<&BifrostCatalogEntry> {
+        let key = den_llm::model_registry::resolve_model_handle(handle)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let trimmed = handle.trim();
+                if trimmed.contains('/') {
+                    trimmed.to_string()
+                } else {
+                    format!("openai/{trimmed}")
+                }
+            });
+        self.models.get(&key)
+    }
+
+    pub fn models_vec(&self) -> Vec<BifrostModelMetadata> {
+        let mut models = self
+            .models
+            .iter()
+            .map(|(handle, entry)| BifrostModelMetadata {
+                handle: handle.clone(),
+                provider: entry.provider.clone(),
+                model: entry.provider_model_id.clone(),
+                display_name: entry.display_name.clone(),
+                context_window: entry.context_window,
+                max_output_tokens: entry.max_output_tokens,
+                enabled: entry.available,
+                supports_tools: entry.supports_tools,
+                supports_responses_api: entry.supports_responses_api,
+                supports_vision: entry.supports_vision,
+            })
+            .collect::<Vec<_>>();
+        sort_models(&mut models);
+        models
+    }
+}
+
+pub type BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>;
+
+pub fn new_catalog_store() -> BifrostCatalogStore {
+    Arc::new(RwLock::new(BifrostCatalogSnapshot::default()))
 }
 
 fn default_enabled() -> bool {
@@ -135,17 +248,6 @@ impl BifrostLiveModel {
     }
 }
 
-/// Feed gateway-advertised Responses-API support into the den-llm routing
-/// cache so `preferred_api_style_for_model` tracks the live catalog.
-fn record_responses_api_support(models: &[BifrostModelMetadata]) {
-    for model in models {
-        den_llm::model_registry::record_catalog_responses_api_support(
-            &model.handle,
-            model.supports_responses_api,
-        );
-    }
-}
-
 fn sort_models(models: &mut [BifrostModelMetadata]) {
     models.sort_by(|a, b| {
         a.display_name
@@ -217,7 +319,6 @@ impl BifrostClient {
         }
         sort_models(&mut models);
         models.dedup_by(|a, b| a.handle == b.handle);
-        record_responses_api_support(&models);
         Ok(models)
     }
 
@@ -285,24 +386,34 @@ impl BifrostClient {
             .filter(|m| m.enabled && !m.handle.trim().is_empty())
             .collect();
         sort_models(&mut models);
-        record_responses_api_support(&models);
         Ok(models)
     }
 
-    /// Eagerly fetch the model catalog at startup so `preferred_api_style_for_model`
-    /// reflects gateway-advertised Responses-API support from the first request,
-    /// rather than the static fallback used before the catalog is first listed.
-    /// Best-effort: logs and returns on failure instead of blocking startup.
-    pub async fn warm_model_catalog(&self) {
+    pub async fn refresh_catalog_snapshot(
+        &self,
+        store: &BifrostCatalogStore,
+    ) -> Result<BifrostCatalogSnapshot, DenError> {
+        let models = self.list_available_models().await?;
+        let snapshot = BifrostCatalogSnapshot::from_available_models(models);
+        if let Ok(mut guard) = store.write() {
+            *guard = snapshot.clone();
+        }
+        Ok(snapshot)
+    }
+
+    pub async fn warm_model_catalog(&self, store: &BifrostCatalogStore) {
         if !self.is_enabled() {
             return;
         }
-        match self.list_models().await {
-            Ok(models) => {
-                tracing::info!(count = models.len(), "Warmed Bifrost model catalog");
+        match self.refresh_catalog_snapshot(store).await {
+            Ok(snapshot) => {
+                tracing::info!(count = snapshot.models.len(), "Warmed Bifrost model catalog snapshot");
             }
             Err(err) => {
-                tracing::warn!(error = %err, "Failed to warm Bifrost model catalog at startup");
+                if let Ok(mut guard) = store.write() {
+                    guard.stale = true;
+                }
+                tracing::warn!(error = %err, "Failed to warm Bifrost model catalog snapshot at startup");
             }
         }
     }

@@ -760,6 +760,7 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             model: "openai/test".to_string(),
+            api_style: None,
             step: 0,
             max_steps: 4,
             strategy: StrategyProfile::plain_react(),

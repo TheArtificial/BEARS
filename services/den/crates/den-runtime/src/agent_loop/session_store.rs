@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
-    llm::{ChatMessage, LlmRequestTelemetry, LlmToolDefinition},
+    llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
 
 #[derive(Debug, Clone)]
@@ -24,6 +24,7 @@ pub struct AgentLoopSession {
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
     pub model: String,
+    pub api_style: Option<LlmApiStyle>,
     pub step: u32,
     pub max_steps: u32,
     pub strategy: StrategyProfile,

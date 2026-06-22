@@ -56,6 +56,7 @@ impl LazyAgentStepStream {
         llm: LlmClient,
         request: ChatCompletionRequest,
         session_key: String,
+        api_style_override: Option<LlmApiStyle>,
         overflow: Option<AgentStepOverflowContext>,
     ) -> Self {
         let model = request.model.clone();
@@ -68,6 +69,7 @@ impl LazyAgentStepStream {
             model,
             message_count,
             tool_count,
+            api_style_override,
             overflow,
         );
         Self {
@@ -82,11 +84,12 @@ impl LazyAgentStepStream {
         model: String,
         message_count: usize,
         tool_count: usize,
+        api_style_override: Option<LlmApiStyle>,
         overflow: Option<AgentStepOverflowContext>,
     ) -> Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>> {
         Box::pin(async move {
             let started = Instant::now();
-            let api_style = preferred_api_style_for_model(&model);
+            let api_style = api_style_override.unwrap_or_else(|| preferred_api_style_for_model(&model));
             tracing::info!(
                 session_key = %session_key,
                 model = %model,
@@ -370,6 +373,7 @@ pub async fn run_agent_step_stream(
         model = %session.model,
         message_count = messages.len(),
         tool_count = session.tools.len(),
+        api_style_override = session.api_style.map(|style| style.as_str()),
         step = session.step,
         overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
@@ -388,6 +392,7 @@ pub async fn run_agent_step_stream(
         llm.clone(),
         request,
         session.session_key.clone(),
+        session.api_style,
         overflow,
     )))
 }

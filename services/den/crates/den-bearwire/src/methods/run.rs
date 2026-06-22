@@ -86,6 +86,7 @@ fn runtime_upstream_target(
 struct ResolvedRunModel {
     handle: String,
     provider_model_id: String,
+    api_style: den_llm::LlmApiStyle,
     source: &'static str,
 }
 
@@ -143,8 +144,10 @@ async fn resolve_pair_run_model(
                     .filter(|model| !model.is_empty())
                 {
                     let handle = den_llm::normalize_llm_model_handle(&model);
+                    let provider_model_id = provider_model_id_for_den_handle(&handle);
                     return Ok(ResolvedRunModel {
-                        provider_model_id: provider_model_id_for_den_handle(&handle),
+                        api_style: den_llm::preferred_api_style_for_model(&handle),
+                        provider_model_id,
                         handle,
                         source: "conversation_explicit",
                     });
@@ -155,8 +158,10 @@ async fn resolve_pair_run_model(
                 .filter(|model| !model.is_empty())
             {
                 let handle = den_llm::normalize_llm_model_handle(&model);
+                let provider_model_id = provider_model_id_for_den_handle(&handle);
                 return Ok(ResolvedRunModel {
-                    provider_model_id: provider_model_id_for_den_handle(&handle),
+                    api_style: den_llm::preferred_api_style_for_model(&handle),
+                    provider_model_id,
                     handle,
                     source: "conversation_auto",
                 });
@@ -168,8 +173,10 @@ async fn resolve_pair_run_model(
         bears_db::profile_model_setting(&state.sqlx_pool, bear.id, BearProfile::Pair).await?
     {
         let handle = den_llm::normalize_llm_model_handle(&model);
+        let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
-            provider_model_id: provider_model_id_for_den_handle(&handle),
+            api_style: den_llm::preferred_api_style_for_model(&handle),
+            provider_model_id,
             handle,
             source: "profile_default",
         });
@@ -182,16 +189,20 @@ async fn resolve_pair_run_model(
         .filter(|model| !model.is_empty())
     {
         let handle = den_llm::normalize_llm_model_handle(model);
+        let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
-            provider_model_id: provider_model_id_for_den_handle(&handle),
+            api_style: den_llm::preferred_api_style_for_model(&handle),
+            provider_model_id,
             handle,
             source: "bear_default",
         });
     }
 
     let handle = den_llm::normalize_llm_model_handle(&state.config.default_llm_model);
+    let provider_model_id = provider_model_id_for_den_handle(&handle);
     Ok(ResolvedRunModel {
-        provider_model_id: provider_model_id_for_den_handle(&handle),
+        api_style: den_llm::preferred_api_style_for_model(&handle),
+        provider_model_id,
         handle,
         source: "system_default",
     })
@@ -204,11 +215,20 @@ async fn preflight_pair_run_model(
     conversation_id: &str,
 ) -> Result<ResolvedRunModel, CustomError> {
     let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
-    let available = state.bifrost.list_available_models().await.map_err(|err| {
-        CustomError::System(format!(
-            "could not verify Bifrost model availability before starting Pair run: {err}"
-        ))
+    let snapshot = state.bifrost_catalog.read().map_err(|_| {
+        CustomError::System(
+            "could not read Bifrost model catalog snapshot before starting Pair run".to_string(),
+        )
     })?;
+    let available = snapshot.models_vec();
+    let catalog_entry = snapshot.resolve(&resolved.handle);
+    let resolved = ResolvedRunModel {
+        api_style: den_llm::preferred_api_style_for_model_with_catalog_support(
+            &resolved.handle,
+            catalog_entry.and_then(|entry| entry.supports_responses_api),
+        ),
+        ..resolved
+    };
     if available
         .iter()
         .any(|model| available_model_matches(model, &resolved))
@@ -220,6 +240,9 @@ async fn preflight_pair_run_model(
             model_handle = %resolved.handle,
             provider_model_id = %resolved.provider_model_id,
             model_selection_source = resolved.source,
+            api_style = %resolved.api_style.as_str(),
+            catalog_stale = snapshot.stale,
+            catalog_fetched_at = ?snapshot.fetched_at,
             "BearWire model preflight passed"
         );
         return Ok(resolved);
@@ -232,14 +255,18 @@ async fn preflight_pair_run_model(
         model_handle = %resolved.handle,
         provider_model_id = %resolved.provider_model_id,
         model_selection_source = resolved.source,
+        api_style = %resolved.api_style.as_str(),
         available_models = %available_model_sample(&available),
+        catalog_stale = snapshot.stale,
+        catalog_fetched_at = ?snapshot.fetched_at,
         "BearWire model preflight failed"
     );
     Err(CustomError::ValidationError(format!(
-        "selected Pair model {} is not currently available from Bifrost for BearWire runs (provider model id: {}; selection source: {}; available sample: {})",
+        "selected Pair model {} is not currently available from Bifrost catalog snapshot for BearWire runs (provider model id: {}; selection source: {}; catalog stale: {}; available sample: {})",
         resolved.handle,
         resolved.provider_model_id,
         resolved.source,
+        snapshot.stale,
         available_model_sample(&available),
     )))
 }
@@ -704,7 +731,7 @@ pub(crate) async fn run_start_result(
         binding_id,
         compatibility_backend: Some("native".to_string()),
     };
-    let _resolved_model =
+    let resolved_model =
         preflight_pair_run_model(&state, &bear, &session_id, &upstream_target).await?;
     acp_sessions::upsert_session(
         &state.sqlx_pool,
@@ -760,6 +787,7 @@ pub(crate) async fn run_start_result(
     let prompt_for_task = prompt.clone();
     let run_id_for_task = run_id.clone();
     let client_tools_for_task = client_tools.clone();
+    let api_style_for_task = resolved_model.api_style;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         let mut eager_prefix_tx = Some(eager_prefix_tx);
@@ -847,6 +875,7 @@ pub(crate) async fn run_start_result(
             runtime_context: None,
             runtime_context_len: 0,
             stream_tokens: true,
+            api_style: Some(api_style_for_task),
         })
         .await;
 
@@ -1102,6 +1131,7 @@ mod tests {
         let resolved = ResolvedRunModel {
             handle: "openai/gpt-5.5".to_string(),
             provider_model_id: "gpt-5.5".to_string(),
+            api_style: den_llm::LlmApiStyle::ResponsesStream,
             source: "conversation_explicit",
         };
 

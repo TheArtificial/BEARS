@@ -259,7 +259,7 @@ pub async fn admin_bear_new_form_context(state: &AppState, form: &NewBearForm) -
     }
 }
 
-fn model_option_from_bifrost_metadata(
+pub(crate) fn model_option_from_bifrost_metadata(
     model: den_service::bifrost::BifrostModelMetadata,
 ) -> ModelOption {
     den_llm::model_registry::model_option_for_available_handle(
@@ -278,28 +278,30 @@ pub async fn all_model_catalog_options_context(
         return (false, Vec::new(), None);
     }
 
-    match state.bifrost.list_available_models().await {
-        Ok(models) if models.is_empty() => (
-            true,
-            Vec::new(),
-            Some("Bifrost returned no available models.".into()),
-        ),
-        Ok(models) => {
-            let mut options = models
-                .into_iter()
-                .map(model_option_from_bifrost_metadata)
-                .collect::<Vec<_>>();
-            options.sort_by(|a, b| a.label.cmp(&b.label));
-            (true, options, None)
+    let snapshot = match state.bifrost_catalog.read() {
+        Ok(snapshot) => snapshot.clone(),
+        Err(_) => {
+            return (
+                true,
+                Vec::new(),
+                Some("Could not read Bifrost model catalog snapshot.".into()),
+            );
         }
-        Err(e) => (
+    };
+    let models = snapshot.models_vec();
+    if models.is_empty() {
+        return (
             true,
             Vec::new(),
-            Some(format!(
-                "Could not load live models from Bifrost /v1/models: {e}."
-            )),
-        ),
+            Some("Bifrost model catalog snapshot is empty.".into()),
+        );
     }
+    let mut options = models
+        .into_iter()
+        .map(model_option_from_bifrost_metadata)
+        .collect::<Vec<_>>();
+    options.sort_by(|a, b| a.label.cmp(&b.label));
+    (true, options, None)
 }
 
 pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelOption> {
@@ -332,6 +334,21 @@ pub async fn model_catalog_select_context(
     } else {
         (true, curated, error)
     }
+}
+
+pub fn default_model_available_in_catalog(models: &[ModelOption], requested: &str) -> bool {
+    let requested = requested.trim();
+    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
+    models.iter().any(|model| {
+        if model.handle == requested {
+            return true;
+        }
+        let Some(resolved) = requested_resolved else {
+            return false;
+        };
+        resolved == model.handle
+            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
+    })
 }
 
 pub fn validate_default_model_for_catalog(
@@ -368,21 +385,7 @@ pub fn validate_default_model_for_catalog(
                 );
                 return;
             }
-            let requested = default_model_trim.trim();
-            let requested_resolved =
-                den_llm::model_registry::resolve_model_handle(requested);
-            let available = models.iter().any(|model| {
-                if model.handle == requested {
-                    return true;
-                }
-                let Some(resolved) = requested_resolved else {
-                    return false;
-                };
-                resolved == model.handle
-                    || den_llm::model_registry::resolve_model_handle(&model.handle)
-                        == Some(resolved)
-            });
-            if !available {
+            if !default_model_available_in_catalog(models, default_model_trim) {
                 validation_errors.add(
                     "default_model",
                     ValidationError::new("Pick a model currently available in Bifrost."),

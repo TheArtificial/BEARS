@@ -295,20 +295,28 @@ async fn gather_status(state: &AppState) -> StatusPayload {
 }
 
 async fn gather_model_registry_status(state: &AppState) -> ModelRegistryStatus {
-    match state.bifrost.list_available_models().await {
-        Ok(models) => {
-            let handles = models
+    match state.bifrost_catalog.read() {
+        Ok(snapshot) => {
+            let handles = snapshot
+                .models_vec()
                 .into_iter()
                 .map(|model| model.handle)
                 .collect::<Vec<_>>();
+            let gateway_error = if snapshot.models.is_empty() {
+                Some("Bifrost model catalog snapshot is empty.".to_string())
+            } else if snapshot.stale {
+                Some("Bifrost model catalog snapshot is stale; using last known values.".to_string())
+            } else {
+                None
+            };
             ModelRegistryStatus {
                 report: model_registry::gateway_compatibility_report(handles),
-                gateway_error: None,
+                gateway_error,
             }
         }
-        Err(error) => ModelRegistryStatus {
+        Err(_) => ModelRegistryStatus {
             report: model_registry::gateway_compatibility_report(Vec::<String>::new()),
-            gateway_error: Some(error.to_string()),
+            gateway_error: Some("Could not read Bifrost model catalog snapshot.".to_string()),
         },
     }
 }

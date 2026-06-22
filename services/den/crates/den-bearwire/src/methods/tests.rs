@@ -40,12 +40,28 @@ fn test_state(pool: sqlx::PgPool) -> DenState {
 
 fn test_state_with_config(pool: sqlx::PgPool, config: den_core::config::Config) -> DenState {
     let config = std::sync::Arc::new(config);
-    DenState::new(
+    let state = DenState::new(
         pool,
         config.clone(),
         std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
         den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
-    )
+    );
+    let snapshot = den_service::bifrost::BifrostCatalogSnapshot::from_available_models(vec![
+        den_service::bifrost::BifrostModelMetadata {
+            handle: den_llm::normalize_llm_model_handle(&config.default_llm_model),
+            provider: "openai".to_string(),
+            model: config.default_llm_model.trim().to_string(),
+            display_name: Some("BearWire test model".to_string()),
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            enabled: true,
+            supports_tools: Some(true),
+            supports_responses_api: Some(false),
+            supports_vision: Some(false),
+        },
+    ]);
+    *state.bifrost_catalog.write().expect("catalog lock") = snapshot;
+    state
 }
 
 async fn create_test_user(pool: &sqlx::PgPool) -> i32 {

@@ -108,6 +108,7 @@ pub struct AppState {
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
     pub bifrost: std::sync::Arc<den_service::bifrost::BifrostClient>,
+    pub bifrost_catalog: den_service::bifrost::BifrostCatalogStore,
     pub web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
@@ -146,6 +147,7 @@ impl AppState {
             asset_router: Arc::new(Router::new()),
             config,
             bifrost,
+            bifrost_catalog: den_service::bifrost::new_catalog_store(),
             web_chat_runtime,
             media: None,
         }
@@ -232,6 +234,14 @@ pub async fn server_with_state_and_runtime(
         MemoryServe::new(load_assets!("src/assets")).cache_control(CacheControl::Short);
 
     let bifrost = std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref()));
+    let bifrost_catalog = den_service::bifrost::new_catalog_store();
+    {
+        let bifrost = bifrost.clone();
+        let catalog = bifrost_catalog.clone();
+        tokio::spawn(async move {
+            bifrost.warm_model_catalog(&catalog).await;
+        });
+    }
 
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
@@ -241,6 +251,7 @@ pub async fn server_with_state_and_runtime(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             bifrost,
+            bifrost_catalog,
             web_chat_runtime,
             media,
         },

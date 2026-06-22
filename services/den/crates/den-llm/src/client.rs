@@ -372,16 +372,21 @@ fn chat_message_to_responses_input_items(message: &ChatMessage) -> Vec<Value> {
 }
 
 pub fn preferred_api_style_for_model(model: &str) -> LlmApiStyle {
-    let model = normalize_llm_model_handle(model);
-    // Prefer the gateway's live capability from the Bifrost `/v1/models` catalog.
-    if let Some(supports_responses) = model_registry::catalog_supports_responses_api(&model) {
-        return if supports_responses {
+    preferred_api_style_for_model_with_catalog_support(model, None)
+}
+
+pub fn preferred_api_style_for_model_with_catalog_support(
+    model: &str,
+    supports_responses_api: Option<bool>,
+) -> LlmApiStyle {
+    if let Some(supports_responses_api) = supports_responses_api {
+        return if supports_responses_api {
             LlmApiStyle::ResponsesStream
         } else {
             LlmApiStyle::ChatCompletionsStream
         };
     }
-    // Fallback before the catalog has been observed (e.g. early startup).
+    let model = normalize_llm_model_handle(model);
     if model == "openai/gpt-5.5" || model.ends_with("/gpt-5.5") {
         LlmApiStyle::ResponsesStream
     } else {
@@ -823,17 +828,13 @@ mod tests {
     }
 
     #[test]
-    fn preferred_api_style_uses_catalog_when_observed() {
-        // Synthetic handles keep this independent of other tests' global state.
-        model_registry::record_catalog_responses_api_support("vendor/style-yes", Some(true));
-        model_registry::record_catalog_responses_api_support("vendor/style-no", Some(false));
-
+    fn preferred_api_style_uses_explicit_catalog_support() {
         assert_eq!(
-            preferred_api_style_for_model("vendor/style-yes"),
+            preferred_api_style_for_model_with_catalog_support("vendor/style-yes", Some(true)),
             LlmApiStyle::ResponsesStream
         );
         assert_eq!(
-            preferred_api_style_for_model("vendor/style-no"),
+            preferred_api_style_for_model_with_catalog_support("vendor/style-no", Some(false)),
             LlmApiStyle::ChatCompletionsStream
         );
     }

@@ -132,7 +132,7 @@ pub(in crate::acp) fn runtime_terminal_events(
             context: runtime_context,
         }) => {
             let terminal_request_id = upstream_request_id
-                
+
                 .unwrap_or_else(|| request_id.to_string());
             Some(vec![
                 GatewayEvent::Error {
@@ -381,7 +381,7 @@ impl AcpRuntimeSseStream {
         let mut turn_controller = TurnController::new();
         turn_controller.set_client_label(context.client.clone());
         turn_controller.on_stream_started();
-        
+
         Self {
             inner: Box::pin(inner),
             pending,
@@ -853,6 +853,7 @@ impl Stream for AcpRuntimeSseStream {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),
                                     bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                                    bifrost_catalog: den_service::bifrost::new_catalog_store(),
                                     tool_turns: this.context.tool_turns.clone(),
                                     acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                                     memory_stores: this.context.memory_stores.clone(),
@@ -1054,6 +1055,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
+                        bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
@@ -1114,6 +1116,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                        bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
@@ -1149,6 +1152,7 @@ impl Stream for AcpRuntimeSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: this.context.config.clone(),
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                        bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
@@ -1162,7 +1166,7 @@ impl Stream for AcpRuntimeSseStream {
                                 bear_id,
                                 pair_agent_id,
                                 run_ids,
-                                reason: "orphaned_requires_approval_stop",
+                                reason: "requires_approval_without_tool_obligation",
                                 request_id,
                             },
                         )

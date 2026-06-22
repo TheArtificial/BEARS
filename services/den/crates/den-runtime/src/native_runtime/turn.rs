@@ -243,6 +243,7 @@ async fn build_session(
     request_id: Option<Uuid>,
     run_id: Option<&str>,
     stream_tokens: bool,
+    api_style: Option<crate::llm::LlmApiStyle>,
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, DenError> {
     let llm = LlmClient::new(deps.config);
@@ -322,6 +323,7 @@ async fn build_session(
         messages,
         tools,
         model,
+        api_style,
         step: 0,
         max_steps: profile.max_steps,
         strategy: profile.strategy,
@@ -362,6 +364,7 @@ pub async fn run_native_profile_turn_collect_assistant_text(
         None,
         None,
         false,
+        None,
         Vec::new(),
     )
     .await?;
@@ -421,6 +424,7 @@ pub async fn start_native_web_chat_turn_event_stream(
         Some(params.request_id),
         None,
         true,
+        None,
         Vec::new(),
     )
     .await?;
@@ -507,6 +511,7 @@ pub async fn start_native_profile_turn_event_stream(
         Some(request.request_id),
         request.run_id,
         request.stream_tokens,
+        request.api_style,
         Vec::new(),
     )
     .await?;

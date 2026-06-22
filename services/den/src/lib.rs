@@ -157,18 +157,6 @@ pub async fn run() -> Result<(), StartupError> {
         "Loaded configuration",
     );
 
-    // Eagerly warm the Bifrost model catalog so LLM request routing
-    // (`preferred_api_style_for_model`) reflects gateway-advertised Responses-API
-    // support from the first request. Best-effort and non-blocking.
-    {
-        let config = config.clone();
-        tokio::spawn(async move {
-            den_service::bifrost::BifrostClient::new(config.as_ref())
-                .warm_model_catalog()
-                .await;
-        });
-    }
-
     let mut services = Vec::new();
     if config.run_web {
         services.push("web");

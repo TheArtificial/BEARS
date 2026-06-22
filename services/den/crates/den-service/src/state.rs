@@ -13,7 +13,8 @@ use sqlx::PgPool;
 use den_core::config::Config;
 
 use crate::{
-    bifrost::BifrostClient, tool_turns::ToolTurnCoordinator,
+    bifrost::{new_catalog_store, BifrostCatalogStore, BifrostClient},
+    tool_turns::ToolTurnCoordinator,
     turn_controller::ActiveTurnCancelRegistry,
 };
 use den_memory::MemoryStoreManager;
@@ -31,6 +32,8 @@ pub struct DenState {
     pub config: Arc<Config>,
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
+    /// Shared runtime model catalog snapshot.
+    pub bifrost_catalog: BifrostCatalogStore,
     /// Process-local active direct tool turns.
     pub tool_turns: ToolTurnCoordinator,
     /// Process-local active stream cancellation signals.
@@ -53,6 +56,7 @@ impl DenState {
             sqlx_pool,
             config,
             bifrost,
+            bifrost_catalog: new_catalog_store(),
             tool_turns: ToolTurnCoordinator::new(),
             acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
             memory_stores,

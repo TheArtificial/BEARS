@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
-use crate::{core::user::db as user_db, errors::CustomError, web::AppState};
+use crate::{
+    core::user::db as user_db,
+    errors::CustomError,
+    web::{bear_create_support, AppState},
+};
 use den_service::bears::{
     db::{self as bears_db, BearParams, MembershipRow},
     model::Bear,
@@ -73,6 +77,31 @@ async fn create_bear(
             "bear slug already exists".to_string(),
         ));
     }
+    let default_model = body
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(model) = default_model {
+        let catalog_models = state
+            .bifrost_catalog
+            .read()
+            .map_err(|_| CustomError::System("could not read Bifrost model catalog snapshot".to_string()))?
+            .models_vec()
+            .into_iter()
+            .map(bear_create_support::model_option_from_bifrost_metadata)
+            .collect::<Vec<_>>();
+        if catalog_models.is_empty() {
+            return Err(CustomError::ValidationError(
+                "Bifrost model catalog snapshot is empty; cannot validate default_model".to_string(),
+            ));
+        }
+        if !bear_create_support::default_model_available_in_catalog(&catalog_models, model) {
+            return Err(CustomError::ValidationError(format!(
+                "default_model `{model}` is not currently available in Bifrost"
+            )));
+        }
+    }
     let _legacy_tools_enabled = body.tools_enabled;
     let _legacy_agent_type = body.letta_agent_type;
     let _legacy_tool_ids = body.letta_tool_ids;
@@ -83,11 +112,7 @@ async fn create_bear(
             name: body.name.trim(),
             description: body.description.trim(),
             system_prompt: body.system_prompt.trim(),
-            default_model: body
-                .default_model
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
+            default_model,
             tools_enabled: None,
             letta_agent_type: None,
             letta_tool_ids: SqlxJson(Vec::new()),

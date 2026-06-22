@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 production = ["den-core/production", "den-protocol/production"]
-test-util = []
+test-util = ["den-core/test-util"]
 
 [dependencies]
 den-core = { path = "../den-core" }
@@ -29,3 +29,6 @@ time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", default-features = false, features = ["sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }

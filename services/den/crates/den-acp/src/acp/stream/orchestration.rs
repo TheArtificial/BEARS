@@ -194,6 +194,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
             runtime_context: Some(setup.turn_runtime_context.as_str()),
             runtime_context_len: setup.turn_runtime_context.len(),
             stream_tokens: setup.stream_tokens,
+            api_style: None,
         },
     )
     .await

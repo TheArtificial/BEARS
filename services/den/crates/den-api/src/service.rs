@@ -104,6 +104,13 @@ pub async fn create_api_app(
         Arc::new(BifrostClient::new(config.as_ref())),
         MemoryStoreManager::new(config.as_ref()),
     );
+    {
+        let bifrost = api_state.bifrost.clone();
+        let catalog = api_state.bifrost_catalog.clone();
+        tokio::spawn(async move {
+            bifrost.warm_model_catalog(&catalog).await;
+        });
+    }
 
     // Create OAuth state (separate from main API state for OAuth endpoints)
     let oauth_state = OAuthState::new(sqlx_pool.clone(), web_server_url, api_server_url);
