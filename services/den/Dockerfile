@@ -4,11 +4,9 @@ ARG RUST_VERSION=1.92.0
 
 FROM rust:${RUST_VERSION}-alpine AS build
 ARG APP_NAME=den
-ARG GIT_SHA=
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
 ARG CARGO_BUILD_JOBS=2
-ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app
 RUN apk add --no-cache clang lld musl-dev git
 

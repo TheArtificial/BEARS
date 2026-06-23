@@ -15,7 +15,7 @@ pub struct VersionBody {
     /// otherwise from when `build.rs` last ran (`SOURCE_DATE_EPOCH` overrides for reproducible builds).
     pub built_at_utc: String,
     /// Git commit from runtime override (`DEN_GIT_SHA_OVERRIDE`, `GIT_SHA`, or `SOURCE_COMMIT`) when present,
-    /// otherwise the compile-time `GIT_SHA` build-arg baked by `build.rs`.
+    /// otherwise the stable compile-time fallback emitted by `build.rs`.
     pub git_sha: String,
 }
 
