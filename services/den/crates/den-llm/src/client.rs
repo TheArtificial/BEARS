@@ -604,7 +604,6 @@ impl LlmClient {
             conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
             bear_id = request.telemetry.as_ref().and_then(|t| t.bear_id.as_deref()),
             stance = request.telemetry.as_ref().and_then(|t| t.stance.as_deref()),
-            x_model_affinity = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
             message_chain_diagnostic = %message_chain_diagnostic,
             "LLM chat/completions request starting"
         );
@@ -621,8 +620,11 @@ impl LlmClient {
             );
             req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
             req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
-            req =
-                apply_optional_header(req, "x-model-affinity", telemetry.field("conversation_id"));
+            // Bifrost session stickiness: keep a conversation pinned to the same
+            // upstream/model for cache locality. This is a routing *hint* keyed on a
+            // stable session id, not a model/key constraint (unlike x-model-affinity,
+            // which rejected a non-model value with "no keys found").
+            req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
         }
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -669,7 +671,6 @@ impl LlmClient {
             run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
             session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
             conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-            x_model_affinity = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
             "LLM chat/completions response headers received"
         );
         Ok(resp)
@@ -712,8 +713,11 @@ impl LlmClient {
             );
             req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
             req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
-            req =
-                apply_optional_header(req, "x-model-affinity", telemetry.field("conversation_id"));
+            // Bifrost session stickiness: keep a conversation pinned to the same
+            // upstream/model for cache locality. This is a routing *hint* keyed on a
+            // stable session id, not a model/key constraint (unlike x-model-affinity,
+            // which rejected a non-model value with "no keys found").
+            req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
         }
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
