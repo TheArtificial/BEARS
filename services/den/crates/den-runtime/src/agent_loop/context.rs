@@ -241,9 +241,6 @@ pub fn repair_tool_call_message_chain(messages: Vec<ChatMessage>) -> Vec<ChatMes
             let mut has_legacy_synthetic = false;
             while index < messages.len() && messages[index].role == "tool" {
                 let tool_message = messages[index].clone();
-                if is_legacy_synthetic_interrupted_tool_result(tool_message.content.as_deref()) {
-                    has_legacy_synthetic = true;
-                }
                 let Some(tool_call_id) = tool_message.tool_call_id.as_deref() else {
                     tracing::debug!("dropping tool message without tool_call_id from LLM context");
                     index += 1;
@@ -257,6 +254,17 @@ pub fn repair_tool_call_message_chain(messages: Vec<ChatMessage>) -> Vec<ChatMes
                     );
                     index += 1;
                     continue;
+                }
+                if resolved_ids.contains(tool_call_id) {
+                    tracing::debug!(
+                        tool_call_id,
+                        "dropping duplicate tool message from LLM context"
+                    );
+                    index += 1;
+                    continue;
+                }
+                if is_legacy_synthetic_interrupted_tool_result(tool_message.content.as_deref()) {
+                    has_legacy_synthetic = true;
                 }
                 if tool_message_counts_toward_llm_resolution(tool_message.content.as_deref()) {
                     resolved_ids.insert(tool_call_id.to_string());
@@ -649,6 +657,45 @@ mod tests {
         assert_eq!(repaired[0].role, "assistant");
         assert_eq!(repaired[1].role, "tool");
         assert_eq!(repaired[1].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn repair_tool_call_message_chain_drops_duplicate_tool_results() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: "call_1".to_string(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "fs_list_directory".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("first".to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: Some("fs_list_directory".to_string()),
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("duplicate".to_string()),
+                tool_call_id: Some("call_1".to_string()),
+                name: Some("fs_list_directory".to_string()),
+                tool_calls: None,
+            },
+        ];
+        let repaired = repair_tool_call_message_chain(messages);
+        assert_eq!(repaired.len(), 2);
+        assert_eq!(repaired[0].role, "assistant");
+        assert_eq!(repaired[1].role, "tool");
+        assert_eq!(repaired[1].content.as_deref(), Some("first"));
     }
 
     #[test]

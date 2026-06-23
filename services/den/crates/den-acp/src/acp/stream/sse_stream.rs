@@ -10,29 +10,29 @@ use bytes::Bytes;
 use futures::{Future, Stream};
 
 use crate::{
+    acp::types::PersistedToolRequestEffect,
     acp::{
         acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
-        continue_acp_turn_with_runtime, looks_like_runtime_waiting_for_approval_error,
-        map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-        mode_from_den_tool_result, plan_update_from_den_tool_result,
-        ActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
-        AcpStaleRuntimeCleanupParams, AcpStreamContext, TurnContinueRequest,
-        RoleRuntimeBinding, default_tool_continue_stream_context,
+        continue_acp_turn_with_runtime, default_tool_continue_stream_context,
+        looks_like_runtime_waiting_for_approval_error,
+        map_runtime_stream_event_to_acp_adapter_events_with_persistence, mode_from_den_tool_result,
+        plan_update_from_den_tool_result, AcpPendingFuture, AcpResolvedToolResult,
+        AcpStaleRuntimeCleanupParams, AcpStreamContext, ActiveTurnCancelHandle, RoleRuntimeBinding,
+        TurnContinueRequest,
     },
-    acp::types::PersistedToolRequestEffect,
-    service::DenState,
     core::tools::descriptor::den_tool_completion_status_text,
+    service::DenState,
 };
 use den_http::errors::{CustomError, DenError};
 use den_runtime::{
+    agent_assist::normalize_display_status_text,
+    bifrost::BifrostClient,
     gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
-    tool_turns::ToolResultRequest,
-    turn_controller::{ActiveTurnCancelRegistry, TurnController, TurnPhase},
     role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
     runtime_contracts::RuntimeConversationRef,
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
-    bifrost::BifrostClient,
-    agent_assist::normalize_display_status_text,
+    tool_turns::ToolResultRequest,
+    turn_controller::{ActiveTurnCancelRegistry, TurnController, TurnPhase},
 };
 
 use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
@@ -41,17 +41,12 @@ use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
 const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
 
 pub(in crate::acp) struct AcpRuntimeSseStream {
-    pub(in crate::acp) inner: Pin<
-        Box<
-            dyn Stream<Item = Result<den_protocol::RuntimeStreamEvent, CustomError>>
-                + Send,
-        >,
-    >,
+    pub(in crate::acp) inner:
+        Pin<Box<dyn Stream<Item = Result<den_protocol::RuntimeStreamEvent, CustomError>> + Send>>,
     pub(in crate::acp) pending: VecDeque<Bytes>,
     pub(in crate::acp) context: AcpStreamContext,
     pub(in crate::acp) assistant_text_buffer: String,
-    pub(in crate::acp) waiting_adapter_tool_result:
-        Option<(String, String, AcpResolvedToolResult)>,
+    pub(in crate::acp) waiting_adapter_tool_result: Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::acp) queued_tool_result_continuation: Option<ToolResultRequest>,
     pub(in crate::acp) diagnostics: AcpStreamDiagnostics,
     pub(in crate::acp) logged_summary: bool,
@@ -59,8 +54,7 @@ pub(in crate::acp) struct AcpRuntimeSseStream {
     pub(in crate::acp) session_info_event_sent: bool,
     pub(in crate::acp) text_chunker: AcpTextChunker,
     pub(in crate::acp) active_turn_guard: Option<RoleTurnGuard>,
-    pub(in crate::acp) parked_adapter_result_rx:
-        Option<(String, String, AcpResolvedToolResult)>,
+    pub(in crate::acp) parked_adapter_result_rx: Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::acp) cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     pub(in crate::acp) cancel_handle: Option<ActiveTurnCancelHandle>,
     pub(in crate::acp) turn_controller: TurnController,
@@ -76,30 +70,32 @@ pub(in crate::acp) fn runtime_terminal_events(
     acp_session_id: &str,
 ) -> Option<Vec<GatewayEvent>> {
     match event {
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => Some(vec![
-            GatewayEvent::Error {
-                message,
-                detail: None,
-                error_type: Some("runtime_turn_failed".to_string()),
-                request_id: Some(request_id.to_string()),
-                context: Some(serde_json::json!({
-                    "component": "den.acp",
-                    "acp_session_id": acp_session_id,
-                })),
-            },
-            GatewayEvent::TurnResult {
-                status: "failed".to_string(),
-                reason: "runtime_cleanup".to_string(),
-                request_id: Some(request_id.to_string()),
-                session_id: Some(acp_session_id.to_string()),
-                retryable: false,
-                diagnostics: serde_json::json!({
-                    "component": "den.acp",
-                    "source": "runtime_stream_event",
-                    "event": "turn_failed",
-                }),
-            },
-        ]),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
+            Some(vec![
+                GatewayEvent::Error {
+                    message,
+                    detail: None,
+                    error_type: Some("runtime_turn_failed".to_string()),
+                    request_id: Some(request_id.to_string()),
+                    context: Some(serde_json::json!({
+                        "component": "den.acp",
+                        "acp_session_id": acp_session_id,
+                    })),
+                },
+                GatewayEvent::TurnResult {
+                    status: "failed".to_string(),
+                    reason: "runtime_cleanup".to_string(),
+                    request_id: Some(request_id.to_string()),
+                    session_id: Some(acp_session_id.to_string()),
+                    retryable: false,
+                    diagnostics: serde_json::json!({
+                        "component": "den.acp",
+                        "source": "runtime_stream_event",
+                        "event": "turn_failed",
+                    }),
+                },
+            ])
+        }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => Some(vec![
             GatewayEvent::Error {
                 message: "Runtime continuation was cancelled.".to_string(),
@@ -131,19 +127,19 @@ pub(in crate::acp) fn runtime_terminal_events(
             request_id: upstream_request_id,
             context: runtime_context,
         }) => {
-            let terminal_request_id = upstream_request_id
-
-                .unwrap_or_else(|| request_id.to_string());
+            let terminal_request_id = upstream_request_id.unwrap_or_else(|| request_id.to_string());
             Some(vec![
                 GatewayEvent::Error {
                     message,
                     detail,
                     error_type,
                     request_id: Some(terminal_request_id.clone()),
-                    context: runtime_context.or_else(|| Some(serde_json::json!({
-                        "component": "den.acp",
-                        "acp_session_id": acp_session_id,
-                    }))),
+                    context: runtime_context.or_else(|| {
+                        Some(serde_json::json!({
+                            "component": "den.acp",
+                            "acp_session_id": acp_session_id,
+                        }))
+                    }),
                 },
                 GatewayEvent::TurnResult {
                     status: "failed".to_string(),
@@ -247,12 +243,7 @@ impl AcpRuntimeSseStream {
 
     fn emit_status_heartbeat(&mut self) {
         let update = self.turn_controller.heartbeat_status_update();
-        self.enqueue_adapter_event(
-            GatewayEvent::StatusText {
-                text: update.text,
-            },
-            false,
-        );
+        self.enqueue_adapter_event(GatewayEvent::StatusText { text: update.text }, false);
     }
 
     fn ensure_status_heartbeat_scheduled(&mut self) {
@@ -339,10 +330,7 @@ impl AcpRuntimeSseStream {
         self.push_adapter_event(event);
     }
 
-    pub(in crate::acp) fn push_terminal_result_when_ready(
-        &mut self,
-        role_result: RoleTurnResult,
-    ) {
+    pub(in crate::acp) fn push_terminal_result_when_ready(&mut self, role_result: RoleTurnResult) {
         if self.controller_allows_terminal() {
             self.push_terminal_result_now(role_result);
             return;
@@ -413,12 +401,7 @@ impl AcpRuntimeSseStream {
 
     fn push_turn_status_update(&mut self) {
         if let Some(update) = self.turn_controller.take_status_update() {
-            self.enqueue_adapter_event(
-                GatewayEvent::StatusText {
-                    text: update.text,
-                },
-                false,
-            );
+            self.enqueue_adapter_event(GatewayEvent::StatusText { text: update.text }, false);
         }
     }
 
@@ -439,6 +422,94 @@ impl AcpRuntimeSseStream {
         self.cancel_handle = Some(handle);
         self.cancel_rx = Some(cancel_rx);
         self
+    }
+
+    fn start_queued_tool_result_continuation(&mut self) -> bool {
+        let Some(tool_result) = self.queued_tool_result_continuation.take() else {
+            return false;
+        };
+        tracing::info!(
+            request_id = %self.context.request_id,
+            acp_session_id = %self.context.acp_session_id,
+            tool_call_id = tool_result.tool_call_id.as_deref().unwrap_or("<missing>"),
+            controller_phase = ?self.turn_controller.phase(),
+            controller_open_obligations = self.turn_controller.status_snapshot().open_obligations,
+            outstanding_tool_call_ids = ?self.outstanding_tool_obligations(),
+            "ACP starting runtime continuation for queued tool result"
+        );
+        let prepared_continuation =
+            match den_service::tool_turns::ToolTurnCoordinator::prepare_runtime_continuation(
+                &tool_result,
+            ) {
+                Ok(prepared) => prepared,
+                Err(
+                    den_service::tool_turns::PrepareRuntimeContinuationError::MissingToolCallId {
+                        display_tool_name,
+                    },
+                ) => {
+                    self.pending.push_back(gateway_event_to_adapter_sse(
+                    GatewayEvent::Error {
+                        message: "Cannot continue runtime after ACP tool result without original tool_call_id.".to_string(),
+                        detail: Some(format!(
+                            "Tool result for {display_tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."
+                        )),
+                        error_type: Some("missing_tool_call_id".to_string()),
+                        request_id: Some(self.context.request_id.to_string()),
+                        context: None,
+                    },
+                ));
+                    return true;
+                }
+            };
+        self.diagnostics.saw_tool_return_ack = true;
+        let config = self.context.config.clone();
+        let api_state = DenState {
+            sqlx_pool: self.context.pool.clone(),
+            config: config.clone(),
+            bifrost: Arc::new(BifrostClient::new(config.as_ref())),
+            bifrost_catalog: den_service::bifrost::new_catalog_store(),
+            tool_turns: self.context.tool_turns.clone(),
+            acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+            memory_stores: self.context.memory_stores.clone(),
+        };
+        let binding = RoleRuntimeBinding {
+            binding_id: self.context.pair_agent_id.clone(),
+            compatibility_backend: Some("runtime:native".to_string()),
+        };
+        let request_id = self.context.request_id;
+        let acp_session_id = self.context.acp_session_id.clone();
+        let continuation_request = prepared_continuation.continuation;
+        let stream_context = default_tool_continue_stream_context();
+        let continuation_conversation = RuntimeConversationRef {
+            id: self
+                .context
+                .resolved_conversation_id
+                .clone()
+                .unwrap_or_else(|| self.context.conversation_id.clone()),
+        };
+        self.persist_future = Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
+            let prepared = continue_acp_turn_with_runtime(TurnContinueRequest {
+                sqlx_pool: &api_state.sqlx_pool,
+                config: &api_state.config,
+                memory_stores: &api_state.memory_stores,
+                request_id,
+                run_id: None,
+                acp_session_id: &acp_session_id,
+                conversation: continuation_conversation,
+                binding: &binding,
+                continuation: continuation_request,
+                stream_context,
+            })
+            .await?;
+            let diagnostics = AcpStreamDiagnostics::resumed_continuation_defaults();
+            Ok((
+                prepared.0,
+                prepared.1,
+                std::sync::Arc::new(std::sync::Mutex::new(diagnostics)),
+            ))
+        })));
+        self.diagnostics.reset_for_resumed_continuation();
+        true
     }
 
     pub(in crate::acp) fn cleanup_active_tool_turns(&mut self) {
@@ -606,18 +677,21 @@ impl Stream for AcpRuntimeSseStream {
                                     .as_ref()
                                     .map(|handle| handle.record_run_id(run_id));
                             }
+                            let has_tool_effect = tool_effect.is_some();
                             if let Some(effect) = tool_effect.as_ref() {
                                 this.turn_controller.on_tool_request(
                                     effect.tool_call_id.clone(),
                                     effect.tool_name.clone(),
                                     effect.route.into(),
                                 );
-                                this.push_turn_status_update();
                             }
                             for event in events {
                                 for event in this.text_chunker.push(event) {
                                     this.push_adapter_event(event);
                                 }
+                            }
+                            if has_tool_effect {
+                                this.push_turn_status_update();
                             }
                             if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
                                 this.waiting_adapter_tool_result =
@@ -739,24 +813,28 @@ impl Stream for AcpRuntimeSseStream {
                             let acp_session_id = this.context.acp_session_id.clone();
                             let diagnostics_for_stream = diagnostics.clone();
                             let mut runtime_stream = Box::pin(stream);
-                            this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
-                                let mut queued_events = Vec::new();
-                                let mut saw_terminal_event = false;
-                                while let Some(item) = futures::StreamExt::next(&mut runtime_stream).await {
-                                    match item {
-                                        Ok(event) => {
-                                            if let Ok(mut guard) = diagnostics_for_stream.lock() {
-                                                guard.observe_runtime_event(&event);
-                                            }
-                                            if let Some(events) = runtime_terminal_events(
-                                                event.clone(),
-                                                &request_id,
-                                                &acp_session_id,
-                                            ) {
-                                                queued_events.extend(events);
-                                                saw_terminal_event = true;
-                                            } else {
-                                                match event {
+                            this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(
+                                async move {
+                                    let mut queued_events = Vec::new();
+                                    let mut saw_terminal_event = false;
+                                    while let Some(item) =
+                                        futures::StreamExt::next(&mut runtime_stream).await
+                                    {
+                                        match item {
+                                            Ok(event) => {
+                                                if let Ok(mut guard) = diagnostics_for_stream.lock()
+                                                {
+                                                    guard.observe_runtime_event(&event);
+                                                }
+                                                if let Some(events) = runtime_terminal_events(
+                                                    event.clone(),
+                                                    &request_id,
+                                                    &acp_session_id,
+                                                ) {
+                                                    queued_events.extend(events);
+                                                    saw_terminal_event = true;
+                                                } else {
+                                                    match event {
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
                                                     queued_events.push(GatewayEvent::AssistantTextDelta { text });
                                                 }
@@ -821,23 +899,42 @@ impl Stream for AcpRuntimeSseStream {
                                                     "runtime terminal events are handled before non-terminal match"
                                                 ),
                                                 }
+                                                }
+                                                if saw_terminal_event {
+                                                    break;
+                                                }
                                             }
-                                            if saw_terminal_event {
-                                                break;
+                                            Err(err) => {
+                                                return (
+                                                    Err::<
+                                                        (
+                                                            Vec<GatewayEvent>,
+                                                            Option<PersistedToolRequestEffect>,
+                                                            Option<(
+                                                                String,
+                                                                String,
+                                                                AcpResolvedToolResult,
+                                                            )>,
+                                                        ),
+                                                        std::io::Error,
+                                                    >(
+                                                        std::io::Error::other(err.to_string())
+                                                    ),
+                                                    AcpStreamDiagnostics::default(),
+                                                )
                                             }
                                         }
-                                        Err(err) => return (Err::<(Vec<GatewayEvent>, Option<PersistedToolRequestEffect>, Option<(String, String, AcpResolvedToolResult)>), std::io::Error>(std::io::Error::other(err.to_string())), AcpStreamDiagnostics::default()),
                                     }
-                                }
-                                let mut diagnostics = std::sync::Arc::try_unwrap(diagnostics)
-                                    .ok()
-                                    .and_then(|m| m.into_inner().ok())
-                                    .unwrap_or_default();
-                                for event in &queued_events {
-                                    diagnostics.observe_mapped_event(event, true);
-                                }
-                                (Ok((queued_events, None, None)), diagnostics)
-                            })));
+                                    let mut diagnostics = std::sync::Arc::try_unwrap(diagnostics)
+                                        .ok()
+                                        .and_then(|m| m.into_inner().ok())
+                                        .unwrap_or_default();
+                                    for event in &queued_events {
+                                        diagnostics.observe_mapped_event(event, true);
+                                    }
+                                    (Ok((queued_events, None, None)), diagnostics)
+                                },
+                            )));
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -856,7 +953,9 @@ impl Stream for AcpRuntimeSseStream {
                                 let cleanup_state = DenState {
                                     sqlx_pool: this.context.pool.clone(),
                                     config: this.context.config.clone(),
-                                    bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                                    bifrost: Arc::new(BifrostClient::new(
+                                        this.context.config.as_ref(),
+                                    )),
                                     bifrost_catalog: den_service::bifrost::new_catalog_store(),
                                     tool_turns: this.context.tool_turns.clone(),
                                     acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
@@ -937,6 +1036,15 @@ impl Stream for AcpRuntimeSseStream {
             return Poll::Ready(None);
         }
 
+        if this.pending.is_empty()
+            && this.queued_tool_result_continuation.is_some()
+            && this.outstanding_tool_obligations().is_empty()
+            && this.persist_future.is_none()
+            && this.start_queued_tool_result_continuation()
+        {
+            return self.poll_next(cx);
+        }
+
         match this.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(event))) => {
                 this.diagnostics.upstream_frames += 1;
@@ -957,8 +1065,9 @@ impl Stream for AcpRuntimeSseStream {
                 this.ensure_status_heartbeat_scheduled();
                 Poll::Pending
             }
-            Poll::Ready(None) if !this.outstanding_tool_obligations().is_empty()
-                || this.persist_future.is_some() =>
+            Poll::Ready(None)
+                if !this.outstanding_tool_obligations().is_empty()
+                    || this.persist_future.is_some() =>
             {
                 this.ensure_status_heartbeat_scheduled();
                 cx.waker().wake_by_ref();
@@ -1207,10 +1316,11 @@ impl Stream for AcpRuntimeSseStream {
                     }
                     if this.turn_controller.phase() != TurnPhase::Terminal {
                         this.turn_controller.on_stream_end();
-                        let compacted_retry = den_runtime::native_runtime::take_session_overflow_compaction_recovered(
-                            &this.context.conversation_id,
-                            &this.context.acp_session_id,
-                        );
+                        let compacted_retry =
+                            den_runtime::native_runtime::take_session_overflow_compaction_recovered(
+                                &this.context.conversation_id,
+                                &this.context.acp_session_id,
+                            );
                         let (status, reason, retryable) = if compacted_retry {
                             (
                                 TurnResultStatus::Recovered,
