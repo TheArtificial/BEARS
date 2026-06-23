@@ -409,6 +409,45 @@ fn apply_optional_header(
     req.header(HeaderName::from_static(name), value)
 }
 
+fn apply_bears_telemetry_headers(
+    mut req: reqwest::RequestBuilder,
+    telemetry: Option<&LlmRequestTelemetry>,
+) -> reqwest::RequestBuilder {
+    let Some(telemetry) = telemetry else {
+        return req;
+    };
+    req = apply_optional_header(req, "x-bears-request-id", telemetry.field("request_id"));
+    req = apply_optional_header(req, "x-bears-run-id", telemetry.field("run_id"));
+    req = apply_optional_header(req, "x-bears-session-id", telemetry.field("session_id"));
+    req = apply_optional_header(
+        req,
+        "x-bears-conversation-id",
+        telemetry.field("conversation_id"),
+    );
+    req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
+    apply_optional_header(req, "x-bears-stance", telemetry.field("stance"))
+}
+
+fn apply_bifrost_session_cache_headers(
+    mut req: reqwest::RequestBuilder,
+    telemetry: Option<&LlmRequestTelemetry>,
+) -> reqwest::RequestBuilder {
+    let Some(telemetry) = telemetry else {
+        return req;
+    };
+    // Bifrost session stickiness: keep a conversation pinned to the same
+    // upstream key via the documented x-bf-session-id header. Direct cache
+    // uses the same partition key and is forced to hash-only mode; no
+    // embeddings are required.
+    req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
+    req = apply_optional_header(req, "x-bf-cache-key", telemetry.field("conversation_id"));
+    apply_optional_header(req, "x-bf-cache-type", Some("direct"))
+}
+
+fn bifrost_key_selection_error(text: &str) -> bool {
+    text.contains("no keys found that support model")
+}
+
 struct TimedLlmByteStream {
     inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
     telemetry: Option<LlmRequestTelemetry>,
@@ -607,26 +646,10 @@ impl LlmClient {
             "LLM chat/completions request starting"
         );
         let started = Instant::now();
-        let mut req = self.http.post(&url).json(&request.to_body());
-        if let Some(telemetry) = request.telemetry.as_ref() {
-            req = apply_optional_header(req, "x-bears-request-id", telemetry.field("request_id"));
-            req = apply_optional_header(req, "x-bears-run-id", telemetry.field("run_id"));
-            req = apply_optional_header(req, "x-bears-session-id", telemetry.field("session_id"));
-            req = apply_optional_header(
-                req,
-                "x-bears-conversation-id",
-                telemetry.field("conversation_id"),
-            );
-            req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
-            req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
-            // Bifrost session stickiness: keep a conversation pinned to the same
-            // upstream key via the documented x-bf-session-id header. Direct cache
-            // uses the same partition key and is forced to hash-only mode; no
-            // embeddings are required.
-            req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
-            req = apply_optional_header(req, "x-bf-cache-key", telemetry.field("conversation_id"));
-            req = apply_optional_header(req, "x-bf-cache-type", Some("direct"));
-        }
+        let body = request.to_body();
+        let mut req = self.http.post(&url).json(&body);
+        req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+        req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
@@ -660,6 +683,39 @@ impl LlmClient {
                 conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
                 "LLM chat/completions returned error status"
             );
+            if bifrost_key_selection_error(&text) {
+                tracing::warn!(
+                    model = %request.model,
+                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                    "retrying LLM chat/completions once without Bifrost session/cache headers after key-selection error"
+                );
+                let mut retry_req = self.http.post(&url).json(&body);
+                retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
+                if !self.api_key.is_empty() {
+                    retry_req = retry_req.bearer_auth(&self.api_key);
+                }
+                let retry_resp = retry_req.send().await.map_err(|e| {
+                    DenError::System(format!(
+                        "LLM chat/completions retry without Bifrost session/cache headers failed: {e}; original HTTP {status}: {text}"
+                    ))
+                })?;
+                if retry_resp.status().is_success() {
+                    tracing::info!(
+                        model = %request.model,
+                        http_status = retry_resp.status().as_u16(),
+                        request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                        conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                        "LLM chat/completions retry without Bifrost session/cache headers succeeded"
+                    );
+                    return Ok(retry_resp);
+                }
+                let retry_status = retry_resp.status();
+                let retry_text = retry_resp.text().await.unwrap_or_default();
+                return Err(DenError::System(format!(
+                    "LLM chat/completions HTTP {retry_status}: {retry_text} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP {status}: {text})"
+                )));
+            }
             return Err(DenError::System(format!(
                 "LLM chat/completions HTTP {status}: {text}"
             )));
@@ -702,26 +758,10 @@ impl LlmClient {
             "LLM responses request starting"
         );
         let started = Instant::now();
-        let mut req = self.http.post(&url).json(&request.to_responses_body());
-        if let Some(telemetry) = request.telemetry.as_ref() {
-            req = apply_optional_header(req, "x-bears-request-id", telemetry.field("request_id"));
-            req = apply_optional_header(req, "x-bears-run-id", telemetry.field("run_id"));
-            req = apply_optional_header(req, "x-bears-session-id", telemetry.field("session_id"));
-            req = apply_optional_header(
-                req,
-                "x-bears-conversation-id",
-                telemetry.field("conversation_id"),
-            );
-            req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
-            req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
-            // Bifrost session stickiness: keep a conversation pinned to the same
-            // upstream key via the documented x-bf-session-id header. Direct cache
-            // uses the same partition key and is forced to hash-only mode; no
-            // embeddings are required.
-            req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
-            req = apply_optional_header(req, "x-bf-cache-key", telemetry.field("conversation_id"));
-            req = apply_optional_header(req, "x-bf-cache-type", Some("direct"));
-        }
+        let body = request.to_responses_body();
+        let mut req = self.http.post(&url).json(&body);
+        req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+        req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
@@ -753,6 +793,41 @@ impl LlmClient {
                 conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
                 "LLM responses returned error status"
             );
+            if bifrost_key_selection_error(&text) {
+                tracing::warn!(
+                    model_handle = %model_handle,
+                    api_style = %LlmApiStyle::ResponsesStream.as_str(),
+                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                    "retrying LLM responses once without Bifrost session/cache headers after key-selection error"
+                );
+                let mut retry_req = self.http.post(&url).json(&body);
+                retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
+                if !self.api_key.is_empty() {
+                    retry_req = retry_req.bearer_auth(&self.api_key);
+                }
+                let retry_resp = retry_req.send().await.map_err(|e| {
+                    DenError::System(format!(
+                        "LLM responses retry without Bifrost session/cache headers failed: {e}; original HTTP {status}: {text}"
+                    ))
+                })?;
+                if retry_resp.status().is_success() {
+                    tracing::info!(
+                        model_handle = %model_handle,
+                        api_style = %LlmApiStyle::ResponsesStream.as_str(),
+                        http_status = retry_resp.status().as_u16(),
+                        request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                        conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                        "LLM responses retry without Bifrost session/cache headers succeeded"
+                    );
+                    return Ok(retry_resp);
+                }
+                let retry_status = retry_resp.status();
+                let retry_text = retry_resp.text().await.unwrap_or_default();
+                return Err(DenError::System(format!(
+                    "LLM responses HTTP {retry_status}: {retry_text} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP {status}: {text})"
+                )));
+            }
             return Err(DenError::System(format!(
                 "LLM responses HTTP {status}: {text}"
             )));
