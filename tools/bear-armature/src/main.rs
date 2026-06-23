@@ -5158,12 +5158,7 @@ async fn handle_prompt_with_retry(
     }
 
     if !upstream_errors.is_empty() {
-        if saw_visible_output {
-            eprintln!(
-                "bear-armature: ignoring upstream error after visible output: {}",
-                upstream_errors.join("; ")
-            );
-        } else if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
+        if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
             eprintln!(
                 "bear-armature: suppressing recovery hint for cancellation session_id={} errors={}",
                 session_id,
@@ -5177,6 +5172,12 @@ async fn handle_prompt_with_retry(
             saw_visible_output = true;
             upstream_errors.clear();
         } else {
+            if saw_visible_output {
+                eprintln!(
+                    "bear-armature: upstream error arrived after visible output; surfacing as terminal ACP turn error: {}",
+                    upstream_errors.join("; ")
+                );
+            }
             let message = format!(
                 "BEARS upstream stream reported error: {}",
                 upstream_errors.join("; ")

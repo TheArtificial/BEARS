@@ -286,16 +286,9 @@ async fn preflight_pair_run_model(
         available_models = %available_model_sample(&available),
         catalog_stale = snapshot.stale,
         catalog_fetched_at = ?snapshot.fetched_at,
-        "BearWire model preflight failed"
+        "BearWire model preflight did not find selected model in catalog snapshot; proceeding and letting Bifrost execution validate"
     );
-    Err(CustomError::ValidationError(format!(
-        "selected Pair model {} is not currently available from Bifrost catalog snapshot for BearWire runs (provider model id: {}; selection source: {}; catalog stale: {}; available sample: {})",
-        resolved.handle,
-        resolved.provider_model_id,
-        resolved.source,
-        snapshot.stale,
-        available_model_sample(&available),
-    )))
+    Ok(resolved)
 }
 
 fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
