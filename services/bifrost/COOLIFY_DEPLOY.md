@@ -10,10 +10,13 @@ This repository uses **file-based (GitOps) configuration**: `services/bifrost/co
 
 Model availability is driven entirely by the **live provider catalog**: the OpenAI key uses a wildcard (`"models": ["*"]`), so `/v1/models` reflects whatever the provider exposes. There is **no BEARS metadata sidecar** — Den reads availability and capability metadata from `/v1/models` directly.
 
+The root compose stack also runs `bears-valkey` (`valkey/valkey-bundle`) for Bifrost Redis/Valkey-compatible storage. Bifrost uses it as the `vector_store` for direct hash caching (`semantic_cache` with `dimension: 1`), and Den sends `x-bf-session-id`, `x-bf-cache-key`, and `x-bf-cache-type: direct` on LLM requests.
+
 ## Prerequisites
 
 - Coolify v4+
 - Provider API keys for every `env.*` reference in `services/bifrost/config.json` (the default file requires `**OPENAI_API_KEY`**)
+- `bears-valkey` reachable on the compose network at `bears-valkey:6379` for direct cache storage and session stickiness support
 - A **GitHub** (or other Git) remote for this repo—only required for the **Git + Docker Compose** path below
 
 ---
@@ -149,6 +152,8 @@ From a container on the **same Docker network** as `bears-bifrost` (or Coolify *
 ```bash
 curl -sS http://bears-bifrost:8080/health
 curl -sS http://bears-bifrost:8080/v1/models
+# Optional from the Valkey container:
+valkey-cli ping
 ```
 
 Optional smoke test:
@@ -156,6 +161,9 @@ Optional smoke test:
 ```bash
 curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "x-bf-session-id: smoke-session" \
+  -H "x-bf-cache-key: smoke-session" \
+  -H "x-bf-cache-type: direct" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 

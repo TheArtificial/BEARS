@@ -9,14 +9,44 @@
                 {
                     "name": "openai-primary",
                     "value": "env.OPENAI_API_KEY",
-                    "models": [
-                        "*"
-                    ],
+                    "models": ["*"],
                     "weight": 1.0
                 }
             ]
         }
     },
+    "vector_store": {
+        "enabled": true,
+        "type": "redis",
+        "config": {
+            "addr": "bears-valkey:6379",
+            "db": 0,
+            "use_tls": false,
+            "pool_size": 10,
+            "max_active_conns": 10,
+            "min_idle_conns": 2,
+            "max_idle_conns": 10,
+            "dial_timeout": "5s",
+            "read_timeout": "3s",
+            "write_timeout": "3s",
+            "context_timeout": "10s"
+        }
+    },
+    "plugins": [
+        {
+            "enabled": true,
+            "name": "semantic_cache",
+            "config": {
+                "dimension": 1,
+                "ttl": "10m",
+                "conversation_history_threshold": 50,
+                "exclude_system_prompt": false,
+                "cache_by_model": true,
+                "cache_by_provider": true,
+                "vector_store_namespace": "BearsDirectCache"
+            }
+        }
+    ],
     "config_store": {
         "enabled": false
     }

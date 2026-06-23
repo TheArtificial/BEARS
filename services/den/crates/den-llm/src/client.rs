@@ -77,7 +77,6 @@ pub fn normalize_llm_model_handle(model: &str) -> String {
     DenModelHandle::normalize(model).into_string()
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatToolCall {
     pub id: String,
@@ -621,10 +620,12 @@ impl LlmClient {
             req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
             req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
             // Bifrost session stickiness: keep a conversation pinned to the same
-            // upstream/model for cache locality. This is a routing *hint* keyed on a
-            // stable session id, not a model/key constraint (unlike x-model-affinity,
-            // which rejected a non-model value with "no keys found").
+            // upstream key via the documented x-bf-session-id header. Direct cache
+            // uses the same partition key and is forced to hash-only mode; no
+            // embeddings are required.
             req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
+            req = apply_optional_header(req, "x-bf-cache-key", telemetry.field("conversation_id"));
+            req = apply_optional_header(req, "x-bf-cache-type", Some("direct"));
         }
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -714,10 +715,12 @@ impl LlmClient {
             req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
             req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
             // Bifrost session stickiness: keep a conversation pinned to the same
-            // upstream/model for cache locality. This is a routing *hint* keyed on a
-            // stable session id, not a model/key constraint (unlike x-model-affinity,
-            // which rejected a non-model value with "no keys found").
+            // upstream key via the documented x-bf-session-id header. Direct cache
+            // uses the same partition key and is forced to hash-only mode; no
+            // embeddings are required.
             req = apply_optional_header(req, "x-bf-session-id", telemetry.field("conversation_id"));
+            req = apply_optional_header(req, "x-bf-cache-key", telemetry.field("conversation_id"));
+            req = apply_optional_header(req, "x-bf-cache-type", Some("direct"));
         }
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
