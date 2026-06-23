@@ -965,6 +965,37 @@ pub struct DocketJobProjection {
     pub task_states: Vec<DocketTaskRunStateRow>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DocketCountByStatus {
+    pub pending: usize,
+    pub in_progress: usize,
+    pub done: usize,
+    pub blocked: usize,
+    pub cancelled: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DocketCriteriaCountByStatus {
+    pub unmet: usize,
+    pub met: usize,
+    pub waived: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DocketJobStatusReport {
+    pub job_id: Uuid,
+    pub run_id: Option<Uuid>,
+    pub job_status: String,
+    pub run_state: Option<String>,
+    pub current_task_id: Option<Uuid>,
+    pub current_task_title: Option<String>,
+    pub task_counts: DocketCountByStatus,
+    pub criteria_counts: DocketCriteriaCountByStatus,
+    pub tasks_complete: bool,
+    pub criteria_complete: bool,
+    pub next_action: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DocketJobCriterionInput {
     #[serde(default = "default_criterion_kind")]
@@ -1193,6 +1224,96 @@ impl std::error::Error for DocketValidationError {}
 impl From<DocketValidationError> for DenError {
     fn from(err: DocketValidationError) -> Self {
         DenError::ValidationError(err.to_string())
+    }
+}
+
+pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobStatusReport {
+    let mut task_counts = DocketCountByStatus {
+        pending: 0,
+        in_progress: 0,
+        done: 0,
+        blocked: 0,
+        cancelled: 0,
+    };
+    let task_states_by_id = projection
+        .task_states
+        .iter()
+        .map(|state| (state.task_id, state.status.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let current_task = projection.tasks.iter().find(|task| {
+        task_states_by_id
+            .get(&task.id)
+            .is_some_and(|status| *status == "in_progress")
+    });
+    for task in &projection.tasks {
+        match task_states_by_id
+            .get(&task.id)
+            .copied()
+            .unwrap_or("pending")
+        {
+            "in_progress" => task_counts.in_progress += 1,
+            "done" => task_counts.done += 1,
+            "blocked" => task_counts.blocked += 1,
+            "cancelled" => task_counts.cancelled += 1,
+            _ => task_counts.pending += 1,
+        }
+    }
+
+    let mut criteria_counts = DocketCriteriaCountByStatus {
+        unmet: 0,
+        met: 0,
+        waived: 0,
+    };
+    let criteria_states_by_id = projection
+        .criteria_states
+        .iter()
+        .map(|state| (state.criterion_id, state.status.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    for criterion in &projection.criteria {
+        match criteria_states_by_id
+            .get(&criterion.id)
+            .copied()
+            .unwrap_or("unmet")
+        {
+            "met" => criteria_counts.met += 1,
+            "waived" => criteria_counts.waived += 1,
+            _ => criteria_counts.unmet += 1,
+        }
+    }
+
+    let tasks_complete = task_counts.pending == 0
+        && task_counts.in_progress == 0
+        && task_counts.blocked == 0
+        && task_counts.done + task_counts.cancelled == projection.tasks.len();
+    let criteria_complete = projection.criteria.is_empty()
+        || criteria_counts.unmet == 0
+            && criteria_counts.met + criteria_counts.waived == projection.criteria.len();
+    let next_action = if task_counts.blocked > 0 || projection.job.status == "blocked" {
+        "resolve_blocked_task_or_criterion".to_string()
+    } else if task_counts.in_progress > 0 {
+        "continue_current_task".to_string()
+    } else if task_counts.pending > 0 {
+        "execute_job_to_select_next_task".to_string()
+    } else if !criteria_complete {
+        "evaluate_remaining_criteria".to_string()
+    } else if projection.job.status != "completed" {
+        "execute_job_to_complete".to_string()
+    } else {
+        "done".to_string()
+    };
+
+    DocketJobStatusReport {
+        job_id: projection.job.id,
+        run_id: projection.current_run.as_ref().map(|run| run.id),
+        job_status: projection.job.status.clone(),
+        run_state: projection.current_run.as_ref().map(|run| run.state.clone()),
+        current_task_id: current_task.map(|task| task.id),
+        current_task_title: current_task.map(|task| task.title.clone()),
+        task_counts,
+        criteria_counts,
+        tasks_complete,
+        criteria_complete,
+        next_action,
     }
 }
 
@@ -1839,6 +1960,98 @@ mod tests {
             validate_docket_task_create(&create),
             Err(DocketValidationError::TaskMissingAnchor)
         );
+    }
+
+    fn docket_projection_fixture() -> DocketJobProjection {
+        let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
+        let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
+        let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000abc").unwrap();
+        DocketJobProjection {
+            job: DocketJobRow {
+                id: job_id,
+                bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                created_by_user_id: 42,
+                created_by_role: "pair".to_string(),
+                goal: "Ship Docket".to_string(),
+                work_surface_ref: Some("zed".to_string()),
+                commit_policy: Some("propose_only".to_string()),
+                status: "running".to_string(),
+                visibility: "bear_visible".to_string(),
+                current_run_id: Some(run_id),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            current_run: Some(DocketJobRunRow {
+                id: run_id,
+                job_id,
+                trigger: "manual".to_string(),
+                schedule_ref: None,
+                state: "running".to_string(),
+                started_at: Some(OffsetDateTime::UNIX_EPOCH),
+                finished_at: None,
+                outcome: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }),
+            criteria: vec![DocketJobCriterionRow {
+                id: Uuid::parse_str("00000000-0000-0000-0000-000000000c01").unwrap(),
+                job_id,
+                kind: "narrative".to_string(),
+                description: "Criterion".to_string(),
+                spec: None,
+                sibling_order: 0,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+            criteria_states: Vec::new(),
+            tasks: vec![DocketTaskRow {
+                id: root_task_id,
+                bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                job_id: Some(job_id),
+                session_anchor_id: None,
+                parent_task_id: None,
+                sibling_order: 0,
+                kind: "execution".to_string(),
+                scope: "template".to_string(),
+                title: "Root task".to_string(),
+                body: "Do root work.".to_string(),
+                difficulty: None,
+                effort_hint: None,
+                assigned_to_role: Some("work".to_string()),
+                created_by_role: "pair".to_string(),
+                created_by_user_id: Some(42),
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+            task_states: vec![DocketTaskRunStateRow {
+                run_id,
+                task_id: root_task_id,
+                status: "in_progress".to_string(),
+                result_refs: None,
+                result_summary: None,
+                started_at: None,
+                finished_at: None,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+        }
+    }
+
+    #[test]
+    fn docket_status_report_summarizes_current_task_and_next_action() {
+        let projection = docket_projection_fixture();
+
+        let report = docket_job_status_report(&projection);
+
+        assert_eq!(report.job_status, "running");
+        assert_eq!(report.run_state.as_deref(), Some("running"));
+        assert_eq!(report.current_task_title.as_deref(), Some("Root task"));
+        assert_eq!(report.task_counts.in_progress, 1);
+        assert_eq!(report.criteria_counts.unmet, 1);
+        assert!(!report.tasks_complete);
+        assert!(!report.criteria_complete);
+        assert_eq!(report.next_action, "continue_current_task");
     }
 
     #[test]

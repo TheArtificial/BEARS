@@ -9,13 +9,13 @@ use crate::{
     config::Config,
     core::{
         docket::{
-            DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus,
-            DocketEffortHint, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
-            DocketJobListFilter, DocketJobStatus, DocketJobUpdate, DocketService, DocketTaskCreate,
-            DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-            DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-            DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListProjection,
-            TaskListSyncRequest,
+            docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
+            DocketCriterionStatus, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
+            DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus, DocketJobUpdate,
+            DocketService, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
+            DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
+            DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError,
+            PgDocketService, TaskListProjection, TaskListSyncRequest,
         },
         tools::{
             activity_payloads::{activity_payload, plan_mode_workplan_payload},
@@ -653,11 +653,13 @@ pub(crate) async fn get_job(
     let task_list = job
         .as_ref()
         .map(|job| work_plans::task_list_projection_from_docket_job(job, None));
+    let status_report = job.as_ref().map(docket_job_status_report);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "job": job,
         "task_list": task_list,
+        "status_report": status_report,
     }))
 }
 
@@ -688,10 +690,12 @@ pub(crate) async fn update_job(
             visibility: args.visibility,
         })
         .await?;
+    let status_report = docket_job_status_report(&job);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "job": job,
+        "status_report": status_report,
     }))
 }
 
@@ -717,10 +721,12 @@ pub(crate) async fn execute_job(
             actor_agent_id: clean_optional(&context.binding_id),
         })
         .await?;
+    let status_report = docket_job_status_report(&outcome.job);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "execution": outcome,
+        "status_report": status_report,
     }))
 }
 
@@ -744,10 +750,12 @@ pub(crate) async fn evaluate_criterion(
             actor_agent_id: clean_optional(&context.binding_id),
         })
         .await?;
+    let status_report = docket_job_status_report(&job);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "job": job,
+        "status_report": status_report,
     }))
 }
 
