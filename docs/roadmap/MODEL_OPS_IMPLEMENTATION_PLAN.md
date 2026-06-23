@@ -82,27 +82,34 @@ Use precise terms instead of overloading “orchestration.”
 Implemented or partially implemented today:
 
 - Den-native runtime calls Bifrost directly for inference (ADR-0035).
-- Den has a static model metadata overlay bootstrap in `den-runtime::llm::model_registry`.
-- Bear Admin model dropdown is Bifrost-availability-first and enriched with Den overlay metadata.
-- Den's Bifrost client reads availability and capability metadata from Bifrost `/v1/models` only; the legacy `/bears/models` sidecar has been retired.
+- Den has a static model metadata overlay bootstrap in `den-llm::model_registry`.
+- Bifrost provider keys are no longer explicitly limited to a manually maintained model allowlist when the desired behavior is all catalog-supported models.
+- Den's Bifrost client reads availability and capability metadata from paginated Bifrost `GET /v1/models`; the legacy `/bears/models` sidecar is compatibility-only and must not be used for Bear Admin availability.
+- Den holds a shared `BifrostCatalogSnapshot` / `BifrostCatalogStore` in edge state and refreshes it in the background via `BIFROST_CATALOG_REFRESH_SECS`.
+- Bear Admin model configuration is catalog-first:
+  - the submitted `Model` fields use a datalist populated from the full Bifrost snapshot,
+  - curated dropdowns are convenience shortcuts only,
+  - `inherit` means inherit the relevant default.
 - Bear default model exists in `bears.default_model`.
 - Per-profile model overrides exist in `bear_profile_model_settings`:
   - missing/blank profile model means inherit Bear default.
-- Native runtime resolves profile override → Bear default → system default.
+- Conversation-level model state exists in `conversation_model_state` and is used by web chat and BearWire/ACP session model controls.
+- Runtime resolution uses conversation explicit/auto state → profile override → Bear default → system default.
+- BearWire defines `session.model.get`, `session.model.set`, and `model.selection.changed`.
 - Key-memory projection budget can use known model context-window metadata.
 - `/status` includes a Den metadata vs Bifrost availability reconciliation panel.
 
-Recently completed:
+Important note from Phase 1/1.5 churn:
 
-- Bifrost provider keys are no longer explicitly limited to a manually maintained model allowlist when the desired behavior is all catalog-supported models.
+- We have churned several times around whether Den should use Bifrost `/v1/models`, `/api/models/details`, `/api/models/base`, or the BEARS sidecar for model choices. For ordinary Bear Admin availability and model selection, the settled v1 rule is: **use the paginated `/v1/models` snapshot as the source for selectable/live models**. Management catalog endpoints can be evaluated later for richer metadata, but they must not replace `/v1/models` as the availability source without a deliberate design update.
 
 Known gaps:
 
 - Den overlay is still static Rust code rather than a small overlay artifact/cache hydrated from Bifrost catalog data.
-- Den does not yet parse/use the richest Bifrost management catalog endpoints (`/api/models/details`, `/api/models/base`) when management auth/config_store are available.
-- No conversation-level model state/stickiness yet.
-- No user-facing in-conversation model selector yet.
-- No selected-vs-actual model event stream contract yet.
+- Den does not yet parse/use richer Bifrost management catalog endpoints (`/api/models/details`, `/api/models/base`) for supplemental metadata when management auth/config_store are available.
+- The catalog snapshot has periodic refresh, but last-good error metadata/operator diagnostics are still thin.
+- Model validation helpers are still spread across a few edge paths rather than one shared cross-crate API.
+- No selected-vs-actual model execution/usage event persistence yet.
 - No model usage/cost event ingestion yet.
 - No Bear overview usage/cost panel yet.
 - No budget mirror/resolver integration yet.
@@ -208,12 +215,12 @@ Use Bifrost before implementing Den-local alternatives.
 
 ### Availability and catalog data
 
-Use Bifrost catalog surfaces in this order:
+Use Bifrost catalog surfaces with separate responsibilities:
 
-1. `GET /v1/models` for live availability in ordinary deployments.
-2. `GET /api/models/details` when Bifrost management auth is available, for richer catalog metadata such as context, modalities, supported methods, and accessible keys.
-3. `GET /api/models/base` when Den needs base model/pricing-catalog awareness rather than deployment availability.
-4. ~~`/bears/models` sidecar~~ — retired; `/v1/models` is the sole availability surface.
+1. `GET /v1/models` is the v1 source for live availability in ordinary deployments. Den should use it through the shared `BifrostCatalogSnapshot`, with pagination, for Bear Admin selectable models, validation, BearWire model options, and status reconciliation.
+2. `GET /api/models/details` may be used later as supplemental metadata when management auth/config_store is available, for richer catalog facts such as context, modalities, supported methods, and accessible keys. Do not use it as the primary availability source unless we deliberately redesign the boundary.
+3. `GET /api/models/base` may be used later when Den needs base model/pricing-catalog awareness rather than deployment availability.
+4. `/bears/models` sidecar is compatibility-only. It must not feed Bear Admin availability or the primary datalist.
 
 Avoid manually enumerating every provider model in Den or in Bifrost provider-key `models` allowlists unless the goal is intentional restriction.
 
@@ -559,10 +566,11 @@ Future outputs:
 - Bear default model editable.
 - Per-profile inherit/override table.
 - Models page in Bear Admin.
-- Runtime model resolver uses profile override → Bear default → system default.
+- Runtime resolver uses profile override → Bear default → system default.
 - Lane-specific assignments explicitly TBD.
 - Models page shows availability and metadata-known/unknown status.
-- Normal dropdowns are curated; advanced custom fields validate against full Bifrost availability with browser autocomplete.
+- Model fields use datalist-backed text inputs populated from full Bifrost `/v1/models` availability; curated dropdowns are non-submitting shortcut controls only.
+- `inherit` is explicit in the UI and means inherit the relevant default.
 - Runtime resolver has unit coverage for profile override → Bear default → system default.
 - Auto mode is explicitly noted as planned, not yet available for Bear/stance defaults.
 
@@ -594,34 +602,60 @@ model_metadata_overrides (
 
 Do not add this until we confirm live Bifrost catalog queries are insufficient for admin/runtime needs.
 
-### Phase 2 — Conversation model state ✅/partial
+### Phase 2 — Conversation model state ✅
 
 - Add `conversation_model_state` table.
 - Add resolver logic for conversation sticky selection.
 - Add web chat model selection controls.
 - Display selected/effective conversation model in the web chat toolbar.
+- Add BearWire/ACP model selection controls through `session.model.get`, `session.model.set`, and `model.selection.changed`.
 
 Exit:
 
-- changing model in one web conversation affects subsequent turns only for that conversation,
-- selected model survives page reload/session continuation.
+- changing model in one web or ACP conversation affects subsequent turns only for that conversation,
+- selected model survives page reload/session continuation,
+- ACP clients can display and update conversation-scoped model state.
 
 Remaining:
 
-- ACP model selection/display controls,
 - actual model/fallback reporting (Phase 3),
 - explicit auto-mode heuristics beyond inherit stance/Bear default (Phase 6).
 
-### Phase 3 — Actual model and usage capture
+### Phase 3 — Actual model and usage capture ⬅ next
 
-- Capture Bifrost response model/provider/usage fields.
-- Persist model usage events.
-- Emit runtime/BearWire/ACP events.
+Goal: create a durable per-call trace from Den's requested/selected model through Bifrost/provider execution results, without reopening the model catalog source decision.
+
+Implementation notes:
+
+- Keep model availability/catalog reads on the existing `BifrostCatalogSnapshot` path. Phase 3 should not switch Bear Admin or runtime validation to `/api/models/details`, `/api/models/base`, or `/bears/models`.
+- Add `model_usage_events` or equivalent event storage with requested/selected/actual model fields.
+- Record Den-side facts before execution:
+  - `bear_id`, `conversation_id`, profile/stance,
+  - task class (`agent_primary` first; later compaction/reflection/etc.),
+  - selection mode/source (`conversation_explicit`, `profile_default`, `bear_default`, etc.),
+  - requested model and selected model.
+- Capture Bifrost/provider facts after execution where available:
+  - actual model/provider,
+  - request id / response id for correlation,
+  - input/output/total tokens,
+  - cost/currency if Bifrost/provider exposes it,
+  - fallback/routing metadata when exposed.
+- Update `conversation_model_state.actual_last_model`, `actual_last_provider`, and `fallback_count` opportunistically from the same execution result.
+- Emit runtime events for `model.execution.started`, `model.execution.completed`, `model.execution.fallback` when detectable, and `model.usage.recorded`.
+- Surface the selected vs actual distinction to BearWire/ACP and web clients; do not mutate selected model just because Bifrost/provider fell back.
+
+Likely first integration points:
+
+- BearWire Pair run preflight already produces a `ResolvedRunModel` in `services/den/crates/den-bearwire/src/methods/run.rs`; use that as the selected-model source for Pair/ACP runs.
+- Den runtime/Bifrost client response handling is where actual model and token usage should be captured.
+- `conversation_persistence::ConversationModelState` already has actual/fallback columns ready for update.
 
 Exit:
 
-- each model call has requested/selected/actual model trace,
-- token usage recorded when provider/Bifrost reports it.
+- each primary model call has requested/selected/actual model trace when enough information is available,
+- token usage is recorded when provider/Bifrost reports it,
+- selected-vs-actual model differences are observable in logs/events and persisted usage records,
+- Phase 4 Bear usage UI can be built from the persisted usage/events table.
 
 ### Phase 4 — Bear usage and cost UI
 

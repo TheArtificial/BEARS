@@ -45,21 +45,12 @@ The repository already contains a useful bootstrap of this idea, but ownership i
 
 ### Current state
 
-- `services/bifrost/config.json` contains a BEARS-specific `bears.models` metadata section.
-- `services/den/src/core/bifrost.rs` reads Bifrost model metadata and converts it into Den/Letta-facing model options.
-- The existing metadata already includes fields such as:
-  - `handle`
-  - `provider`
-  - `model`
-  - `display_name`
-  - `context_window`
-  - `max_output_tokens`
-  - `supports_tools`
-  - `supports_responses_api`
-  - `supports_vision`
-  - `enabled`
+- `services/bifrost/config.json` may still contain a BEARS-specific `bears.models` metadata seed, but that sidecar is no longer the intended source for live Bear Admin choices.
+- `services/den/crates/den-service/src/bifrost.rs` reads paginated Bifrost `GET /v1/models` and builds a `BifrostCatalogSnapshot`.
+- `services/den/crates/den-llm/src/model_registry.rs` contains Den's static curated overlay for labels, aliases, fallback capability facts, and UI selectability.
+- Bear Admin and BearWire should use snapshot-derived `/v1/models` availability for full model lists and validation; curated dropdowns are convenience overlays.
 
-That is a good bootstrap, but the long-term boundary should be clearer:
+The long-term boundary is:
 
 - **Bifrost decides what models are currently available and how they route to providers.**
 - **Den tracks what it knows about models and uses that metadata for validation, display, and runtime planning.**
@@ -99,8 +90,8 @@ Treat **model capability metadata** as Den-owned validation/planning state, and 
 - runtime request execution
 - provider key model allowlists and gateway aliases
 - provider routing / failover / weighting where used
-- Bifrost Model Catalog data (availability, provider mapping, pricing, provider-reported capabilities)
-- live model availability for this deployment
+- **Bifrost Model Catalog data (availability, provider mapping, pricing, provider-reported capabilities)**
+- live model availability for this deployment, surfaced to Den v1 through paginated `/v1/models`
 - OpenAI-compatible execution surface
 
 This preserves the repo's broader architecture:
@@ -390,33 +381,17 @@ This may later drive a file patcher or a Bifrost management API sync, but status
 
 The existing repository already supports a first bootstrap of the target design.
 
-### Den-side metadata consumer
+### Den-side metadata and availability consumer
 
-`services/den/src/core/bifrost.rs` currently defines a `BifrostModelMetadata` struct with fields including:
+Current code locations:
 
-- `handle`
-- `provider`
-- `model`
-- `display_name`
-- `context_window`
-- `max_output_tokens`
-- `enabled`
-- `supports_tools`
-- `supports_responses_api`
-- `supports_vision`
+- `services/den/crates/den-service/src/bifrost.rs` defines `BifrostModelMetadata`, `BifrostCatalogEntry`, `BifrostCatalogSnapshot`, and the paginated `/v1/models` client.
+- `services/den/crates/den-llm/src/model_registry.rs` defines the static Den overlay and reconciliation helpers.
+- Bear Admin, BearWire model selection, preflight validation, and `/status` should read snapshot-derived availability rather than the BEARS sidecar.
 
-It also converts that metadata into Den/Letta-facing model options for presentation.
+### Bifrost-side metadata seed
 
-### Bifrost-side metadata producer
-
-`services/bifrost/config.json` already stores BEARS model metadata for entries such as:
-
-- `gpt-4o-mini`
-- `gpt-4o`
-- `gpt-4.1-mini`
-- `gpt-4.1`
-
-That config is useful as a seed source for the Den registry, but it should not remain the long-term semantic owner.
+`services/bifrost/config.json` still contains a BEARS `bears.models` block that can be useful as historical seed material for Den's overlay, but it should not remain the semantic owner and must not be confused with Bifrost's live `/v1/models` availability surface.
 
 ---
 

@@ -23,37 +23,21 @@ This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST
 
 ## Current repo-grounded baseline
 
-Today, effective model metadata is stored in `services/bifrost/config.json` under the custom `bears.models` section.
+Current implementation has moved beyond the original `bears.models` sidecar bootstrap.
 
-That metadata currently includes fields such as:
-- `handle`
-- `provider`
-- `model`
-- `display_name`
-- `context_window`
-- `max_output_tokens`
-- `supports_tools`
-- `supports_responses_api`
-- `supports_vision`
-- `enabled`
+As of 2026-06:
 
-Den currently consumes that metadata through `services/den/src/core/bifrost.rs`, which:
-- fetches a JSON payload from `BIFROST_METADATA_URL`
-- deserializes `models: Vec<BifrostModelMetadata>`
-- filters to enabled models
-- sorts models for presentation
-- converts each record into a Letta-facing `LettaModelOption`
+- Bifrost remains the execution/availability owner.
+- Den reads live availability and available capability hints from paginated Bifrost `GET /v1/models` in `services/den/crates/den-service/src/bifrost.rs`.
+- Den stores that live surface in `BifrostCatalogSnapshot` / `BifrostCatalogStore`, keyed by canonical Den handles, and refreshes it in edge state.
+- Den's static metadata overlay lives in `services/den/crates/den-llm/src/model_registry.rs` and is used for labels, aliases, fallback capability facts, curated UI exposure, and reconciliation.
+- Bear Admin and BearWire model option lists should use the snapshot-derived `/v1/models` availability surface; `/bears/models` is compatibility-only and must not feed the primary selector/datalist.
+- `services/bifrost/config.json` may still contain a BEARS-specific `bears.models` metadata seed, but it is no longer the desired source for live Bear Admin choices.
 
-So the current architecture is effectively:
-1. Bifrost config is the source of truth.
-2. Bifrost exposes model metadata.
-3. Den reads Bifrost’s metadata projection.
-4. Den presents a simplified model list to clients.
-
-The desired architecture in this spec clarifies that ownership:
+The desired architecture in this spec clarifies ownership:
 1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, routing, and Model Catalog facts.
 2. Den owns curated overlays and Bear-specific validation context.
-3. Den hydrates/enriches model options from Bifrost Model Catalog surfaces wherever possible.
+3. Den hydrates/enriches model options from Bifrost `/v1/models` availability and may later supplement metadata from Bifrost management catalog endpoints.
 4. Den reports unknown metadata or availability mismatches, but does not maintain a duplicate authoritative model catalog.
 
 ---
@@ -347,7 +331,7 @@ This is the observed Bifrost model surface Den compares against its metadata reg
 }
 ```
 
-The exact shape can come from Bifrost `/bears/models`, `/v1/models`, or management APIs. Den should treat it as availability evidence, not as authoritative capability metadata.
+For the v1 implementation, this shape comes from paginated Bifrost `/v1/models` through `BifrostCatalogSnapshot`. Management APIs may supplement metadata later, and `/bears/models` is compatibility-only. Den should treat observed Bifrost data as availability evidence and live capability hints, not as Den-owned policy metadata.
 
 ---
 
