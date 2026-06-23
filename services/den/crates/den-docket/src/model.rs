@@ -1018,7 +1018,20 @@ pub struct DocketTaskCreate {
     pub created_in_run_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
+pub struct DocketTaskListFilter {
+    pub job_id: Option<Uuid>,
+    pub session_anchor_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    pub include_descendants: bool,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketTaskRunStateUpdate {
+    pub run_id: Uuid,
+    pub status: DocketTaskStatus,
+    pub result_refs: Option<serde_jsonPartialEq, Eq)]
 pub enum DocketValidationError {
     EmptyGoal,
     InvalidJobCreatorRole { role: String },
