@@ -207,7 +207,7 @@ services:
             MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
             MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
-            TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
             BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
