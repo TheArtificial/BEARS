@@ -135,12 +135,19 @@ def validate_bifrost_model_metadata_config() -> None:
         fail(f"BIFROST_CONFIG_PATH is not valid JSON: {exc}")
 
     bears = config.get("bears")
-    if not isinstance(bears, dict):
-        fail("Bifrost config must include a top-level bears object with model metadata")
-
-    models = bears.get("models")
-    if not isinstance(models, list) or not models:
-        fail("Bifrost config bears.models must be a non-empty array")
+    models = []
+    if bears is None:
+        warn(
+            "Bifrost config has no top-level bears model metadata; Den will rely on the live /v1/models catalog"
+        )
+    elif not isinstance(bears, dict):
+        fail("Bifrost config top-level bears value must be an object when present")
+    else:
+        models = bears.get("models")
+        if not isinstance(models, list):
+            fail(
+                "Bifrost config bears.models must be an array when bears metadata is present"
+            )
 
     providers = config.get("providers")
     if not isinstance(providers, dict) or not providers:
@@ -210,7 +217,7 @@ def validate_bifrost_model_metadata_config() -> None:
                 f"bears.models[{idx}] maps handle {handle!r} to {provider}/{upstream_model}, but that model is not listed under providers.{provider}.keys[].models"
             )
 
-    if enabled_count == 0:
+    if models and enabled_count == 0:
         fail("Bifrost config bears.models has no enabled models")
     if wildcard_providers:
         warn(
@@ -218,7 +225,10 @@ def validate_bifrost_model_metadata_config() -> None:
             "explicit provider model lists are recommended when you want preflight to validate exact availability"
         )
 
-    info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
+    if models:
+        info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
+    else:
+        info(f"Bifrost provider config OK (no bears model metadata in {path})")
 
 
 def validate_database_url(reachable: bool = True) -> None:
