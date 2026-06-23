@@ -12,11 +12,12 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    BearWorkPlanRow, DocketJobCreate, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    task_list_projection_from_docket_job, DocketTaskCreate, DocketTaskRow,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest,
-    TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest, WorkPlanListFilter,
-    WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
+    task_list_projection_from_docket_job, BearWorkPlanRow, DocketJobCreate, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketTaskCreate, DocketTaskListFilter,
+    DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
+    TaskListSyncOutcome, TaskListSyncRequest, WorkPlanListFilter, WorkPlanLookup,
+    WorkPlanProjection, WorkPlanUpsert,
 };
 
 /// Orchestration API for Docket work plans. The only public entry point to the
@@ -42,6 +43,15 @@ pub trait DocketService: Send + Sync {
     ) -> Result<Option<DocketJobProjection>, DenError>;
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
+
+    async fn list_tasks(
+        &self,
+        bear_id: Uuid,
+        filter: DocketTaskListFilter,
+    ) -> Result<Vec<DocketTaskProjection>, DenError>;
+
+    async fn update_task(&self, update: DocketTaskUpdate)
+        -> Result<DocketTaskProjection, DenError>;
 
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError>;
 
@@ -123,6 +133,21 @@ impl DocketService for PgDocketService {
         db::create_task(&self.pool, create).await
     }
 
+    async fn list_tasks(
+        &self,
+        bear_id: Uuid,
+        filter: DocketTaskListFilter,
+    ) -> Result<Vec<DocketTaskProjection>, DenError> {
+        db::list_tasks(&self.pool, bear_id, filter).await
+    }
+
+    async fn update_task(
+        &self,
+        update: DocketTaskUpdate,
+    ) -> Result<DocketTaskProjection, DenError> {
+        db::update_task(&self.pool, update).await
+    }
+
     async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError> {
         db::create_or_update_work_plan(&self.pool, params).await
     }
@@ -174,10 +199,7 @@ impl DocketService for PgDocketService {
         &self,
         request: TaskListSyncRequest,
     ) -> Result<TaskListSyncOutcome, DenError> {
-        Ok(TaskListSyncOutcome::review_required(
-            request.task_list,
-            "Task-list sync seam is present; direct Docket sync awaits relational Docket backing.",
-        ))
+        db::sync_task_list(&self.pool, request).await
     }
 
     async fn request_task_list_handoff(

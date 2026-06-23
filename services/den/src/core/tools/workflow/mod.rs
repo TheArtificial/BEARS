@@ -11,8 +11,10 @@ use crate::{
         docket::{
             DocketCommitPolicy, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
             DocketJobListFilter, DocketJobStatus, DocketService, DocketTaskCreate,
-            DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope,
-            DocketValidationError, PgDocketService,
+            DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+            DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+            DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListProjection,
+            TaskListSyncRequest,
         },
         tools::{
             activity_payloads::{activity_payload, plan_mode_workplan_payload},
@@ -126,6 +128,39 @@ impl WorkPlanOps for DenWorkPlanOps<'_> {
             .await
             .map_err(CustomError::into_den)
     }
+
+    async fn list_tasks(
+        &self,
+        context: &DenToolInvocationContext,
+        _role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        list_tasks(self.pool, context, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn update_task(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        update_task(self.pool, context, role, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn sync_task_list(
+        &self,
+        _context: &DenToolInvocationContext,
+        _role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        sync_task_list(self.pool, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,6 +262,58 @@ pub(crate) struct DocketTaskCreateArguments {
     pub(crate) assigned_to_role: Option<BearProfile>,
     #[serde(default)]
     pub(crate) created_in_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskListArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) session_anchor_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) parent_task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) include_descendants: bool,
+    #[serde(default)]
+    pub(crate) limit: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskUpdateArguments {
+    pub(crate) task_id: Uuid,
+    #[serde(default)]
+    pub(crate) title: Option<String>,
+    #[serde(default)]
+    pub(crate) body: Option<String>,
+    #[serde(default)]
+    pub(crate) parent_task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) clear_parent_task_id: bool,
+    #[serde(default)]
+    pub(crate) sibling_order: Option<i32>,
+    #[serde(default)]
+    pub(crate) kind: Option<DocketTaskKind>,
+    #[serde(default)]
+    pub(crate) scope: Option<DocketTaskScope>,
+    #[serde(default)]
+    pub(crate) difficulty: Option<DocketTaskDifficulty>,
+    #[serde(default)]
+    pub(crate) effort_hint: Option<DocketEffortHint>,
+    #[serde(default)]
+    pub(crate) assigned_to_role: Option<BearProfile>,
+    #[serde(default)]
+    pub(crate) run_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) status: Option<DocketTaskStatus>,
+    #[serde(default)]
+    pub(crate) result_refs: Option<Value>,
+    #[serde(default)]
+    pub(crate) result_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TaskListSyncArguments {
+    pub(crate) task_list: TaskListProjection,
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -540,6 +627,97 @@ pub(crate) async fn create_task(
         "notes": [
             "Created durable Docket task definition. Status and results remain run-scoped."
         ]
+    }))
+}
+
+pub(crate) async fn list_tasks(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
+    let tasks = PgDocketService::from_pool(pool)
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id: args.job_id,
+                session_anchor_id: args.session_anchor_id,
+                parent_task_id: args.parent_task_id,
+                include_descendants: args.include_descendants,
+                limit: args.limit,
+            },
+        )
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "tasks": tasks,
+    }))
+}
+
+pub(crate) async fn update_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskUpdateArguments = serde_json::from_value(arguments)?;
+    let run_state = match (args.run_id, args.status) {
+        (Some(run_id), Some(status)) => Some(DocketTaskRunStateUpdate {
+            run_id,
+            status,
+            result_refs: args.result_refs,
+            result_summary: args.result_summary,
+        }),
+        (None, Some(_)) => {
+            return Err(DenError::ValidationError(
+                "update_task status requires run_id".to_string(),
+            )
+            .into());
+        }
+        _ => None,
+    };
+    let task = PgDocketService::from_pool(pool)
+        .update_task(DocketTaskUpdate {
+            bear_id: context.bear_id,
+            task_id: args.task_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+            definition: DocketTaskDefinitionPatch {
+                title: args.title,
+                body: args.body,
+                parent_task_id: args
+                    .clear_parent_task_id
+                    .then_some(None)
+                    .or_else(|| args.parent_task_id.map(Some)),
+                sibling_order: args.sibling_order,
+                kind: args.kind,
+                scope: args.scope,
+                difficulty: args.difficulty.map(Some),
+                effort_hint: args.effort_hint.map(Some),
+                assigned_to_role: args.assigned_to_role.map(Some),
+            },
+            run_state,
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "task": task,
+    }))
+}
+
+pub(crate) async fn sync_task_list(pool: &PgPool, arguments: Value) -> Result<Value, CustomError> {
+    let args: TaskListSyncArguments = serde_json::from_value(arguments)?;
+    let outcome = PgDocketService::from_pool(pool)
+        .sync_task_list(TaskListSyncRequest {
+            task_list: args.task_list,
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "sync": outcome,
     }))
 }
 

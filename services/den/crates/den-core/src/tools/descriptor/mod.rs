@@ -38,9 +38,11 @@ use crate::tools::{
         DEN_PROMPT_MEMORY_UPSERT, DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUN_WRITE_RESULT,
         DEN_SITUATION_GET, DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_CREATE_PROVIDER, DEN_TASK_REJECT_INTENT,
-        DEN_TASK_WRITE_INTENT, DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER,
-        DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_GET_STATUS,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_CREATE_PROVIDER, DEN_TASK_LIST,
+        DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER,
+        DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT,
+        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER,
+        DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_GET_STATUS,
         DEN_WORK_PLAN_GET_STATUS_LEGACY_PROVIDER, DEN_WORK_PLAN_GET_STATUS_PROVIDER,
         DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_LIST_LEGACY_PROVIDER, DEN_WORK_PLAN_LIST_PROVIDER,
         DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_REQUEST_HANDOFF_LEGACY_PROVIDER,
@@ -109,6 +111,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_JOB_LIST => return DEN_JOB_LIST_PROVIDER.to_string(),
         DEN_JOB_GET => return DEN_JOB_GET_PROVIDER.to_string(),
         DEN_TASK_CREATE => return DEN_TASK_CREATE_PROVIDER.to_string(),
+        DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
+        DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
         DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
         DEN_PLAN_MODE_RECORD_APPROVAL => return DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER.to_string(),
@@ -469,6 +474,33 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_TASK_LIST,
+            "List Docket tasks",
+            "List durable Docket task definitions for a job/session subtree, including current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for session working focus.",
+            "bear.docket",
+            &["docket.task.read"],
+            WORK_PLAN_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_UPDATE,
+            "Update Docket task",
+            "Update a Docket task definition and/or its run-scoped state. Title/body/hierarchy changes update the durable task definition; status/result fields update bear_task_run_state for the provided run_id. Does not execute task bodies.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]},"run_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string"}},"required":["task_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LIST_SYNC,
+            "Sync task list to Docket",
+            "Apply authorized changes from a checked-out session task list back to Docket-backed tasks. Docket-backed items update task definitions and run-scoped status; local-only items in a Docket checkout become new child tasks. Conflicts are reported instead of overwritten.",
+            "bear.docket",
+            &["docket.task.sync"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_list":{"type":"object","description":"TaskListProjection returned by get_job, get_task_list_status, update_task_list, or checkout."}},"required":["task_list"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_PLAN_MODE_ENTER,
             "Enter planning mode",
             "Enter ACP pair workplan mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.",
@@ -623,6 +655,9 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_JOB_LIST,
         DEN_JOB_GET,
         DEN_TASK_CREATE,
+        DEN_TASK_LIST,
+        DEN_TASK_UPDATE,
+        DEN_TASK_LIST_SYNC,
     ]
 }
 
@@ -721,9 +756,16 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_JOB_CREATE | DEN_TASK_CREATE => Some(ToolDescriptorGuidance {
+        DEN_JOB_CREATE | DEN_TASK_CREATE | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC => {
+            Some(ToolDescriptorGuidance {
+                scope: ToolScopeKind::CurrentSession,
+                side_effect: ToolSideEffectKind::ActiveWorkState,
+                orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+            })
+        }
+        DEN_TASK_LIST => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
-            side_effect: ToolSideEffectKind::ActiveWorkState,
+            side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
         DEN_PLAN_MODE_ENTER
@@ -1100,6 +1142,33 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["body"],
             approval_summary: "Create a durable Docket task definition.",
         },
+        DEN_TASK_LIST => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Listing Docket tasks",
+            complete_verb: "Listed Docket tasks",
+            target_arg_keys: &["job_id", "parent_task_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read Docket task definitions and current run state.",
+        },
+        DEN_TASK_UPDATE => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Updating Docket task",
+            complete_verb: "Updated Docket task",
+            target_arg_keys: &["task_id", "status"],
+            sensitive_arg_keys: &["body", "result_refs", "result_summary"],
+            approval_summary: "Update a Docket task definition or run-scoped state.",
+        },
+        DEN_TASK_LIST_SYNC => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Syncing task list",
+            complete_verb: "Synced task list",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &["task_list"],
+            approval_summary: "Sync checked-out session task-list changes to Docket.",
+        },
         DEN_PLAN_MODE_ENTER => ToolDisplayDescriptor {
             label,
             category: "plan",
@@ -1222,7 +1291,8 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
         | DEN_WORK_PLAN_REQUEST_HANDOFF => "activity",
-        DEN_JOB_CREATE | DEN_JOB_LIST | DEN_JOB_GET | DEN_TASK_CREATE => "docket",
+        DEN_JOB_CREATE | DEN_JOB_LIST | DEN_JOB_GET | DEN_TASK_CREATE | DEN_TASK_LIST
+        | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC => "docket",
         DEN_MEMORY_WRITE_ENTRY
         | DEN_MEMORY_STATUS
         | DEN_MEMORY_TREE

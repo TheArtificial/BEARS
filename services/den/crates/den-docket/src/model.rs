@@ -418,7 +418,7 @@ pub struct TaskListItem {
     pub sync_state: TaskListSyncState,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskListProjection {
     pub id: Uuid,
     pub bear_id: Uuid,
@@ -581,6 +581,30 @@ pub struct TaskListSyncOutcome {
 }
 
 impl TaskListSyncOutcome {
+    pub fn applied(task_list: TaskListProjection, message: impl Into<String>) -> Self {
+        Self {
+            task_list,
+            applied: true,
+            review_required: false,
+            conflicts: Vec::new(),
+            message: message.into(),
+        }
+    }
+
+    pub fn conflicts(
+        task_list: TaskListProjection,
+        conflicts: Vec<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            task_list,
+            applied: false,
+            review_required: false,
+            conflicts,
+            message: message.into(),
+        }
+    }
+
     pub fn review_required(task_list: TaskListProjection, message: impl Into<String>) -> Self {
         Self {
             task_list,
@@ -1031,7 +1055,41 @@ pub struct DocketTaskListFilter {
 pub struct DocketTaskRunStateUpdate {
     pub run_id: Uuid,
     pub status: DocketTaskStatus,
-    pub result_refs: Option<serde_jsonPartialEq, Eq)]
+    pub result_refs: Option<serde_json::Value>,
+    pub result_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DocketTaskDefinitionPatch {
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub parent_task_id: Option<Option<Uuid>>,
+    pub sibling_order: Option<i32>,
+    pub kind: Option<DocketTaskKind>,
+    pub scope: Option<DocketTaskScope>,
+    pub difficulty: Option<Option<DocketTaskDifficulty>>,
+    pub effort_hint: Option<Option<DocketEffortHint>>,
+    pub assigned_to_role: Option<Option<BearProfile>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketTaskUpdate {
+    pub bear_id: Uuid,
+    pub task_id: Uuid,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+    pub definition: DocketTaskDefinitionPatch,
+    pub run_state: Option<DocketTaskRunStateUpdate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocketTaskProjection {
+    pub task: DocketTaskRow,
+    pub run_state: Option<DocketTaskRunStateRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocketValidationError {
     EmptyGoal,
     InvalidJobCreatorRole { role: String },
@@ -1115,7 +1173,7 @@ pub fn task_list_projection_from_docket_job(
         version: 1,
         source_ref: TaskListSourceRef::docket_job(
             projection.job.id.to_string(),
-            vec![format!("docket_job:{}", projection.job.id)],
+            docket_checkout_refs(projection.job.id, parent_task_id),
         ),
         items,
         current_item,
@@ -1128,12 +1186,50 @@ pub fn task_list_projection_from_docket_job(
     }
 }
 
+fn docket_checkout_refs(job_id: Uuid, parent_task_id: Option<Uuid>) -> Vec<String> {
+    let mut refs = vec![format!("docket_job:{job_id}")];
+    if let Some(parent_task_id) = parent_task_id {
+        refs.push(format!("docket_parent_task:{parent_task_id}"));
+    }
+    refs
+}
+
+pub fn docket_parent_task_ref(source_ref: &TaskListSourceRef) -> Option<Uuid> {
+    source_ref
+        .refs
+        .iter()
+        .find_map(|raw| raw.trim().strip_prefix("docket_parent_task:"))
+        .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
+}
+
+pub fn work_plan_item_status_from_docket_task_status(status: &str) -> WorkPlanItemStatus {
+    match status {
+        "in_progress" => WorkPlanItemStatus::InProgress,
+        "done" => WorkPlanItemStatus::Completed,
+        "blocked" => WorkPlanItemStatus::Blocked,
+        "cancelled" => WorkPlanItemStatus::Cancelled,
+        _ => WorkPlanItemStatus::Pending,
+    }
+}
+
+pub fn docket_task_status_from_work_plan_item_status(
+    status: WorkPlanItemStatus,
+) -> DocketTaskStatus {
+    match status {
+        WorkPlanItemStatus::Pending => DocketTaskStatus::Pending,
+        WorkPlanItemStatus::InProgress => DocketTaskStatus::InProgress,
+        WorkPlanItemStatus::Blocked => DocketTaskStatus::Blocked,
+        WorkPlanItemStatus::Completed => DocketTaskStatus::Done,
+        WorkPlanItemStatus::Cancelled => DocketTaskStatus::Cancelled,
+    }
+}
+
 fn task_list_item_from_docket_task(
     task: &DocketTaskRow,
     state: Option<&DocketTaskRunStateRow>,
 ) -> TaskListItem {
     let status = state
-        .map(|state| work_plan_status_from_docket_task_status(&state.status))
+        .map(|state| work_plan_item_status_from_docket_task_status(&state.status))
         .unwrap_or(WorkPlanItemStatus::Pending);
     TaskListItem {
         id: task.id.to_string(),
@@ -1154,16 +1250,6 @@ fn task_list_item_from_docket_task(
             ],
         ),
         sync_state: TaskListSyncState::Clean,
-    }
-}
-
-fn work_plan_status_from_docket_task_status(status: &str) -> WorkPlanItemStatus {
-    match status {
-        "in_progress" => WorkPlanItemStatus::InProgress,
-        "done" => WorkPlanItemStatus::Completed,
-        "blocked" => WorkPlanItemStatus::Blocked,
-        "cancelled" => WorkPlanItemStatus::Cancelled,
-        _ => WorkPlanItemStatus::Pending,
     }
 }
 

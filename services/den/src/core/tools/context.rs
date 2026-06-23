@@ -505,6 +505,37 @@ impl WorkPlanOps for DenToolContext<'_> {
             .create_task(context, role, arguments)
             .await
     }
+
+    async fn list_tasks(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.work_plans().list_tasks(context, role, arguments).await
+    }
+
+    async fn update_task(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.work_plans()
+            .update_task(context, role, arguments)
+            .await
+    }
+
+    async fn sync_task_list(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.work_plans()
+            .sync_task_list(context, role, arguments)
+            .await
+    }
 }
 
 impl ToolContext for DenToolContext<'_> {}

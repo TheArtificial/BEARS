@@ -13,11 +13,14 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use super::model::{
-    validate_docket_job_create, validate_docket_task_create, validate_work_plan_update,
-    BearWorkPlanRow, DocketJobCreate, DocketJobCriterionRow, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketTaskCreate, DocketTaskInput,
-    DocketTaskRow, DocketTaskRunStateRow, WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection,
-    WorkPlanStatus, WorkPlanUpsert,
+    docket_parent_task_ref, docket_task_status_from_work_plan_item_status,
+    task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
+    validate_work_plan_update, BearWorkPlanRow, DocketJobCreate, DocketJobCriterionRow,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskProjection,
+    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanListFilter,
+    WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
 };
 
 pub(super) async fn create_job(
@@ -110,7 +113,12 @@ pub(super) async fn create_job(
     for task in &create.tasks {
         let parent_task_id = resolve_parent_task_id(task, &task_ids_by_client_key)?;
         let row = insert_task_for_job(&mut tx, &create, job.id, &run, task, parent_task_id).await?;
-        if let Some(key) = task.client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+        if let Some(key) = task
+            .client_key
+            .as_ref()
+            .map(|key| key.trim())
+            .filter(|key| !key.is_empty())
+        {
             task_ids_by_client_key.insert(key.to_string(), row.id);
         }
         tasks.push(row);
@@ -328,7 +336,11 @@ pub(super) async fn list_jobs(
     bear_id: Uuid,
     filter: DocketJobListFilter,
 ) -> Result<Vec<DocketJobRow>, DenError> {
-    let limit = if filter.limit <= 0 { 50 } else { filter.limit.min(200) };
+    let limit = if filter.limit <= 0 {
+        50
+    } else {
+        filter.limit.min(200)
+    };
     let rows = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
@@ -454,6 +466,536 @@ async fn list_task_run_states(
     .fetch_all(pool)
     .await
     .map_err(Into::into)
+}
+
+pub(super) async fn list_tasks(
+    pool: &PgPool,
+    bear_id: Uuid,
+    filter: DocketTaskListFilter,
+) -> Result<Vec<DocketTaskProjection>, DenError> {
+    let limit = if filter.limit <= 0 {
+        100
+    } else {
+        filter.limit.min(500)
+    };
+    let tasks = if filter.include_descendants {
+        list_tasks_with_descendants(pool, bear_id, &filter, limit).await?
+    } else {
+        sqlx::query_as::<_, DocketTaskRow>(
+            r"
+            SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                   kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   created_at, updated_at
+            FROM bear_tasks
+            WHERE bear_id = $1
+              AND ($2::uuid IS NULL OR job_id = $2)
+              AND ($3::uuid IS NULL OR session_anchor_id = $3)
+              AND (
+                    ($4::uuid IS NULL AND parent_task_id IS NULL)
+                 OR ($4::uuid IS NOT NULL AND parent_task_id = $4)
+              )
+            ORDER BY sibling_order, created_at
+            LIMIT $5
+            ",
+        )
+        .bind(bear_id)
+        .bind(filter.job_id)
+        .bind(filter.session_anchor_id)
+        .bind(filter.parent_task_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    };
+    let states = current_run_states_for_tasks(pool, filter.job_id, &tasks).await?;
+    Ok(tasks
+        .into_iter()
+        .map(|task| DocketTaskProjection {
+            run_state: states.get(&task.id).cloned(),
+            task,
+        })
+        .collect())
+}
+
+async fn list_tasks_with_descendants(
+    pool: &PgPool,
+    bear_id: Uuid,
+    filter: &DocketTaskListFilter,
+    limit: i64,
+) -> Result<Vec<DocketTaskRow>, DenError> {
+    sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        WITH RECURSIVE task_tree AS (
+            SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                   kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   created_at, updated_at
+            FROM bear_tasks
+            WHERE bear_id = $1
+              AND ($2::uuid IS NULL OR job_id = $2)
+              AND ($3::uuid IS NULL OR session_anchor_id = $3)
+              AND (
+                    ($4::uuid IS NULL AND parent_task_id IS NULL)
+                 OR ($4::uuid IS NOT NULL AND parent_task_id = $4)
+              )
+            UNION ALL
+            SELECT child.id, child.bear_id, child.job_id, child.session_anchor_id,
+                   child.parent_task_id, child.sibling_order, child.kind, child.scope,
+                   child.title, child.body, child.difficulty, child.effort_hint,
+                   child.assigned_to_role, child.created_by_role, child.created_by_user_id,
+                   child.created_by_agent_id, child.created_in_run_id, child.created_at,
+                   child.updated_at
+            FROM bear_tasks child
+            JOIN task_tree parent ON child.parent_task_id = parent.id
+        )
+        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+               kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               created_at, updated_at
+        FROM task_tree
+        ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
+        LIMIT $5
+        ",
+    )
+    .bind(bear_id)
+    .bind(filter.job_id)
+    .bind(filter.session_anchor_id)
+    .bind(filter.parent_task_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn current_run_states_for_tasks(
+    pool: &PgPool,
+    job_id: Option<Uuid>,
+    tasks: &[DocketTaskRow],
+) -> Result<HashMap<Uuid, DocketTaskRunStateRow>, DenError> {
+    let Some(job_id) = job_id.or_else(|| tasks.iter().find_map(|task| task.job_id)) else {
+        return Ok(HashMap::new());
+    };
+    let run_id =
+        sqlx::query_as::<_, (Option<Uuid>,)>(r"SELECT current_run_id FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await?
+            .and_then(|row| row.0);
+    let Some(run_id) = run_id else {
+        return Ok(HashMap::new());
+    };
+    Ok(list_task_run_states(pool, run_id)
+        .await?
+        .into_iter()
+        .map(|state| (state.task_id, state))
+        .collect())
+}
+
+pub(super) async fn update_task(
+    pool: &PgPool,
+    update: DocketTaskUpdate,
+) -> Result<DocketTaskProjection, DenError> {
+    validate_docket_task_patch(&update.definition)?;
+    let mut tx = pool.begin().await?;
+    let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
+    let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
+    append_task_updated_events(&mut tx, &patched, &update).await?;
+    let run_state = if let Some(run_state) = update.run_state.as_ref() {
+        Some(upsert_task_run_state(&mut tx, update.task_id, run_state).await?)
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(DocketTaskProjection {
+        task: patched,
+        run_state,
+    })
+}
+
+fn validate_docket_task_patch(patch: &DocketTaskDefinitionPatch) -> Result<(), DenError> {
+    if patch
+        .title
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(str::is_empty)
+    {
+        return Err(DenError::ValidationError(
+            "Docket task title must not be empty".to_string(),
+        ));
+    }
+    if patch
+        .body
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(str::is_empty)
+    {
+        return Err(DenError::ValidationError(
+            "Docket task body must not be empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn select_task(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bear_id: Uuid,
+    task_id: Uuid,
+) -> Result<DocketTaskRow, DenError> {
+    sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+               kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               created_at, updated_at
+        FROM bear_tasks
+        WHERE bear_id = $1 AND id = $2
+        ",
+    )
+    .bind(bear_id)
+    .bind(task_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {task_id}")))
+}
+
+async fn update_task_definition(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    current: &DocketTaskRow,
+    patch: &DocketTaskDefinitionPatch,
+) -> Result<DocketTaskRow, DenError> {
+    sqlx::query_as::<_, DocketTaskRow>(
+        r"
+        UPDATE bear_tasks
+        SET title = $3,
+            body = $4,
+            parent_task_id = $5,
+            sibling_order = $6,
+            kind = $7,
+            scope = $8,
+            difficulty = $9,
+            effort_hint = $10,
+            assigned_to_role = $11,
+            updated_at = NOW()
+        WHERE bear_id = $1 AND id = $2
+        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                  kind, scope, title, body, difficulty, effort_hint, assigned_to_role,
+                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  created_at, updated_at
+        ",
+    )
+    .bind(current.bear_id)
+    .bind(current.id)
+    .bind(
+        patch
+            .title
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&current.title),
+    )
+    .bind(
+        patch
+            .body
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&current.body),
+    )
+    .bind(patch.parent_task_id.unwrap_or(current.parent_task_id))
+    .bind(patch.sibling_order.unwrap_or(current.sibling_order))
+    .bind(
+        patch
+            .kind
+            .map(|kind| kind.as_str())
+            .unwrap_or(&current.kind),
+    )
+    .bind(
+        patch
+            .scope
+            .map(|scope| scope.as_str())
+            .unwrap_or(&current.scope),
+    )
+    .bind(
+        patch
+            .difficulty
+            .map(|value| value.map(|difficulty| difficulty.as_str().to_string()))
+            .unwrap_or_else(|| current.difficulty.clone()),
+    )
+    .bind(
+        patch
+            .effort_hint
+            .map(|value| value.map(|effort| effort.as_str().to_string()))
+            .unwrap_or_else(|| current.effort_hint.clone()),
+    )
+    .bind(
+        patch
+            .assigned_to_role
+            .map(|value| value.map(|role| role.as_str().to_string()))
+            .unwrap_or_else(|| current.assigned_to_role.clone()),
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(Into::into)
+}
+
+async fn append_task_updated_events(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    update: &DocketTaskUpdate,
+) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, 'updated', $3, $4, $5, $6::jsonb)
+        ",
+    )
+    .bind(task.id)
+    .bind(update.run_state.as_ref().map(|state| state.run_id))
+    .bind(update.actor_role.as_str())
+    .bind(update.actor_agent_id.as_deref())
+    .bind(update.actor_user_id)
+    .bind(json!({
+        "title": task.title,
+        "parent_task_id": task.parent_task_id,
+        "scope": task.scope,
+    }))
+    .execute(&mut **tx)
+    .await?;
+
+    if let Some(job_id) = task.job_id {
+        sqlx::query(
+            r"
+            INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
+            VALUES ($1, $2, 'task_updated', $3, $4, $5, $6, $7::jsonb)
+            ",
+        )
+        .bind(job_id)
+        .bind(update.run_state.as_ref().map(|state| state.run_id))
+        .bind(task.id)
+        .bind(update.actor_role.as_str())
+        .bind(update.actor_agent_id.as_deref())
+        .bind(update.actor_user_id)
+        .bind(json!({
+            "title": task.title,
+            "parent_task_id": task.parent_task_id,
+            "scope": task.scope,
+        }))
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn upsert_task_run_state(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task_id: Uuid,
+    update: &super::model::DocketTaskRunStateUpdate,
+) -> Result<DocketTaskRunStateRow, DenError> {
+    if update.status.as_str() == "in_progress" {
+        sqlx::query(
+            r"
+            UPDATE bear_task_run_state
+            SET status = 'pending', updated_at = NOW()
+            WHERE run_id = $1 AND task_id <> $2 AND status = 'in_progress'
+            ",
+        )
+        .bind(update.run_id)
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    sqlx::query_as::<_, DocketTaskRunStateRow>(
+        r"
+        INSERT INTO bear_task_run_state (
+            run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+        )
+        VALUES (
+            $1, $2, $3, $4::jsonb, $5,
+            CASE WHEN $3 = 'in_progress' THEN COALESCE(NOW(), NOW()) ELSE NULL END,
+            CASE WHEN $3 IN ('done', 'cancelled') THEN NOW() ELSE NULL END,
+            NOW()
+        )
+        ON CONFLICT (run_id, task_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            result_refs = EXCLUDED.result_refs,
+            result_summary = EXCLUDED.result_summary,
+            started_at = CASE
+                WHEN EXCLUDED.status = 'in_progress' THEN COALESCE(bear_task_run_state.started_at, NOW())
+                ELSE bear_task_run_state.started_at
+            END,
+            finished_at = CASE
+                WHEN EXCLUDED.status IN ('done', 'cancelled') THEN COALESCE(bear_task_run_state.finished_at, NOW())
+                WHEN EXCLUDED.status IN ('pending', 'in_progress', 'blocked') THEN NULL
+                ELSE bear_task_run_state.finished_at
+            END,
+            updated_at = NOW()
+        RETURNING run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+        ",
+    )
+    .bind(update.run_id)
+    .bind(task_id)
+    .bind(update.status.as_str())
+    .bind(update.result_refs.as_ref())
+    .bind(update.result_summary.as_deref())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(Into::into)
+}
+
+pub(super) async fn sync_task_list(
+    pool: &PgPool,
+    request: TaskListSyncRequest,
+) -> Result<TaskListSyncOutcome, DenError> {
+    let Some(job_id) = task_list_job_id(&request.task_list) else {
+        return Ok(TaskListSyncOutcome::review_required(
+            request.task_list,
+            "Task list is not Docket-backed; request handoff/promotion before syncing.",
+        ));
+    };
+    let Some(job) = get_job(pool, request.task_list.bear_id, job_id).await? else {
+        return Ok(TaskListSyncOutcome::conflicts(
+            request.task_list,
+            vec![format!("Docket job not found: {job_id}")],
+            "Task-list sync could not find its Docket job.",
+        ));
+    };
+    let Some(run_id) = job.job.current_run_id else {
+        return Ok(TaskListSyncOutcome::conflicts(
+            request.task_list,
+            vec![format!("Docket job has no current run: {job_id}")],
+            "Task-list sync requires a current Docket run for status updates.",
+        ));
+    };
+
+    let tasks_by_id = job
+        .tasks
+        .iter()
+        .map(|task| (task.id, task))
+        .collect::<HashMap<_, _>>();
+    let parent_task_id = docket_parent_task_ref(&request.task_list.source_ref);
+    let mut conflicts = Vec::new();
+    for item in &request.task_list.items {
+        if let Some(task_id) = task_ref_uuid(&item.source_ref) {
+            let Some(existing) = tasks_by_id.get(&task_id).copied() else {
+                conflicts.push(format!(
+                    "Docket task not found for item `{}`: {task_id}",
+                    item.id
+                ));
+                continue;
+            };
+            if existing.updated_at > request.task_list.updated_at
+                && (existing.title != item.title
+                    || item
+                        .summary
+                        .as_deref()
+                        .is_some_and(|summary| summary != existing.body))
+            {
+                conflicts.push(format!(
+                    "Docket task `{}` changed after checkout; refresh before syncing item `{}`",
+                    existing.id, item.id
+                ));
+            }
+        }
+    }
+    if !conflicts.is_empty() {
+        return Ok(TaskListSyncOutcome::conflicts(
+            request.task_list,
+            conflicts,
+            "Task-list sync found conflicts; refresh checkout and reconcile before applying.",
+        ));
+    }
+
+    for item in &request.task_list.items {
+        if matches!(
+            item.sync_state,
+            TaskListSyncState::Conflict | TaskListSyncState::ReviewRequired
+        ) {
+            continue;
+        }
+        if let Some(task_id) = task_ref_uuid(&item.source_ref) {
+            let body = item.summary.clone();
+            update_task(
+                pool,
+                DocketTaskUpdate {
+                    bear_id: request.task_list.bear_id,
+                    task_id,
+                    actor_role: request
+                        .task_list
+                        .owner_profile
+                        .parse()
+                        .map_err(DenError::Parsing)?,
+                    actor_user_id: None,
+                    actor_agent_id: None,
+                    definition: DocketTaskDefinitionPatch {
+                        title: Some(item.title.clone()),
+                        body,
+                        ..DocketTaskDefinitionPatch::default()
+                    },
+                    run_state: Some(super::model::DocketTaskRunStateUpdate {
+                        run_id,
+                        status: docket_task_status_from_work_plan_item_status(item.status),
+                        result_refs: None,
+                        result_summary: item.blocked_reason.clone(),
+                    }),
+                },
+            )
+            .await?;
+        } else if item.source_ref.kind == "local" {
+            create_task(
+                pool,
+                DocketTaskCreate {
+                    bear_id: request.task_list.bear_id,
+                    job_id: Some(job_id),
+                    session_anchor_id: None,
+                    parent_task_id,
+                    sibling_order: i32::MAX / 2,
+                    kind: super::model::DocketTaskKind::Execution,
+                    scope: super::model::DocketTaskScope::Template,
+                    title: item.title.clone(),
+                    body: item.summary.clone().unwrap_or_else(|| item.title.clone()),
+                    difficulty: None,
+                    effort_hint: None,
+                    assigned_to_role: Some(BearProfile::Work),
+                    created_by_role: request.task_list.owner_profile.clone(),
+                    created_by_user_id: None,
+                    created_by_agent_id: None,
+                    created_in_run_id: Some(run_id),
+                },
+            )
+            .await?;
+        }
+    }
+
+    let refreshed = get_job(pool, request.task_list.bear_id, job_id)
+        .await?
+        .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))
+        .unwrap_or(request.task_list);
+    Ok(TaskListSyncOutcome::applied(
+        refreshed,
+        "Task-list changes synced to Docket.",
+    ))
+}
+
+fn task_list_job_id(task_list: &TaskListProjection) -> Option<Uuid> {
+    task_list
+        .source_ref
+        .docket_job_id
+        .as_deref()
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .or_else(|| {
+            task_list.items.iter().find_map(|item| {
+                item.source_ref
+                    .docket_job_id
+                    .as_deref()
+                    .and_then(|raw| Uuid::parse_str(raw).ok())
+            })
+        })
+}
+
+fn task_ref_uuid(source_ref: &TaskListSourceRef) -> Option<Uuid> {
+    source_ref
+        .docket_task_id
+        .as_deref()
+        .and_then(|raw| Uuid::parse_str(raw).ok())
 }
 
 pub(super) async fn create_or_update_work_plan(
