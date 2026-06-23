@@ -61,7 +61,7 @@ Default runtime probes include:
 | Check | What it validates |
 | ----- | ----------------- |
 | Den PostgreSQL | `SELECT 1` against `DATABASE_URL` |
-| Bifrost | `GET /health` and metadata URL from `BIFROST_BASE_URL` / `BIFROST_METADATA_URL` |
+| Bifrost | `GET /health` from `BIFROST_BASE_URL` and live model catalog from `LLM_API_URL` (`/v1/models`) |
 | Config shape | `JWT_SECRET` when required, `DATABASE_URL` host/scheme, `WEB_SERVER_URL`, `LLM_API_URL` shape, `OPENAI_API_KEY` presence (warn if empty) |
 
 Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns for Den image drift checks.

@@ -84,7 +84,7 @@ Implemented or partially implemented today:
 - Den-native runtime calls Bifrost directly for inference (ADR-0035).
 - Den has a static model metadata overlay bootstrap in `den-runtime::llm::model_registry`.
 - Bear Admin model dropdown is Bifrost-availability-first and enriched with Den overlay metadata.
-- Den's Bifrost client prefers Bifrost `/v1/models` and falls back to the legacy `/bears/models` sidecar.
+- Den's Bifrost client reads availability and capability metadata from Bifrost `/v1/models` only; the legacy `/bears/models` sidecar has been retired.
 - Bear default model exists in `bears.default_model`.
 - Per-profile model overrides exist in `bear_profile_model_settings`:
   - missing/blank profile model means inherit Bear default.
@@ -213,7 +213,7 @@ Use Bifrost catalog surfaces in this order:
 1. `GET /v1/models` for live availability in ordinary deployments.
 2. `GET /api/models/details` when Bifrost management auth is available, for richer catalog metadata such as context, modalities, supported methods, and accessible keys.
 3. `GET /api/models/base` when Den needs base model/pricing-catalog awareness rather than deployment availability.
-4. `/bears/models` sidecar only as a compatibility fallback while it exists.
+4. ~~`/bears/models` sidecar~~ — retired; `/v1/models` is the sole availability surface.
 
 Avoid manually enumerating every provider model in Den or in Bifrost provider-key `models` allowlists unless the goal is intentional restriction.
 

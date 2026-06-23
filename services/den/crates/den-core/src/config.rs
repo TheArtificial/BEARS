@@ -110,10 +110,6 @@ pub struct Config {
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
-    /// BEARS model metadata URL served by the Bifrost image, e.g. `http://bears-bifrost:8081/bears/models`.
-    /// Empty = derive from `bifrost_base_url` where possible or skip Bifrost metadata.
-    pub bifrost_metadata_url: String,
-
     /// Seconds between background Bifrost model-catalog refreshes
     /// (`BIFROST_CATALOG_REFRESH_SECS`, default 300). `0` warms once at startup
     /// with no periodic refresh.
@@ -348,17 +344,6 @@ impl Config {
 
         let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
         let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
-        let bifrost_metadata_url = std::env::var("BIFROST_METADATA_URL")
-            .unwrap_or_else(|_| {
-                if bifrost_base_url.is_empty() {
-                    String::new()
-                } else {
-                    bifrost_base_url.replace(":8080", ":8081") + "/bears/models"
-                }
-            })
-            .trim()
-            .to_string();
-
         let bifrost_catalog_refresh_secs = std::env::var("BIFROST_CATALOG_REFRESH_SECS")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
@@ -507,7 +492,6 @@ impl Config {
             api_server_url,
             den_internal_token,
             bifrost_base_url,
-            bifrost_metadata_url,
             bifrost_catalog_refresh_secs,
             llm_api_url,
             llm_api_key,
@@ -584,7 +568,6 @@ impl Config {
             api_server_url: "http://localhost:3001".into(),
             den_internal_token: String::new(),
             bifrost_base_url: String::new(),
-            bifrost_metadata_url: String::new(),
             bifrost_catalog_refresh_secs: 300,
             llm_api_url: String::new(),
             llm_api_key: String::new(),

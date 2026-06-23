@@ -168,11 +168,6 @@ fn default_enabled() -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-struct BifrostModelMetadataResponse {
-    models: Vec<BifrostModelMetadata>,
-}
-
-#[derive(Debug, Deserialize)]
 struct BifrostLiveModelsResponse {
     data: Vec<BifrostLiveModel>,
     next_page_token: Option<String>,
@@ -287,7 +282,6 @@ fn sort_models(models: &mut [BifrostModelMetadata]) {
 #[derive(Clone)]
 pub struct BifrostClient {
     http: reqwest::Client,
-    metadata_url: String,
     llm_api_url: String,
     api_key: String,
 }
@@ -301,24 +295,16 @@ impl BifrostClient {
             .expect("reqwest client");
         Self {
             http,
-            metadata_url: config.bifrost_metadata_url.trim().to_string(),
             llm_api_url: config.llm_api_url.trim_end_matches('/').to_string(),
             api_key: config.llm_api_key.clone(),
         }
     }
 
     pub fn is_enabled(&self) -> bool {
-        !self.llm_api_url.is_empty() || !self.metadata_url.is_empty()
+        !self.llm_api_url.is_empty()
     }
 
-    pub async fn list_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
-        match self.list_available_models().await {
-            Ok(models) if !models.is_empty() => Ok(models),
-            Ok(_) | Err(_) => self.list_sidecar_models().await,
-        }
-    }
-
-    /// Live Bifrost availability from `/v1/models`; does not fall back to the legacy BEARS sidecar.
+    /// Live Bifrost availability from `/v1/models`.
     pub async fn list_available_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
         if self.llm_api_url.is_empty() {
             return Err(DenError::System(
@@ -379,43 +365,6 @@ impl BifrostClient {
             .map_err(|e| DenError::Parsing(format!("Bifrost /v1/models JSON: {e}; body: {text}")))
     }
 
-    async fn list_sidecar_models(&self) -> Result<Vec<BifrostModelMetadata>, DenError> {
-        if self.metadata_url.is_empty() {
-            return Err(DenError::System(
-                "Bifrost metadata is not configured (set BIFROST_METADATA_URL)".to_string(),
-            ));
-        }
-
-        let resp = self
-            .http
-            .get(&self.metadata_url)
-            .send()
-            .await
-            .map_err(|e| DenError::System(format!("Bifrost model metadata request failed: {e}")))?;
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| DenError::System(format!("Bifrost model metadata response body: {e}")))?;
-        if !status.is_success() {
-            return Err(DenError::System(format!(
-                "Bifrost model metadata HTTP {status}: {text}"
-            )));
-        }
-
-        let payload: BifrostModelMetadataResponse = serde_json::from_str(&text).map_err(|e| {
-            DenError::Parsing(format!("Bifrost model metadata JSON: {e}; body: {text}"))
-        })?;
-
-        let mut models: Vec<BifrostModelMetadata> = payload
-            .models
-            .into_iter()
-            .filter(|m| m.enabled && !m.handle.trim().is_empty())
-            .collect();
-        sort_models(&mut models);
-        Ok(models)
-    }
-
     pub async fn refresh_catalog_snapshot(
         &self,
         store: &BifrostCatalogStore,
@@ -455,7 +404,7 @@ impl BifrostClient {
             return Ok(None);
         }
         Ok(self
-            .list_models()
+            .list_available_models()
             .await?
             .into_iter()
             .find(|m| m.handle == handle))

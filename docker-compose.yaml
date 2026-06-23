@@ -115,7 +115,6 @@ services:
             APP_PORT: ${BIFROST_APP_PORT:-8080}
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
-            DEN_METADATA_PORT: ${BIFROST_METADATA_PORT:-8081}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
         healthcheck:
             test:
@@ -195,7 +194,6 @@ services:
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
             TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
             BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
-            BIFROST_METADATA_URL: ${BIFROST_METADATA_URL:-http://bears-bifrost:8081/bears/models}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
