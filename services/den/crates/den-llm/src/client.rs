@@ -444,8 +444,10 @@ fn apply_bifrost_session_cache_headers(
     apply_optional_header(req, "x-bf-cache-type", Some("direct"))
 }
 
-fn bifrost_key_selection_error(text: &str) -> bool {
+pub fn bifrost_key_selection_error(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
     text.contains("no keys found that support model")
+        || (text.contains("key-selection error") && text.contains("no keys"))
 }
 
 struct TimedLlmByteStream {
@@ -928,6 +930,17 @@ mod tests {
             preferred_api_style_for_model("gpt-5.5"),
             LlmApiStyle::ResponsesStream
         );
+    }
+
+    #[test]
+    fn detects_bifrost_key_selection_errors() {
+        let raw = r#"LLM responses HTTP 400 Bad Request: {"is_bifrost_error":false,"error":{"error":"no keys found that support model: gpt-5.5","message":"no keys found that support model: gpt-5.5"},"extra_fields":{"provider":"openai","model_requested":"gpt-5.5","request_type":"responses_stream"}}"#;
+        assert!(bifrost_key_selection_error(raw));
+
+        let wrapped = format!(
+            "{raw} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP 400 Bad Request: {raw})"
+        );
+        assert!(bifrost_key_selection_error(&wrapped));
     }
 
     #[test]

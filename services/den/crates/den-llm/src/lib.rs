@@ -11,7 +11,7 @@ mod model_options;
 pub mod model_registry;
 
 pub use client::{
-    normalize_llm_model_handle, preferred_api_style_for_model,
+    bifrost_key_selection_error, normalize_llm_model_handle, preferred_api_style_for_model,
     preferred_api_style_for_model_with_catalog_support, ChatCompletionRequest, ChatMessage,
     ChatToolCall, ChatToolCallFunction, LlmApiStyle, LlmClient, LlmRequestTelemetry,
     LlmToolDefinition,
