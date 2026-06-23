@@ -9,8 +9,9 @@ use crate::{
     config::Config,
     core::{
         docket::{
-            DocketCommitPolicy, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
-            DocketJobListFilter, DocketJobStatus, DocketService, DocketTaskCreate,
+            DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus,
+            DocketEffortHint, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
+            DocketJobListFilter, DocketJobStatus, DocketJobUpdate, DocketService, DocketTaskCreate,
             DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
             DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
             DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListProjection,
@@ -114,6 +115,39 @@ impl WorkPlanOps for DenWorkPlanOps<'_> {
         arguments: Value,
     ) -> Result<Value, DenError> {
         get_job(self.pool, context, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn update_job(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        update_job(self.pool, context, role, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn execute_job(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        execute_job(self.pool, context, role, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn evaluate_criterion(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        evaluate_criterion(self.pool, context, role, arguments)
             .await
             .map_err(CustomError::into_den)
     }
@@ -236,6 +270,40 @@ pub(crate) struct DocketJobListArguments {
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobGetArguments {
     pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobUpdateArguments {
+    pub(crate) job_id: Uuid,
+    #[serde(default)]
+    pub(crate) goal: Option<String>,
+    #[serde(default)]
+    pub(crate) work_surface_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) clear_work_surface_ref: bool,
+    #[serde(default)]
+    pub(crate) commit_policy: Option<DocketCommitPolicy>,
+    #[serde(default)]
+    pub(crate) clear_commit_policy: bool,
+    #[serde(default)]
+    pub(crate) status: Option<DocketJobStatus>,
+    #[serde(default)]
+    pub(crate) visibility: Option<WorkPlanVisibility>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobExecuteArguments {
+    pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketCriterionEvaluateArguments {
+    pub(crate) job_id: Uuid,
+    pub(crate) run_id: Uuid,
+    pub(crate) criterion_id: Uuid,
+    pub(crate) status: DocketCriterionStatus,
+    #[serde(default)]
+    pub(crate) evidence: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -590,6 +658,96 @@ pub(crate) async fn get_job(
         "bear_id": context.bear_id,
         "job": job,
         "task_list": task_list,
+    }))
+}
+
+pub(crate) async fn update_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .update_job(DocketJobUpdate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+            goal: args.goal,
+            work_surface_ref: args
+                .clear_work_surface_ref
+                .then_some(None)
+                .or_else(|| args.work_surface_ref.map(Some)),
+            commit_policy: args
+                .clear_commit_policy
+                .then_some(None)
+                .or_else(|| args.commit_policy.map(Some)),
+            status: args.status,
+            visibility: args.visibility,
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
+    }))
+}
+
+pub(crate) async fn execute_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
+    if role != BearProfile::Pair {
+        return Err(DenError::Authorization(
+            "execute_job is currently limited to pair stance".to_string(),
+        )
+        .into());
+    }
+    let outcome = PgDocketService::from_pool(pool)
+        .execute_job(DocketJobExecuteRequest {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "execution": outcome,
+    }))
+}
+
+pub(crate) async fn evaluate_criterion(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketCriterionEvaluateArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .evaluate_criterion(DocketCriterionStateUpdate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            run_id: args.run_id,
+            criterion_id: args.criterion_id,
+            status: args.status,
+            evidence: args.evidence,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
     }))
 }
 

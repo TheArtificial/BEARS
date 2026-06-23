@@ -15,10 +15,12 @@ use den_core::{BearProfile, DenError};
 use super::model::{
     docket_parent_task_ref, docket_task_status_from_work_plan_item_status,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
-    validate_work_plan_update, BearWorkPlanRow, DocketJobCreate, DocketJobCriterionRow,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskProjection,
-    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection, TaskListSourceRef,
+    validate_work_plan_update, BearWorkPlanRow, DocketCriterionStateRow,
+    DocketCriterionStateUpdate, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection, TaskListSourceRef,
     TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanListFilter,
     WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
 };
@@ -145,10 +147,12 @@ pub(super) async fn create_job(
 
     tx.commit().await?;
     let task_states = list_task_run_states(pool, run.id).await?;
+    let criteria_states = list_criterion_states(pool, run.id).await?;
     Ok(DocketJobProjection {
         job,
         current_run: Some(run),
         criteria,
+        criteria_states,
         tasks,
         task_states,
     })
@@ -435,19 +439,476 @@ pub(super) async fn get_job(
     .fetch_all(pool)
     .await?;
 
-    let task_states = if let Some(run) = current_run.as_ref() {
-        list_task_run_states(pool, run.id).await?
+    let (criteria_states, task_states) = if let Some(run) = current_run.as_ref() {
+        (
+            list_criterion_states(pool, run.id).await?,
+            list_task_run_states(pool, run.id).await?,
+        )
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     Ok(Some(DocketJobProjection {
         job,
         current_run,
         criteria,
+        criteria_states,
         tasks,
         task_states,
     }))
+}
+
+pub(super) async fn update_job(
+    pool: &PgPool,
+    update: DocketJobUpdate,
+) -> Result<DocketJobProjection, DenError> {
+    if update
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(str::is_empty)
+    {
+        return Err(DenError::ValidationError(
+            "Docket job goal must not be empty".to_string(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let Some(current) = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+               commit_policy, status, visibility, current_run_id, created_at, updated_at
+        FROM bear_jobs
+        WHERE bear_id = $1 AND id = $2
+        ",
+    )
+    .bind(update.bear_id)
+    .bind(update.job_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {}",
+            update.job_id
+        )));
+    };
+    let job = sqlx::query_as::<_, DocketJobRow>(
+        r"
+        UPDATE bear_jobs
+        SET goal = $3,
+            work_surface_ref = $4,
+            commit_policy = $5,
+            status = $6,
+            visibility = $7,
+            updated_at = NOW()
+        WHERE bear_id = $1 AND id = $2
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+        ",
+    )
+    .bind(update.bear_id)
+    .bind(update.job_id)
+    .bind(
+        update
+            .goal
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&current.goal),
+    )
+    .bind(
+        update
+            .work_surface_ref
+            .clone()
+            .unwrap_or_else(|| current.work_surface_ref.clone()),
+    )
+    .bind(
+        update
+            .commit_policy
+            .map(|policy| policy.map(|policy| policy.as_str().to_string()))
+            .unwrap_or_else(|| current.commit_policy.clone()),
+    )
+    .bind(
+        update
+            .status
+            .map(|status| status.as_str())
+            .unwrap_or(&current.status),
+    )
+    .bind(
+        update
+            .visibility
+            .map(|visibility| visibility.as_str())
+            .unwrap_or(&current.visibility),
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let run_id = job.current_run_id;
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ",
+    )
+    .bind(job.id)
+    .bind(run_id)
+    .bind(job_event_type_for_status(update.status))
+    .bind(update.actor_role.as_str())
+    .bind(update.actor_agent_id.as_deref())
+    .bind(update.actor_user_id)
+    .bind(json!({
+        "status": job.status,
+        "goal": job.goal,
+        "visibility": job.visibility,
+    }))
+    .execute(&mut *tx)
+    .await?;
+    update_run_for_job_status(&mut tx, run_id, update.status).await?;
+    tx.commit().await?;
+    get_job(pool, update.bear_id, update.job_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {}", update.job_id)))
+}
+
+fn job_event_type_for_status(status: Option<DocketJobStatus>) -> &'static str {
+    match status {
+        Some(DocketJobStatus::Blocked) => "job_blocked",
+        Some(DocketJobStatus::Completed) => "job_completed",
+        Some(DocketJobStatus::Cancelled) => "job_cancelled",
+        _ => "note_added",
+    }
+}
+
+async fn update_run_for_job_status(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run_id: Option<Uuid>,
+    status: Option<DocketJobStatus>,
+) -> Result<(), DenError> {
+    let Some(run_id) = run_id else {
+        return Ok(());
+    };
+    let Some(status) = status else {
+        return Ok(());
+    };
+    let (state, finished) = match status {
+        DocketJobStatus::Running => (Some("running"), false),
+        DocketJobStatus::Blocked => (Some("paused"), false),
+        DocketJobStatus::Completed => (Some("completed"), true),
+        DocketJobStatus::Cancelled => (Some("cancelled"), true),
+        _ => (None, false),
+    };
+    if let Some(state) = state {
+        sqlx::query(
+            r"
+            UPDATE bear_job_runs
+            SET state = $2,
+                started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, NOW()) ELSE started_at END,
+                finished_at = CASE WHEN $3 THEN COALESCE(finished_at, NOW()) ELSE finished_at END,
+                updated_at = NOW()
+            WHERE id = $1
+            ",
+        )
+        .bind(run_id)
+        .bind(state)
+        .bind(finished)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn evaluate_criterion(
+    pool: &PgPool,
+    update: DocketCriterionStateUpdate,
+) -> Result<DocketJobProjection, DenError> {
+    let mut tx = pool.begin().await?;
+    let exists = sqlx::query_as::<_, (Uuid,)>(
+        r"
+        SELECT c.id
+        FROM bear_job_criteria c
+        JOIN bear_jobs j ON j.id = c.job_id
+        WHERE j.bear_id = $1 AND c.job_id = $2 AND c.id = $3
+        ",
+    )
+    .bind(update.bear_id)
+    .bind(update.job_id)
+    .bind(update.criterion_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if exists.is_none() {
+        return Err(DenError::NotFound(format!(
+            "Docket criterion not found: {}",
+            update.criterion_id
+        )));
+    }
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_criteria_state (run_id, criterion_id, status, evaluated_at, evidence, updated_at)
+        VALUES ($1, $2, $3, NOW(), $4::jsonb, NOW())
+        ON CONFLICT (run_id, criterion_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            evaluated_at = NOW(),
+            evidence = EXCLUDED.evidence,
+            updated_at = NOW()
+        ",
+    )
+    .bind(update.run_id)
+    .bind(update.criterion_id)
+    .bind(update.status.as_str())
+    .bind(update.evidence.as_ref())
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, 'criterion_evaluated', $3, $4, $5, $6::jsonb)
+        ",
+    )
+    .bind(update.job_id)
+    .bind(update.run_id)
+    .bind(update.actor_role.as_str())
+    .bind(update.actor_agent_id.as_deref())
+    .bind(update.actor_user_id)
+    .bind(json!({
+        "criterion_id": update.criterion_id,
+        "status": update.status.as_str(),
+    }))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_job(pool, update.bear_id, update.job_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {}", update.job_id)))
+}
+
+pub(super) async fn execute_job(
+    pool: &PgPool,
+    request: DocketJobExecuteRequest,
+) -> Result<DocketJobExecuteOutcome, DenError> {
+    let Some(projection) = get_job(pool, request.bear_id, request.job_id).await? else {
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {}",
+            request.job_id
+        )));
+    };
+    let Some(run) = projection.current_run.as_ref() else {
+        return Err(DenError::ValidationError(
+            "Docket job has no current run".to_string(),
+        ));
+    };
+
+    if let Some(active) = projection
+        .task_states
+        .iter()
+        .find(|state| state.status == "in_progress")
+    {
+        mark_job_running(pool, &request, run.id).await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
+        return Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: Some(active.task_id),
+            completed: false,
+            blocked: false,
+            message: "Job already has an in-progress task.".to_string(),
+        });
+    }
+
+    if projection
+        .task_states
+        .iter()
+        .any(|state| state.status == "blocked")
+    {
+        let job = update_job(
+            pool,
+            DocketJobUpdate {
+                bear_id: request.bear_id,
+                job_id: request.job_id,
+                actor_role: request.actor_role,
+                actor_user_id: request.actor_user_id,
+                actor_agent_id: request.actor_agent_id,
+                goal: None,
+                work_surface_ref: None,
+                commit_policy: None,
+                status: Some(DocketJobStatus::Blocked),
+                visibility: None,
+            },
+        )
+        .await?;
+        return Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: None,
+            completed: false,
+            blocked: true,
+            message: "A task is blocked; job marked blocked.".to_string(),
+        });
+    }
+
+    let state_by_task = projection
+        .task_states
+        .iter()
+        .map(|state| (state.task_id, state.status.as_str()))
+        .collect::<HashMap<_, _>>();
+    if let Some(next) = projection.tasks.iter().find(|task| {
+        !matches!(
+            state_by_task.get(&task.id).copied().unwrap_or("pending"),
+            "done" | "cancelled" | "blocked"
+        )
+    }) {
+        mark_job_running(pool, &request, run.id).await?;
+        update_task(
+            pool,
+            DocketTaskUpdate {
+                bear_id: request.bear_id,
+                task_id: next.id,
+                actor_role: request.actor_role,
+                actor_user_id: request.actor_user_id,
+                actor_agent_id: request.actor_agent_id.clone(),
+                definition: DocketTaskDefinitionPatch::default(),
+                run_state: Some(super::model::DocketTaskRunStateUpdate {
+                    run_id: run.id,
+                    status: super::model::DocketTaskStatus::InProgress,
+                    result_refs: None,
+                    result_summary: None,
+                }),
+            },
+        )
+        .await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
+        return Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: Some(next.id),
+            completed: false,
+            blocked: false,
+            message: "Selected next pending task for pair execution.".to_string(),
+        });
+    }
+
+    let criteria_complete = projection.criteria.is_empty()
+        || projection.criteria.iter().all(|criterion| {
+            projection
+                .criteria_states
+                .iter()
+                .find(|state| state.criterion_id == criterion.id)
+                .map(|state| matches!(state.status.as_str(), "met" | "waived"))
+                .unwrap_or(false)
+        });
+    if criteria_complete {
+        let job = update_job(
+            pool,
+            DocketJobUpdate {
+                bear_id: request.bear_id,
+                job_id: request.job_id,
+                actor_role: request.actor_role,
+                actor_user_id: request.actor_user_id,
+                actor_agent_id: request.actor_agent_id,
+                goal: None,
+                work_surface_ref: None,
+                commit_policy: None,
+                status: Some(DocketJobStatus::Completed),
+                visibility: None,
+            },
+        )
+        .await?;
+        Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: None,
+            completed: true,
+            blocked: false,
+            message: "All tasks and criteria are complete; job completed.".to_string(),
+        })
+    } else {
+        let job = update_job(
+            pool,
+            DocketJobUpdate {
+                bear_id: request.bear_id,
+                job_id: request.job_id,
+                actor_role: request.actor_role,
+                actor_user_id: request.actor_user_id,
+                actor_agent_id: request.actor_agent_id,
+                goal: None,
+                work_surface_ref: None,
+                commit_policy: None,
+                status: Some(DocketJobStatus::Blocked),
+                visibility: None,
+            },
+        )
+        .await?;
+        Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: None,
+            completed: false,
+            blocked: true,
+            message: "All tasks are terminal, but acceptance criteria are not met.".to_string(),
+        })
+    }
+}
+
+async fn mark_job_running(
+    pool: &PgPool,
+    request: &DocketJobExecuteRequest,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r"
+        UPDATE bear_jobs
+        SET status = 'running', updated_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND status <> 'running'
+        ",
+    )
+    .bind(request.bear_id)
+    .bind(request.job_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r"
+        UPDATE bear_job_runs
+        SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+        WHERE id = $1
+        ",
+    )
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, 'run_started', $3, $4, $5, $6::jsonb)
+        ",
+    )
+    .bind(request.job_id)
+    .bind(run_id)
+    .bind(request.actor_role.as_str())
+    .bind(request.actor_agent_id.as_deref())
+    .bind(request.actor_user_id)
+    .bind(json!({"status": "running"}))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn list_criterion_states(
+    pool: &PgPool,
+    run_id: Uuid,
+) -> Result<Vec<DocketCriterionStateRow>, DenError> {
+    sqlx::query_as::<_, DocketCriterionStateRow>(
+        r"
+        SELECT run_id, criterion_id, status, evaluated_at, evidence, updated_at
+        FROM bear_job_criteria_state
+        WHERE run_id = $1
+        ORDER BY updated_at DESC
+        ",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 async fn list_task_run_states(

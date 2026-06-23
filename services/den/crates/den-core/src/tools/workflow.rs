@@ -61,6 +61,27 @@ pub trait WorkPlanOps: Send + Sync {
         arguments: Value,
     ) -> Result<Value, DenError>;
 
+    async fn update_job(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
+    async fn execute_job(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
+    async fn evaluate_criterion(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
     async fn create_task(
         &self,
         context: &DenToolInvocationContext,

@@ -18,14 +18,16 @@ use crate::tools::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
         DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
-        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER, DEN_JOB_GET,
-        DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
-        DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
-        DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
-        DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
-        DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_REQUEST_REVIEW,
-        DEN_MEMORY_REQUEST_REVIEW_PROVIDER, DEN_MEMORY_RESOLVE_PROPOSAL,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
+        DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
+        DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
+        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER,
+        DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_LIST_PROPOSALS_PROVIDER,
+        DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ,
+        DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER,
+        DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_REQUEST_REVIEW_PROVIDER, DEN_MEMORY_RESOLVE_PROPOSAL,
         DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER, DEN_MEMORY_SEARCH, DEN_MEMORY_SEARCH_PROVIDER,
         DEN_MEMORY_STATUS, DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE,
         DEN_MEMORY_TREE_LEGACY_PROVIDER, DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY,
@@ -110,6 +112,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_JOB_CREATE => return DEN_JOB_CREATE_PROVIDER.to_string(),
         DEN_JOB_LIST => return DEN_JOB_LIST_PROVIDER.to_string(),
         DEN_JOB_GET => return DEN_JOB_GET_PROVIDER.to_string(),
+        DEN_JOB_UPDATE => return DEN_JOB_UPDATE_PROVIDER.to_string(),
+        DEN_JOB_EXECUTE => return DEN_JOB_EXECUTE_PROVIDER.to_string(),
+        DEN_JOB_EVALUATE_CRITERION => return DEN_JOB_EVALUATE_CRITERION_PROVIDER.to_string(),
         DEN_TASK_CREATE => return DEN_TASK_CREATE_PROVIDER.to_string(),
         DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
         DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
@@ -465,6 +470,33 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_JOB_UPDATE,
+            "Update Docket job",
+            "Update durable Docket job metadata or lifecycle status. Use for status transitions such as running, blocked, completed, or cancelled; does not execute task bodies.",
+            "bear.docket",
+            &["docket.job.write"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"goal":{"type":"string"},"work_surface_ref":{"type":["string","null"]},"clear_work_surface_ref":{"type":"boolean"},"commit_policy":{"enum":["none","per_task","per_job","propose_only",null]},"clear_commit_policy":{"type":"boolean"},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_EXECUTE,
+            "Execute Docket job",
+            "First-pass pair execution: start or advance a Docket job by selecting the next pending task for pair to work. This records job/run/task state but does not dispatch to work stance yet.",
+            "bear.docket",
+            &["docket.job.execute"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_EVALUATE_CRITERION,
+            "Evaluate Docket criterion",
+            "Record run-scoped acceptance-criterion state for a Docket job. Use after checking narrative, command, or external evidence; job completion requires criteria to be met or waived.",
+            "bear.docket",
+            &["docket.criteria.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"criterion_id":{"type":"string","format":"uuid"},"status":{"enum":["unmet","met","waived"]},"evidence":{"type":"object"}},"required":["job_id","run_id","criterion_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
             "Create a durable Docket task under a job or ACP session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Status/results remain run-scoped and are not stored on the task definition.",
@@ -654,6 +686,9 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_JOB_CREATE,
         DEN_JOB_LIST,
         DEN_JOB_GET,
+        DEN_JOB_UPDATE,
+        DEN_JOB_EXECUTE,
+        DEN_JOB_EVALUATE_CRITERION,
         DEN_TASK_CREATE,
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
@@ -756,13 +791,17 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_JOB_CREATE | DEN_TASK_CREATE | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC => {
-            Some(ToolDescriptorGuidance {
-                scope: ToolScopeKind::CurrentSession,
-                side_effect: ToolSideEffectKind::ActiveWorkState,
-                orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
-            })
-        }
+        DEN_JOB_CREATE
+        | DEN_JOB_UPDATE
+        | DEN_JOB_EXECUTE
+        | DEN_JOB_EVALUATE_CRITERION
+        | DEN_TASK_CREATE
+        | DEN_TASK_UPDATE
+        | DEN_TASK_LIST_SYNC => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ActiveWorkState,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
         DEN_TASK_LIST => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ReadOnly,
@@ -1291,8 +1330,16 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
         | DEN_WORK_PLAN_REQUEST_HANDOFF => "activity",
-        DEN_JOB_CREATE | DEN_JOB_LIST | DEN_JOB_GET | DEN_TASK_CREATE | DEN_TASK_LIST
-        | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC => "docket",
+        DEN_JOB_CREATE
+        | DEN_JOB_LIST
+        | DEN_JOB_GET
+        | DEN_JOB_UPDATE
+        | DEN_JOB_EXECUTE
+        | DEN_JOB_EVALUATE_CRITERION
+        | DEN_TASK_CREATE
+        | DEN_TASK_LIST
+        | DEN_TASK_UPDATE
+        | DEN_TASK_LIST_SYNC => "docket",
         DEN_MEMORY_WRITE_ENTRY
         | DEN_MEMORY_STATUS
         | DEN_MEMORY_TREE

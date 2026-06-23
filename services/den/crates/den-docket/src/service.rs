@@ -12,8 +12,9 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    task_list_projection_from_docket_job, BearWorkPlanRow, DocketJobCreate, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketTaskCreate, DocketTaskListFilter,
+    task_list_projection_from_docket_job, BearWorkPlanRow, DocketCriterionStateUpdate,
+    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate, DocketTaskListFilter,
     DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
     TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
     TaskListSyncOutcome, TaskListSyncRequest, WorkPlanListFilter, WorkPlanLookup,
@@ -41,6 +42,18 @@ pub trait DocketService: Send + Sync {
         bear_id: Uuid,
         job_id: Uuid,
     ) -> Result<Option<DocketJobProjection>, DenError>;
+
+    async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError>;
+
+    async fn evaluate_criterion(
+        &self,
+        update: DocketCriterionStateUpdate,
+    ) -> Result<DocketJobProjection, DenError>;
+
+    async fn execute_job(
+        &self,
+        request: DocketJobExecuteRequest,
+    ) -> Result<DocketJobExecuteOutcome, DenError>;
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
 
@@ -127,6 +140,24 @@ impl DocketService for PgDocketService {
         job_id: Uuid,
     ) -> Result<Option<DocketJobProjection>, DenError> {
         db::get_job(&self.pool, bear_id, job_id).await
+    }
+
+    async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError> {
+        db::update_job(&self.pool, update).await
+    }
+
+    async fn evaluate_criterion(
+        &self,
+        update: DocketCriterionStateUpdate,
+    ) -> Result<DocketJobProjection, DenError> {
+        db::evaluate_criterion(&self.pool, update).await
+    }
+
+    async fn execute_job(
+        &self,
+        request: DocketJobExecuteRequest,
+    ) -> Result<DocketJobExecuteOutcome, DenError> {
+        db::execute_job(&self.pool, request).await
     }
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {

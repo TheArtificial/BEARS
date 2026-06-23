@@ -945,11 +945,22 @@ pub struct DocketTaskRunStateRow {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketCriterionStateRow {
+    pub run_id: Uuid,
+    pub criterion_id: Uuid,
+    pub status: String,
+    pub evaluated_at: Option<OffsetDateTime>,
+    pub evidence: Option<Json<serde_json::Value>>,
+    pub updated_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DocketJobProjection {
     pub job: DocketJobRow,
     pub current_run: Option<DocketJobRunRow>,
     pub criteria: Vec<DocketJobCriterionRow>,
+    pub criteria_states: Vec<DocketCriterionStateRow>,
     pub tasks: Vec<DocketTaskRow>,
     pub task_states: Vec<DocketTaskRunStateRow>,
 }
@@ -1020,6 +1031,51 @@ pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
     pub include_cancelled: bool,
     pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketJobUpdate {
+    pub bear_id: Uuid,
+    pub job_id: Uuid,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+    pub goal: Option<String>,
+    pub work_surface_ref: Option<Option<String>>,
+    pub commit_policy: Option<Option<DocketCommitPolicy>>,
+    pub status: Option<DocketJobStatus>,
+    pub visibility: Option<WorkPlanVisibility>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketCriterionStateUpdate {
+    pub bear_id: Uuid,
+    pub job_id: Uuid,
+    pub run_id: Uuid,
+    pub criterion_id: Uuid,
+    pub status: DocketCriterionStatus,
+    pub evidence: Option<serde_json::Value>,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketJobExecuteRequest {
+    pub bear_id: Uuid,
+    pub job_id: Uuid,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocketJobExecuteOutcome {
+    pub job: DocketJobProjection,
+    pub selected_task_id: Option<Uuid>,
+    pub completed: bool,
+    pub blocked: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1852,6 +1908,7 @@ mod tests {
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 },
             ],
+            criteria_states: Vec::new(),
             task_states: vec![DocketTaskRunStateRow {
                 run_id,
                 task_id: root_task_id,
