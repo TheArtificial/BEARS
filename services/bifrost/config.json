@@ -10,6 +10,7 @@
                 {
                     "name": "openai-primary",
                     "value": "env.OPENAI_API_KEY",
+                    "models": ["*"],
                     "weight": 1.0
                 }
             ]

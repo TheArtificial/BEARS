@@ -162,17 +162,10 @@ def validate_bifrost_model_metadata_config() -> None:
             if not isinstance(key, dict):
                 continue
             key_name = str(key.get("name", "<unnamed>")).strip() or "<unnamed>"
-            if "models" not in key:
-                wildcard_providers.add(provider_name)
-                continue
             key_models = key.get("models")
-            if not isinstance(key_models, list):
+            if not isinstance(key_models, list) or not key_models:
                 fail(
-                    f"providers.{provider_name}.keys[{key_name}].models must be an array when present"
-                )
-            if not key_models:
-                fail(
-                    f"providers.{provider_name}.keys[{key_name}].models is empty; omit models or use ['*'] for provider-wide routing"
+                    f"providers.{provider_name}.keys[{key_name}] must declare a non-empty models array; use ['*'] for provider-wide routing"
                 )
             for model in key_models:
                 if model == "*":
@@ -228,7 +221,7 @@ def validate_bifrost_model_metadata_config() -> None:
         fail("Bifrost config bears.models has no enabled models")
     if wildcard_providers:
         warn(
-            "Bifrost provider keys use provider-wide routing (models omitted or models: ['*']); "
+            "Bifrost provider keys use provider-wide routing (models: ['*']); "
             "explicit provider model lists are recommended only when you want preflight to validate exact availability"
         )
 
