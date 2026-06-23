@@ -450,6 +450,36 @@ pub fn bifrost_key_selection_error(text: &str) -> bool {
         || (text.contains("key-selection error") && text.contains("no keys"))
 }
 
+fn bifrost_key_selection_diagnostic(
+    api_style: LlmApiStyle,
+    model: &str,
+    telemetry: Option<&LlmRequestTelemetry>,
+    status: &str,
+    text: &str,
+    retry_status: Option<&str>,
+    retry_text: Option<&str>,
+) -> String {
+    let request_id = telemetry
+        .and_then(|t| t.request_id.as_deref())
+        .unwrap_or("unknown");
+    let session_id = telemetry
+        .and_then(|t| t.session_id.as_deref())
+        .unwrap_or("unknown");
+    let conversation_id = telemetry
+        .and_then(|t| t.conversation_id.as_deref())
+        .unwrap_or("unknown");
+    let retry_summary = match (retry_status, retry_text) {
+        (Some(retry_status), Some(retry_text)) => format!(
+            " Den retried once without x-bf-session-id/x-bf-cache-* headers and Bifrost still returned HTTP {retry_status}: {retry_text}."
+        ),
+        _ => String::new(),
+    };
+    let api_style = api_style.as_str();
+    format!(
+        "Bifrost key-selection failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}.{retry_summary} Meaning: after Bifrost applied provider/model routing, session/key stickiness, request-type filters, and key model allowlists, no eligible provider key remained. If this is stochastic, inspect Bifrost for mixed OpenAI keys, stale config-store key rows, per-key `models` allowlists, key health/rate-limit state, and Responses-vs-chat support for this model. If it only affects old sessions, clear Bifrost session/cache state or start a new Den/ACP session. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}."
+    )
+}
+
 struct TimedLlmByteStream {
     inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
     telemetry: Option<LlmRequestTelemetry>,
@@ -698,8 +728,17 @@ impl LlmClient {
                     retry_req = retry_req.bearer_auth(&self.api_key);
                 }
                 let retry_resp = retry_req.send().await.map_err(|e| {
+                    let diagnostic = bifrost_key_selection_diagnostic(
+                        LlmApiStyle::ChatCompletionsStream,
+                        &request.model,
+                        request.telemetry.as_ref(),
+                        &status.to_string(),
+                        &text,
+                        None,
+                        None,
+                    );
                     DenError::System(format!(
-                        "LLM chat/completions retry without Bifrost session/cache headers failed: {e}; original HTTP {status}: {text}"
+                        "LLM chat/completions retry without Bifrost session/cache headers failed: {e}. {diagnostic}"
                     ))
                 })?;
                 if retry_resp.status().is_success() {
@@ -714,9 +753,23 @@ impl LlmClient {
                 }
                 let retry_status = retry_resp.status();
                 let retry_text = retry_resp.text().await.unwrap_or_default();
-                return Err(DenError::System(format!(
-                    "LLM chat/completions HTTP {retry_status}: {retry_text} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP {status}: {text})"
-                )));
+                let diagnostic = bifrost_key_selection_diagnostic(
+                    LlmApiStyle::ChatCompletionsStream,
+                    &request.model,
+                    request.telemetry.as_ref(),
+                    &status.to_string(),
+                    &text,
+                    Some(&retry_status.to_string()),
+                    Some(&retry_text),
+                );
+                tracing::warn!(
+                    model = %request.model,
+                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                    diagnostic = %diagnostic,
+                    "LLM chat/completions key-selection retry diagnostic"
+                );
+                return Err(DenError::System(diagnostic));
             }
             return Err(DenError::System(format!(
                 "LLM chat/completions HTTP {status}: {text}"
@@ -809,8 +862,17 @@ impl LlmClient {
                     retry_req = retry_req.bearer_auth(&self.api_key);
                 }
                 let retry_resp = retry_req.send().await.map_err(|e| {
+                    let diagnostic = bifrost_key_selection_diagnostic(
+                        LlmApiStyle::ResponsesStream,
+                        model_handle.as_str(),
+                        request.telemetry.as_ref(),
+                        &status.to_string(),
+                        &text,
+                        None,
+                        None,
+                    );
                     DenError::System(format!(
-                        "LLM responses retry without Bifrost session/cache headers failed: {e}; original HTTP {status}: {text}"
+                        "LLM responses retry without Bifrost session/cache headers failed: {e}. {diagnostic}"
                     ))
                 })?;
                 if retry_resp.status().is_success() {
@@ -826,9 +888,24 @@ impl LlmClient {
                 }
                 let retry_status = retry_resp.status();
                 let retry_text = retry_resp.text().await.unwrap_or_default();
-                return Err(DenError::System(format!(
-                    "LLM responses HTTP {retry_status}: {retry_text} (retry without Bifrost session/cache headers after key-selection error also failed; original HTTP {status}: {text})"
-                )));
+                let diagnostic = bifrost_key_selection_diagnostic(
+                    LlmApiStyle::ResponsesStream,
+                    model_handle.as_str(),
+                    request.telemetry.as_ref(),
+                    &status.to_string(),
+                    &text,
+                    Some(&retry_status.to_string()),
+                    Some(&retry_text),
+                );
+                tracing::warn!(
+                    model_handle = %model_handle,
+                    api_style = %LlmApiStyle::ResponsesStream.as_str(),
+                    request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
+                    conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
+                    diagnostic = %diagnostic,
+                    "LLM responses key-selection retry diagnostic"
+                );
+                return Err(DenError::System(diagnostic));
             }
             return Err(DenError::System(format!(
                 "LLM responses HTTP {status}: {text}"
