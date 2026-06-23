@@ -77,9 +77,6 @@ pub fn normalize_llm_model_handle(model: &str) -> String {
     DenModelHandle::normalize(model).into_string()
 }
 
-fn responses_api_model_id(model: &str) -> ProviderModelId {
-    ProviderModelId::for_den_handle(&DenModelHandle::normalize(model))
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatToolCall {
@@ -280,7 +277,9 @@ impl ChatCompletionRequest {
             })
             .collect();
         let mut body = json!({
-            "model": self.model,
+            // Bifrost requires provider-qualified ids (`provider/model`) on both
+            // `/v1/completions` and `/v1/responses`; normalize defensively.
+            "model": normalize_llm_model_handle(&self.model),
             "messages": self.messages,
             "stream": self.stream,
         });
@@ -317,9 +316,11 @@ impl ChatCompletionRequest {
                 })
             })
             .collect();
-        let provider_model_id = responses_api_model_id(&self.model);
+        // Bifrost's `/v1/responses` requires provider-qualified ids (`provider/model`),
+        // same as `/v1/completions`; sending a bare id yields HTTP 400
+        // "model should be in provider/model format".
         let mut body = json!({
-            "model": provider_model_id.as_str(),
+            "model": normalize_llm_model_handle(&self.model),
             "input": input,
             "stream": self.stream,
         });
@@ -685,10 +686,8 @@ impl LlmClient {
         }
         let url = format!("{}/responses", self.base_url);
         let model_handle = DenModelHandle::normalize(&request.model);
-        let provider_model_id = ProviderModelId::for_den_handle(&model_handle);
         tracing::info!(
             model_handle = %model_handle,
-            provider_model_id = %provider_model_id,
             api_style = %LlmApiStyle::ResponsesStream.as_str(),
             message_count = request.messages.len(),
             tool_count = request.tools.len(),
@@ -722,7 +721,6 @@ impl LlmClient {
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(
                 model_handle = %model_handle,
-                provider_model_id = %provider_model_id,
                 api_style = %LlmApiStyle::ResponsesStream.as_str(),
                 duration_ms = started.elapsed().as_millis(),
                 error = %e,
@@ -737,7 +735,6 @@ impl LlmClient {
             let response_body_sample = log_sample(&text, 1000);
             tracing::warn!(
                 model_handle = %model_handle,
-                provider_model_id = %provider_model_id,
                 api_style = %LlmApiStyle::ResponsesStream.as_str(),
                 http_status,
                 duration_ms = started.elapsed().as_millis(),
@@ -755,7 +752,6 @@ impl LlmClient {
         }
         tracing::info!(
             model_handle = %model_handle,
-            provider_model_id = %provider_model_id,
             api_style = %LlmApiStyle::ResponsesStream.as_str(),
             http_status,
             duration_ms = started.elapsed().as_millis(),
@@ -853,17 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_api_model_id_uses_provider_model_id_for_den_handles() {
-        assert_eq!(responses_api_model_id("openai/gpt-5.5").as_str(), "gpt-5.5");
-        assert_eq!(responses_api_model_id("gpt-5.5").as_str(), "gpt-5.5");
-        assert_eq!(
-            responses_api_model_id("custom/provider-model").as_str(),
-            "custom/provider-model"
-        );
-    }
-
-    #[test]
-    fn responses_body_sends_provider_model_id() {
+    fn responses_body_sends_provider_qualified_handle() {
         let request = ChatCompletionRequest {
             model: "openai/gpt-5.5".to_string(),
             messages: vec![ChatMessage {
@@ -883,7 +869,8 @@ mod tests {
 
         let body = request.to_responses_body();
 
-        assert_eq!(body["model"], "gpt-5.5");
+        // Bifrost `/v1/responses` requires the provider-qualified handle, not a bare id.
+        assert_eq!(body["model"], "openai/gpt-5.5");
         assert_eq!(body["stream"], true);
     }
 
