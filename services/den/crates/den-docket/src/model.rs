@@ -9,8 +9,8 @@
 //! and `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`).
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use sqlx::types::Json;
+use sqlx::FromRow;
 use std::fmt::{self, Write as _};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -930,27 +930,51 @@ pub struct DocketJobProjection {
     pub task_states: Vec<DocketTaskRunStateRow>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DocketJobCriterionInput {
+    #[serde(default = "default_criterion_kind")]
     pub kind: DocketCriterionKind,
     pub description: String,
+    #[serde(default)]
     pub spec: Option<serde_json::Value>,
+    #[serde(default)]
     pub sibling_order: i32,
 }
 
-#[derive(Debug, Clone)]
+fn default_criterion_kind() -> DocketCriterionKind {
+    DocketCriterionKind::Narrative
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct DocketTaskInput {
+    #[serde(default)]
     pub client_key: Option<String>,
+    #[serde(default)]
     pub parent_client_key: Option<String>,
+    #[serde(default)]
     pub parent_task_id: Option<Uuid>,
+    #[serde(default)]
     pub sibling_order: i32,
+    #[serde(default = "default_task_kind")]
     pub kind: DocketTaskKind,
+    #[serde(default = "default_task_scope")]
     pub scope: DocketTaskScope,
     pub title: String,
     pub body: String,
+    #[serde(default)]
     pub difficulty: Option<DocketTaskDifficulty>,
+    #[serde(default)]
     pub effort_hint: Option<DocketEffortHint>,
+    #[serde(default)]
     pub assigned_to_role: Option<BearProfile>,
+}
+
+fn default_task_kind() -> DocketTaskKind {
+    DocketTaskKind::Execution
+}
+
+fn default_task_scope() -> DocketTaskScope {
+    DocketTaskScope::Template
 }
 
 #[derive(Debug, Clone)]
@@ -1011,7 +1035,10 @@ impl fmt::Display for DocketValidationError {
         match self {
             Self::EmptyGoal => f.write_str("Docket job goal must not be empty"),
             Self::InvalidJobCreatorRole { role } => {
-                write!(f, "Docket jobs must be human-created via chat, pair, or ui, not `{role}`")
+                write!(
+                    f,
+                    "Docket jobs must be human-created via chat, pair, or ui, not `{role}`"
+                )
             }
             Self::EmptyCriterionDescription => {
                 f.write_str("Docket job criterion description must not be empty")
@@ -1025,7 +1052,10 @@ impl fmt::Display for DocketValidationError {
                 write!(f, "Docket task client_key `{client_key}` is duplicated")
             }
             Self::MissingParentClientKey { client_key } => {
-                write!(f, "Docket task parent_client_key `{client_key}` does not exist")
+                write!(
+                    f,
+                    "Docket task parent_client_key `{client_key}` does not exist"
+                )
             }
         }
     }
@@ -1128,8 +1158,16 @@ fn current_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
     items
         .iter()
         .find(|item| item.status == WorkPlanItemStatus::InProgress)
-        .or_else(|| items.iter().find(|item| item.status == WorkPlanItemStatus::Blocked))
-        .or_else(|| items.iter().find(|item| item.status == WorkPlanItemStatus::Pending))
+        .or_else(|| {
+            items
+                .iter()
+                .find(|item| item.status == WorkPlanItemStatus::Blocked)
+        })
+        .or_else(|| {
+            items
+                .iter()
+                .find(|item| item.status == WorkPlanItemStatus::Pending)
+        })
 }
 
 pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), DocketValidationError> {
@@ -1171,7 +1209,12 @@ fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketVa
         if task.body.trim().is_empty() {
             return Err(DocketValidationError::EmptyTaskBody);
         }
-        if let Some(key) = task.client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+        if let Some(key) = task
+            .client_key
+            .as_ref()
+            .map(|key| key.trim())
+            .filter(|key| !key.is_empty())
+        {
             if !keys.insert(key.to_string()) {
                 return Err(DocketValidationError::DuplicateTaskClientKey {
                     client_key: key.to_string(),
@@ -1180,7 +1223,12 @@ fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketVa
         }
     }
     for task in tasks {
-        if let Some(parent_key) = task.parent_client_key.as_ref().map(|key| key.trim()).filter(|key| !key.is_empty()) {
+        if let Some(parent_key) = task
+            .parent_client_key
+            .as_ref()
+            .map(|key| key.trim())
+            .filter(|key| !key.is_empty())
+        {
             if !keys.contains(parent_key) {
                 return Err(DocketValidationError::MissingParentClientKey {
                     client_key: parent_key.to_string(),
@@ -1722,7 +1770,10 @@ mod tests {
         assert_eq!(root_checkout.items.len(), 1);
         assert_eq!(root_checkout.items[0].id, root_task_id.to_string());
         assert_eq!(root_checkout.items[0].sync_state, TaskListSyncState::Clean);
-        assert_eq!(root_checkout.items[0].status, WorkPlanItemStatus::InProgress);
+        assert_eq!(
+            root_checkout.items[0].status,
+            WorkPlanItemStatus::InProgress
+        );
 
         let child_checkout = task_list_projection_from_docket_job(&projection, Some(root_task_id));
         assert_eq!(child_checkout.items.len(), 1);

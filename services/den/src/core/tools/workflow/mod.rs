@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -8,7 +8,12 @@ use den_core::tools::workflow::WorkPlanOps;
 use crate::{
     config::Config,
     core::{
-        docket::{DocketService, PgDocketService},
+        docket::{
+            DocketCommitPolicy, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
+            DocketJobListFilter, DocketJobStatus, DocketService, DocketTaskCreate,
+            DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope,
+            DocketValidationError, PgDocketService,
+        },
         tools::{
             activity_payloads::{activity_payload, plan_mode_workplan_payload},
             memory_write::source_acp_session_id,
@@ -24,7 +29,7 @@ use crate::{
 };
 use den_runtime::{
     bears::BearProfile,
-    memory::{MemoryStoreManager, tools as sqlite_memory},
+    memory::{tools as sqlite_memory, MemoryStoreManager},
     plan_mode,
 };
 
@@ -77,6 +82,50 @@ impl WorkPlanOps for DenWorkPlanOps<'_> {
             .await
             .map_err(CustomError::into_den)
     }
+
+    async fn create_job(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        create_job(self.pool, context, role, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn list_jobs(
+        &self,
+        context: &DenToolInvocationContext,
+        _role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        list_jobs(self.pool, context, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn get_job(
+        &self,
+        context: &DenToolInvocationContext,
+        _role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        get_job(self.pool, context, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn create_task(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        create_task(self.pool, context, role, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +169,80 @@ pub(crate) struct WorkPlanUpdateArguments {
     pub(crate) items: Vec<work_plans::WorkPlanItem>,
     #[serde(default = "empty_json_object")]
     pub(crate) workspace_context: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobCreateArguments {
+    pub(crate) goal: String,
+    #[serde(default)]
+    pub(crate) work_surface_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) commit_policy: Option<DocketCommitPolicy>,
+    #[serde(default = "default_job_status")]
+    pub(crate) status: DocketJobStatus,
+    #[serde(default = "default_job_visibility")]
+    pub(crate) visibility: WorkPlanVisibility,
+    #[serde(default)]
+    pub(crate) criteria: Vec<DocketJobCriterionInput>,
+    #[serde(default)]
+    pub(crate) tasks: Vec<DocketTaskInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobListArguments {
+    #[serde(default, rename = "status")]
+    pub(crate) statuses: Option<Vec<DocketJobStatus>>,
+    #[serde(default)]
+    pub(crate) include_cancelled: bool,
+    #[serde(default)]
+    pub(crate) limit: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobGetArguments {
+    pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskCreateArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) session_anchor_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) parent_task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) sibling_order: i32,
+    #[serde(default = "default_task_kind")]
+    pub(crate) kind: DocketTaskKind,
+    #[serde(default = "default_task_scope")]
+    pub(crate) scope: DocketTaskScope,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    #[serde(default)]
+    pub(crate) difficulty: Option<DocketTaskDifficulty>,
+    #[serde(default)]
+    pub(crate) effort_hint: Option<DocketEffortHint>,
+    #[serde(default)]
+    pub(crate) assigned_to_role: Option<BearProfile>,
+    #[serde(default)]
+    pub(crate) created_in_run_id: Option<Uuid>,
+}
+
+fn default_job_status() -> DocketJobStatus {
+    DocketJobStatus::Ready
+}
+
+fn default_job_visibility() -> WorkPlanVisibility {
+    WorkPlanVisibility::SameUser
+}
+
+fn default_task_kind() -> DocketTaskKind {
+    DocketTaskKind::Execution
+}
+
+fn default_task_scope() -> DocketTaskScope {
+    DocketTaskScope::Template
 }
 
 pub(crate) fn empty_json_object() -> Value {
@@ -295,6 +418,128 @@ pub(crate) async fn update_work_plan(
         "task_list": task_list,
         "activity": activity_payload(Some(&plan)),
         "plan": plan,
+    }))
+}
+
+pub(crate) async fn create_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(
+            DenError::from(DocketValidationError::InvalidJobCreatorRole {
+                role: role.as_str().to_string(),
+            })
+            .into(),
+        );
+    }
+    let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .create_job(DocketJobCreate {
+            bear_id: context.bear_id,
+            created_by_user_id: context.user_id,
+            created_by_role: role.as_str().to_string(),
+            goal: args.goal,
+            work_surface_ref: args.work_surface_ref,
+            commit_policy: args.commit_policy,
+            status: args.status,
+            visibility: args.visibility,
+            criteria: args.criteria,
+            tasks: args.tasks,
+        })
+        .await?;
+    let task_list = work_plans::task_list_projection_from_docket_job(&job, None);
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
+        "task_list": task_list,
+        "notes": [
+            "Created durable Docket job state; execution is not started by this tool.",
+            "Use get_job for canonical job/task state and update_task_list for session focus."
+        ]
+    }))
+}
+
+pub(crate) async fn list_jobs(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobListArguments = serde_json::from_value(arguments)?;
+    let jobs = PgDocketService::from_pool(pool)
+        .list_jobs(
+            context.bear_id,
+            DocketJobListFilter {
+                statuses: args.statuses,
+                include_cancelled: args.include_cancelled,
+                limit: args.limit,
+            },
+        )
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "jobs": jobs,
+    }))
+}
+
+pub(crate) async fn get_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobGetArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .get_job(context.bear_id, args.job_id)
+        .await?;
+    let task_list = job
+        .as_ref()
+        .map(|job| work_plans::task_list_projection_from_docket_job(job, None));
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
+        "task_list": task_list,
+    }))
+}
+
+pub(crate) async fn create_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
+    let task = PgDocketService::from_pool(pool)
+        .create_task(DocketTaskCreate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            session_anchor_id: args.session_anchor_id,
+            parent_task_id: args.parent_task_id,
+            sibling_order: args.sibling_order,
+            kind: args.kind,
+            scope: args.scope,
+            title: args.title,
+            body: args.body,
+            difficulty: args.difficulty,
+            effort_hint: args.effort_hint,
+            assigned_to_role: args.assigned_to_role,
+            created_by_role: role.as_str().to_string(),
+            created_by_user_id: Some(context.user_id),
+            created_by_agent_id: clean_optional(&context.binding_id),
+            created_in_run_id: args.created_in_run_id,
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "task": task,
+        "notes": [
+            "Created durable Docket task definition. Status and results remain run-scoped."
+        ]
     }))
 }
 
