@@ -1,4 +1,5 @@
 {
+    "$schema": "https://www.getbifrost.ai/schema",
     "client": {
         "drop_excess_requests": false,
         "disable_db_pings_in_health": true
@@ -9,7 +10,6 @@
                 {
                     "name": "openai-primary",
                     "value": "env.OPENAI_API_KEY",
-                    "models": ["*"],
                     "weight": 1.0
                 }
             ]
