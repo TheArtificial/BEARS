@@ -372,6 +372,23 @@ impl BifrostClient {
         let models = self.list_available_models().await?;
         let snapshot = BifrostCatalogSnapshot::from_available_models(models);
         if let Ok(mut guard) = store.write() {
+            let current_count = guard.models.len();
+            let new_count = snapshot.models.len();
+            if guard.fetched_at.is_some()
+                && current_count >= 100
+                && new_count > 0
+                && new_count < 100
+                && new_count * 2 < current_count
+            {
+                tracing::warn!(
+                    current_count,
+                    new_count,
+                    current_fetched_at = ?guard.fetched_at,
+                    "Ignoring suspiciously small Bifrost model catalog refresh; keeping last good snapshot"
+                );
+                guard.stale = true;
+                return Ok(guard.clone());
+            }
             *guard = snapshot.clone();
         }
         Ok(snapshot)
@@ -385,6 +402,7 @@ impl BifrostClient {
             Ok(snapshot) => {
                 tracing::info!(
                     count = snapshot.models.len(),
+                    stale = snapshot.stale,
                     "Refreshed Bifrost model catalog snapshot"
                 );
             }
