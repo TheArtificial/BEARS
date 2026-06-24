@@ -14,14 +14,14 @@ use den_runtime::{
     client_tools::ResolvedSessionPolicy,
     plan_mode,
     prompt_memory_block_store::{
-        PromptMemoryBlockQuery, PromptMemoryRuntimeSelection,
-        select_prompt_memory_blocks_for_runtime,
+        select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
+        PromptMemoryRuntimeSelection,
     },
     prompt_memory_blocks::{
-        PromptMemoryCompilationInput, compile_prompt_memory_blocks,
-        render_prompt_memory_block_context,
+        compile_prompt_memory_blocks, render_prompt_memory_block_context,
+        PromptMemoryCompilationInput,
     },
-    runtime_compaction::{RuntimeContextEnvelopeInput, build_runtime_context_envelope},
+    runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
     runtime_compaction_observability::RuntimeCompactionEventStatus,
     runtime_conversations::RuntimeCompactionTriggerKind,
 };
@@ -261,7 +261,7 @@ pub(super) async fn acp_plan_mode_prompt_context(
     };
     let execution_unlocked = plan_mode.state == "approved";
     Ok(format!(
-        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is controlled by the user or ACP client UI, not by model tool calls. Keep the visible session task list current with `update_task_list` and concise prose. If implementation is requested but write tools are not callable this turn, explain that the user can switch the session to Write mode. Artifact path remains available for audit when needed: {}.</system-reminder>",
+        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is controlled by the user or ACP client UI, not by model tool calls. Keep the visible session task list current with `update_task_list` and concise prose, but treat task-list status as factual: update status after doing or verifying work, not as a substitute for doing it. If implementation is requested but write tools are not callable this turn, explain that the user can switch the session to Write mode. Artifact path remains available for audit when needed: {}.</system-reminder>",
         plan_mode.id,
         plan_mode.state,
         submitted_plan_present,
