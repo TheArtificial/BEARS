@@ -15,22 +15,48 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+CURRENT_MODE = "startup"
+
+
+def emit(stream, msg: str) -> None:
+    print(msg, file=stream, flush=True)
+
 
 def err(msg: str) -> None:
-    print(f"preflight: ERROR: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: ERROR: {msg}")
 
 
 def warn(msg: str) -> None:
-    print(f"preflight: WARNING: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: WARNING: {msg}")
 
 
 def info(msg: str) -> None:
-    print(f"preflight: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: {msg}")
+
+
+def banner(title: str, msg: str) -> str:
+    return "\n".join(
+        [
+            "",
+            f"================ BEARS PREFLIGHT {title} [{CURRENT_MODE}] ================",
+            msg,
+            "===============================================================",
+            "",
+        ]
+    )
 
 
 def fail(msg: str) -> None:
-    err(msg)
+    rendered = banner("FAILED", msg)
+    emit(sys.stderr, rendered)
+    emit(sys.stdout, rendered)
     sys.exit(1)
+
+
+def success(msg: str) -> None:
+    rendered = banner("OK", msg)
+    emit(sys.stderr, rendered)
+    emit(sys.stdout, rendered)
 
 
 def require_non_empty(name: str) -> str:
@@ -268,16 +294,20 @@ def validate_config_shape() -> None:
 
 
 def main() -> None:
+    global CURRENT_MODE
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+    CURRENT_MODE = mode
 
     if mode == "config":
         validate_config_shape()
+        success("configuration shape checks passed")
     elif mode == "den-db":
         validate_database_url(reachable=True)
+        success("Den database reachability checks passed")
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        info("all preflight checks passed")
+        success("all preflight checks passed")
     else:
         fail(f"unknown preflight mode {mode!r}; expected config, den-db, or all")
 
