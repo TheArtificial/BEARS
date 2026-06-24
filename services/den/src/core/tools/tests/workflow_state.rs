@@ -34,10 +34,10 @@ use crate::core::{
         session::{DenToolInvocationContext, invoke_den_tool},
         support::validate_memory_write_entry_semantics,
     },
-    work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
 use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
 use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
+use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
 use den_runtime::{client_tools::ClientToolName, plan_mode::PlanModeSessionRow};
 
 #[test]

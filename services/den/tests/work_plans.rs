@@ -3,17 +3,16 @@
 use den::{
     config::Config,
     core::{
-        docket::{DocketService, PgDocketService},
         tools::{
             constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
             session::{invoke_den_tool, DenToolInvocationContext},
         },
-        work_plans::{
-            WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus, WorkPlanUpdate,
-            WorkPlanUpsert, WorkPlanVisibility,
-        },
     },
     startup::run_sqlx_migrations,
+};
+use den_docket::{
+    DocketService, PgDocketService, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter,
+    WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
 };
 use den_runtime::bears::{db as bears_db, db::BearParams, BearProfile};
 use serde_json::json;

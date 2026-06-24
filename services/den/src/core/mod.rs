@@ -11,12 +11,10 @@ pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.
 pub use den_http::{api_utils, email, user};
-pub mod docket;
 pub mod sandbox;
 pub mod tools;
 pub use tools::tool_descriptor_guidance;
 pub use tools::web_policy;
-pub mod work_plans;
 
 // Cross-layer bridge tests: they exercise den_runtime modules together with
 // den-only modules (native_runtime / turn_controller), so they live here in the

@@ -26,35 +26,22 @@ den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
 den-oauth = { path = "../den-oauth" }
 den-runtime = { path = "../den-runtime" }
-anyhow = "1.0"
-async-trait = "0.1.86"
-axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
-axum-extra = { version = "0.10.0", features = ["form", "query"] }
-axum-login = "0.17.0"
-base64 = "0.22"
-bytes = "1"
-futures = "0.3"
-jsonwebtoken = "9.3.0"
-password-auth = "1.0.0"
-rand = "0.9.1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls", "stream"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.138"
-sha2 = "0.10"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
-thiserror = "2.0.12"
-time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
-tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
-tower-http = { version = "0.6.2", features = ["trace", "cors"] }
-tracing = "0.1.41"
-url = "2.5.4"
-urlencoding = "2.1"
-utoipa = { version = "4.0", features = ["axum_extras"] }
-uuid = { version = "1", features = ["serde", "v4"] }
-validator = { version = "0.20", features = ["derive"] }
+axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum-extra.workspace = true
+base64.workspace = true
+bytes.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+time = { workspace = true, features = ["serde", "serde-well-known"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
 den-runtime = { path = "../den-runtime", features = ["test-util"] }
-dotenvy = "0.15.7"
-serde_json = "1.0.138"
+dotenvy.workspace = true
+serde_json.workspace = true

@@ -20,28 +20,28 @@ production = ["den-core/production", "den-http/production"]
 [dependencies]
 den-core = { path = "../den-core" }
 den-http = { path = "../den-http" }
-axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
-axum-login = "0.17.0"
-base64 = "0.22"
-bytes = "1"
+axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum-login.workspace = true
+base64.workspace = true
+bytes.workspace = true
 jsonwebtoken = "9.3.0"
-minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
-minijinja-embed = "2.7.0"
-password-auth = "1.0.0"
-rand = "0.9.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.138"
-sha2 = "0.10"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
-time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
-tower-http = { version = "0.6.2", features = ["trace", "cors"] }
-tracing = "0.1.41"
-url = "2.5.4"
-urlencoding = "2.1"
+minijinja.workspace = true
+minijinja-embed.workspace = true
+password-auth.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+time = { workspace = true, features = ["serde", "serde-well-known"] }
+tower-http.workspace = true
+tracing.workspace = true
+url.workspace = true
+urlencoding.workspace = true
 
 [build-dependencies]
-minijinja-embed = "2.7.0"
+minijinja-embed.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
-tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
