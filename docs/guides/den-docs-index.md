@@ -7,9 +7,11 @@ Index of agent- and contributor-oriented docs for **this project**.
 | Topic | Document |
 |--------|-----------|
 | Den-native runtime (target) | [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
+| Prompt fragment registry | [`../architecture/prompt-fragment-registry.md`](../architecture/prompt-fragment-registry.md) |
 | Memory model | [`../architecture/memory-model.md`](../architecture/memory-model.md) |
 | Den concepts overview | [`../architecture/den-concepts-overview.md`](../architecture/den-concepts-overview.md) |
 | Native runtime migration plan | [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) |
+| Prompt fragment registry plan | [`../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md) |
 
 ## Foundations
 

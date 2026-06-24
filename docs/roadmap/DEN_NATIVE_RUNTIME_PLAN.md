@@ -4,6 +4,8 @@
 
 **Architecture source of truth:** [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md).
 
+**Prompt source extraction plan:** [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md) (ADR-0046).
+
 This plan supersedes the Letta-backed runtime direction in older roadmap docs (Phase 1 Letta/Codepool stack, ACP-as-Letta-conversation, MemFS-canonical memory, harness-backed vs API-direct split). See [the architecture doc](../architecture/den-native-runtime.md#what-this-supersedes) for the full supersession list.
 
 ## Goal
@@ -52,6 +54,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - New `core/agent_loop/`: prompt -> Bifrost stream -> assistant text + tool calls -> execute tools -> append results -> loop until `stop`/`max_steps`/cancel.
 - Factor the loop so the step primitive is reusable and the run is parameterized by a `strategy_profile`; v1 ships the plain ReAct profile (all knobs off) plus the seam to read a profile. The policy selector and optional passes land in Phase 7.
 - Context assembler builds model input from **`bear_compiled_configs` system prompt** + **key memory projection** (SQLite; [v1 policy locked](../architecture/den-native-runtime.md#v1-selection-policy-locked)) + Den transcript + prompt-memory blocks + compaction — fully Den-owned. See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
+- Prompt source extraction is a parallel workstream, not a turn-hot-path redesign: repository-authored prompt fragments and runtime-authored compile-time prompt content both compile into `bear_compiled_configs`; the loop must continue to consume compiled prompt output only. See [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md) and the [Prompt Fragment Registry plan](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md).
 - Persist each step to canonical transcript; Den-native approvals store (new table) + pause/resume integrated with the tool-turn coordinator.
 
 ### Phase 4 — Wire native loop under existing ACP orchestration for `pair` — Closed

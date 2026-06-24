@@ -136,6 +136,8 @@ After compaction, Den should still assemble prompt context explicitly from separ
 - derived compacted state,
 - and any separately governed memory or retrieval inputs.
 
+Under [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), the instruction/policy layer may come from repository-authored prompt fragments and runtime-authored compile-time prompt content, but compaction must still operate over a visibly layered assembly rather than a single opaque template blob.
+
 This is a major architectural point.
 
 Den should not flatten everything into an indistinguishable blob if that would erase provenance, reduce explainability, or make recovery/debugging difficult.

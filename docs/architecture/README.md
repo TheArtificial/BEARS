@@ -7,6 +7,7 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 ## Suggested reading order
 
 - [den-native-runtime (target architecture)](den-native-runtime.md)
+- [prompt fragment registry](prompt-fragment-registry.md)
 - [overview](overview.md)
 - [bear roles](bear-roles.md)
 - [bears and den](bears-and-den.md)
@@ -28,6 +29,7 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 
 ### Runtime and systems
 - [den-native-runtime (target architecture, canonical)](den-native-runtime.md)
+- [prompt fragment registry](prompt-fragment-registry.md)
 - [overview](overview.md)
 - [workflow state overview](workflow-state-overview.md)
 - [den architecture](den-architecture.md)

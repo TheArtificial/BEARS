@@ -11,6 +11,7 @@ It rests on these decisions:
 - [ADR-0034 — Jobs and tasks work-management (Docket)](../decisions/adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0037 — Work sandbox, egress gateway, and upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — Phase 7 execution isolation and multi-identity GitHub policy
 - [ADR-0043 — ACP is an edge adapter; the Den runtime is protocol-agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md) — the runtime below owns turns/sessions/events under neutral names; ACP is one edge
+- [ADR-0046 — File-backed prompt fragments and compiled runtime prompts](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md) — repository-authored prompt fragments + runtime-authored compile-time-only prompt content compiled into hot-path prompt bases
 
 ## Why this exists (the direction change)
 
@@ -108,9 +109,19 @@ Compilation merges:
 - per-Bear **`bear_block_bindings`** (`inherit` vs `custom` overrides),
 - Bear-local **`context_profile`** fields (`user_steering`, `bear_context`, and role-contract fallbacks).
 
+Under [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), this layer evolves into a **hybrid prompt source model**:
+
+- **repository-authored fragments** live in Git as Markdown + YAML frontmatter and are loaded into a startup prompt registry,
+- **runtime-authored prompt content** (for example Bear Admin-authored text) remains data-backed in Postgres,
+- both source classes are normalized and compiled into `bear_compiled_configs`.
+
+The architecture and rollout details live in [prompt-fragment-registry.md](prompt-fragment-registry.md) and the [Prompt Fragment Registry implementation plan](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md).
+
 The row is written by `compile_and_store_managed_config_for_bear` and keyed by `config_hash` / per-role `rendered_prompt_hashes_json` for drift checks on stance bindings (`bear_profile_bindings` during the compatibility migration).
 
 **Target invariant:** the native agent loop **must** read compiled prompts from `bear_compiled_configs`. It must **not** recompose prompts via `compose_role_context(..., resolved: None)`, which bypasses managed-block resolution and diverges from Letta-era behavior.
+
+Additional invariant from ADR-0046: the turn hot path must not parse frontmatter, read prompt files from disk, or render runtime-authored database templates. Runtime-authored prompt content is compile-time-only; turn-time templating is reserved for explicitly approved repository-owned fragments.
 
 Legacy Bears without `context_profile` continue to use `bears.system_prompt` until migrated.
 
@@ -226,6 +237,8 @@ After compiled prompt + key memory projection, the assembler appends **turn-loca
 - **ACP / channel runtime context** — plan mode, workboard, trusted-session mode, tool-surface reminders (today’s `<system-reminder>` envelope for `pair`),
 - **prompt memory blocks** — selected from `prompt_memory_blocks` for `(bear, role, session, work_surfaces)`,
 - **compaction envelope** — Den-owned transcript bounding artifacts.
+
+These supplements remain distinct from the compiled prompt base even after file-backed prompt extraction. Repository-owned prompt fragments may contribute narrowly-scoped turn-time templated supplements (for example date or budget reminders), but runtime-authored prompt content remains pre-turn compiled.
 
 Order target:
 

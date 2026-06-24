@@ -20,6 +20,7 @@ Human-oriented docs for the Bear Den product.
 - [decisions/README.md](decisions/README.md)
 - [guides/README.md](guides/README.md)
 - [roadmap/PLAN.md](roadmap/PLAN.md)
+- [architecture/prompt-fragment-registry.md](architecture/prompt-fragment-registry.md)
 
 Service-specific runbooks may also stay next to service configs under `services/*` where appropriate.
 
