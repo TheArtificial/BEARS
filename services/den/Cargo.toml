@@ -184,7 +184,7 @@ den-bearwire = { path = "crates/den-bearwire" }
 den-web = { path = "crates/den-web" }
 anyhow.workspace = true
 async-trait.workspace = true
-axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros"] }
+axum = { workspace = true, features = ["http1", "tokio"] }
 axum-login.workspace = true
 dotenvy.workspace = true
 futures.workspace = true

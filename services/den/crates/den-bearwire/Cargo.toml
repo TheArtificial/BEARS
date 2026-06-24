@@ -20,13 +20,13 @@ den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
-axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query"] }
+axum = { workspace = true, features = ["json", "query"] }
 bytes.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing.workspace = true
 uuid.workspace = true
 

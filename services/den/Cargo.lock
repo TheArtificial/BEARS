@@ -580,6 +580,7 @@ dependencies = [
  "den-service",
  "dotenvy",
  "futures",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -595,7 +596,6 @@ name = "den-api"
 version = "0.1.2"
 dependencies = [
  "axum",
- "axum-extra",
  "axum-login",
  "den-core",
  "den-docket",
@@ -609,7 +609,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "time",
- "tokio",
  "tower-http",
  "tower-sessions-sqlx-store",
  "tracing",
@@ -731,7 +730,6 @@ name = "den-oauth"
 version = "0.1.2"
 dependencies = [
  "axum",
- "axum-login",
  "base64",
  "bytes",
  "den-core",

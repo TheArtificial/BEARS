@@ -26,15 +26,13 @@ den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
 den-oauth = { path = "../den-oauth" }
 den-runtime = { path = "../den-runtime" }
-axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
-axum-extra.workspace = true
+axum = { workspace = true, features = ["json", "matched-path"] }
 axum-login.workspace = true
 password-auth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http.workspace = true
 tower-sessions-sqlx-store.workspace = true
 tracing.workspace = true

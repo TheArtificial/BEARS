@@ -22,7 +22,7 @@ production = ["den-core/production"]
 den-core = { path = "../den-core" }
 anyhow.workspace = true
 async-trait.workspace = true
-axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros"] }
+axum = { workspace = true, features = ["json"] }
 axum-login.workspace = true
 base64.workspace = true
 mailgun-rs = "2.0.1"
@@ -34,10 +34,10 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 thiserror.workspace = true
 time = { workspace = true, features = ["serde", "serde-well-known"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true

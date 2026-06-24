@@ -18,6 +18,6 @@ serde_json.workspace = true
 serde_yml.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite", "time", "json", "uuid"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
-tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
 tracing.workspace = true
 uuid.workspace = true

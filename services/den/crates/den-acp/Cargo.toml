@@ -26,7 +26,7 @@ den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
 den-oauth = { path = "../den-oauth" }
 den-runtime = { path = "../den-runtime" }
-axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form"] }
+axum = { workspace = true, features = ["json", "http1", "tokio", "query"] }
 axum-extra.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -34,9 +34,9 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "sqlite", "time", "json", "uuid", "macros"] }
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
 tracing.workspace = true
 uuid.workspace = true
 
@@ -44,4 +44,5 @@ uuid.workspace = true
 den-core = { path = "../den-core", features = ["test-util"] }
 den-runtime = { path = "../den-runtime", features = ["test-util"] }
 dotenvy.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
