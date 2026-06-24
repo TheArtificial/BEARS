@@ -639,41 +639,52 @@ Exit:
 - Bifrost availability is diagnostic/status metadata, not the primary selector source,
 - existing saved Den-configured models can be shown even when Bifrost availability is unknown or temporarily absent.
 
-### Phase 3 — Actual model and usage capture ⬅ next
+### Phase 3 — Bear-scoped Bifrost virtual keys ⬅ next
 
-Goal: create a durable per-call trace from Den's requested/selected model through Bifrost/provider execution results, without reopening the model catalog source decision.
+Goal: use Bifrost's governance model directly by giving each Bear a Bifrost virtual key. Bifrost then owns hard enforcement, usage accounting, budgets, rate limits, and gateway routing at Bear scope; Den owns stable model-selection UX and Bear-aware policy.
+
+Ownership:
+
+- Bifrost owns virtual-key enforcement: allowed providers/models, key restrictions, rate limits, budgets, usage logs, cost accounting, retries/fallbacks, and gateway routing.
+- Den owns Bear/profile/conversation model policy, stable selectable model options, and the Bear ↔ Bifrost virtual key mapping.
 
 Implementation notes:
 
-- Keep model availability/catalog reads on the existing `BifrostCatalogSnapshot` path. Phase 3 should not switch Bear Admin or runtime validation to `/api/models/details`, `/api/models/base`, or `/bears/models`.
-- Add `model_usage_events` or equivalent event storage with requested/selected/actual model fields.
-- Record Den-side facts before execution:
-  - `bear_id`, `conversation_id`, profile/stance,
-  - task class (`agent_primary` first; later compaction/reflection/etc.),
-  - selection mode/source (`conversation_explicit`, `profile_default`, `bear_default`, etc.),
-  - requested model and selected model.
-- Capture Bifrost/provider facts after execution where available:
-  - actual model/provider,
-  - request id / response id for correlation,
-  - input/output/total tokens,
-  - cost/currency if Bifrost/provider exposes it,
-  - fallback/routing metadata when exposed.
-- Update `conversation_model_state.actual_last_model`, `actual_last_provider`, and `fallback_count` opportunistically from the same execution result.
-- Emit runtime events for `model.execution.started`, `model.execution.completed`, `model.execution.fallback` when detectable, and `model.usage.recorded`.
-- Surface the selected vs actual distinction to BearWire/ACP and web clients; do not mutate selected model just because Bifrost/provider fell back.
-
-Likely first integration points:
-
-- BearWire Pair run preflight already produces a `ResolvedRunModel` in `services/den/crates/den-bearwire/src/methods/run.rs`; use that as the selected-model source for Pair/ACP runs.
-- Den runtime/Bifrost client response handling is where actual model and token usage should be captured.
-- `conversation_persistence::ConversationModelState` already has actual/fallback columns ready for update.
+- Add Den storage for Bear ↔ Bifrost virtual key mapping.
+- Treat Bifrost virtual key values as secrets. Prefer storing only virtual-key identifiers until Den has an explicit secure-storage/encryption story for runtime-created Bear keys.
+- Start with an operator-managed attach flow if needed: Bear admin/operator pastes or selects an existing Bifrost virtual key for a Bear.
+- Send `x-bf-vk` on LLM requests for Bears that have a mapped virtual key.
+- Keep existing `x-bears-*` request/correlation headers for Den debugging.
+- Do not use Bifrost's live `/v1/models` as the primary user-facing selector source. Den's `model_selection_options` remains the stable selector source.
+- Query Bifrost logs/usage APIs by virtual key for Bear usage/cost UI before adding any Den-side usage mirror.
 
 Exit:
 
-- each primary model call has requested/selected/actual model trace when enough information is available,
-- token usage is recorded when provider/Bifrost reports it,
-- selected-vs-actual model differences are observable in logs/events and persisted usage records,
-- Phase 4 Bear usage UI can be built from the persisted usage/events table.
+- A Bear can be associated with a Bifrost virtual key,
+- Den sends that virtual key on the Bear's LLM requests,
+- Bifrost usage/logs can be attributed to that Bear by virtual key,
+- budget/rate-limit enforcement design is Bifrost-first,
+- Den model selectors remain stable and Den-owned.
+
+### Phase 3.5 — Sync Den model policy to Bifrost governance
+
+Goal: use Bifrost governance to enforce Den's configured model policy without making Bifrost the primary UX selector.
+
+Implementation notes:
+
+- Sync or reconcile Den's Bear-selectable model policy to the Bear's Bifrost virtual key `allowed_models` / provider config.
+- For v1, decide whether Bear virtual keys start with `allowed_models: ["*"]` or an explicit Den-selected allowlist. Prefer `"*"` only when broad provider access is intended.
+- Add drift diagnostics:
+  - Den says a model is selectable, but the Bear virtual key does not allow it,
+  - the Bear virtual key allows models Den does not expose,
+  - Bifrost rejects a selected model despite the Den/Bifrost policy mapping.
+- Use Bifrost management APIs where available; otherwise produce an operator-visible sync plan rather than silently patching gateway config.
+
+Exit:
+
+- Bifrost enforces the upper bound of what a Bear may run,
+- Den still controls the user-facing selector and stance/conversation defaults,
+- drift between Den model policy and Bifrost virtual-key governance is visible.
 
 ### Phase 4 — Bear usage and cost UI
 
