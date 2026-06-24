@@ -315,23 +315,28 @@ pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelO
         .collect()
 }
 
-/// Curated Bifrost availability list for normal Bear Admin dropdowns.
+/// Stable Den-owned model list for normal Bear Admin/web selectors.
+///
+/// Bifrost availability is used as status/validation metadata elsewhere; the
+/// primary user-facing selector should not flicker when Bifrost's live catalog
+/// temporarily shrinks or expands.
 pub async fn model_catalog_select_context(
     state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
-    let (configured, all_options, error) = all_model_catalog_options_context(state).await;
-    if !configured || all_options.is_empty() {
-        return (configured, all_options, error);
-    }
-    let curated = curated_model_options_from_all(&all_options);
-    if curated.is_empty() {
-        (
+    match den_service::model_selection::list_selectable_model_options(state.sqlx_pool()).await {
+        Ok(options) if options.is_empty() => (
             true,
-            all_options,
-            Some("No Bifrost models matched Den's curated model overlay; showing all available models.".into()),
-        )
-    } else {
-        (true, curated, error)
+            Vec::new(),
+            Some("No Den model selection options are configured.".into()),
+        ),
+        Ok(options) => (true, options, None),
+        Err(err) => (
+            true,
+            den_llm::model_registry::selectable_model_options(),
+            Some(format!(
+                "Could not load Den model selection options; using static fallback: {err}."
+            )),
+        ),
     }
 }
 
@@ -373,7 +378,7 @@ pub fn validate_default_model_for_catalog(
         Ok(models) if models.is_empty() => {
             validation_errors.add(
                 "default_model",
-                ValidationError::new("Bifrost has no available models."),
+                ValidationError::new("No Den model selection options are configured."),
             );
         }
         Ok(models) => {
@@ -387,7 +392,7 @@ pub fn validate_default_model_for_catalog(
             if !default_model_available_in_catalog(models, default_model_trim) {
                 validation_errors.add(
                     "default_model",
-                    ValidationError::new("Pick a model currently available in Bifrost."),
+                    ValidationError::new("Pick a configured Den model selection option."),
                 );
             }
         }

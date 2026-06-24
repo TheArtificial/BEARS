@@ -16,6 +16,7 @@ pub use client::{
     ChatToolCall, ChatToolCallFunction, LlmApiStyle, LlmClient, LlmRequestTelemetry,
     LlmToolDefinition,
 };
+pub use model_registry::execution_fallback_model_handles;
 pub use embeddings::EmbeddingClient;
 pub use idle_byte_stream::byte_stream_with_idle_timeout;
 pub use model_options::{ModelOption, ToolOption};

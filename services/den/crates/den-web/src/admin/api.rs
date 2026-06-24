@@ -83,22 +83,17 @@ async fn create_bear(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(model) = default_model {
-        let catalog_models = state
-            .bifrost_catalog
-            .read()
-            .map_err(|_| CustomError::System("could not read Bifrost model catalog snapshot".to_string()))?
-            .models_vec()
-            .into_iter()
-            .map(bear_create_support::model_option_from_bifrost_metadata)
-            .collect::<Vec<_>>();
+        let catalog_models =
+            den_service::model_selection::list_selectable_model_options(state.sqlx_pool()).await?;
         if catalog_models.is_empty() {
             return Err(CustomError::ValidationError(
-                "Bifrost model catalog snapshot is empty; cannot validate default_model".to_string(),
+                "No Den model selection options are configured; cannot validate default_model"
+                    .to_string(),
             ));
         }
         if !bear_create_support::default_model_available_in_catalog(&catalog_models, model) {
             return Err(CustomError::ValidationError(format!(
-                "default_model `{model}` is not currently available in Bifrost"
+                "default_model `{model}` is not configured as a selectable Den model"
             )));
         }
     }
@@ -121,12 +116,8 @@ async fn create_bear(
     )
     .await?;
 
-    if let Err(e) = provision::provision_bear_if_configured(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        id,
-    )
-    .await
+    if let Err(e) =
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id).await
     {
         tracing::warn!(%id, "Bear provision failed after admin API create: {e}");
     }

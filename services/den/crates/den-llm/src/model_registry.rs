@@ -77,6 +77,14 @@ pub fn provider_model_id_for_handle(handle: &str) -> Option<&'static str> {
     entry_for_handle(handle).map(|entry| entry.provider_model_id)
 }
 
+pub fn execution_fallback_model_handles(handle: &str) -> &'static [&'static str] {
+    match resolve_model_handle(handle).unwrap_or(handle.trim()) {
+        "openai/gpt-5.5" => &["openai/gpt-5.1", "openai/gpt-5"],
+        "openai/gpt-5.1" => &["openai/gpt-5"],
+        _ => &[],
+    }
+}
+
 pub fn is_routing_wildcard_model_handle(handle: &str) -> bool {
     let trimmed = handle.trim();
     trimmed == "*" || trimmed.ends_with("/*")
@@ -428,6 +436,19 @@ mod tests {
         );
         assert_eq!(provider_model_id_for_handle("gpt-5.5"), Some("gpt-5.5"));
         assert_eq!(provider_model_id_for_handle("unknown-model"), None);
+    }
+
+    #[test]
+    fn resolves_execution_fallback_models() {
+        assert_eq!(
+            execution_fallback_model_handles("gpt-5.5"),
+            ["openai/gpt-5.1", "openai/gpt-5"]
+        );
+        assert_eq!(
+            execution_fallback_model_handles("openai/gpt-5.1"),
+            ["openai/gpt-5"]
+        );
+        assert!(execution_fallback_model_handles("openai/gpt-4.1").is_empty());
     }
 
     #[test]

@@ -15,12 +15,15 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::web::bear_create_support::{
+    canonical_default_model_handle, model_catalog_select_context,
+};
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
-            docket::{DocketService, PgDocketService},
-            work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
-        },
+        docket::{DocketService, PgDocketService},
+        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
+    },
     errors::CustomError,
     observability::{
         chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
@@ -29,7 +32,6 @@ use crate::{
     web::AppState,
     web_chat_runtime::WebChatRuntimeRequest,
 };
-use crate::web::bear_create_support::{canonical_default_model_handle, model_catalog_select_context};
 use den_llm::ModelOption;
 use den_service::{acp_sessions, archived_conversations};
 use den_service::{
@@ -580,7 +582,6 @@ async fn web_chat_workboard_prompt_context(
     Ok(work_plans::render_workboard_prompt_context(&plans))
 }
 
-
 fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
     let requested = raw.trim();
     if requested.is_empty() {
@@ -595,8 +596,7 @@ fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
             return false;
         };
         resolved == model.handle
-            || den_llm::model_registry::resolve_model_handle(&model.handle)
-                == Some(resolved)
+            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
     })
 }
 
@@ -618,9 +618,9 @@ async fn chat_model_response_for(
     let conv_id = normalize_client_conversation_id(conversation_id)?;
     let (configured, model_options, fetch_error) = model_catalog_select_context(state).await;
     if !configured || model_options.is_empty() {
-        return Err(CustomError::System(
-            fetch_error.unwrap_or_else(|| "No Bifrost models are available.".to_string()),
-        ));
+        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
+            "No Den model selection options are configured.".to_string()
+        })));
     }
 
     let base_model = bears_db::resolve_model_for_profile(
@@ -651,11 +651,9 @@ async fn chat_model_response_for(
         None,
     )
     .await?;
-    let state_row = conversation_persistence::get_conversation_model_state(
-        state.sqlx_pool(),
-        conversation.id,
-    )
-    .await?;
+    let state_row =
+        conversation_persistence::get_conversation_model_state(state.sqlx_pool(), conversation.id)
+            .await?;
     let effective = conversation_persistence::resolve_conversation_selected_model(
         state.sqlx_pool(),
         conversation.id,
@@ -667,8 +665,12 @@ async fn chat_model_response_for(
             .as_ref()
             .map(|row| row.selection_mode.clone())
             .unwrap_or_else(|| "auto".to_string()),
-        requested_model: state_row.as_ref().and_then(|row| row.requested_model.clone()),
-        selected_model: state_row.as_ref().and_then(|row| row.selected_model.clone()),
+        requested_model: state_row
+            .as_ref()
+            .and_then(|row| row.requested_model.clone()),
+        selected_model: state_row
+            .as_ref()
+            .and_then(|row| row.selected_model.clone()),
         effective_model: effective,
         source: if state_row.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
             "conversation_explicit".to_string()
@@ -721,20 +723,25 @@ async fn chat_model_patch(
     }
     let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
     if !configured || model_options.is_empty() {
-        return Err(CustomError::System(
-            fetch_error.unwrap_or_else(|| "No Bifrost models are available.".to_string()),
-        ));
+        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
+            "No Den model selection options are configured.".to_string()
+        })));
     }
     let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
     let (selection_mode, requested_model, selected_model, reason) = if mode == "explicit" {
         let raw = body.model.as_deref().unwrap_or("").trim();
         if raw.is_empty() || !chat_model_available(&model_options, raw) {
             return Err(CustomError::ValidationError(
-                "Pick a model currently available in Bifrost.".to_string(),
+                "Pick a configured Den model selection option.".to_string(),
             ));
         }
         let canonical = canonical_default_model_handle(raw).unwrap_or_else(|| raw.to_string());
-        ("explicit", Some(canonical.clone()), Some(canonical), "human_selected")
+        (
+            "explicit",
+            Some(canonical.clone()),
+            Some(canonical),
+            "human_selected",
+        )
     } else {
         ("auto", None, None, "inherit_stance_or_bear_default")
     };
@@ -810,30 +817,21 @@ async fn maybe_handle_direct_set_conversation_title(
     request: ConversationTitleRequest<'_>,
 ) -> Result<Option<Response>, CustomError> {
     let ConversationTitleRequest {
-            bear,
-            conv_id,
-            message,
-            request_id,
-        } = request;
+        bear,
+        conv_id,
+        message,
+        request_id,
+    } = request;
     let Some(title) = parse_set_conversation_title_request(message) else {
         return Ok(None);
     };
     let title = title.chars().take(120).collect::<String>();
-        conversation_persistence::set_conversation_title(
-            state.sqlx_pool(),
-            bear.id,
-            conv_id,
-            &title,
-        )
+    conversation_persistence::set_conversation_title(state.sqlx_pool(), bear.id, conv_id, &title)
         .await?;
-        let _ = acp_sessions::set_title_for_bear_conversation(
-            state.sqlx_pool(),
-            bear.id,
-            conv_id,
-            &title,
-        )
-        .await?;
-        let text = "Conversation title updated.";
+    let _ =
+        acp_sessions::set_title_for_bear_conversation(state.sqlx_pool(), bear.id, conv_id, &title)
+            .await?;
+    let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
@@ -970,8 +968,8 @@ async fn chat_send_native_inner(
         &state,
         ConversationTitleRequest {
             bear: &bear,
-                        conv_id: &conv_id,
-                        message: body.message.trim(),
+            conv_id: &conv_id,
+            message: body.message.trim(),
             request_id,
         },
     )

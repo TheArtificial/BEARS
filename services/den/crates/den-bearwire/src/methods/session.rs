@@ -245,25 +245,8 @@ async fn session_model_payload(
         )
         .await?
         .unwrap_or(base_model);
-    let model_options = state
-        .bifrost_catalog
-        .read()
-        .ok()
-        .map(|snapshot| snapshot.models_vec())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|model| {
-            !den_llm::model_registry::is_routing_wildcard_model_handle(&model.handle)
-        })
-        .map(|model| {
-            den_llm::model_registry::model_option_for_available_handle(
-                &model.handle,
-                model.display_name.as_deref(),
-                (model.context_window > 0).then_some(model.context_window),
-                model.max_output_tokens,
-            )
-        })
-        .collect::<Vec<_>>();
+    let model_options =
+        den_service::model_selection::list_selectable_model_options(&state.sqlx_pool).await?;
     Ok(json!({
         "ok": true,
         "session_id": session_id,
@@ -323,7 +306,7 @@ pub(crate) async fn session_model_set_result(
         });
         if !available {
             return Err(CustomError::ValidationError(
-                "model must be available in Bifrost".to_string(),
+                "model must be configured as a selectable Den model".to_string(),
             ));
         }
         Some(resolved.unwrap_or(raw).to_string())

@@ -42,7 +42,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 - `GET /bear/{slug}/access` — membership list; bear admins grant/revoke via POST actions
 - `GET /bear/{slug}/persona` — compiled prompts and block bindings
 - `GET /bear/{slug}/stances` — native stance binding table
-- `GET|POST /bear/{slug}/models` — Bear default model plus per-profile model overrides (`inherit` or Bifrost-available model); lane-specific assignments are TBD
+- `GET|POST /bear/{slug}/models` — Bear default model plus per-profile model overrides (`inherit` or configured Den model selection option); lane-specific assignments are TBD
 - `GET /bear/{slug}/stances/{profile}` — stance detail for `chat`, `pair`, `curate`, `work`, or `watch`
 - `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
 - `GET /bear/{slug}/context` — prompt memory blocks

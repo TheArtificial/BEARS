@@ -10,6 +10,7 @@ pub mod bifrost;
 pub mod conversation;
 pub mod conversation_ids;
 pub mod memory_proposals;
+pub mod model_selection;
 pub mod pair_reflection;
 pub mod prompt_memory_block_store;
 pub mod prompt_memory_blocks;

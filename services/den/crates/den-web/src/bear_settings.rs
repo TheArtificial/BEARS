@@ -47,7 +47,6 @@ use crate::web::admin::bears::{
 };
 use crate::web::bear_create_support::{
     all_model_catalog_options_context, canonical_default_model_handle,
-    curated_model_options_from_all,
 };
 use den_llm::ModelOption;
 
@@ -892,6 +891,20 @@ fn configured_model_from_form(raw: &str) -> Option<String> {
     }
 }
 
+fn merge_model_options(primary: &[ModelOption], secondary: &[ModelOption]) -> Vec<ModelOption> {
+    let mut merged = primary.to_vec();
+    for option in secondary {
+        if !merged
+            .iter()
+            .any(|existing| existing.handle == option.handle)
+        {
+            merged.push(option.clone());
+        }
+    }
+    merged.sort_by(|a, b| a.label.cmp(&b.label));
+    merged
+}
+
 fn model_available(options: &[ModelOption], raw: &str) -> bool {
     let requested = raw.trim();
     if requested.is_empty() {
@@ -906,8 +919,7 @@ fn model_available(options: &[ModelOption], raw: &str) -> bool {
             return false;
         };
         resolved == model.handle
-            || den_llm::model_registry::resolve_model_handle(&model.handle)
-                == Some(resolved)
+            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
     })
 }
 
@@ -988,29 +1000,23 @@ async fn models_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let (model_catalog_configured, all_model_options, models_fetch_error) =
+    let model_options =
+        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
+            .await
+            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
+    let (model_catalog_configured, live_model_options, models_fetch_error) =
         all_model_catalog_options_context(&state).await;
-    let mut model_options = curated_model_options_from_all(&all_model_options);
-    let curated_warning =
-        if model_catalog_configured && !all_model_options.is_empty() && model_options.is_empty() {
-            model_options = all_model_options.clone();
-            Some(
-            "No Bifrost models matched Den's curated model overlay; showing all available models."
-                .to_string(),
-        )
-        } else {
-            None
-        };
-    let validation_options = if all_model_options.is_empty() {
-        &model_options
-    } else {
-        &all_model_options
-    };
-    let rows =
-        model_page_rows(state.sqlx_pool(), &bear, &model_options, validation_options).await?;
+    let all_model_options = merge_model_options(&model_options, &live_model_options);
+    let rows = model_page_rows(
+        state.sqlx_pool(),
+        &bear,
+        &model_options,
+        &live_model_options,
+    )
+    .await?;
     let bear_default_model = bear.default_model.as_deref().unwrap_or("");
     let bear_default_availability_status =
-        model_availability_status(validation_options, bear_default_model);
+        model_availability_status(&live_model_options, bear_default_model);
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
     web::render_template(
         &state,
@@ -1020,7 +1026,7 @@ async fn models_view(
             model_catalog_configured,
             model_options,
             all_model_options,
-            models_fetch_error => models_fetch_error.or(curated_warning),
+            models_fetch_error,
             rows,
             bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
             bear_default_availability_status,
@@ -1045,12 +1051,15 @@ async fn models_post(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let (configured, all_model_options, fetch_error) =
-        all_model_catalog_options_context(&state).await;
-    let validation_options = &all_model_options;
-    if !configured || validation_options.is_empty() {
+    let model_options =
+        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
+            .await
+            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
+    let (_, live_model_options, fetch_error) = all_model_catalog_options_context(&state).await;
+    let validation_options = merge_model_options(&model_options, &live_model_options);
+    if validation_options.is_empty() {
         let message = fetch_error
-            .unwrap_or_else(|| "No Bifrost models are available for validation.".to_string());
+            .unwrap_or_else(|| "No Den model selection options are configured.".to_string());
         return Ok(Redirect::to(&format!(
             "/bear/{}/models?error={}",
             bear.slug,
@@ -1061,11 +1070,12 @@ async fn models_post(
 
     let default_trim =
         selected_or_custom_model(&form.bear_default_model, &form.bear_default_model_custom).trim();
-    if !is_inherit_model_value(default_trim) && !model_available(validation_options, default_trim) {
+    if !is_inherit_model_value(default_trim) && !model_available(&validation_options, default_trim)
+    {
         return Ok(Redirect::to(&format!(
             "/bear/{}/models?error={}",
             bear.slug,
-            urlencoding::encode("Choose inherit or a Bifrost-available Bear default model.")
+            urlencoding::encode("Choose inherit or a configured Den model selection option.")
         ))
         .into_response());
     }
@@ -1077,9 +1087,9 @@ async fn models_post(
             form_profile_model_custom(&form, profile),
         )
         .trim();
-        if !is_inherit_model_value(raw) && !model_available(validation_options, raw) {
+        if !is_inherit_model_value(raw) && !model_available(&validation_options, raw) {
             let message = format!(
-                "{} override must be a Bifrost-available model.",
+                "{} override must be a configured Den model selection option.",
                 profile_label(profile)
             );
             return Ok(Redirect::to(&format!(

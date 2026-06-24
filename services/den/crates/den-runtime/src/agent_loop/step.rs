@@ -16,8 +16,9 @@ use crate::{
         session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
     llm::{
-        bifrost_key_selection_error, byte_stream_with_idle_timeout, preferred_api_style_for_model,
-        ChatCompletionRequest, LlmApiStyle, LlmClient,
+        bifrost_key_selection_error, byte_stream_with_idle_timeout,
+        execution_fallback_model_handles, preferred_api_style_for_model, ChatCompletionRequest,
+        LlmApiStyle, LlmClient,
     },
     native_runtime::{
         openai_byte_stream_to_event_stream_with_telemetry, responses_byte_stream_to_event_stream,
@@ -52,6 +53,124 @@ struct LazyAgentStepStream {
 }
 
 impl LazyAgentStepStream {
+    async fn connect_request_stream(
+        llm: &LlmClient,
+        request: &ChatCompletionRequest,
+        session_key: &str,
+        model: &str,
+        api_style: LlmApiStyle,
+        started: Instant,
+    ) -> Result<RuntimeEventStream, DenError> {
+        match api_style {
+            LlmApiStyle::ChatCompletionsStream => {
+                let byte_stream = llm.chat_completions_byte_stream(request).await?;
+                Self::connect_byte_stream(
+                    session_key.to_string(),
+                    model.to_string(),
+                    api_style,
+                    started,
+                    byte_stream,
+                    request.telemetry.clone(),
+                )
+            }
+            LlmApiStyle::ResponsesStream => match llm.responses_byte_stream(request).await {
+                Ok(byte_stream) => Self::connect_byte_stream(
+                    session_key.to_string(),
+                    model.to_string(),
+                    api_style,
+                    started,
+                    byte_stream,
+                    request.telemetry.clone(),
+                ),
+                Err(err) if bifrost_key_selection_error(&err.to_string()) => {
+                    tracing::warn!(
+                        session_key = %session_key,
+                        model = %model,
+                        api_style = %api_style.as_str(),
+                        error = %err,
+                        "LLM responses stream hit Bifrost key-selection error; retrying via chat/completions stream"
+                    );
+                    let byte_stream = llm.chat_completions_byte_stream(request).await?;
+                    Self::connect_byte_stream(
+                        session_key.to_string(),
+                        model.to_string(),
+                        LlmApiStyle::ChatCompletionsStream,
+                        started,
+                        byte_stream,
+                        request.telemetry.clone(),
+                    )
+                }
+                Err(err) => Err(err),
+            },
+        }
+    }
+
+    async fn retry_with_fallback_models(
+        llm: &LlmClient,
+        request: &ChatCompletionRequest,
+        session_key: &str,
+        api_style_override: Option<LlmApiStyle>,
+    ) -> Result<Option<RuntimeEventStream>, DenError> {
+        let fallback_models = execution_fallback_model_handles(&request.model);
+        if fallback_models.is_empty() {
+            return Ok(None);
+        }
+        for fallback_model in fallback_models {
+            let mut fallback_request = request.clone();
+            fallback_request.model = (*fallback_model).to_string();
+            let fallback_style =
+                api_style_override.unwrap_or_else(|| preferred_api_style_for_model(fallback_model));
+            tracing::warn!(
+                session_key = %session_key,
+                requested_model = %request.model,
+                fallback_model,
+                api_style = %fallback_style.as_str(),
+                "retrying LLM stream with fallback model after Bifrost key-selection error"
+            );
+            match timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, Self::connect_request_stream(
+                llm,
+                &fallback_request,
+                session_key,
+                fallback_model,
+                fallback_style,
+                Instant::now(),
+            ))
+            .await
+            {
+                Ok(Ok(stream)) => {
+                    tracing::info!(
+                        session_key = %session_key,
+                        requested_model = %request.model,
+                        fallback_model,
+                        api_style = %fallback_style.as_str(),
+                        "LLM stream fallback model handshake succeeded"
+                    );
+                    return Ok(Some(stream));
+                }
+                Ok(Err(err)) if bifrost_key_selection_error(&err.to_string()) => {
+                    tracing::warn!(
+                        session_key = %session_key,
+                        requested_model = %request.model,
+                        fallback_model,
+                        error = %err,
+                        "fallback model also hit Bifrost key-selection error"
+                    );
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) => {
+                    tracing::warn!(
+                        session_key = %session_key,
+                        requested_model = %request.model,
+                        fallback_model,
+                        handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                        "fallback model handshake timed out"
+                    );
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn new(
         llm: LlmClient,
         request: ChatCompletionRequest,
@@ -100,50 +219,10 @@ impl LazyAgentStepStream {
                 handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
                 "LLM stream handshake starting"
             );
-            let handshake = timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, async {
-                match api_style {
-                    LlmApiStyle::ChatCompletionsStream => {
-                        let byte_stream = llm.chat_completions_byte_stream(&request).await?;
-                        Self::connect_byte_stream(
-                            session_key.clone(),
-                            model.clone(),
-                            api_style,
-                            started,
-                            byte_stream,
-                            request.telemetry.clone(),
-                        )
-                    }
-                    LlmApiStyle::ResponsesStream => match llm.responses_byte_stream(&request).await {
-                        Ok(byte_stream) => Self::connect_byte_stream(
-                            session_key.clone(),
-                            model.clone(),
-                            api_style,
-                            started,
-                            byte_stream,
-                            request.telemetry.clone(),
-                        ),
-                        Err(err) if bifrost_key_selection_error(&err.to_string()) => {
-                            tracing::warn!(
-                                session_key = %session_key,
-                                model = %model,
-                                api_style = %api_style.as_str(),
-                                error = %err,
-                                "LLM responses stream hit Bifrost key-selection error; retrying via chat/completions stream"
-                            );
-                            let byte_stream = llm.chat_completions_byte_stream(&request).await?;
-                            Self::connect_byte_stream(
-                                session_key.clone(),
-                                model.clone(),
-                                LlmApiStyle::ChatCompletionsStream,
-                                started,
-                                byte_stream,
-                                request.telemetry.clone(),
-                            )
-                        }
-                        Err(err) => Err(err),
-                    }
-                }
-            })
+            let handshake = timeout(
+                NATIVE_LLM_HANDSHAKE_TIMEOUT,
+                Self::connect_request_stream(&llm, &request, &session_key, &model, api_style, started),
+            )
             .await;
             match handshake {
                 Err(_) => {
@@ -169,6 +248,18 @@ impl LazyAgentStepStream {
                         api_style = %api_style.as_str(),
                         "LLM stream handshake failed"
                     );
+                    if bifrost_key_selection_error(&err.to_string()) {
+                        if let Some(stream) = Self::retry_with_fallback_models(
+                            &llm,
+                            &request,
+                            &session_key,
+                            api_style_override,
+                        )
+                        .await?
+                        {
+                            return Ok(stream);
+                        }
+                    }
                     if let Some(ctx) = overflow {
                         if den_error_indicates_context_overflow(&err) {
                             return Self::recover_from_overflow_and_retry(

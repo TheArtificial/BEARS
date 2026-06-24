@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::{Arc, RwLock}, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

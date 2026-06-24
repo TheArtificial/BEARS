@@ -621,6 +621,24 @@ Remaining:
 - actual model/fallback reporting (Phase 3),
 - explicit auto-mode heuristics beyond inherit stance/Bear default (Phase 6).
 
+### Phase 2.5 — Configured selectable model options ✅
+
+Goal: give Den a stable, operator-controlled list of models users can choose from, reconciled with Bifrost availability but not replaced by it.
+
+Implemented:
+
+- Add `model_selection_options` table seeded with Den's curated OpenAI model set.
+- Use configured Den model options for Bear Admin, web chat, and BearWire/ACP model selectors.
+- Keep Bifrost live catalog as status/availability metadata and as a supplemental advanced/autocomplete source.
+- Allow selector stability even when Bifrost `/v1/models` temporarily shrinks or expands.
+
+Exit:
+
+- ACP model selector is stable across Bifrost catalog refreshes,
+- Bear Admin and web chat selectors are stable across Bifrost catalog refreshes,
+- Bifrost availability is diagnostic/status metadata, not the primary selector source,
+- existing saved Den-configured models can be shown even when Bifrost availability is unknown or temporarily absent.
+
 ### Phase 3 — Actual model and usage capture ⬅ next
 
 Goal: create a durable per-call trace from Den's requested/selected model through Bifrost/provider execution results, without reopening the model catalog source decision.
