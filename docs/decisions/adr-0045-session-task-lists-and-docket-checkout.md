@@ -37,6 +37,10 @@ Docket remains canonical for:
 
 The session task list remains canonical only for its own session-local working projection and UI/focus state.
 
+Session task lists are **session- and stance-local by default**. Passive prompt injection should include only the task list owned by the current session/conversation and stance. A `pair` session task list must not appear as active prompt context for a `chat` stance turn merely because it is visible to the Bear. Other stances may inspect visible task lists through explicit tools when policy allows, but cross-stance passive context is reserved for Docket-backed/promoted work.
+
+A task list becomes appropriate cross-stance durable work context only when its items are attached/synced/promoted to a Docket job/task hierarchy, or when a user explicitly asks a stance to inspect another session's task-list projection.
+
 ## Terms
 
 | Term | Meaning |
@@ -133,7 +137,7 @@ Legacy provider names such as `list_plans`, `get_plan_status`, `update_plan`, an
 
 ### Tool semantics
 
-`update_task_list` should be allowed to update the visible session task list. If task-list items are Docket-backed and policy allows direct sync, those changes may update Docket tasks. If policy requires review, the tool should preserve changes in task-list state and mark them `review_required` or ask for handoff/sync review.
+`update_task_list` should be allowed to update the visible session task list. Passive prompt context for task lists must be scoped to the current session/conversation and stance; broader visibility is for explicit read tools, not automatic prompt bleed. If task-list items are Docket-backed and policy allows direct sync, those changes may update Docket tasks. If policy requires review, the tool should preserve changes in task-list state and mark them `review_required` or ask for handoff/sync review.
 
 `checkout_task_list` should create or refresh a session task list from a source such as:
 

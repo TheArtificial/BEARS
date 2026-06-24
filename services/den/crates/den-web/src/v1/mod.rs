@@ -22,7 +22,7 @@ use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
         docket::{DocketService, PgDocketService},
-        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
+        work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
     observability::{
@@ -566,19 +566,22 @@ async fn web_chat_workboard_prompt_context(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
     user_id: i32,
+    conversation_id: &str,
+    _session_id: &str,
 ) -> Result<String, CustomError> {
-    let plans = PgDocketService::from_pool(pool)
-        .list_visible_work_plans(
+    let plan = PgDocketService::from_pool(pool)
+        .get_visible_work_plan(
             bear_id,
             BearProfile::Chat,
             user_id,
-            WorkPlanListFilter {
-                statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
-                owner_profile: None,
-                include_archived: false,
+            WorkPlanLookup {
+                plan_id: None,
+                source_conversation_id: Some(conversation_id.to_string()),
+                source_acp_session_id: None,
             },
         )
         .await?;
+    let plans = plan.into_iter().collect::<Vec<_>>();
     Ok(work_plans::render_workboard_prompt_context(&plans))
 }
 
@@ -978,8 +981,14 @@ async fn chat_send_native_inner(
         return Ok(response);
     }
 
-    let workboard_context =
-        web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
+    let workboard_context = web_chat_workboard_prompt_context(
+        state.sqlx_pool(),
+        bear.id,
+        user_id,
+        &conv_id,
+        &session_id,
+    )
+    .await?;
     let upstream_message = format!("{}{}", body.message.trim(), workboard_context);
 
     let canonical_conversation = conversation_persistence::ensure_conversation_for_external_id(

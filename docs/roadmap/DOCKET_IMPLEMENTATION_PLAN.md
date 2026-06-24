@@ -59,7 +59,7 @@ The implementation should not jump directly from the current legacy activity boa
 | Add task-list projection types | Code has `TaskListProjection`, `TaskListItem`, `TaskListSourceRef`, and `TaskListSyncState` (or equivalent) wrapping legacy rows. |
 | Represent local-only vs backed items | Items can say `source_ref.kind = "local"` or `"docket_task"` even if only local/legacy sources are supported initially. |
 | Preserve sync metadata | Projection includes `sync.state` such as `local_only`, `checked_out`, `dirty`, `synced`, `conflict`, or `review_required`. |
-| Update Den tool payloads | `list_task_lists` / `get_task_list_status` / `update_task_list` return task-list-shaped payloads while compatibility fields remain available. |
+| Update Den tool payloads | `list_task_lists` / `get_task_list_status` / `update_task_list` return task-list-shaped payloads while compatibility fields remain available. Passive prompt payloads are scoped to the current session/conversation and stance; explicit reads can still list visible task lists. |
 
 **Exit gate:** Model-facing tools and ACP/BearWire plan UI consume task-list projection payloads, not raw `bear_work_plans.items` semantics.
 
@@ -131,6 +131,8 @@ The intended flow is effectiveness-first:
 5. Conflicts surface in the task list rather than being silently overwritten.
 
 Docket remains canonical for durable jobs, task identity, task hierarchy, run state, criteria, and audit. Session task lists are the working projection and sync surface. This boundary exists to preserve source-of-truth, concurrency, audit, and dispatch semantics — not to prevent Bears from effectively working Docket tasks through a task list.
+
+Session task lists are session- and stance-local by default. Passive prompt context should include only the current session/conversation's task list for the current stance. Cross-stance visibility belongs to explicit read tools (`list_task_lists`, Docket job/task tools) or to Docket-backed/promoted work, not automatic prompt injection.
 
 Target Docket service capabilities should therefore include:
 
