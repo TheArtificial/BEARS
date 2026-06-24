@@ -11,7 +11,14 @@
                 {
                     "name": "openai-primary",
                     "value": "env.OPENAI_API_KEY",
-                    "models": ["*"],
+                    "models": [
+                        "gpt-5.5",
+                        "gpt-5.1",
+                        "gpt-5",
+                        "gpt-5-mini",
+                        "gpt-4.1",
+                        "gpt-4.1-mini"
+                    ],
                     "weight": 1.0
                 }
             ]
