@@ -109,4 +109,11 @@ pub trait WorkPlanOps: Send + Sync {
         role: BearProfile,
         arguments: Value,
     ) -> Result<Value, DenError>;
+
+    async fn checkout_task_list(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
 }

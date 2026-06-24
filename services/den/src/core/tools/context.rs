@@ -567,6 +567,17 @@ impl WorkPlanOps for DenToolContext<'_> {
             .sync_task_list(context, role, arguments)
             .await
     }
+
+    async fn checkout_task_list(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.work_plans()
+            .checkout_task_list(context, role, arguments)
+            .await
+    }
 }
 
 impl ToolContext for DenToolContext<'_> {}

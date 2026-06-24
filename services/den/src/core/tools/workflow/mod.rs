@@ -5,26 +5,24 @@ use uuid::Uuid;
 
 use den_core::tools::workflow::WorkPlanOps;
 use den_docket::{
-    self as work_plans, docket_job_status_report, DocketCommitPolicy,
-    DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus,
-    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
-    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
-    DocketValidationError, PgDocketService, TaskListProjection, TaskListSyncRequest,
+    self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
+    DocketCriterionStatus, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus, DocketJobUpdate, DocketService,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
+    DocketTaskStatus, DocketTaskUpdate, DocketValidationError, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
     WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
     WorkPlanVisibility,
 };
 
 use crate::{
     config::Config,
-    core::{
-        tools::{
-            activity_payloads::{activity_payload, plan_mode_workplan_payload},
-            memory_write::source_acp_session_id,
-            session::DenToolInvocationContext,
-            support::clean_optional,
-        },
+    core::tools::{
+        activity_payloads::{activity_payload, plan_mode_workplan_payload},
+        memory_write::source_acp_session_id,
+        session::DenToolInvocationContext,
+        support::clean_optional,
     },
     errors::{CustomError, DenError},
 };
@@ -190,6 +188,17 @@ impl WorkPlanOps for DenWorkPlanOps<'_> {
         arguments: Value,
     ) -> Result<Value, DenError> {
         sync_task_list(self.pool, arguments)
+            .await
+            .map_err(CustomError::into_den)
+    }
+
+    async fn checkout_task_list(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        checkout_task_list(self.pool, context, role, arguments)
             .await
             .map_err(CustomError::into_den)
     }
@@ -380,6 +389,20 @@ pub(crate) struct DocketTaskUpdateArguments {
 #[derive(Debug, Deserialize)]
 pub(crate) struct TaskListSyncArguments {
     pub(crate) task_list: TaskListProjection,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TaskListCheckoutArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) parent_task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) plan_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) source_conversation_id: Option<String>,
+    #[serde(default)]
+    pub(crate) source_acp_session_id: Option<String>,
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -882,6 +905,44 @@ pub(crate) async fn sync_task_list(pool: &PgPool, arguments: Value) -> Result<Va
     Ok(json!({
         "domain": "docket",
         "sync": outcome,
+    }))
+}
+
+pub(crate) async fn checkout_task_list(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: TaskListCheckoutArguments = serde_json::from_value(arguments)?;
+    let source = if let Some(job_id) = args.job_id {
+        TaskListCheckoutSource::DocketJob {
+            job_id,
+            parent_task_id: args.parent_task_id,
+        }
+    } else {
+        TaskListCheckoutSource::LegacyWorkPlan(WorkPlanLookup {
+            plan_id: args.plan_id,
+            source_conversation_id: args
+                .source_conversation_id
+                .or_else(|| clean_optional(&context.conversation_id)),
+            source_acp_session_id: args
+                .source_acp_session_id
+                .or_else(|| source_acp_session_id(context)),
+        })
+    };
+    let task_list = PgDocketService::from_pool(pool)
+        .checkout_task_list(
+            context.bear_id,
+            role,
+            context.user_id,
+            TaskListCheckoutRequest { source },
+        )
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "task_list": task_list,
     }))
 }
 

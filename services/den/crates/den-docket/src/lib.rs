@@ -9,6 +9,8 @@
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 mod db;
+#[cfg(test)]
+mod integration_tests;
 pub mod model;
 pub mod service;
 
