@@ -21,8 +21,8 @@ use super::model::{
     DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
     DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanListFilter,
-    WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanItemStatus,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
 };
 
 pub(super) async fn create_job(
@@ -1057,6 +1057,7 @@ pub(super) async fn update_task(
     update: DocketTaskUpdate,
 ) -> Result<DocketTaskProjection, DenError> {
     validate_docket_task_patch(&update.definition)?;
+    validate_docket_task_run_state_update(update.run_state.as_ref())?;
     let mut tx = pool.begin().await?;
     let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
@@ -1071,6 +1072,26 @@ pub(super) async fn update_task(
         task: patched,
         run_state,
     })
+}
+
+fn validate_docket_task_run_state_update(
+    update: Option<&super::model::DocketTaskRunStateUpdate>,
+) -> Result<(), DenError> {
+    let Some(update) = update else {
+        return Ok(());
+    };
+    if update.status.as_str() == "done"
+        && update
+            .result_summary
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+    {
+        return Err(DenError::ValidationError(
+            "Docket task completion requires non-empty result_summary".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_docket_task_patch(patch: &DocketTaskDefinitionPatch) -> Result<(), DenError> {
@@ -1355,6 +1376,19 @@ pub(super) async fn sync_task_list(
                     existing.id, item.id
                 ));
             }
+            if item.status == WorkPlanItemStatus::Completed
+                && item
+                    .summary
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|summary| !summary.is_empty() && *summary != existing.body.trim())
+                    .is_none()
+            {
+                conflicts.push(format!(
+                    "Completed Docket-backed item `{}` requires a completion summary/evidence distinct from the task body",
+                    item.id
+                ));
+            }
         }
     }
     if !conflicts.is_empty() {
@@ -1373,7 +1407,21 @@ pub(super) async fn sync_task_list(
             continue;
         }
         if let Some(task_id) = task_ref_uuid(&item.source_ref) {
+            let existing = tasks_by_id.get(&task_id).copied();
             let body = item.summary.clone();
+            let result_summary = match item.status {
+                WorkPlanItemStatus::Completed => item
+                    .summary
+                    .as_ref()
+                    .filter(|summary| {
+                        existing
+                            .map(|task| task.body.trim() != summary.trim())
+                            .unwrap_or(true)
+                    })
+                    .cloned(),
+                WorkPlanItemStatus::Blocked => item.blocked_reason.clone(),
+                _ => None,
+            };
             update_task(
                 pool,
                 DocketTaskUpdate {
@@ -1395,7 +1443,7 @@ pub(super) async fn sync_task_list(
                         run_id,
                         status: docket_task_status_from_work_plan_item_status(item.status),
                         result_refs: None,
-                        result_summary: item.blocked_reason.clone(),
+                        result_summary,
                     }),
                 },
             )
