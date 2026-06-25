@@ -49,7 +49,7 @@ Extract long-lived prompt and instruction prose from Rust source into file-backe
 
 ### Phase 4 — Initial prompt migration
 
-- Move shared role/policy/base instruction prose from Rust into repository fragments.
+- Move shared stance/policy/base instruction prose from Rust into repository fragments.
 - Keep dynamic runtime supplements unchanged.
 - Validate no behavior drift in compiled outputs where possible.
 

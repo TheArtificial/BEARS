@@ -18,6 +18,44 @@ fn repository_registry_contains_den_baseline() {
 }
 
 #[test]
+fn repository_bundle_references_pair_stance_fragment() {
+    let fragments = repository_prompt_fragment_registry().unwrap();
+    let bundles = repository_prompt_bundle_registry(&fragments).unwrap();
+    let bundle = bundles.require("pair").unwrap();
+    assert_eq!(bundle.fragments, vec!["den_baseline", "stance_pair"]);
+}
+
+#[test]
+fn bundle_validation_rejects_missing_fragment() {
+    let fragments = repository_prompt_fragment_registry().unwrap();
+    let err = PromptBundleRegistry::from_embedded_sources(
+        &[("bad.yaml", "id: bad\nfragments:\n  - missing_fragment\n")],
+        &fragments,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("missing_fragment"));
+}
+
+#[test]
+fn renders_repository_pair_bundle_fragments() {
+    let fragments = repository_prompt_fragment_registry().unwrap();
+    let bundles = repository_prompt_bundle_registry(&fragments).unwrap();
+    let rendered = render_compile_time_bundle_fragments(
+        bundles.require("pair").unwrap(),
+        &fragments,
+        &CompileTimePromptContext {
+            bear_name: "Builder Bear",
+            bear_slug: "builder",
+        },
+    )
+    .unwrap();
+    assert_eq!(rendered.len(), 2);
+    assert_eq!(rendered[0].id, "den_baseline");
+    assert_eq!(rendered[1].id, "stance_pair");
+    assert!(rendered[1].body.contains("You are Builder Bear"));
+}
+
+#[test]
 fn renders_compile_time_fragment_with_allowed_variables() {
     let registry = PromptFragmentRegistry::from_embedded_sources(&[(
         "demo.md",

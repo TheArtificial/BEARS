@@ -20,7 +20,7 @@ Den prompt source comes from three classes.
 - Stored in Git.
 - Format: Markdown body with YAML frontmatter.
 - Loaded into a startup-built prompt registry.
-- Source of truth for shared role/policy/runtime prose.
+- Source of truth for shared stance/policy/runtime prose.
 
 Example layout:
 
@@ -28,7 +28,7 @@ Example layout:
 services/den/prompts/
   fragments/
     base/
-    roles/
+    stances/
     policies/
     runtime/
   bundles/
@@ -56,21 +56,21 @@ Fragments use Markdown plus YAML frontmatter.
 
 ```md
 ---
-id: role_pair
-layer: role
+id: stance_pair
+layer: stance
 templating_phase: compile
 applies_to: [pair]
 order: 200
 vars: [bear_name, bear_slug]
 ---
 
-You are the Pair role for **{{ bear_name }}** (`{{ bear_slug }}`).
+You are the Pair stance for **{{ bear_name }}** (`{{ bear_slug }}`).
 ```
 
 Suggested frontmatter fields:
 
 - `id` — stable fragment identifier
-- `layer` — `base | role | policy | runtime | tooling`
+- `layer` — `base | stance | policy | runtime | tooling`
 - `templating_phase` — `compile | turn`
 - `applies_to` — role/profile applicability
 - `order` — stable assembly ordering inside a layer
@@ -145,7 +145,7 @@ id: pair
 fragments:
   - base/identity
   - base/platform_contract
-  - roles/pair
+  - stances/pair
   - policies/memory
   - policies/tools
   - runtime/tool_surface
@@ -234,4 +234,4 @@ Small deterministic structural helpers may remain code-generated:
 - compact structured diagnostics,
 - simple dynamic supplements that are mostly data formatting.
 
-Long-lived instruction prose and role/policy text should move to prompt fragments.
+Long-lived instruction prose and stance/policy text should move to prompt fragments.

@@ -7,7 +7,10 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use super::{context_composition, Bear, BearProfile};
-use super::prompt_fragments::{repository_prompt_fragment_registry, repository_prompt_source_version};
+use super::prompt_fragments::{
+    repository_prompt_bundle_registry, repository_prompt_fragment_registry,
+    repository_prompt_source_version,
+};
 
 type ManagedBlockResolutionRow = (
     String,
@@ -173,12 +176,17 @@ pub fn managed_space_block_key(role: BearProfile) -> &'static str {
 
 pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
     let registry = repository_prompt_fragment_registry().ok();
+    let defaults = context_composition::default_role_contracts_for_bear("the Bear");
     let den_baseline_content = registry
         .as_ref()
         .and_then(|registry| registry.get("den_baseline"))
         .map(|fragment| fragment.body.clone())
         .unwrap_or_else(|| context_composition::den_baseline().to_string());
-    let defaults = context_composition::default_role_contracts_for_bear("the Bear");
+    let pair_contract_content = registry
+        .as_ref()
+        .and_then(|registry| registry.get("stance_pair"))
+        .map(|fragment| fragment.body.clone())
+        .unwrap_or_else(|| defaults.pair.clone());
     vec![
         SeedSystemBlock {
             key: "den_baseline",
@@ -198,7 +206,7 @@ pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
             key: "space_instruction.pair",
             kind: SystemBlockKind::PromptText,
             scope: SystemBlockScope::Space,
-            content: defaults.pair,
+            content: pair_contract_content,
             change_summary: "Seed current pair space instruction text.",
         },
         SeedSystemBlock {
@@ -490,6 +498,8 @@ pub fn compile_managed_config_for_bear(
     resolved: ResolvedManagedBlockSet,
 ) -> Result<CompiledBearConfig, DenError> {
     let prompt_registry = repository_prompt_fragment_registry()?;
+    let bundle_registry = repository_prompt_bundle_registry(&prompt_registry)?;
+    bundle_registry.require("pair")?;
     let mut rendered_prompts = serde_json::Map::new();
     let mut rendered_prompt_hashes = serde_json::Map::new();
 

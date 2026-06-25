@@ -50,7 +50,7 @@ Agent- and product-agnostic practices for building a **small surface-area** web 
 
 ## 6. Prompt source discipline
 
-- **Keep long-lived prompt prose out of Rust source** when it is product/role/policy text rather than structural formatting. Prefer reviewable prompt files.
+- **Keep long-lived prompt prose out of Rust source** when it is product/stance/policy text rather than structural formatting. Prefer reviewable prompt files.
 - **Use Markdown + YAML frontmatter** for repository-authored prompt fragments; use templates only where interpolation is genuinely needed.
 - **Keep runtime-authored prompt content compile-time-only**: operator or Bear Admin-entered prompt text may use a restricted compile-time variable surface, but should not introduce arbitrary turn-time templating into the hot path.
 - **Read compiled prompts at runtime**: request/turn assembly should consume compiled output (`bear_compiled_configs`), not parse prompt files or compile templates per turn.

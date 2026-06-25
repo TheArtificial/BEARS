@@ -35,7 +35,8 @@ pub use model::{
     BearWithMembership,
 };
 pub use prompt_fragments::{
-    repository_prompt_fragment_registry, repository_prompt_source_version, PromptFragment,
+    repository_prompt_bundle_registry, repository_prompt_fragment_registry,
+    repository_prompt_source_version, PromptBundle, PromptBundleRegistry, PromptFragment,
     PromptFragmentFrontmatter, PromptFragmentRegistry,
 };
 pub use runtime_plan::{default_runtime_plan, effective_runtime_plan};
