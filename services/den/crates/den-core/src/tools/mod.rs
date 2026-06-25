@@ -30,6 +30,7 @@ pub mod environment;
 pub mod identity;
 pub mod plan_mode;
 pub mod review;
+pub mod result_compaction;
 pub mod support;
 pub mod work_surface;
 pub mod workflow;

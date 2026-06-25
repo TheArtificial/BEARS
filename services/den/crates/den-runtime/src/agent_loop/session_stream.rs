@@ -26,6 +26,7 @@ use crate::{
 use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
+    result_compaction::compact_json_tool_result,
 };
 use den_core::{DenError, config::Config, profile::BearProfile};
 
@@ -318,9 +319,7 @@ impl SessionTrackingStream {
                 .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
                 .await
             {
-                Ok(value) => {
-                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
-                }
+                Ok(value) => compact_json_tool_result(value).content,
                 Err(error) => format!("error: {error}"),
             };
             let message = ChatMessage {
