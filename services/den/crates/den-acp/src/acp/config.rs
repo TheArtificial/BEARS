@@ -52,6 +52,14 @@ pub(crate) fn acp_tool_timeout_ms_for_provider(tool_name: &str) -> u64 {
         })
 }
 
+pub(crate) fn acp_tool_result_followup_timeout_ms() -> u64 {
+    std::env::var("BEARS_ACP_TOOL_RESULT_FOLLOWUP_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(1, 300_000))
+        .unwrap_or(15_000)
+}
+
 pub(crate) fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
         .ok()

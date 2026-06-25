@@ -10,10 +10,10 @@ use bytes::Bytes;
 use futures::{Future, Stream};
 
 use crate::{
-    acp::types::PersistedToolRequestEffect,
     acp::{
-        acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
-        continue_acp_turn_with_runtime, default_tool_continue_stream_context,
+        acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_result_followup_timeout_ms,
+        acp_tool_timeout_ms_for_provider, continue_acp_turn_with_runtime,
+        default_tool_continue_stream_context,
         looks_like_runtime_waiting_for_approval_error,
         map_runtime_stream_event_to_acp_adapter_events_with_persistence, mode_from_den_tool_result,
         plan_update_from_den_tool_result, AcpPendingFuture, AcpResolvedToolResult,
@@ -686,8 +686,31 @@ impl Stream for AcpRuntimeSseStream {
                                 );
                             }
                             for event in events {
+                                let continuation_terminal_failure = matches!(
+                                    &event,
+                                    GatewayEvent::Error { error_type: Some(error_type), .. }
+                                        if error_type == "runtime_tool_result_followup_timeout"
+                                            || error_type == "runtime_tool_result_missing_terminal"
+                                );
                                 for event in this.text_chunker.push(event) {
                                     this.push_adapter_event(event);
+                                }
+                                if continuation_terminal_failure
+                                    && this.turn_controller.phase() != TurnPhase::Terminal
+                                {
+                                    this.turn_controller.on_stream_error();
+                                    let role_result = this.context.role_runtime.turn_result(
+                                        TurnResultStatus::Failed,
+                                        TurnResultReason::RuntimeCleanup,
+                                        this.context.request_id,
+                                        this.context.turn_scope.clone(),
+                                        false,
+                                        serde_json::json!({
+                                            "error": "runtime_tool_result_followup_missing_terminal",
+                                            "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
+                                        }),
+                                    );
+                                    this.push_terminal_result_when_ready(role_result);
                                 }
                             }
                             if has_tool_effect {
@@ -817,11 +840,15 @@ impl Stream for AcpRuntimeSseStream {
                                 async move {
                                     let mut queued_events = Vec::new();
                                     let mut saw_terminal_event = false;
-                                    while let Some(item) =
-                                        futures::StreamExt::next(&mut runtime_stream).await
-                                    {
-                                        match item {
-                                            Ok(event) => {
+                                    let followup_timeout = std::time::Duration::from_millis(
+                                        acp_tool_result_followup_timeout_ms(),
+                                    );
+                                    let collect_followup = async {
+                                        while let Some(item) =
+                                            futures::StreamExt::next(&mut runtime_stream).await
+                                        {
+                                            match item {
+                                                Ok(event) => {
                                                 if let Ok(mut guard) = diagnostics_for_stream.lock()
                                                 {
                                                     guard.observe_runtime_event(&event);
@@ -877,7 +904,7 @@ impl Stream for AcpRuntimeSseStream {
                                                         &mut temp_diagnostics,
                                                     ).await {
                                                         Ok(ok) => ok,
-                                                        Err(err) => return (Err(err), AcpStreamDiagnostics::default()),
+                                                        Err(err) => return Err(err),
                                                     };
                                                     if adapter_result_rx.is_some() {
                                                         // A continued runtime turn can immediately request another adapter-local tool.
@@ -903,27 +930,43 @@ impl Stream for AcpRuntimeSseStream {
                                                 if saw_terminal_event {
                                                     break;
                                                 }
-                                            }
-                                            Err(err) => {
-                                                return (
-                                                    Err::<
-                                                        (
-                                                            Vec<GatewayEvent>,
-                                                            Option<PersistedToolRequestEffect>,
-                                                            Option<(
-                                                                String,
-                                                                String,
-                                                                AcpResolvedToolResult,
-                                                            )>,
-                                                        ),
-                                                        std::io::Error,
-                                                    >(
-                                                        std::io::Error::other(err.to_string())
-                                                    ),
-                                                    AcpStreamDiagnostics::default(),
-                                                )
+                                                }
+                                                Err(err) => return Err(std::io::Error::other(err.to_string())),
                                             }
                                         }
+                                        Ok::<(), std::io::Error>(())
+                                    };
+                                    if tokio::time::timeout(followup_timeout, collect_followup)
+                                        .await
+                                        .is_err()
+                                    {
+                                        queued_events.push(GatewayEvent::Error {
+                                            message: "Timed out waiting for the runtime to respond after an ACP local tool result.".to_string(),
+                                            detail: Some(format!(
+                                                "No assistant message or terminal event arrived within {}ms after the completed tool result was submitted.",
+                                                followup_timeout.as_millis(),
+                                            )),
+                                            error_type: Some("runtime_tool_result_followup_timeout".to_string()),
+                                            request_id: Some(request_id.clone()),
+                                            context: Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                                "timeout_ms": followup_timeout.as_millis(),
+                                            })),
+                                        });
+                                        saw_terminal_event = true;
+                                    }
+                                    if !saw_terminal_event {
+                                        queued_events.push(GatewayEvent::Error {
+                                            message: "Tool finished but the runtime did not send a follow-up assistant response.".to_string(),
+                                            detail: Some("The continuation stream ended after a completed tool result without assistant text or a terminal event.".to_string()),
+                                            error_type: Some("runtime_tool_result_missing_terminal".to_string()),
+                                            request_id: Some(request_id.clone()),
+                                            context: Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                            })),
+                                        });
                                     }
                                     let mut diagnostics = std::sync::Arc::try_unwrap(diagnostics)
                                         .ok()

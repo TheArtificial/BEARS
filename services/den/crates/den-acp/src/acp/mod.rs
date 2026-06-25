@@ -148,7 +148,7 @@ pub(crate) use self::client::{
 };
 pub(crate) use self::config::{
     acp_debug_event_sample_chars, acp_debug_ui_enabled, acp_stream_tokens_enabled,
-    acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
+    acp_text_chunk_chars, acp_tool_result_followup_timeout_ms, acp_tool_timeout_ms_for_provider,
 };
 pub(crate) use self::http_types::{
     AcpCompactionStatusResponse, AcpConversationHistoryMessage, AcpConversationRow,
@@ -222,6 +222,5 @@ async fn prompt_inner(
 ) -> types::AcpPromptInnerResult {
     run_prompt_flow(state, slug, session_id, headers, body, request_id).await
 }
-
 
 
