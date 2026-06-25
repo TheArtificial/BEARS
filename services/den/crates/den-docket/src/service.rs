@@ -13,12 +13,12 @@ use den_core::{BearProfile, DenError};
 use super::db;
 use super::model::{
     task_list_projection_from_docket_job, BearWorkPlanRow, DocketCriterionStateUpdate,
-    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate, DocketTaskListFilter,
-    DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
-    TaskListSyncOutcome, TaskListSyncRequest, WorkPlanListFilter, WorkPlanLookup,
-    WorkPlanProjection, WorkPlanUpsert,
+    DocketExecutionLookup, DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobUpdate, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
+    DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
 };
 
 /// Orchestration API for Docket work plans. The only public entry point to the
@@ -54,6 +54,13 @@ pub trait DocketService: Send + Sync {
         &self,
         request: DocketJobExecuteRequest,
     ) -> Result<DocketJobExecuteOutcome, DenError>;
+
+    async fn get_active_execution_session(
+        &self,
+        bear_id: Uuid,
+        owner_profile: BearProfile,
+        lookup: DocketExecutionLookup,
+    ) -> Result<Option<DocketExecutionSessionRow>, DenError>;
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
 
@@ -158,6 +165,15 @@ impl DocketService for PgDocketService {
         request: DocketJobExecuteRequest,
     ) -> Result<DocketJobExecuteOutcome, DenError> {
         db::execute_job(&self.pool, request).await
+    }
+
+    async fn get_active_execution_session(
+        &self,
+        bear_id: Uuid,
+        owner_profile: BearProfile,
+        lookup: DocketExecutionLookup,
+    ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
+        db::get_active_execution_session(&self.pool, bear_id, owner_profile, lookup).await
     }
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {

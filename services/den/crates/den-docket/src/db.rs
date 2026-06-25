@@ -16,7 +16,8 @@ use super::model::{
     docket_parent_task_ref, docket_task_status_from_work_plan_item_status,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
     validate_work_plan_update, BearWorkPlanRow, DocketCriterionStateRow,
-    DocketCriterionStateUpdate, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
+    DocketCriterionStateUpdate, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketExecutionSessionUpsert, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
     DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
@@ -678,6 +679,166 @@ pub(super) async fn evaluate_criterion(
         .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {}", update.job_id)))
 }
 
+pub(super) async fn get_active_execution_session(
+    pool: &PgPool,
+    bear_id: Uuid,
+    owner_profile: BearProfile,
+    lookup: DocketExecutionLookup,
+) -> Result<Option<DocketExecutionSessionRow>, DenError> {
+    let row = if let Some(source_acp_session_id) = lookup.source_acp_session_id {
+        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
+            .bind(bear_id)
+            .bind(owner_profile.as_str())
+            .bind(source_acp_session_id)
+            .fetch_optional(pool)
+            .await?
+    } else if let Some(session_id) = lookup.session_id {
+        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_SESSION)
+            .bind(bear_id)
+            .bind(owner_profile.as_str())
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?
+    } else if let Some(source_conversation_id) = lookup.source_conversation_id {
+        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
+            .bind(bear_id)
+            .bind(owner_profile.as_str())
+            .bind(source_conversation_id)
+            .fetch_optional(pool)
+            .await?
+    } else {
+        None
+    };
+    Ok(row)
+}
+
+const SELECT_EXECUTION_BY_ACP_SESSION: &str = r"
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+           job_id, run_id, task_id, state, created_at, updated_at
+    FROM docket_execution_sessions
+    WHERE bear_id = $1 AND owner_profile = $2 AND source_acp_session_id = $3
+      AND state IN ('active', 'blocked', 'completing', 'paused')
+    ORDER BY updated_at DESC
+    LIMIT 1
+";
+
+const SELECT_EXECUTION_BY_SESSION: &str = r"
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+           job_id, run_id, task_id, state, created_at, updated_at
+    FROM docket_execution_sessions
+    WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
+      AND state IN ('active', 'blocked', 'completing', 'paused')
+    ORDER BY updated_at DESC
+    LIMIT 1
+";
+
+const SELECT_EXECUTION_BY_CONVERSATION: &str = r"
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+           job_id, run_id, task_id, state, created_at, updated_at
+    FROM docket_execution_sessions
+    WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3
+      AND state IN ('active', 'blocked', 'completing', 'paused')
+    ORDER BY updated_at DESC
+    LIMIT 1
+";
+
+async fn upsert_execution_session(
+    pool: &PgPool,
+    upsert: DocketExecutionSessionUpsert,
+) -> Result<DocketExecutionSessionRow, DenError> {
+    if upsert.session_id.trim().is_empty() {
+        return Err(DenError::ValidationError(
+            "Docket execution session_id must not be empty".to_string(),
+        ));
+    }
+    sqlx::query_as::<_, DocketExecutionSessionRow>(
+        r"
+        INSERT INTO docket_execution_sessions (
+            bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+            job_id, run_id, task_id, state
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (bear_id, owner_profile, session_id)
+            WHERE state IN ('active', 'blocked', 'completing', 'paused')
+        DO UPDATE SET
+            source_conversation_id = EXCLUDED.source_conversation_id,
+            source_acp_session_id = EXCLUDED.source_acp_session_id,
+            job_id = EXCLUDED.job_id,
+            run_id = EXCLUDED.run_id,
+            task_id = EXCLUDED.task_id,
+            state = EXCLUDED.state,
+            updated_at = NOW()
+        RETURNING id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+                  job_id, run_id, task_id, state, created_at, updated_at
+        ",
+    )
+    .bind(upsert.bear_id)
+    .bind(upsert.owner_profile.as_str())
+    .bind(upsert.session_id)
+    .bind(upsert.source_conversation_id)
+    .bind(upsert.source_acp_session_id)
+    .bind(upsert.job_id)
+    .bind(upsert.run_id)
+    .bind(upsert.task_id)
+    .bind(upsert.state)
+    .fetch_one(pool)
+    .await
+    .map_err(Into::into)
+}
+
+fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
+    request
+        .session_id
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            request
+                .source_acp_session_id
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("acp:{value}"))
+        })
+        .or_else(|| {
+            request
+                .source_conversation_id
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("conversation:{value}"))
+        })
+}
+
+async fn record_execution_session(
+    pool: &PgPool,
+    request: &DocketJobExecuteRequest,
+    run_id: Uuid,
+    task_id: Option<Uuid>,
+    state: &str,
+) -> Result<(), DenError> {
+    let Some(session_id) = execution_session_id(request) else {
+        return Ok(());
+    };
+    upsert_execution_session(
+        pool,
+        DocketExecutionSessionUpsert {
+            bear_id: request.bear_id,
+            owner_profile: request.actor_role,
+            session_id,
+            source_conversation_id: request.source_conversation_id.clone(),
+            source_acp_session_id: request.source_acp_session_id.clone(),
+            job_id: request.job_id,
+            run_id,
+            task_id,
+            state: state.to_string(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 pub(super) async fn execute_job(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
@@ -700,6 +861,7 @@ pub(super) async fn execute_job(
         .find(|state| state.status == "in_progress")
     {
         mark_job_running(pool, &request, run.id).await?;
+        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
@@ -719,6 +881,7 @@ pub(super) async fn execute_job(
         .iter()
         .any(|state| state.status == "blocked")
     {
+        record_execution_session(pool, &request, run.id, None, "blocked").await?;
         let job = update_job(
             pool,
             DocketJobUpdate {
@@ -756,6 +919,7 @@ pub(super) async fn execute_job(
         )
     }) {
         mark_job_running(pool, &request, run.id).await?;
+        record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;
         update_task(
             pool,
             DocketTaskUpdate {
@@ -798,6 +962,7 @@ pub(super) async fn execute_job(
                 .unwrap_or(false)
         });
     if criteria_complete {
+        record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = update_job(
             pool,
             DocketJobUpdate {
@@ -822,6 +987,7 @@ pub(super) async fn execute_job(
             message: "All tasks and criteria are complete; job completed.".to_string(),
         })
     } else {
+        record_execution_session(pool, &request, run.id, None, "blocked").await?;
         let job = update_job(
             pool,
             DocketJobUpdate {

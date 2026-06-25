@@ -5,10 +5,10 @@ use uuid::Uuid;
 use crate::{
     docket_task_status_from_work_plan_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobStatus,
-    DocketService, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
-    PgDocketService, TaskListSyncRequest, WorkPlanVisibility,
+    DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
+    DocketJobStatus, DocketService, DocketTaskDefinitionPatch, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+    DocketTaskUpdate, PgDocketService, TaskListSyncRequest, WorkPlanVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {
@@ -132,11 +132,31 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
+            session_id: Some("pair-integration-session".to_string()),
+            source_conversation_id: None,
+            source_acp_session_id: Some("pair-integration-session".to_string()),
         })
         .await
         .expect("execute first");
     assert_eq!(first.selected_task_id, Some(first_task_id));
     assert_eq!(first.job.job.status, "running");
+    let active_execution = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: None,
+                source_conversation_id: None,
+                source_acp_session_id: Some("pair-integration-session".to_string()),
+            },
+        )
+        .await
+        .expect("lookup active execution")
+        .expect("active execution binding");
+    assert_eq!(active_execution.job_id, created.job.id);
+    assert_eq!(active_execution.run_id, run_id);
+    assert_eq!(active_execution.task_id, Some(first_task_id));
+    assert_eq!(active_execution.state, "active");
 
     let missing_summary = service
         .update_task(DocketTaskUpdate {
@@ -181,6 +201,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_acp_session_id: None,
         })
         .await
         .expect("execute second");
@@ -211,6 +234,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_acp_session_id: None,
         })
         .await
         .expect("blocked before criteria");
@@ -240,6 +266,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_acp_session_id: None,
         })
         .await
         .expect("complete job");

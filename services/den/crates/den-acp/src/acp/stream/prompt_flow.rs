@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use uuid::Uuid;
 
+use crate::acp::client_tool_advertisement::client_tool_descriptors_for_client_context;
 use crate::{
     acp::{
         acp_error_status_message, authenticate_acp_code_token_with_auth,
@@ -13,29 +14,77 @@ use crate::{
         stream::orchestration::{build_acp_sse_response, build_acp_stream_setup},
         AcpPromptRequest,
     },
-    service::DenState,
     core::{
         acp_runtime::{
             canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
             AcpConversationService,
         },
         acp_tokens,
-        docket::{DocketService, PgDocketService},
+        docket::{DocketExecutionLookup, DocketService, PgDocketService},
         work_plans::{self, WorkPlanLookup},
     },
+    service::DenState,
 };
 use den_http::errors::CustomError;
 use den_oauth::auth::{self, ApiError};
 use den_runtime::{
-    plan_mode,
     acp_sessions::{self, UpsertAcpSession},
-    conversation_events::{
-            persist_canonical_conversation_record, CanonicalConversationRecord,
-            ConversationEventProvenance, ConversationPersistenceContext,
-        },
     bears::{db as bears_db, BearProfile},
+    conversation_events::{
+        persist_canonical_conversation_record, CanonicalConversationRecord,
+        ConversationEventProvenance, ConversationPersistenceContext,
+    },
+    plan_mode,
 };
-use crate::acp::client_tool_advertisement::client_tool_descriptors_for_client_context;
+use den_service::bears::prompt_fragments::{
+    render_turn_fragment, repository_prompt_fragment_registry,
+};
+
+async fn acp_docket_execution_prompt_context(
+    state: &DenState,
+    bear_id: Uuid,
+    session_id: &str,
+    policy_mode_label: &str,
+) -> Result<String, CustomError> {
+    let execution = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: Some(session_id.to_string()),
+                source_conversation_id: None,
+                source_acp_session_id: Some(session_id.to_string()),
+            },
+        )
+        .await
+        .map_err(CustomError::from)?;
+    let Some(execution) = execution else {
+        return Ok(String::new());
+    };
+    let registry = repository_prompt_fragment_registry().map_err(CustomError::from)?;
+    let fragment = registry
+        .require("runtime_docket_execution_active")
+        .map_err(CustomError::from)?;
+    let body = render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "execution": {
+                "id": execution.id,
+                "state": execution.state,
+                "job_id": execution.job_id,
+                "run_id": execution.run_id,
+                "task_id": execution.task_id,
+                "session_id": execution.session_id,
+                "owner_profile": execution.owner_profile,
+                "source_acp_session_id": execution.source_acp_session_id,
+                "source_conversation_id": execution.source_conversation_id,
+                "acp_permission_mode": policy_mode_label,
+            }
+        }),
+    )
+    .map_err(CustomError::from)?;
+    Ok(format!("\n\n<system-reminder>{body}</system-reminder>"))
+}
 
 pub(in crate::acp) async fn run_prompt_flow(
     state: DenState,
@@ -88,13 +137,7 @@ pub(in crate::acp) async fn run_prompt_flow(
         })?;
 
     let pair_runtime_binding =
-        match require_pair_runtime_binding(
-            &state.sqlx_pool,
-            state.config.as_ref(),
-            &bear,
-        )
-        .await
-        {
+        match require_pair_runtime_binding(&state.sqlx_pool, state.config.as_ref(), &bear).await {
             Ok(binding) => binding,
             Err(err) => return Ok(Err(err)),
         };
@@ -128,10 +171,7 @@ pub(in crate::acp) async fn run_prompt_flow(
         Err(err) => return Ok(Err(err)),
     };
     let generated_conversation_id = super::super::new_acp_conversation_id(&client);
-    let conversation_runtime = AcpConversationService::new(
-        &state.sqlx_pool,
-        state.config.as_ref(),
-    );
+    let conversation_runtime = AcpConversationService::new(&state.sqlx_pool, state.config.as_ref());
     let (conversation_resolution, ensure_conversation_result) = conversation_runtime
         .ensure_prompt_conversation(
             den_protocol::EnsureConversationRequest {
@@ -236,8 +276,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                 )
                 .await
                 .map_err(|err| {
-                    let (status, code, message) =
-                        acp_error_status_message(&CustomError::from(err));
+                    let (status, code, message) = acp_error_status_message(&CustomError::from(err));
                     ApiError::new(status, code, message)
                 })?;
             }
@@ -251,8 +290,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                 )
                 .await
                 .map_err(|err| {
-                    let (status, code, message) =
-                        acp_error_status_message(&CustomError::from(err));
+                    let (status, code, message) = acp_error_status_message(&CustomError::from(err));
                     ApiError::new(status, code, message)
                 })?;
             }
@@ -357,6 +395,18 @@ pub(in crate::acp) async fn run_prompt_flow(
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
+    let docket_execution_context = acp_docket_execution_prompt_context(
+        &state,
+        bear.id,
+        session_id,
+        resolved_policy.mode_label,
+    )
+    .await
+    .map_err(|err| {
+        let (status, code, message) = acp_error_status_message(&err);
+        ApiError::new(status, code, message)
+    })?;
+    let plan_mode_context = format!("{plan_mode_context}{docket_execution_context}");
     let current_activity_plan = PgDocketService::from_pool(&state.sqlx_pool)
         .get_visible_work_plan(
             bear.id,
@@ -371,25 +421,26 @@ pub(in crate::acp) async fn run_prompt_flow(
         .await
         .map_err(CustomError::from)
         .map_err(|err| {
-        let (status, code, message) = acp_error_status_message(&err);
-        ApiError::new(status, code, message)
-    })?;
-    let (tool_prompt_context, prompt_memory_diagnostic) = acp_direct_tool_prompt_context_with_activity(
-        &state,
-        bear.id,
-        session_id,
-        &cwd,
-        &body.client_context,
-        tools_enabled,
-        &resolved_policy,
-        current_activity_plan.as_ref(),
-        auto_title_guidance.as_deref(),
-    )
-    .await
-    .map_err(|err| {
-        let (status, code, message) = acp_error_status_message(&err);
-        ApiError::new(status, code, message)
-    })?;
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
+    let (tool_prompt_context, prompt_memory_diagnostic) =
+        acp_direct_tool_prompt_context_with_activity(
+            &state,
+            bear.id,
+            session_id,
+            &cwd,
+            &body.client_context,
+            tools_enabled,
+            &resolved_policy,
+            current_activity_plan.as_ref(),
+            auto_title_guidance.as_deref(),
+        )
+        .await
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
     let merged_client_tool_descriptors = tools_enabled.then(|| {
         super::super::merge_acp_pair_tool_descriptors(
             client_tool_descriptors_for_client_context(
@@ -406,7 +457,9 @@ pub(in crate::acp) async fn run_prompt_flow(
             items.iter().any(|item| {
                 item.get("name")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|name| name == den_core::tools::constants::DEN_CONVERSATION_SET_TITLE_PROVIDER)
+                    .is_some_and(|name| {
+                        name == den_core::tools::constants::DEN_CONVERSATION_SET_TITLE_PROVIDER
+                    })
             })
         });
     tracing::info!(
@@ -419,7 +472,10 @@ pub(in crate::acp) async fn run_prompt_flow(
         conversation_id = %synthetic_session_row.conversation_id,
         "ACP auto-title prompt state"
     );
-    let plans = current_activity_plan.clone().into_iter().collect::<Vec<_>>();
+    let plans = current_activity_plan
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
     let activity_context = work_plans::render_workboard_prompt_context(&plans);
     tracing::info!(
         %request_id,
@@ -427,6 +483,7 @@ pub(in crate::acp) async fn run_prompt_flow(
         prompt_message_len = prompt.len(),
         plan_mode_context_len = plan_mode_context.len(),
         activity_context_len = activity_context.len(),
+        docket_execution_context_len = docket_execution_context.len(),
         tool_prompt_context_len = tool_prompt_context.len(),
         prompt_has_trusted_mode_suffix = prompt.contains("Trusted ACP session mode this turn:"),
         prompt_has_system_reminder = prompt.contains("<system-reminder>"),

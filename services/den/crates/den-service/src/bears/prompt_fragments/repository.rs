@@ -3,13 +3,20 @@ use sha2::{Digest, Sha256};
 
 use super::{PromptBundleRegistry, PromptFragmentRegistry};
 
-const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[(
-    "fragments/base/den_baseline.md",
-    include_str!("../../../../../prompts/fragments/base/den_baseline.md"),
-), (
-    "fragments/stances/pair.md",
-    include_str!("../../../../../prompts/fragments/stances/pair.md"),
-)];
+const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
+    (
+        "fragments/base/den_baseline.md",
+        include_str!("../../../../../prompts/fragments/base/den_baseline.md"),
+    ),
+    (
+        "fragments/stances/pair.md",
+        include_str!("../../../../../prompts/fragments/stances/pair.md"),
+    ),
+    (
+        "fragments/runtime/docket_execution_active.md",
+        include_str!("../../../../../prompts/fragments/runtime/docket_execution_active.md"),
+    ),
+];
 
 const REPOSITORY_BUNDLE_SOURCES: &[(&str, &str)] = &[(
     "bundles/pair.yaml",

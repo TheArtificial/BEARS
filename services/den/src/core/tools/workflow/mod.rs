@@ -733,6 +733,19 @@ pub(crate) async fn execute_job(
         )
         .into());
     }
+    if let Some(mode_label) = context
+        .session_policy
+        .as_ref()
+        .and_then(|policy| policy.get("mode_label"))
+        .and_then(Value::as_str)
+    {
+        if !mode_label.eq_ignore_ascii_case("write") {
+            return Err(DenError::Authorization(format!(
+                "Docket execution is active, but ACP mode is {mode_label}; switch the session to Write mode before proceeding"
+            ))
+            .into());
+        }
+    }
     let outcome = PgDocketService::from_pool(pool)
         .execute_job(DocketJobExecuteRequest {
             bear_id: context.bear_id,
@@ -740,6 +753,9 @@ pub(crate) async fn execute_job(
             actor_role: role,
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),
+            session_id: Some(context.session_id.clone()),
+            source_conversation_id: clean_optional(&context.conversation_id),
+            source_acp_session_id: context.acp_session_id.clone(),
         })
         .await?;
     let status_report = docket_job_status_report(&outcome.job);
