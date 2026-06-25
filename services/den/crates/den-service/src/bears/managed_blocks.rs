@@ -7,6 +7,7 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use super::{context_composition, Bear, BearProfile};
+use super::prompt_fragments::{repository_prompt_fragment_registry, repository_prompt_source_version};
 
 type ManagedBlockResolutionRow = (
     String,
@@ -171,13 +172,19 @@ pub fn managed_space_block_key(role: BearProfile) -> &'static str {
 }
 
 pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {
+    let registry = repository_prompt_fragment_registry().ok();
+    let den_baseline_content = registry
+        .as_ref()
+        .and_then(|registry| registry.get("den_baseline"))
+        .map(|fragment| fragment.body.clone())
+        .unwrap_or_else(|| context_composition::den_baseline().to_string());
     let defaults = context_composition::default_role_contracts_for_bear("the Bear");
     vec![
         SeedSystemBlock {
             key: "den_baseline",
             kind: SystemBlockKind::PromptText,
             scope: SystemBlockScope::Global,
-            content: context_composition::den_baseline().to_string(),
+            content: den_baseline_content,
             change_summary: "Seed current Den baseline prompt text.",
         },
         SeedSystemBlock {
@@ -482,12 +489,17 @@ pub fn compile_managed_config_for_bear(
     bear: &Bear,
     resolved: ResolvedManagedBlockSet,
 ) -> Result<CompiledBearConfig, DenError> {
+    let prompt_registry = repository_prompt_fragment_registry()?;
     let mut rendered_prompts = serde_json::Map::new();
     let mut rendered_prompt_hashes = serde_json::Map::new();
 
     for role in BearProfile::ALL {
-        let role_prompt =
-            context_composition::render_managed_role_prompt(bear, role, Some(&resolved))?;
+        let role_prompt = context_composition::render_managed_role_prompt_with_registry(
+            bear,
+            role,
+            Some(&resolved),
+            Some(&prompt_registry),
+        )?;
         let role_key = role.as_str().to_string();
         rendered_prompt_hashes.insert(role_key.clone(), json!(content_hash(&role_prompt)));
         rendered_prompts.insert(role_key, json!(role_prompt));
@@ -503,6 +515,7 @@ pub fn compile_managed_config_for_bear(
         "rendered_prompts": rendered_prompts_value,
         "rendered_prompt_hashes": rendered_prompt_hashes_value,
         "tool_guidance_hashes": tool_guidance_hashes_value,
+        "prompt_source_version": repository_prompt_source_version(),
     });
     let config_hash = content_hash(&config_payload.to_string());
 

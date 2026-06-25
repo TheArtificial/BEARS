@@ -3,6 +3,7 @@ use sqlx::types::Json;
 
 use super::{
     managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet},
+    prompt_fragments::{render_compile_time_text, CompileTimePromptContext, PromptFragmentRegistry},
     Bear, BearProfile,
 };
 use den_core::DenError;
@@ -117,6 +118,15 @@ pub fn render_managed_role_prompt(
     role: BearProfile,
     resolved: Option<&ResolvedManagedBlockSet>,
 ) -> Result<String, DenError> {
+    render_managed_role_prompt_with_registry(bear, role, resolved, None)
+}
+
+pub fn render_managed_role_prompt_with_registry(
+    bear: &Bear,
+    role: BearProfile,
+    resolved: Option<&ResolvedManagedBlockSet>,
+    registry: Option<&PromptFragmentRegistry>,
+) -> Result<String, DenError> {
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
         return Ok(bear.system_prompt.trim().to_string());
     };
@@ -129,7 +139,21 @@ pub fn render_managed_role_prompt(
                 .find(|block| block.key == "den_baseline")
                 .map(|block| block.effective_content.clone())
         })
+        .or_else(|| {
+            registry
+                .and_then(|registry| registry.get("den_baseline"))
+                .map(|fragment| fragment.body.clone())
+        })
         .unwrap_or_else(|| den_baseline().to_string());
+    let compile_context = CompileTimePromptContext {
+        bear_name: &bear.name,
+        bear_slug: &bear.slug,
+    };
+    let den_baseline_text = render_compile_time_text(
+        "den_baseline",
+        &den_baseline_text,
+        &compile_context,
+    )?;
     let role_contract = resolved
         .and_then(|resolved| {
             let key = managed_space_block_key(role);
@@ -140,9 +164,22 @@ pub fn render_managed_role_prompt(
                 .map(|block| block.effective_content.trim().to_string())
         })
         .unwrap_or_else(|| profile.role_contracts.get(role).trim().to_string());
+    let role_contract = render_compile_time_text(
+        managed_space_block_key(role),
+        &role_contract,
+        &compile_context,
+    )?;
 
-    let user_steering = profile.user_steering.trim();
-    let bear_context = profile.bear_context.trim();
+    let user_steering = render_compile_time_text(
+        "context_profile.user_steering",
+        profile.user_steering.trim(),
+        &compile_context,
+    )?;
+    let bear_context = render_compile_time_text(
+        "context_profile.bear_context",
+        profile.bear_context.trim(),
+        &compile_context,
+    )?;
 
     let mut composed = String::new();
     push_section(&mut composed, "Den baseline", &den_baseline_text);
@@ -154,8 +191,8 @@ pub fn render_managed_role_prompt(
         BearProfile::Watch => "Space instructions: Observation Space".to_string(),
     };
     push_section(&mut composed, &instructions_heading, &role_contract);
-    push_section(&mut composed, "User steering", user_steering);
-    push_section(&mut composed, "Bear context", bear_context);
+    push_section(&mut composed, "User steering", &user_steering);
+    push_section(&mut composed, "Bear context", &bear_context);
 
     Ok(composed)
 }
@@ -291,6 +328,48 @@ mod tests {
         assert!(composed
             .composed_prompt
             .contains("# Runtime/thread context"));
+    }
+
+    #[test]
+    fn managed_prompt_renders_compile_time_template_fields() {
+        let mut profile = BearContextProfile {
+            composition_version: CONTEXT_PROFILE_VERSION,
+            template_id: None,
+            template_version: None,
+            role_contract_version: Some(DEFAULT_ROLE_CONTRACT_VERSION.to_string()),
+            role_contracts: default_role_contracts_for_bear("{{ bear_name }}"),
+            user_steering: "Prefer concise plans for {{ bear_name }}.".to_string(),
+            bear_context: "Slug: {{ bear_slug }}.".to_string(),
+            starter_prompts: vec![],
+            first_task: None,
+        };
+        profile.role_contracts.chat = "Speak as {{ bear_name }}.".to_string();
+        let bear = test_bear(Some(profile));
+        let composed = render_managed_role_prompt(&bear, BearProfile::Chat, None).unwrap();
+        assert!(composed.contains("Speak as Builder Bear."));
+        assert!(composed.contains("Prefer concise plans for Builder Bear."));
+        assert!(composed.contains("Slug: builder."));
+    }
+
+    #[test]
+    fn managed_prompt_rejects_turn_time_template_fields() {
+        let profile = BearContextProfile {
+            composition_version: CONTEXT_PROFILE_VERSION,
+            template_id: None,
+            template_version: None,
+            role_contract_version: Some(DEFAULT_ROLE_CONTRACT_VERSION.to_string()),
+            role_contracts: RoleContracts {
+                chat: "Today is {{ current_date }}.".to_string(),
+                ..default_role_contracts_for_bear("Builder Bear")
+            },
+            user_steering: String::new(),
+            bear_context: String::new(),
+            starter_prompts: vec![],
+            first_task: None,
+        };
+        let bear = test_bear(Some(profile));
+        let err = render_managed_role_prompt(&bear, BearProfile::Chat, None).unwrap_err();
+        assert!(err.to_string().contains("failed to render"));
     }
 
     #[test]

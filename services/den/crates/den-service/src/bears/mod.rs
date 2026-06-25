@@ -5,6 +5,7 @@ pub mod context_composition;
 pub mod db;
 pub mod managed_blocks;
 pub mod model;
+pub mod prompt_fragments;
 pub mod provision;
 #[cfg(test)]
 mod provision_native_tests {
@@ -32,5 +33,9 @@ pub use managed_blocks::{
 pub use model::{
     Bear, BearProfile, BearProfileBinding, BearSkillManifestEntry, BearSkillProposal,
     BearWithMembership,
+};
+pub use prompt_fragments::{
+    repository_prompt_fragment_registry, repository_prompt_source_version, PromptFragment,
+    PromptFragmentFrontmatter, PromptFragmentRegistry,
 };
 pub use runtime_plan::{default_runtime_plan, effective_runtime_plan};

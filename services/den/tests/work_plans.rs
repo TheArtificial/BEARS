@@ -2,11 +2,9 @@
 
 use den::{
     config::Config,
-    core::{
-        tools::{
-            constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
-            session::{invoke_den_tool, DenToolInvocationContext},
-        },
+    core::tools::{
+        constants::{DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
+        session::{invoke_den_tool, DenToolInvocationContext},
     },
     startup::run_sqlx_migrations,
 };

@@ -180,12 +180,10 @@ fn den_tool_display_json_includes_memory_titles() {
         &serde_json::json!({ "title": "Saved fact", "path": "pair/notes/mem_1.md" }),
     )
     .expect("memory_write_entry display");
-    assert!(
-        write["title"]
-            .as_str()
-            .unwrap_or("")
-            .starts_with("Writing memory entry")
-    );
+    assert!(write["title"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("Writing memory entry"));
     assert_eq!(write["progress"], "Writing memory entry");
 
     let policy = den_tool_policy_json_for_provider("memory_read").expect("memory_read policy");

@@ -20,9 +20,11 @@ den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
+minijinja.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yml.workspace = true
 sha2.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
