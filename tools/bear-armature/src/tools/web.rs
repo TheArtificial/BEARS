@@ -1,7 +1,7 @@
 use crate::ToolPolicy;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use reqwest::Url;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::net::IpAddr;
 use std::time::Duration;
 

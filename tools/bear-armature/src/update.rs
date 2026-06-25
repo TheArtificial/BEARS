@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

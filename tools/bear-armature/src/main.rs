@@ -21,45 +21,46 @@ use agent_client_protocol::schema::{
     ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 
 use approvals::{
-    ApprovalCache, ApprovalScope, ApprovalTarget, PermissionDecision, approval_url_host_scope,
-    parse_permission_decision, permission_class_for_tool, permission_options_for_context,
+    approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
+    permission_options_for_context, ApprovalCache, ApprovalScope, ApprovalTarget,
+    PermissionDecision,
 };
 use axum::{extract::State, response::IntoResponse};
 use futures_util::StreamExt;
 use http::StatusCode;
-use json_rpc::{JsonRpcTransport, id_key, write_json};
+use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{
     file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path,
     resolve_requested_tool_path,
 };
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use rmcp::{
     handler::server::{
-        ServerHandler,
-        common::{FromContextPart, schema_for_type},
+        common::{schema_for_type, FromContextPart},
         router::Router as McpRouter,
         wrapper::Parameters,
+        ServerHandler,
     },
     model::{
         CallToolResult, Content, Implementation as McpImplementation, ServerCapabilities,
         ServerInfo, Tool as McpTool,
     },
     transport::{
-        StreamableHttpServerConfig, StreamableHttpService,
-        streamable_http_server::session::local::LocalSessionManager,
+        streamable_http_server::session::local::LocalSessionManager, StreamableHttpServerConfig,
+        StreamableHttpService,
     },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(test)]
 use std::fs;
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{hash_map::DefaultHasher, HashMap},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -68,10 +69,10 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
-    sync::{Mutex as TokioMutex, broadcast, mpsc},
-    time::{Duration, timeout},
+    sync::{broadcast, mpsc, Mutex as TokioMutex},
+    time::{timeout, Duration},
 };
-use tool_tasks::{ToolTaskPhase, ToolTaskRegistry, log_tool_task_phase};
+use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 use tools::chrome::{
     chrome_capability_status_line, chrome_tools_available, handle_chrome_console_messages,
     handle_chrome_network_requests, handle_chrome_open, handle_chrome_screenshot,
@@ -83,23 +84,23 @@ use tools::adapter_env::{
     collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
 };
 use tools::fs::{
-    ReplaceTextArgs, ReplaceTextPlan, handle_apply_patch, handle_copy_path,
-    handle_create_directory, handle_create_text_file, handle_delete_path, handle_find_paths,
-    handle_list_directory, handle_move_path, handle_read_text_file, handle_replace_text,
-    handle_search_files, handle_stat,
+    handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
+    handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
+    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
+    ReplaceTextPlan,
 };
 use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::mcp::{
-    McpRegistry, McpSourceConfig, host_browser_bridge_config_from_env,
-    host_browser_bridge_env_summary, parse_acp_mcp_servers, summarize_acp_mcp_servers_param,
+    host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
+    summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
 };
 use tools::process::handle_process_run;
 use tools::terminal::handle_terminal_run_command;
 use tools::web::handle_local_web_fetch;
-use update::{UpdateCommand, UpdateOptions, run_update_command, update_doctor_line};
+use update::{run_update_command, update_doctor_line, UpdateCommand, UpdateOptions};
 
 use uuid::Uuid;
 
@@ -380,10 +381,11 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     } else {
         "auto".to_string()
     };
-    let mut options = vec![
-        SessionConfigSelectOption::new("auto", format!("Auto / stance default ({effective})"))
-            .description("Inherit the current stance/Bear model policy for this ACP conversation."),
-    ];
+    let mut options = vec![SessionConfigSelectOption::new(
+        "auto",
+        format!("Auto / stance default ({effective})"),
+    )
+    .description("Inherit the current stance/Bear model policy for this ACP conversation.")];
     if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
         for item in items {
             let Some(handle) = item.get("handle").and_then(Value::as_str) else {
@@ -1246,8 +1248,8 @@ fn browser_bridge_router(
     service: BrowserBridgeHttpService,
 ) -> axum::Router {
     use axum::{
-        Router,
         routing::{any, get},
+        Router,
     };
 
     let mcp_path = config.path.clone();
@@ -1375,8 +1377,8 @@ fn route_browser_snapshot() -> rmcp::handler::server::router::tool::ToolRoute<Br
     )
 }
 
-fn route_browser_console_messages()
--> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+fn route_browser_console_messages(
+) -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
     rmcp::handler::server::router::tool::ToolRoute::new_dyn(
         browser_tool(
             "browser_console_messages",
@@ -1400,8 +1402,8 @@ fn route_browser_console_messages()
     )
 }
 
-fn route_browser_network_requests()
--> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+fn route_browser_network_requests(
+) -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
     rmcp::handler::server::router::tool::ToolRoute::new_dyn(
         browser_tool(
             "browser_network_requests",
@@ -9990,14 +9992,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(
-            shared
-                .active_prompts
-                .lock()
-                .await
-                .get("acp-session")
-                .is_none()
-        );
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -10097,14 +10097,12 @@ mod tests {
             request_line.starts_with("POST /acp/bears/test-bear/sessions/acp-session/close "),
             "request_line={request_line:?}"
         );
-        assert!(
-            shared
-                .active_prompts
-                .lock()
-                .await
-                .get("acp-session")
-                .is_none()
-        );
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -10191,14 +10189,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(
-            shared
-                .active_prompts
-                .lock()
-                .await
-                .get("acp-session")
-                .is_none()
-        );
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -10803,21 +10799,15 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             PlanEntryPriority::Medium,
             PlanEntryStatus::Completed,
         )];
-        assert!(
-            should_send_plan_update(&shared, "session-a", &entries)
-                .await
-                .expect("first update check")
-        );
-        assert!(
-            !should_send_plan_update(&shared, "session-a", &entries)
-                .await
-                .expect("duplicate update check")
-        );
-        assert!(
-            should_send_plan_update(&shared, "session-b", &entries)
-                .await
-                .expect("different session update check")
-        );
+        assert!(should_send_plan_update(&shared, "session-a", &entries)
+            .await
+            .expect("first update check"));
+        assert!(!should_send_plan_update(&shared, "session-a", &entries)
+            .await
+            .expect("duplicate update check"));
+        assert!(should_send_plan_update(&shared, "session-b", &entries)
+            .await
+            .expect("different session update check"));
     }
 
     #[test]
@@ -11089,10 +11079,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", result.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", result.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11161,10 +11149,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let limited = handle_direct_find_paths(
             &state,
             "session-1",
@@ -11216,10 +11202,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11237,10 +11221,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", result.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", result.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11462,10 +11444,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11598,10 +11578,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -11711,10 +11689,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -12024,20 +12000,16 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .await
         .unwrap();
         assert_eq!(status["clean"], false);
-        assert!(
-            status["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["path"] == "tracked.txt")
-        );
-        assert!(
-            status["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["path"] == "untracked.txt")
-        );
+        assert!(status["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "tracked.txt"));
+        assert!(status["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "untracked.txt"));
 
         let diff = handle_git_diff(
             context,
@@ -12120,13 +12092,11 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             status["repo_path"].as_str().unwrap(),
             root.to_string_lossy()
         );
-        assert!(
-            status["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["path"] == "nested/file.txt")
-        );
+        assert!(status["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "nested/file.txt"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -12303,20 +12273,16 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_log.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_log.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let outside_show = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": outside.join("x.txt").to_string_lossy() }),
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_show.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_show.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let bad_revision = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "--help" }),
@@ -12367,10 +12333,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", denied.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let diff = handle_git_diff(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "max_bytes": 10 }),
@@ -12442,10 +12406,9 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let plan = ReplaceTextPlan::preflight(context, args, &policy).unwrap();
         assert!(plan.preview.contains("--- before"));
         assert!(plan.preview.contains("+++ after"));
-        assert!(
-            plan.permission_prompt("fs_replace_text", "approve?")
-                .contains("hello old world")
-        );
+        assert!(plan
+            .permission_prompt("fs_replace_text", "approve?")
+            .contains("hello old world"));
         fs::write(&file, "hello changed world\n").unwrap();
         let result = plan.apply(context, &policy);
         assert!(format!("{:#}", result.unwrap_err()).contains("stale preflight"));
@@ -12615,10 +12578,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &json!({ "repo_path": root.to_string_lossy(), "paths": [outside.join("x.txt").to_string_lossy()] }),
             &ToolPolicy::default(),
         ).await;
-        assert!(
-            format!("{:#}", outside_path.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_path.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let bad_commit = handle_git_commit(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "message": "" }),
@@ -12726,10 +12687,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             &ToolPolicy::default(),
         )
         .await;
-        assert!(
-            format!("{:#}", outside_cwd.unwrap_err())
-                .contains("outside the ACP session workspace roots")
-        );
+        assert!(format!("{:#}", outside_cwd.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
 
         let shell_string = handle_process_run(
             context,

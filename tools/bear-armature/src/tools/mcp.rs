@@ -1,15 +1,15 @@
-use anyhow::{Context, Result, anyhow};
-use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
+use anyhow::{anyhow, Context, Result};
+use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use rmcp::{
-    RoleClient, ServiceExt,
     model::CallToolRequestParams,
     service::RunningService,
     transport::{
-        ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
-        streamable_http_client::StreamableHttpClientTransportConfig,
+        streamable_http_client::StreamableHttpClientTransportConfig, ConfigureCommandExt,
+        StreamableHttpClientTransport, TokioChildProcess,
     },
+    RoleClient, ServiceExt,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, HashMap},
     process::Stdio,
@@ -877,7 +877,7 @@ fn mcp_tool_result_content(result: &Value) -> String {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
+    use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
     use http::StatusCode;
     use serde_json::Value;
     use std::sync::{Arc, Mutex};
@@ -954,8 +954,8 @@ mod tests {
         (StatusCode::OK, Json(response)).into_response()
     }
 
-    async fn start_mock_streamable_mcp_server()
-    -> Result<(String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>)> {
+    async fn start_mock_streamable_mcp_server(
+    ) -> Result<(String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>)> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
             .route("/mcp", post(mock_streamable_mcp_handler))

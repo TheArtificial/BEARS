@@ -14,6 +14,28 @@ use crate::{
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
+const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
+
+fn compact_json_preview(value: &Value, max_chars: usize) -> Value {
+    let mut serialized = value.to_string();
+    if serialized.chars().count() <= max_chars {
+        return value.clone();
+    }
+    serialized = serialized.chars().take(max_chars).collect::<String>();
+    json!({
+        "preview": serialized,
+        "truncated": true,
+        "preview_max_chars": max_chars,
+        "original_kind": match value {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        },
+    })
+}
 
 fn bearwire_env_value() -> Option<String> {
     std::env::var("BEARS_BEARWIRE")
@@ -737,7 +759,10 @@ async fn handle_bearwire_tool_call_finished_event(
             status,
             text: summary,
             event: Some(&legacy),
-            raw_output: Some(data.clone()),
+            raw_output: Some(compact_json_preview(
+                data,
+                BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS,
+            )),
             extra_content: Vec::new(),
         },
     )
@@ -1093,6 +1118,18 @@ mod tests {
         assert!(message.contains("stream_error"));
         assert!(message.contains("max_steps_exceeded"));
         assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn compact_json_preview_truncates_large_raw_output() {
+        let value = json!({ "content": "x".repeat(40 * 1024), "status": "ok" });
+
+        let preview = compact_json_preview(&value, 1024);
+
+        assert_eq!(preview["truncated"], true);
+        assert_eq!(preview["preview_max_chars"], 1024);
+        assert_eq!(preview["original_kind"], "object");
+        assert!(preview["preview"].as_str().unwrap().chars().count() <= 1024);
     }
 
     #[test]

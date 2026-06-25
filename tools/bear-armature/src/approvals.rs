@@ -1,4 +1,4 @@
-use crate::{RuntimeConfig, SessionContext, env_bool, paths::session_workspace_roots};
+use crate::{env_bool, paths::session_workspace_roots, RuntimeConfig, SessionContext};
 use agent_client_protocol::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
 };
@@ -1089,20 +1089,16 @@ mod tests {
                 "reject_always",
             ]
         );
-        assert!(
-            serialized
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|option| option["kind"] == "allow_always")
-        );
-        assert!(
-            serialized
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|option| option["kind"] == "reject_always")
-        );
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "allow_always"));
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "reject_always"));
     }
 
     #[test]
@@ -1161,11 +1157,9 @@ mod tests {
                 "reject_always",
             ]
         );
-        assert!(
-            serialized
-                .to_string()
-                .contains("Always for docs.example.test:8443")
-        );
+        assert!(serialized
+            .to_string()
+            .contains("Always for docs.example.test:8443"));
     }
 
     #[test]
@@ -1196,11 +1190,9 @@ mod tests {
                 "reject_always",
             ]
         );
-        assert!(
-            serialized
-                .to_string()
-                .contains("Always allow `cargo` in this workspace")
-        );
+        assert!(serialized
+            .to_string()
+            .contains("Always allow `cargo` in this workspace"));
     }
 
     #[test]
