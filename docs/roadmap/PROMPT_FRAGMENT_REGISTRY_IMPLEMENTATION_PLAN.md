@@ -6,6 +6,8 @@
 
 **Architecture reference:** [Prompt Fragment Registry](../architecture/prompt-fragment-registry.md)
 
+**Audit:** [Prompt Text Hardcode Audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
+
 ## Goal
 
 Extract long-lived prompt and instruction prose from Rust source into file-backed prompt fragments while preserving Den's runtime invariant that turns consume compiled prompt material rather than raw source.
