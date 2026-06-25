@@ -91,6 +91,8 @@ Prompt compilation becomes a first-class pipeline:
 - Markdown is an authoring format, not an HTML-rendering contract for prompt compilation.
 - YAML frontmatter must remain small, typed, and validation-friendly.
 - MiniJinja use should stay interpolation-oriented, not become a general-purpose control-flow layer.
+- Prompt text should not be hardcoded in Rust source. It should be represented as repository-authored fragments or runtime-configured data with explicit defaults.
+- Prompt rendering should choose deterministic instructions before inference whenever Den already knows the relevant state; prompts should not ask the model to branch on known modes or policy inputs if code or MiniJinja can render the applicable instruction directly.
 
 ## Implementation notes
 

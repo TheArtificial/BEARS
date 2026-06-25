@@ -51,11 +51,13 @@ Agent- and product-agnostic practices for building a **small surface-area** web 
 ## 6. Prompt source discipline
 
 - **Keep long-lived prompt prose out of Rust source** when it is product/stance/policy text rather than structural formatting. Prefer reviewable prompt files.
+- **Do not hardcode prompt text in source code.** Prompt text belongs in repository-authored context fragments, or, when it must be operator/runtime-configured, in Den data stores. Defaults for runtime-configured prompt text should be recorded alongside the fragment/configuration model, not hidden as Rust string literals.
 - **Use Markdown + YAML frontmatter** for repository-authored prompt fragments; use templates only where interpolation is genuinely needed.
 - **Keep runtime-authored prompt content compile-time-only**: operator or Bear Admin-entered prompt text may use a restricted compile-time variable surface, but should not introduce arbitrary turn-time templating into the hot path.
 - **Read compiled prompts at runtime**: request/turn assembly should consume compiled output (`bear_compiled_configs`), not parse prompt files or compile templates per turn.
 - **Allow turn-time templating only in repository-owned fragments** where the variable surface is narrow, explicit, and code-reviewed (for example date or budget reminders).
 - **Do not turn MiniJinja into a policy engine**: use interpolation and small conditionals, but keep branching, lookups, and orchestration logic in Rust.
+- **Do not ask the model to choose when code can choose.** If prompt instructions depend on known runtime state, branch in Rust or in MiniJinja before the prompt reaches the model. The rendered prompt should contain the applicable instruction, not a conditional decision tree such as “if mode is Ask do X, if mode is Write do Y” when Den already knows the mode.
 
 See [ADR-0046](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md) and the [prompt fragment registry architecture](../architecture/prompt-fragment-registry.md).
 

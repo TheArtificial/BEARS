@@ -225,6 +225,31 @@ Dynamic turn layers may continue to use specialized caches such as key-memory pr
 - Use MiniJinja for interpolation, not prompt-side business logic.
 - Keep runtime-authored templates compile-time-only.
 - Keep generated structural text in Rust when it is primarily derived data, not prose.
+- Do not hardcode prompt text in Rust source. Add prompt prose as repository context fragments, or store runtime-configured prompt prose in the database with explicit defaults alongside the fragment/configuration model.
+- Do not ask the model to choose among branches when Den already has the state needed to choose. Render only the applicable instruction whenever runtime state such as permission mode, governance mode, budget, or active execution state is known before the model call.
+
+### Deterministic instruction selection
+
+Prompt fragments may contain MiniJinja conditionals, but those conditionals should be used to **select rendered text before inference**, not to delegate policy branching to the model.
+
+Prefer this shape:
+
+```jinja
+{% if execution.acp_permission_mode == "Write" %}
+Work the current Docket task and only mark it done after the work is performed or verified.
+{% else %}
+Docket execution is active, but the session must be switched to Write mode before execution can proceed.
+{% endif %}
+```
+
+Avoid this shape when `execution.acp_permission_mode` is already known:
+
+```text
+If the ACP permission mode is Ask or Plan, do not continue execution.
+If the ACP permission mode is Write, continue execution.
+```
+
+The first form gives the model one applicable instruction. The second form asks the model to perform a policy decision that Den can make deterministically.
 
 ## What stays in Rust
 
