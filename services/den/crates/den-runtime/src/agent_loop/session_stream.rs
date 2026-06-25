@@ -25,7 +25,9 @@ use crate::{
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
 };
 use den_core::tools::{
-    arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
+    arguments::DenToolChannelContext,
+    constants::{DEN_TOOL_OUTPUT_READ, DEN_WEB_FETCH},
+    context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
@@ -52,6 +54,50 @@ type ServerToolFuture = Pin<
             + Send,
     >,
 >;
+
+async fn tool_output_read_result(
+    pool: &sqlx::PgPool,
+    bear_id: uuid::Uuid,
+    session_id: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, DenError> {
+    let artifact_ref = args
+        .get("artifact_ref")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| DenError::ValidationError("artifact_ref is required".to_string()))?;
+    let offset = args
+        .get("offset")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as usize;
+    let limit_chars = args
+        .get("limit_chars")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(12_000)
+        .clamp(1, 24_000) as usize;
+    let read = crate::tool_output_artifacts::read_tool_output_artifact(
+        pool,
+        bear_id,
+        session_id,
+        artifact_ref,
+        offset,
+        limit_chars,
+    )
+    .await?;
+    Ok(serde_json::json!({
+        "artifact_ref": read.artifact_ref,
+        "tool_call_id": read.tool_call_id,
+        "tool_name": read.tool_name,
+        "source": read.source,
+        "offset": read.offset,
+        "limit_chars": read.limit_chars,
+        "total_chars": read.total_chars,
+        "truncated": read.truncated,
+        "content": read.content,
+        "metadata": read.metadata,
+    }))
+}
 
 pub struct SessionTrackingStream {
     inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>,
@@ -320,10 +366,14 @@ impl SessionTrackingStream {
         let conversation_id = self.conversation_id.clone();
         let acp_session_id = self.acp_session_id.clone();
         self.pending_server_tool = Some(Box::pin(async move {
-            let content = match invoker
-                .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
-                .await
-            {
+            let result = if canonical == DEN_TOOL_OUTPUT_READ {
+                tool_output_read_result(&pool, bear_id, &acp_session_id, args).await
+            } else {
+                invoker
+                    .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
+                    .await
+            };
+            let content = match result {
                 Ok(value) => {
                     let compacted = compact_json_tool_result(value.clone());
                     if compacted.truncated {

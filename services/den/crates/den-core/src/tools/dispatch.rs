@@ -28,7 +28,8 @@ use crate::tools::{
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
         DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT,
         DEN_TASK_LIST_SYNC, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE, DEN_TASK_WRITE_INTENT,
-        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_SEARCH, DEN_WORK_PLAN_GET_STATUS,
+        DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_SEARCH,
+        DEN_WORK_PLAN_GET_STATUS,
         DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
     },
     context::DenToolInvocationContext,
@@ -89,6 +90,9 @@ pub async fn invoke_den_tool(
         }
         DEN_WEB_FETCH => web::web_fetch(ctx, context.bear_id, &context.session_id, arguments).await,
         DEN_WEB_SEARCH => web::web_search(ctx, Some(context.bear_id), arguments).await,
+        DEN_TOOL_OUTPUT_READ => Err(DenError::System(
+            "tool_output_read is handled by the native runtime artifact store".to_string(),
+        )),
         DEN_MEMORY_WRITE_ENTRY => {
             let current_user = ctx.current_user(context.user_id).await.ok();
             memory::write_memory_entry(
