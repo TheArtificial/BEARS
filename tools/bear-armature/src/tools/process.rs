@@ -7,7 +7,14 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
+
+const RTK_REDUCER_TIMEOUT_MS: u64 = 5_000;
+const RTK_REDUCER_INPUT_MAX_CHARS: usize = 128 * 1024;
+const RTK_REDUCER_OUTPUT_MAX_CHARS: usize = 24 * 1024;
 
 pub(crate) async fn handle_process_run(
     context: &SessionContext,
@@ -102,12 +109,27 @@ pub(crate) async fn handle_process_run(
                 .unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
             let stdout_text = String::from_utf8_lossy(&stdout_result.bytes).to_string();
             let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
+            let reduced = reduce_process_output_with_rtk(
+                command,
+                &command_args,
+                &cwd.to_string_lossy(),
+                None,
+                true,
+                &stdout_text,
+                &stderr_text,
+            )
+            .await;
+            let display_stdout = reduced
+                .as_ref()
+                .map(|r| r.output.as_str())
+                .unwrap_or(&stdout_text);
+            let display_stderr = if reduced.is_some() { "" } else { &stderr_text };
             let result = ProcessResult {
                 exit_code: None,
                 timed_out: true,
                 elapsed_ms: started.elapsed().as_millis(),
-                stdout: &stdout_text,
-                stderr: &stderr_text,
+                stdout: display_stdout,
+                stderr: display_stderr,
                 truncated: stdout_result.truncated || stderr_result.truncated,
                 timeout_ms: Some(timeout_ms),
             };
@@ -128,6 +150,7 @@ pub(crate) async fn handle_process_run(
                 "elapsed_ms": started.elapsed().as_millis(),
                 "source": "adapter_local",
                 "content": content,
+                "reduction": reduced.map(|r| r.to_json()),
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
             }));
         }
@@ -142,12 +165,27 @@ pub(crate) async fn handle_process_run(
     let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
     let exit_code = status.code();
     let ok = status.success();
+    let reduced = reduce_process_output_with_rtk(
+        command,
+        &command_args,
+        &cwd.to_string_lossy(),
+        exit_code.map(|code| code as i64),
+        false,
+        &stdout_text,
+        &stderr_text,
+    )
+    .await;
+    let display_stdout = reduced
+        .as_ref()
+        .map(|r| r.output.as_str())
+        .unwrap_or(&stdout_text);
+    let display_stderr = if reduced.is_some() { "" } else { &stderr_text };
     let result = ProcessResult {
         exit_code: exit_code.map(|code| code as i64),
         timed_out: false,
         elapsed_ms: started.elapsed().as_millis(),
-        stdout: &stdout_text,
-        stderr: &stderr_text,
+        stdout: display_stdout,
+        stderr: display_stderr,
         truncated: stdout_result.truncated || stderr_result.truncated,
         timeout_ms: None,
     };
@@ -176,8 +214,104 @@ pub(crate) async fn handle_process_run(
         "elapsed_ms": started.elapsed().as_millis(),
         "source": "adapter_local",
         "content": content,
+        "reduction": reduced.map(|r| r.to_json()),
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
     }))
+}
+
+struct RtkReduction {
+    output: String,
+    input_truncated: bool,
+    output_truncated: bool,
+}
+
+impl RtkReduction {
+    fn to_json(&self) -> Value {
+        json!({
+            "reducer": "rtk",
+            "mode": "summary",
+            "reduced": true,
+            "input_truncated": self.input_truncated,
+            "output_truncated": self.output_truncated,
+        })
+    }
+}
+
+fn rtk_reducer_enabled() -> bool {
+    std::env::var("BEARS_PROCESS_RUN_RTK")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+async fn reduce_process_output_with_rtk(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    exit_code: Option<i64>,
+    timed_out: bool,
+    stdout: &str,
+    stderr: &str,
+) -> Option<RtkReduction> {
+    if !rtk_reducer_enabled() || (stdout.trim().is_empty() && stderr.trim().is_empty()) {
+        return None;
+    }
+    let raw = format!(
+        "command: {}\ncwd: {cwd}\nexit_code: {}\ntimed_out: {timed_out}\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}\n",
+        if args.is_empty() { command.to_string() } else { format!("{} {}", command, args.join(" ")) },
+        exit_code.map(|code| code.to_string()).unwrap_or_else(|| "null".to_string()),
+    );
+    let input_truncated = raw.chars().count() > RTK_REDUCER_INPUT_MAX_CHARS;
+    let input = if input_truncated {
+        raw.chars()
+            .take(RTK_REDUCER_INPUT_MAX_CHARS)
+            .collect::<String>()
+    } else {
+        raw
+    };
+    let mut child = Command::new("rtk")
+        .arg("summary")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if stdin.write_all(input.as_bytes()).await.is_err() {
+            let _ = child.kill().await;
+            return None;
+        }
+    }
+    let output = tokio::time::timeout(
+        Duration::from_millis(RTK_REDUCER_TIMEOUT_MS),
+        child.wait_with_output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let output_truncated = text.chars().count() > RTK_REDUCER_OUTPUT_MAX_CHARS;
+    let output = if output_truncated {
+        output_excerpt(&text, RTK_REDUCER_OUTPUT_MAX_CHARS)
+    } else {
+        text
+    };
+    Some(RtkReduction {
+        output,
+        input_truncated,
+        output_truncated,
+    })
 }
 
 fn output_excerpt(raw: &str, max_chars: usize) -> String {

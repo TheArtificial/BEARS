@@ -12650,6 +12650,65 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[tokio::test]
+    async fn process_run_uses_optional_rtk_reducer() {
+        let root = unique_test_dir("process-run-rtk");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let rtk = bin.join("rtk");
+        fs::write(
+            &rtk,
+            "#!/bin/sh\nprintf 'RTK summary: compact failure context\\n'\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&rtk).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+            fs::set_permissions(&rtk, perms).unwrap();
+        }
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        let old_enabled = std::env::var("BEARS_PROCESS_RUN_RTK").ok();
+        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path));
+        std::env::set_var("BEARS_PROCESS_RUN_RTK", "1");
+
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let result = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "printf",
+                "args": ["very long noisy output"],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        std::env::set_var("PATH", old_path);
+        if let Some(value) = old_enabled {
+            std::env::set_var("BEARS_PROCESS_RUN_RTK", value);
+        } else {
+            std::env::remove_var("BEARS_PROCESS_RUN_RTK");
+        }
+
+        assert_eq!(result["reduction"]["reducer"], "rtk");
+        assert!(result["content"]
+            .as_str()
+            .unwrap()
+            .contains("RTK summary: compact failure context"));
+        assert_eq!(result["stdout"], "very long noisy output");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn process_run_reports_nonzero_timeout_and_rejects_unsafe_inputs() {
         let root = unique_test_dir("process-run-policy");
         let outside = unique_test_dir("process-run-outside");
