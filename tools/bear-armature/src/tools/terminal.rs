@@ -1,8 +1,11 @@
 use crate::{
-    client_supports_terminal, paths::ensure_path_allowed_for_session,
-    send_terminal_tool_call_update, AdapterState, CreateTerminalRequest, CreateTerminalResponse,
-    EnvVariable, ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest,
-    TerminalOutputResponse, ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    client_supports_terminal,
+    paths::ensure_path_allowed_for_session,
+    send_terminal_tool_call_update,
+    tools::rtk::{reduce_with_rtk_summary, RtkReduction},
+    AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
+    ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse,
+    ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
@@ -73,6 +76,27 @@ fn terminal_result_content(
         command_line(command, args),
         result,
     )
+}
+
+async fn reduce_terminal_output_with_rtk(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    exit_code: Option<i64>,
+    signal: Option<&str>,
+    timed_out: bool,
+    output: &str,
+) -> Option<RtkReduction> {
+    if output.trim().is_empty() {
+        return None;
+    }
+    let raw = format!(
+        "terminal_command: {}\ncwd: {cwd}\nexit_code: {}\nsignal: {}\ntimed_out: {timed_out}\n\nOUTPUT:\n{output}\n",
+        command_line(command, args),
+        exit_code.map(|code| code.to_string()).unwrap_or_else(|| "null".to_string()),
+        signal.unwrap_or("null"),
+    );
+    reduce_with_rtk_summary("BEARS_TERMINAL_RUN_RTK", raw).await
 }
 
 pub(crate) async fn handle_terminal_run_command(
@@ -197,12 +221,26 @@ pub(crate) async fn handle_terminal_run_command(
                 .get("truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let reduced = reduce_terminal_output_with_rtk(
+                command,
+                &command_args,
+                &cwd.to_string_lossy(),
+                None,
+                None,
+                true,
+                output_text,
+            )
+            .await;
+            let display_output = reduced
+                .as_ref()
+                .map(|r| r.output.as_str())
+                .unwrap_or(output_text);
             let result = TerminalResult {
                 exit_code: None,
                 signal: None,
                 timed_out: true,
                 elapsed_ms: started.elapsed().as_millis(),
-                output: output_text,
+                output: display_output,
                 truncated,
                 timeout_ms: Some(timeout_ms),
             };
@@ -222,6 +260,7 @@ pub(crate) async fn handle_terminal_run_command(
                 "output": output.get("output").cloned().unwrap_or_else(|| json!("")),
                 "truncated": truncated,
                 "content": content,
+                "reduction": reduced.map(|r| r.to_json()),
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
             }));
         }
@@ -235,12 +274,26 @@ pub(crate) async fn handle_terminal_run_command(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
+    let reduced = reduce_terminal_output_with_rtk(
+        command,
+        &command_args,
+        &cwd.to_string_lossy(),
+        exit_code,
+        signal.as_deref(),
+        false,
+        output_text,
+    )
+    .await;
+    let display_output = reduced
+        .as_ref()
+        .map(|r| r.output.as_str())
+        .unwrap_or(output_text);
     let result = TerminalResult {
         exit_code,
         signal: signal.as_deref(),
         timed_out: false,
         elapsed_ms: started.elapsed().as_millis(),
-        output: output_text,
+        output: display_output,
         truncated,
         timeout_ms: None,
     };
@@ -259,6 +312,7 @@ pub(crate) async fn handle_terminal_run_command(
         "output": output.get("output").cloned().unwrap_or_else(|| json!("")),
         "truncated": truncated,
         "content": content,
+        "reduction": reduced.map(|r| r.to_json()),
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
     }))
 }
