@@ -2,7 +2,7 @@ use crate::{
     paths::{
         ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path,
     },
-    tools::rtk::{reduce_with_rtk_summary, RtkReduction},
+    tools::rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
     SessionContext, ToolPolicy,
 };
 use anyhow::{anyhow, Context, Result};
@@ -65,10 +65,21 @@ pub(crate) async fn handle_process_run(
         .map(|v| v.clamp(1, policy_max_output as u64) as usize)
         .unwrap_or(policy_max_output);
     let env = parse_env(args)?;
+    let reducer_mode = ReducerMode::from_args(args);
+    let rtk_execute = reducer_mode == ReducerMode::ExecuteViaRtk && rtk_available().await;
+    let effective_command = if rtk_execute { "rtk" } else { command };
+    let effective_args = if rtk_execute {
+        let mut args = Vec::with_capacity(command_args.len() + 1);
+        args.push(command.to_string());
+        args.extend(command_args.clone());
+        args
+    } else {
+        command_args.clone()
+    };
 
     let started = std::time::Instant::now();
-    let mut child = Command::new(command)
-        .args(&command_args)
+    let mut child = Command::new(effective_command)
+        .args(&effective_args)
         .current_dir(&cwd)
         .envs(env.iter())
         .stdin(Stdio::null())
@@ -76,7 +87,7 @@ pub(crate) async fn handle_process_run(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .with_context(|| format!("spawn process_run command {command:?}"))?;
+        .with_context(|| format!("spawn process_run command {effective_command:?}"))?;
 
     let stdout = child
         .stdout
@@ -104,6 +115,8 @@ pub(crate) async fn handle_process_run(
             let stdout_text = String::from_utf8_lossy(&stdout_result.bytes).to_string();
             let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
             let reduced = reduce_process_output_with_rtk(
+                reducer_mode,
+                rtk_execute,
                 command,
                 &command_args,
                 &cwd.to_string_lossy(),
@@ -145,6 +158,10 @@ pub(crate) async fn handle_process_run(
                 "source": "adapter_local",
                 "content": content,
                 "reduction": reduced.map(|r| r.to_json()),
+                "effective_command": effective_command,
+                "effective_args": effective_args,
+                "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+                "reducer_mode": reducer_mode.as_str(),
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
             }));
         }
@@ -160,6 +177,8 @@ pub(crate) async fn handle_process_run(
     let exit_code = status.code();
     let ok = status.success();
     let reduced = reduce_process_output_with_rtk(
+        reducer_mode,
+        rtk_execute,
         command,
         &command_args,
         &cwd.to_string_lossy(),
@@ -209,11 +228,29 @@ pub(crate) async fn handle_process_run(
         "source": "adapter_local",
         "content": content,
         "reduction": reduced.map(|r| r.to_json()),
+        "effective_command": effective_command,
+        "effective_args": effective_args,
+        "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+        "reducer_mode": reducer_mode.as_str(),
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
     }))
 }
 
+async fn rtk_available() -> bool {
+    Command::new("rtk")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
 async fn reduce_process_output_with_rtk(
+    reducer_mode: ReducerMode,
+    executed_via_rtk: bool,
     command: &str,
     args: &[String],
     cwd: &str,
@@ -222,6 +259,9 @@ async fn reduce_process_output_with_rtk(
     stdout: &str,
     stderr: &str,
 ) -> Option<RtkReduction> {
+    if reducer_mode == ReducerMode::None || executed_via_rtk {
+        return None;
+    }
     if stdout.trim().is_empty() && stderr.trim().is_empty() {
         return None;
     }

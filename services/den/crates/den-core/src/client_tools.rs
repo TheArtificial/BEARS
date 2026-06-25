@@ -970,7 +970,8 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
                 "cwd": { "type": "string", "description": "Absolute working directory under the workspace." },
                 "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 131072 },
-                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." }
+                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." },
+                "reducer_mode": { "type": "string", "enum": ["execute_via_rtk", "postprocess", "none"], "default": "execute_via_rtk", "description": "Output reduction mode. Defaults to execute_via_rtk, which runs supported commands through RTK for compact output. Use none when the user asks for pure/noisy/raw command results." }
             }),
             vec!["command"],
         ),

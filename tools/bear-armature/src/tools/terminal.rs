@@ -2,7 +2,7 @@ use crate::{
     client_supports_terminal,
     paths::ensure_path_allowed_for_session,
     send_terminal_tool_call_update,
-    tools::rtk::{reduce_with_rtk_summary, RtkReduction},
+    tools::rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
     AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
     ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse,
     ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
@@ -79,6 +79,8 @@ fn terminal_result_content(
 }
 
 async fn reduce_terminal_output_with_rtk(
+    reducer_mode: ReducerMode,
+    executed_via_rtk: bool,
     command: &str,
     args: &[String],
     cwd: &str,
@@ -87,6 +89,9 @@ async fn reduce_terminal_output_with_rtk(
     timed_out: bool,
     output: &str,
 ) -> Option<RtkReduction> {
+    if reducer_mode == ReducerMode::None || executed_via_rtk {
+        return None;
+    }
     if output.trim().is_empty() {
         return None;
     }
@@ -97,6 +102,18 @@ async fn reduce_terminal_output_with_rtk(
         signal.unwrap_or("null"),
     );
     reduce_with_rtk_summary("BEARS_TERMINAL_RUN_RTK", raw).await
+}
+
+async fn rtk_available() -> bool {
+    tokio::process::Command::new("rtk")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
 }
 
 pub(crate) async fn handle_terminal_run_command(
@@ -139,10 +156,21 @@ pub(crate) async fn handle_terminal_run_command(
     let env = terminal_env(args)?;
     let timeout_ms = terminal_timeout_ms(args, policy);
     let output_byte_limit = terminal_output_byte_limit(args, policy);
+    let reducer_mode = ReducerMode::from_args(args);
+    let rtk_execute = reducer_mode == ReducerMode::ExecuteViaRtk && rtk_available().await;
+    let effective_command = if rtk_execute { "rtk" } else { command };
+    let effective_args = if rtk_execute {
+        let mut args = Vec::with_capacity(command_args.len() + 1);
+        args.push(command.to_string());
+        args.extend(command_args.clone());
+        args
+    } else {
+        command_args.clone()
+    };
 
     let started = std::time::Instant::now();
-    let create = CreateTerminalRequest::new(session_id.to_string(), command.to_string())
-        .args(command_args.clone())
+    let create = CreateTerminalRequest::new(session_id.to_string(), effective_command.to_string())
+        .args(effective_args.clone())
         .env(env)
         .cwd(Some(cwd.clone()))
         .output_byte_limit(Some(output_byte_limit));
@@ -168,7 +196,7 @@ pub(crate) async fn handle_terminal_run_command(
         let title = tool_title.unwrap_or_else(|| {
             format!(
                 "Run terminal command: {}",
-                command_line(command, &command_args)
+                command_line(effective_command, &effective_args)
             )
         });
         let _ = send_terminal_tool_call_update(
@@ -178,7 +206,7 @@ pub(crate) async fn handle_terminal_run_command(
             title,
             format!(
                 "Running `{}` in `{}`. Live terminal output is attached below.",
-                command_line(command, &command_args),
+                command_line(effective_command, &effective_args),
                 cwd.display()
             ),
             terminal_id.clone(),
@@ -222,6 +250,8 @@ pub(crate) async fn handle_terminal_run_command(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let reduced = reduce_terminal_output_with_rtk(
+                reducer_mode,
+                rtk_execute,
                 command,
                 &command_args,
                 &cwd.to_string_lossy(),
@@ -261,6 +291,10 @@ pub(crate) async fn handle_terminal_run_command(
                 "truncated": truncated,
                 "content": content,
                 "reduction": reduced.map(|r| r.to_json()),
+                "effective_command": effective_command,
+                "effective_args": effective_args,
+                "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+                "reducer_mode": reducer_mode.as_str(),
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
             }));
         }
@@ -275,6 +309,8 @@ pub(crate) async fn handle_terminal_run_command(
         .unwrap_or(false);
     let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
     let reduced = reduce_terminal_output_with_rtk(
+        reducer_mode,
+        rtk_execute,
         command,
         &command_args,
         &cwd.to_string_lossy(),
@@ -313,6 +349,10 @@ pub(crate) async fn handle_terminal_run_command(
         "truncated": truncated,
         "content": content,
         "reduction": reduced.map(|r| r.to_json()),
+        "effective_command": effective_command,
+        "effective_args": effective_args,
+        "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+        "reducer_mode": reducer_mode.as_str(),
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
     }))
 }

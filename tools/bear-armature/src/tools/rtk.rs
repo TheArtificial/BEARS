@@ -12,6 +12,35 @@ pub(crate) struct RtkReduction {
     pub(crate) output_truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReducerMode {
+    ExecuteViaRtk,
+    Postprocess,
+    None,
+}
+
+impl ReducerMode {
+    pub(crate) fn from_args(args: &Value) -> Self {
+        match args
+            .get("reducer_mode")
+            .and_then(Value::as_str)
+            .unwrap_or("execute_via_rtk")
+        {
+            "none" | "pure" | "raw" | "noisy" => Self::None,
+            "postprocess" => Self::Postprocess,
+            _ => Self::ExecuteViaRtk,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ExecuteViaRtk => "execute_via_rtk",
+            Self::Postprocess => "postprocess",
+            Self::None => "none",
+        }
+    }
+}
+
 impl RtkReduction {
     pub(crate) fn to_json(&self) -> Value {
         json!({

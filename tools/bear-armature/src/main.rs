@@ -12613,7 +12613,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 "command": "printf",
                 "args": ["hello"],
                 "cwd": root.to_string_lossy(),
-                "max_output_bytes": 10
+                "max_output_bytes": 10,
+                "reducer_mode": "none"
             }),
             &ToolPolicy {
                 max_bytes: Some(64),
@@ -12634,7 +12635,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 "command": "printf",
                 "args": ["hello world"],
                 "cwd": root.to_string_lossy(),
-                "max_output_bytes": 5
+                "max_output_bytes": 5,
+                "reducer_mode": "none"
             }),
             &ToolPolicy {
                 max_bytes: Some(5),
@@ -12699,12 +12701,12 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             std::env::remove_var("BEARS_PROCESS_RUN_RTK");
         }
 
-        assert_eq!(result["reduction"]["reducer"], "rtk");
+        assert_eq!(result["execution_wrapper"], "rtk");
+        assert_eq!(result["effective_command"], "rtk");
         assert!(result["content"]
             .as_str()
             .unwrap()
             .contains("RTK summary: compact failure context"));
-        assert_eq!(result["stdout"], "very long noisy output");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -12717,7 +12719,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let nonzero = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy() }),
+            &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy(), "reducer_mode": "none" }),
             &ToolPolicy {
                 max_bytes: Some(1024),
                 total_timeout_ms: Some(10_000),
@@ -12732,7 +12734,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let timed_out = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "sleep", "args": ["1"], "cwd": root.to_string_lossy(), "timeout_ms": 1 }),
+            &json!({ "command": "sleep", "args": ["1"], "cwd": root.to_string_lossy(), "timeout_ms": 1, "reducer_mode": "none" }),
             &ToolPolicy { max_bytes: Some(1024), total_timeout_ms: Some(100), ..Default::default() },
         )
         .await
@@ -12742,7 +12744,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let outside_cwd = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "printf", "args": ["x"], "cwd": outside.to_string_lossy() }),
+            &json!({ "command": "printf", "args": ["x"], "cwd": outside.to_string_lossy(), "reducer_mode": "none" }),
             &ToolPolicy::default(),
         )
         .await;
