@@ -40,6 +40,18 @@ use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
 
+fn docket_execution_gate_for_acp(policy_mode_label: &str) -> serde_json::Value {
+    let is_write = policy_mode_label.eq_ignore_ascii_case("write");
+    serde_json::json!({
+        "state": if is_write { "open" } else { "blocked" },
+        "reason": if is_write { "write_enabled" } else { "read_only_surface" },
+        "required_action": if is_write { "none" } else { "switch_work_surface_to_write" },
+        "can_mutate_workspace": is_write,
+        "can_run_processes": is_write,
+        "can_use_browser": is_write,
+    })
+}
+
 async fn acp_docket_execution_prompt_context(
     state: &DenState,
     bear_id: Uuid,
@@ -78,7 +90,16 @@ async fn acp_docket_execution_prompt_context(
                 "owner_profile": execution.owner_profile,
                 "source_acp_session_id": execution.source_acp_session_id,
                 "source_conversation_id": execution.source_conversation_id,
-                "acp_permission_mode": policy_mode_label,
+                "surface": {
+                    "kind": "armature",
+                    "adapter": "acp",
+                    "stance": "pair"
+                },
+                "permission": {
+                    "source": "acp",
+                    "mode_label": policy_mode_label
+                },
+                "gate": docket_execution_gate_for_acp(policy_mode_label),
             }
         }),
     )
