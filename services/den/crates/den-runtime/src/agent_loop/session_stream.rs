@@ -22,11 +22,12 @@ use crate::{
     memory::MemoryStoreManager,
     runtime_compaction::enqueue_compaction_after_turn,
     runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
+    tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
 };
 use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
-    result_compaction::compact_json_tool_result,
+    result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
 use den_core::{DenError, config::Config, profile::BearProfile};
 
@@ -314,12 +315,49 @@ impl SessionTrackingStream {
         let store = self.store.clone();
         let session_key = self.session_key.clone();
         let profile = self.profile;
+        let bear_id = self.bear_id;
+        let user_id = self.user_id;
+        let conversation_id = self.conversation_id.clone();
+        let acp_session_id = self.acp_session_id.clone();
         self.pending_server_tool = Some(Box::pin(async move {
             let content = match invoker
                 .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
                 .await
             {
-                Ok(value) => compact_json_tool_result(value).content,
+                Ok(value) => {
+                    let compacted = compact_json_tool_result(value.clone());
+                    if compacted.truncated {
+                        match create_tool_output_artifact(
+                            &pool,
+                            ToolOutputArtifactInput {
+                                bear_id,
+                                user_id,
+                                session_id: acp_session_id.clone(),
+                                conversation_id: Some(conversation_id.clone()),
+                                run_id: None,
+                                tool_call_id: call.id.clone(),
+                                tool_name: Some(provider_name.clone()),
+                                source: "den_hosted",
+                                content_text: None,
+                                content_json: Some(value.clone()),
+                                metadata: serde_json::json!({ "canonical_tool": canonical }),
+                            },
+                        )
+                        .await
+                        {
+                            Ok(artifact) => {
+                                compact_json_tool_result_with_artifact(
+                                    value,
+                                    Some(&artifact.artifact_ref),
+                                )
+                                .content
+                            }
+                            Err(_) => compacted.content,
+                        }
+                    } else {
+                        compacted.content
+                    }
+                }
                 Err(error) => format!("error: {error}"),
             };
             let message = ChatMessage {

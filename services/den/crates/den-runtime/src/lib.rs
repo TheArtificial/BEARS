@@ -22,6 +22,9 @@ pub mod gateway_events;
 /// Active-turn coordination + tool-result requests (turn lifecycle).
 pub mod tool_turns;
 
+/// Durable full-output artifacts for compacted tool results.
+pub mod tool_output_artifacts;
+
 /// Active-turn cancellation registry + turn controller (turn lifecycle).
 pub mod turn_controller;
 

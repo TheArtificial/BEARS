@@ -7,7 +7,9 @@ use uuid::Uuid;
 
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
-    result_compaction::compact_client_tool_result_params,
+    result_compaction::{
+        compact_client_tool_result_params, compact_client_tool_result_params_with_artifact,
+    },
 };
 use den_http::{errors::CustomError, web_policy};
 use den_runtime::{
@@ -21,6 +23,7 @@ use den_runtime::{
         RuntimeToolResultStatus,
     },
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
+    tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
     DenState,
 };
 
@@ -312,7 +315,40 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
-    let compacted = compact_client_tool_result_params(&tool_call_id, &status, params);
+    let mut compacted = compact_client_tool_result_params(&tool_call_id, &status, params);
+    if compacted.truncated {
+        if let Ok(artifact) = create_tool_output_artifact(
+            &state.sqlx_pool,
+            ToolOutputArtifactInput {
+                bear_id: bear.id,
+                user_id: Some(user_id),
+                session_id: session_id.clone(),
+                conversation_id: None,
+                run_id: Some(run_id.clone()),
+                tool_call_id: tool_call_id.clone(),
+                tool_name: params
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                source: "bearwire_client",
+                content_text: params
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                content_json: Some(params.clone()),
+                metadata: json!({ "status": status }),
+            },
+        )
+        .await
+        {
+            compacted = compact_client_tool_result_params_with_artifact(
+                &tool_call_id,
+                &status,
+                params,
+                Some(&artifact.artifact_ref),
+            );
+        }
+    }
     let payload = compacted.payload.clone();
     if !bearwire_obligations::obligation_is_open(&obligation) {
         return match bearwire_runs::existing_client_result_for_payload(

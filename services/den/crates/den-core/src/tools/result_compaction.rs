@@ -7,6 +7,7 @@ pub const TOOL_RESULT_FIELD_MAX_CHARS: usize = 12 * 1024;
 pub struct CompactToolResult {
     pub payload: Value,
     pub content: String,
+    pub truncated: bool,
 }
 
 pub fn truncate_str(value: &str, max_chars: usize) -> (String, bool, usize) {
@@ -75,7 +76,28 @@ pub fn compact_value_for_model(value: Value, max_chars: usize) -> (Value, bool, 
     }
 }
 
+fn compaction_metadata(omitted_chars: usize, artifact_ref: Option<&str>) -> Value {
+    let mut metadata = json!({
+        "truncated": true,
+        "omitted_chars": omitted_chars,
+        "model_max_chars": MODEL_TOOL_RESULT_MAX_CHARS,
+        "field_max_chars": TOOL_RESULT_FIELD_MAX_CHARS,
+    });
+    if let Some(artifact_ref) = artifact_ref {
+        metadata["artifact_ref"] = json!(artifact_ref);
+        metadata["read_tool"] = json!("tool_output_read");
+    }
+    metadata
+}
+
 pub fn compact_json_tool_result(value: Value) -> CompactToolResult {
+    compact_json_tool_result_with_artifact(value, None)
+}
+
+pub fn compact_json_tool_result_with_artifact(
+    value: Value,
+    artifact_ref: Option<&str>,
+) -> CompactToolResult {
     let (mut payload, truncated, omitted_chars) =
         compact_value_for_model(value, MODEL_TOOL_RESULT_MAX_CHARS);
     let serialized_len = payload.to_string().chars().count();
@@ -97,23 +119,13 @@ pub fn compact_json_tool_result(value: Value) -> CompactToolResult {
             Value::Object(map) => {
                 map.insert(
                     "result_compaction".to_string(),
-                    json!({
-                        "truncated": true,
-                        "omitted_chars": omitted_chars,
-                        "model_max_chars": MODEL_TOOL_RESULT_MAX_CHARS,
-                        "field_max_chars": TOOL_RESULT_FIELD_MAX_CHARS,
-                    }),
+                    compaction_metadata(omitted_chars, artifact_ref),
                 );
             }
             other => {
                 payload = json!({
                     "value": other.clone(),
-                    "result_compaction": {
-                        "truncated": true,
-                        "omitted_chars": omitted_chars,
-                        "model_max_chars": MODEL_TOOL_RESULT_MAX_CHARS,
-                        "field_max_chars": TOOL_RESULT_FIELD_MAX_CHARS,
-                    }
+                    "result_compaction": compaction_metadata(omitted_chars, artifact_ref)
                 });
             }
         }
@@ -130,13 +142,26 @@ pub fn compact_json_tool_result(value: Value) -> CompactToolResult {
         ));
     }
 
-    CompactToolResult { payload, content }
+    CompactToolResult {
+        payload,
+        content,
+        truncated,
+    }
 }
 
 pub fn compact_client_tool_result_params(
     tool_call_id: &str,
     status: &str,
     params: &Value,
+) -> CompactToolResult {
+    compact_client_tool_result_params_with_artifact(tool_call_id, status, params, None)
+}
+
+pub fn compact_client_tool_result_params_with_artifact(
+    tool_call_id: &str,
+    status: &str,
+    params: &Value,
+    artifact_ref: Option<&str>,
 ) -> CompactToolResult {
     let mut truncated = false;
     let mut omitted_chars = 0usize;
@@ -175,12 +200,7 @@ pub fn compact_client_tool_result_params(
         omitted_chars += serialized_len.saturating_sub(MODEL_TOOL_RESULT_MAX_CHARS);
     }
     if truncated {
-        payload["result_compaction"] = json!({
-            "truncated": true,
-            "omitted_chars": omitted_chars,
-            "model_max_chars": MODEL_TOOL_RESULT_MAX_CHARS,
-            "field_max_chars": TOOL_RESULT_FIELD_MAX_CHARS,
-        });
+        payload["result_compaction"] = compaction_metadata(omitted_chars, artifact_ref);
     }
 
     let mut content_text = payload
@@ -207,6 +227,7 @@ pub fn compact_client_tool_result_params(
     CompactToolResult {
         payload,
         content: content_text,
+        truncated,
     }
 }
 
