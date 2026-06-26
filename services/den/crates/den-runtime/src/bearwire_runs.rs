@@ -126,6 +126,37 @@ pub async fn active_run_for_session(
     Ok(row.map(row_to_run))
 }
 
+pub async fn supersede_active_run_for_session(
+    pool: &PgPool,
+    session_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    reason: &str,
+) -> Result<Option<BearWireRunRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r#"
+        UPDATE bearwire_runs
+        SET state = 'failed', terminal_reason = $4, completed_at = NOW(), updated_at = NOW()
+        WHERE id = (
+            SELECT id
+            FROM bearwire_runs
+            WHERE session_id = $1 AND bear_id = $2 AND user_id = $3
+              AND state IN ('accepted','running','waiting_for_tool_result','waiting_for_permission','continuing')
+            ORDER BY created_at DESC
+            LIMIT 1
+        )
+        RETURNING {RUN_RETURNING}
+        "#
+    ))
+    .bind(session_id)
+    .bind(bear_id)
+    .bind(user_id)
+    .bind(reason)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_run))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BearWireClientResultRow {
     pub id: Uuid,

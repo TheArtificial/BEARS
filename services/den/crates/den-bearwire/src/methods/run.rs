@@ -773,6 +773,23 @@ pub(crate) async fn run_start_result(
     )
     .await?;
 
+    if let Some(active_run) = bearwire_runs::supersede_active_run_for_session(
+        &state.sqlx_pool,
+        &session_id,
+        bear.id,
+        user_id,
+        "superseded_by_new_run",
+    )
+    .await?
+    {
+        let _ = bearwire_obligations::settle_outstanding_for_run(
+            &state.sqlx_pool,
+            &active_run.run_id,
+            bearwire_obligations::BearWireObligationState::Failed,
+        )
+        .await;
+    }
+
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let run =
         bearwire_runs::create_run(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id).await?;

@@ -1172,6 +1172,37 @@ async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn superseding_active_run_allows_new_run_for_session(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_a = format!("run_{}", Uuid::new_v4().simple());
+    let run_b = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    bearwire_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
+        .await
+        .expect("create first active run");
+
+    let superseded = bearwire_runs::supersede_active_run_for_session(
+        &pool,
+        &session_id,
+        bear_id,
+        user_id,
+        "superseded_by_new_run",
+    )
+    .await
+    .expect("supersede active run")
+    .expect("active run should be superseded");
+    assert_eq!(superseded.run_id, run_a);
+    assert_eq!(superseded.state, "failed");
+
+    let created = bearwire_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
+        .await
+        .expect("create replacement active run");
+    assert_eq!(created.run_id, run_b);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
