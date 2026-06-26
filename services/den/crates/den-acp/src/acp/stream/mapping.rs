@@ -5,7 +5,7 @@ use den_runtime::{
     gateway_events::{
             map_provider_stream_event_to_gateway_event_with_accumulator, GatewayEvent,
         },
-    runtime_bearwire_projection::runtime_semantic_event_to_bearwire_gateway_events,
+    runtime_bearwire_projection::{project_runtime_event_lossy, RuntimeEventProjectionOutcome},
     runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
 };
 
@@ -154,7 +154,19 @@ pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_
     diagnostics: &mut AcpStreamDiagnostics,
 ) -> AcpFrameResult {
     let runtime_event_for_projection = runtime_event.clone();
-    let value = runtime_stream_event_to_acp_seed_value(runtime_event)?;
+    let value = match runtime_stream_event_to_acp_seed_value(runtime_event.clone()) {
+        Ok(value) => value,
+        Err(err) => match project_runtime_event_lossy(runtime_event) {
+            RuntimeEventProjectionOutcome::Events(events) if !events.is_empty() => {
+                for event in &events {
+                    diagnostics.observe_mapped_event(event, true);
+                }
+                return Ok((events, None, None));
+            }
+            RuntimeEventProjectionOutcome::Ignored { .. } => return Ok((Vec::new(), None, None)),
+            _ => return Err(err),
+        },
+    };
     let observed_run_ids = diagnostics.observe_parsed_event(&value);
     let direct_projected_events = match runtime_event_for_projection.clone() {
         RuntimeStreamEvent::Semantic(
@@ -167,10 +179,9 @@ pub(in crate::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_
             | RuntimeSemanticEvent::RunProgress { .. }
             | RuntimeSemanticEvent::ToolCallFinished { .. },
         ) => {
-            if let RuntimeStreamEvent::Semantic(semantic_event) = runtime_event_for_projection.clone() {
-                runtime_semantic_event_to_bearwire_gateway_events(semantic_event)
-            } else {
-                Vec::new()
+            match project_runtime_event_lossy(runtime_event_for_projection.clone()) {
+                RuntimeEventProjectionOutcome::Events(events) => events,
+                RuntimeEventProjectionOutcome::Ignored { .. } => Vec::new(),
             }
         }
         RuntimeStreamEvent::Semantic(

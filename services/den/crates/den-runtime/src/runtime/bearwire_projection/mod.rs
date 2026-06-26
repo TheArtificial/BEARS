@@ -9,6 +9,23 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
+pub enum RuntimeEventProjectionOutcome {
+    Events(Vec<GatewayEvent>),
+    Ignored { reason: &'static str },
+}
+
+pub fn project_runtime_event_lossy(event: RuntimeStreamEvent) -> RuntimeEventProjectionOutcome {
+    match event {
+        RuntimeStreamEvent::Semantic(event) => RuntimeEventProjectionOutcome::Events(
+            runtime_semantic_event_to_bearwire_gateway_events(event),
+        ),
+        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => RuntimeEventProjectionOutcome::Ignored {
+            reason: "untranslated_provider_event",
+        },
+    }
+}
+
 pub fn runtime_semantic_event_to_bearwire_gateway_events(
     event: RuntimeSemanticEvent,
 ) -> Vec<GatewayEvent> {
@@ -137,6 +154,48 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
             .map(gateway_event_to_adapter_sse)
             .collect(),
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_contracts::{RuntimeConversationRef, RuntimeErrorCategory};
+    use serde_json::json;
+
+    #[test]
+    fn lossy_projection_handles_progress_events_without_failure() {
+        let outcome = project_runtime_event_lossy(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::RunProgress {
+                kind: "plan_update".to_string(),
+                text: None,
+                phase: Some("tool_result".to_string()),
+                detail: Some(json!({ "entries": [] })),
+            },
+        ));
+
+        assert!(matches!(outcome, RuntimeEventProjectionOutcome::Events(events) if !events.is_empty()));
+    }
+
+    #[test]
+    fn lossy_projection_covers_core_semantic_variants() {
+        let events = vec![
+            RuntimeSemanticEvent::AssistantTextDelta { text: "hi".to_string() },
+            RuntimeSemanticEvent::StatusText { text: "working".to_string() },
+            RuntimeSemanticEvent::ConversationResolved { conversation: RuntimeConversationRef { id: "conv".to_string() } },
+            RuntimeSemanticEvent::TurnCompleted { turn: None },
+            RuntimeSemanticEvent::RunPaused { reason: "awaiting_approval".to_string(), resume_token: None, expires_at: None },
+            RuntimeSemanticEvent::Error { message: "err".to_string(), detail: None, error_type: None, request_id: None, context: None },
+            RuntimeSemanticEvent::TurnFailed { category: RuntimeErrorCategory::Internal, message: "failed".to_string(), turn: None },
+            RuntimeSemanticEvent::TurnCancelled { turn: None },
+            RuntimeSemanticEvent::RunProgress { kind: "status_text".to_string(), text: Some("status".to_string()), phase: None, detail: None },
+            RuntimeSemanticEvent::ToolCallFinished { tool_call_id: "call".to_string(), tool_name: "tool".to_string(), status: ToolCallFinishStatus::Ok, summary: Some("done".to_string()), error_message: None },
+        ];
+
+        for event in events {
+            let outcome = project_runtime_event_lossy(RuntimeStreamEvent::Semantic(event));
+            assert!(matches!(outcome, RuntimeEventProjectionOutcome::Events(_)));
+        }
     }
 }
 
