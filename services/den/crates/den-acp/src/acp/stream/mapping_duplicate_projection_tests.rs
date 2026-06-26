@@ -142,3 +142,28 @@ async fn requires_approval_stop_after_tool_request_is_not_unmapped() {
     assert!(diagnostics.unmapped_event_samples.is_empty());
     assert!(diagnostics.saw_requires_approval_stop);
 }
+
+#[tokio::test]
+async fn run_progress_plan_update_maps_without_persistence_error() {
+    let context = test_mapping_context();
+    let mut diagnostics = AcpStreamDiagnostics::default();
+    let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "plan_update".to_string(),
+        text: None,
+        phase: Some("tool_result".to_string()),
+        detail: Some(serde_json::json!({
+            "entries": [{ "id": "task-1", "title": "Task", "status": "in_progress" }]
+        })),
+    });
+
+    let (events, _, _) = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+        event,
+        context,
+        &mut diagnostics,
+    )
+    .await
+    .expect("plan update progress should map without unsupported-event error");
+
+    assert!(!events.is_empty());
+    assert!(diagnostics.unmapped_event_samples.is_empty());
+}

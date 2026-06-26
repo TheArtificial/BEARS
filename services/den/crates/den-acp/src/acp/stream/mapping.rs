@@ -78,6 +78,18 @@ pub(in crate::acp) fn runtime_stream_event_to_acp_seed_value(
                 "reasoning": text,
             }))
         }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind,
+            text,
+            phase,
+            detail,
+        }) => Ok(serde_json::json!({
+            "message_type": "status_message",
+            "content": text.clone().unwrap_or_else(|| kind.clone()),
+            "status_type": kind,
+            "phase": phase,
+            "detail": detail,
+        })),
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message,
             detail,
