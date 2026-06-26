@@ -28,6 +28,7 @@ use den_runtime::{
     runtime_contracts::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
     DenState,
 };
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 use crate::{
     events::{events, EventStreamQuery},
@@ -1200,6 +1201,49 @@ async fn superseding_active_run_allows_new_run_for_session(pool: sqlx::PgPool) {
         .await
         .expect("create replacement active run");
     assert_eq!(created.run_id, run_b);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let tool_call_id = "call-needs-permission";
+    let permission_id = "perm-needs-permission";
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create active run");
+
+    crate::methods::run::persist_runtime_event_as_bearwire(
+        &pool,
+        &session_id,
+        &run_id,
+        bear_id,
+        user_id,
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: "fs_list_directory".to_string(),
+            title: None,
+            kind: Some("read".to_string()),
+            arguments: json!({ "path": "/workspace" }),
+            approval_request_id: Some(permission_id.to_string()),
+            approval_required: true,
+            approval_reason: Some("needs approval".to_string()),
+            run_id: Some(run_id.clone()),
+        }),
+        Uuid::new_v4(),
+        None,
+    )
+    .await;
+
+    let obligation = bearwire_obligations::get_permission_obligation(&pool, &run_id, permission_id)
+        .await
+        .expect("load permission obligation")
+        .expect("permission obligation exists");
+    assert_eq!(obligation.expected_client_method, "client.permission.result");
+    assert_eq!(obligation.tool_call_id.as_deref(), Some(tool_call_id));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

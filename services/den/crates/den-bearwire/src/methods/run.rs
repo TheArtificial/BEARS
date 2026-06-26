@@ -521,22 +521,47 @@ async fn update_run_state_for_runtime_event(
                 bearwire_runs::BearWireRunState::WaitingForToolResult
             };
             let _ = bearwire_runs::transition_run(pool, run_id, state, None).await;
-            let obligation = bearwire_obligations::upsert_tool_call_obligation(
-                pool,
-                run_id,
-                session_id,
-                tool_call_id,
-                approval_request_id.as_deref(),
-                json!({
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "approval_required": approval_required,
-                    "approval_request_id": approval_request_id,
-                    "request_id": request_id,
-                }),
-            )
-            .await;
+            let request_payload = json!({
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "approval_required": approval_required,
+                "approval_request_id": approval_request_id,
+                "request_id": request_id,
+            });
+            let obligation = if *approval_required {
+                if let Some(permission_id) = approval_request_id.as_deref() {
+                    bearwire_obligations::upsert_permission_obligation(
+                        pool,
+                        run_id,
+                        session_id,
+                        permission_id,
+                        Some(tool_call_id),
+                        request_payload,
+                    )
+                    .await
+                } else {
+                    bearwire_obligations::upsert_tool_call_obligation(
+                        pool,
+                        run_id,
+                        session_id,
+                        tool_call_id,
+                        None,
+                        request_payload,
+                    )
+                    .await
+                }
+            } else {
+                bearwire_obligations::upsert_tool_call_obligation(
+                    pool,
+                    run_id,
+                    session_id,
+                    tool_call_id,
+                    approval_request_id.as_deref(),
+                    request_payload,
+                )
+                .await
+            };
             if let Err(err) = obligation {
                 tracing::warn!(
                     error = %err,
