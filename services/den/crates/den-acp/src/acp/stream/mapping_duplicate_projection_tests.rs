@@ -3,6 +3,7 @@ use crate::acp::stream::support::AcpStreamDiagnostics;
 use crate::acp::AcpStreamContext;
 use den_service::tool_turns::ToolTurnCoordinator;
 use den_runtime::gateway_events::GatewayEvent;
+use den_runtime::runtime_contracts::{RuntimeConversationRef, RuntimeErrorCategory, ToolCallFinishStatus};
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;
@@ -166,4 +167,31 @@ async fn run_progress_plan_update_maps_without_persistence_error() {
 
     assert!(!events.is_empty());
     assert!(diagnostics.unmapped_event_samples.is_empty());
+}
+
+#[tokio::test]
+async fn acp_mapper_handles_display_semantic_variants_without_hard_failure() {
+    let variants = vec![
+        RuntimeSemanticEvent::AssistantTextDelta { text: "hi".to_string() },
+        RuntimeSemanticEvent::StatusText { text: "working".to_string() },
+        RuntimeSemanticEvent::ConversationResolved { conversation: RuntimeConversationRef { id: "conv".to_string() } },
+        RuntimeSemanticEvent::TurnCompleted { turn: None },
+        RuntimeSemanticEvent::Error { message: "err".to_string(), detail: None, error_type: None, request_id: None, context: None },
+        RuntimeSemanticEvent::TurnFailed { category: RuntimeErrorCategory::Internal, message: "failed".to_string(), turn: None },
+        RuntimeSemanticEvent::TurnCancelled { turn: None },
+        RuntimeSemanticEvent::RunProgress { kind: "status_text".to_string(), text: Some("status".to_string()), phase: None, detail: None },
+        RuntimeSemanticEvent::ToolCallFinished { tool_call_id: "call".to_string(), tool_name: "tool".to_string(), status: ToolCallFinishStatus::Ok, summary: Some("done".to_string()), error_message: None },
+    ];
+
+    for variant in variants {
+        let context = test_mapping_context();
+        let mut diagnostics = AcpStreamDiagnostics::default();
+        map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+            RuntimeStreamEvent::Semantic(variant),
+            context,
+            &mut diagnostics,
+        )
+        .await
+        .expect("display/progress semantic event should not hard-fail ACP mapping");
+    }
 }
