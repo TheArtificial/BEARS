@@ -34,7 +34,7 @@ pub struct HealthCheck {
     pub detail: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckState {
     Ok,
@@ -82,10 +82,12 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     let den_pg = check_den_postgres(state.sqlx_pool()).await;
     let bifrost_h = check_bifrost_http(&cfg.bifrost_base_url).await;
     let bifrost_models = check_bifrost_live_models(&cfg.llm_api_url).await;
+    let bifrost_management_auth = check_bifrost_management_auth(&cfg.bifrost_management_url).await;
 
     checks.push(den_pg);
     checks.push(bifrost_h);
     checks.push(bifrost_models);
+    checks.push(bifrost_management_auth);
     checks.push(check_qdrant(cfg).await);
 
     StackHealthReport::from_checks(checks)
@@ -417,6 +419,154 @@ async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
     }
 }
 
+async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
+    let base = management_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Skipped,
+            detail: "BIFROST_MANAGEMENT_URL unset — cannot verify virtual-key management auth"
+                .into(),
+        };
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(HTTP_PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthCheck {
+                id: "bifrost_management_auth",
+                label: "Bifrost management auth",
+                state: CheckState::Fail,
+                detail: format!("reqwest client: {e}"),
+            };
+        }
+    };
+
+    let url = format!("{base}/config");
+    match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
+        Err(_) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
+        },
+        Ok(Err(e)) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: e.to_string(),
+        },
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            let text = match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_management_auth",
+                        label: "Bifrost management auth",
+                        state: CheckState::Fail,
+                        detail: format!("/api/config body failed: {e}"),
+                    };
+                }
+            };
+
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                if text.contains("Authentication is not enabled") {
+                    return stale_bifrost_auth_config_check(format!(
+                        "HTTP {status} from {url}: {text}"
+                    ));
+                }
+                return HealthCheck {
+                    id: "bifrost_management_auth",
+                    label: "Bifrost management auth",
+                    state: CheckState::Ok,
+                    detail: format!(
+                        "/api/config is protected (HTTP {status}); management auth appears enabled"
+                    ),
+                };
+            }
+
+            if !status.is_success() {
+                return HealthCheck {
+                    id: "bifrost_management_auth",
+                    label: "Bifrost management auth",
+                    state: CheckState::Fail,
+                    detail: format!("HTTP {status} from {url}: {text}"),
+                };
+            }
+
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_management_auth",
+                        label: "Bifrost management auth",
+                        state: CheckState::Fail,
+                        detail: format!("/api/config JSON parse failed: {e}; body: {text}"),
+                    };
+                }
+            };
+            bifrost_management_auth_config_check_from_value(&value)
+        }
+    }
+}
+
+fn bifrost_management_auth_config_check_from_value(value: &serde_json::Value) -> HealthCheck {
+    if value
+        .get("governance")
+        .and_then(|governance| governance.get("auth_config"))
+        .is_some()
+        && value.get("auth_config").is_none()
+    {
+        return HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: "runtime config exposes governance.auth_config but no top-level auth_config; redeploy Bifrost with top-level auth_config and reset stale /app/data/config.db if needed".into(),
+        };
+    }
+
+    match value
+        .get("auth_config")
+        .and_then(|auth_config| auth_config.get("is_enabled"))
+        .and_then(serde_json::Value::as_bool)
+    {
+        Some(true) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Ok,
+            detail: "runtime /api/config reports auth_config.is_enabled=true; virtual-key management login should be available".into(),
+        },
+        Some(false) => stale_bifrost_auth_config_check(
+            "runtime /api/config reports auth_config.is_enabled=false".to_string(),
+        ),
+        None => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: "runtime /api/config does not expose auth_config.is_enabled; Den cannot verify Bifrost virtual-key management auth".into(),
+        },
+    }
+}
+
+fn stale_bifrost_auth_config_check(observed: String) -> HealthCheck {
+    HealthCheck {
+        id: "bifrost_management_auth",
+        label: "Bifrost management auth",
+        state: CheckState::Fail,
+        detail: format!(
+            "{observed}. Bifrost virtual-key provisioning will fail. If services/bifrost/config.json has top-level auth_config.is_enabled=true, Bifrost is likely serving stale config-store state from /app/data/config.db; recreate/reset bears-bifrost config.db after redeploying the corrected image."
+        ),
+    }
+}
+
 fn count_usable_bifrost_models(value: &serde_json::Value) -> (usize, usize) {
     let Some(items) = value.get("data").and_then(|data| data.as_array()) else {
         return (0, 0);
@@ -493,4 +643,3 @@ async fn check_qdrant(config: &Config) -> HealthCheck {
 
 #[cfg(test)]
 mod tests;
-

@@ -466,6 +466,40 @@ pub fn bifrost_key_selection_error(text: &str) -> bool {
         || (text.contains("key-selection error") && text.contains("no keys"))
 }
 
+fn bifrost_virtual_key_not_found_error(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("virtual_key_not_found") || text.contains("virtual key not found")
+}
+
+fn bifrost_virtual_key_not_found_diagnostic(
+    api_style: LlmApiStyle,
+    model: &str,
+    telemetry: Option<&LlmRequestTelemetry>,
+    status: &str,
+    text: &str,
+) -> String {
+    let request_id = telemetry
+        .and_then(|t| t.request_id.as_deref())
+        .unwrap_or("unknown");
+    let session_id = telemetry
+        .and_then(|t| t.session_id.as_deref())
+        .unwrap_or("unknown");
+    let conversation_id = telemetry
+        .and_then(|t| t.conversation_id.as_deref())
+        .unwrap_or("unknown");
+    let bear_id = telemetry
+        .and_then(|t| t.bear_id.as_deref())
+        .unwrap_or("unknown");
+    let virtual_key_present = telemetry
+        .and_then(|t| t.bifrost_virtual_key.as_deref())
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let api_style = api_style.as_str();
+    format!(
+        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent x-bf-vk (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored virtual_key_id exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. If Bifrost expects a different x-bf-vk value shape for this version, compare the stored virtual_key_id and generated secret value. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
+    )
+}
+
 fn bifrost_key_selection_diagnostic(
     api_style: LlmApiStyle,
     model: &str,
@@ -732,6 +766,15 @@ impl LlmClient {
                 conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
                 "LLM chat/completions returned error status"
             );
+            if bifrost_virtual_key_not_found_error(&text) {
+                return Err(DenError::System(bifrost_virtual_key_not_found_diagnostic(
+                    LlmApiStyle::ChatCompletionsStream,
+                    &request.model,
+                    request.telemetry.as_ref(),
+                    &status.to_string(),
+                    &text,
+                )));
+            }
             if bifrost_key_selection_error(&text) {
                 tracing::warn!(
                     model = %request.model,
@@ -867,6 +910,15 @@ impl LlmClient {
                 conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
                 "LLM responses returned error status"
             );
+            if bifrost_virtual_key_not_found_error(&text) {
+                return Err(DenError::System(bifrost_virtual_key_not_found_diagnostic(
+                    LlmApiStyle::ResponsesStream,
+                    model_handle.as_str(),
+                    request.telemetry.as_ref(),
+                    &status.to_string(),
+                    &text,
+                )));
+            }
             if bifrost_key_selection_error(&text) {
                 tracing::warn!(
                     model_handle = %model_handle,

@@ -714,6 +714,32 @@ pub async fn get_bear_bifrost_virtual_key(
     }
 }
 
+pub async fn bifrost_virtual_key_for_inference(
+    pool: &PgPool,
+    bear_id: Uuid,
+    secret_encryption_key: &str,
+) -> Result<Option<String>, DenError> {
+    let Some(row) = get_bear_bifrost_virtual_key(pool, bear_id).await? else {
+        return Ok(None);
+    };
+    bifrost_virtual_key_for_inference_from_row(row, secret_encryption_key)
+}
+
+fn bifrost_virtual_key_for_inference_from_row(
+    row: BearBifrostVirtualKey,
+    secret_encryption_key: &str,
+) -> Result<Option<String>, DenError> {
+    if let Some(id) = row
+        .virtual_key_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(Some(id.to_string()));
+    }
+    bifrost_virtual_key_secret_from_row(row, secret_encryption_key)
+}
+
 pub async fn bifrost_virtual_key_value_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
@@ -722,6 +748,13 @@ pub async fn bifrost_virtual_key_value_for_bear(
     let Some(row) = get_bear_bifrost_virtual_key(pool, bear_id).await? else {
         return Ok(None);
     };
+    bifrost_virtual_key_secret_from_row(row, secret_encryption_key)
+}
+
+fn bifrost_virtual_key_secret_from_row(
+    row: BearBifrostVirtualKey,
+    secret_encryption_key: &str,
+) -> Result<Option<String>, DenError> {
     if let Some(encrypted) = row
         .virtual_key_value_encrypted
         .as_deref()
@@ -912,6 +945,9 @@ pub fn resolve_model_from_values(
         .unwrap_or_else(|| system_default_model.trim())
         .to_string()
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 mod model_setting_tests {
