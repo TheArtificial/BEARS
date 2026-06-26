@@ -34,10 +34,7 @@ fn spawn_bifrost_management_mock(mode: LoginMode) -> (String, Arc<Mutex<Vec<Requ
     let addr = listener.local_addr().expect("mock server addr");
     let records = Arc::new(Mutex::new(Vec::new()));
     let records_for_thread = Arc::clone(&records);
-    let expected_requests = match mode {
-        LoginMode::AuthDisabled => 1,
-        LoginMode::BearerToken | LoginMode::CookieSession => 2,
-    };
+    let expected_requests = 2;
 
     thread::spawn(move || {
         for _ in 0..expected_requests {
@@ -211,17 +208,20 @@ async fn create_virtual_key_uses_cookie_session_login() {
 }
 
 #[tokio::test]
-async fn auth_disabled_login_error_includes_config_hint() {
-    let (management_url, _records) = spawn_bifrost_management_mock(LoginMode::AuthDisabled);
+async fn auth_disabled_login_falls_back_to_unauthenticated_create() {
+    let (management_url, records) = spawn_bifrost_management_mock(LoginMode::AuthDisabled);
     let client = BifrostGovernanceClient::new(&test_config(management_url));
 
-    let err = client
+    let created = client
         .create_bear_virtual_key(uuid::Uuid::nil(), "test")
         .await
-        .expect_err("auth-disabled login should fail");
-    let message = err.to_string();
+        .expect("create virtual key without management auth");
 
-    assert!(message.contains("Authentication is not enabled"));
-    assert!(message.contains("top-level auth_config.is_enabled=true"));
-    assert!(message.contains("not governance.auth_config"));
+    assert_eq!(created.id, "vk_test");
+    let records = records.lock().expect("records mutex");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].path, "/api/session/login");
+    assert_eq!(records[1].path, "/api/governance/virtual-keys");
+    assert!(records[1].authorization.is_none());
+    assert!(records[1].cookie.is_none());
 }

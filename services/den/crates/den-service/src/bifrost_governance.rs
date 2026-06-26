@@ -20,6 +20,7 @@ pub struct BifrostVirtualKeyProvisioned {
 enum BifrostManagementAuth {
     Bearer(String),
     Cookie(String),
+    Unauthenticated,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,15 +116,18 @@ impl BifrostGovernanceClient {
             .await
             .map_err(|err| DenError::System(format!("Bifrost management login body: {err}")))?;
         if !status.is_success() {
-            let hint = if status == reqwest::StatusCode::FORBIDDEN
+            if status == reqwest::StatusCode::FORBIDDEN
                 && text.contains("Authentication is not enabled")
             {
-                "; Bifrost management auth is disabled. Ensure services/bifrost/config.json uses top-level auth_config.is_enabled=true (not governance.auth_config) and redeploy/recreate bears-bifrost so /app/data/config.json is refreshed."
-            } else {
-                ""
-            };
+                tracing::warn!(
+                    status = %status,
+                    response_body = %text,
+                    "Bifrost management auth is disabled; attempting unauthenticated governance request"
+                );
+                return Ok(BifrostManagementAuth::Unauthenticated);
+            }
             return Err(DenError::System(format!(
-                "Bifrost management login HTTP {status}: {text}{hint}"
+                "Bifrost management login HTTP {status}: {text}"
             )));
         }
         let payload = serde_json::from_str::<LoginResponse>(&text).map_err(|err| {
@@ -172,6 +176,7 @@ impl BifrostGovernanceClient {
             BifrostManagementAuth::Cookie(cookie) => {
                 builder.header(reqwest::header::COOKIE, cookie)
             }
+            BifrostManagementAuth::Unauthenticated => builder,
         };
         let response = builder
             .send()
