@@ -88,8 +88,7 @@
                 value="{{ m.handle | e }}"
                 {%
                 if
-                bear.default_model=""
-                ="m.handle"
+                bear.default_model == m.handle
                 %}
                 selected{%
                 endif
@@ -270,8 +269,7 @@
                                 value="{{ m.handle | e }}"
                                 {%
                                 if
-                                row.configured_model=""
-                                ="m.handle"
+                                row.configured_model == m.handle
                                 %}
                                 selected{%
                                 endif
