@@ -465,8 +465,10 @@ fn apply_bifrost_virtual_key_header(
     };
     // Bifrost virtual keys are inference credentials. Per Bifrost's OpenAPI
     // docs, virtual keys (`sk-bf...`) can be supplied as `x-api-key`, `x-bf-vk`,
-    // or as a bearer token. Send both supported API-key headers with the same
-    // Bear-scoped virtual key secret to tolerate version-specific precedence.
+    // or as a bearer token. Our provisioning validation has confirmed `x-api-key`
+    // works with the deployed Bifrost version; we also send `x-bf-vk` with the
+    // same Bear-scoped virtual key secret for compatibility with Bifrost versions
+    // and docs that name `x-bf-vk` as the governance virtual-key header.
     let req = apply_optional_header(req, "x-api-key", telemetry.field("bifrost_virtual_key"));
     apply_optional_header(req, "x-bf-vk", telemetry.field("bifrost_virtual_key"))
 }
