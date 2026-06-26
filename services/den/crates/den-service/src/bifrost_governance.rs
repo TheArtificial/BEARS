@@ -16,9 +16,15 @@ pub struct BifrostVirtualKeyProvisioned {
     pub value: String,
 }
 
+#[derive(Debug, Clone)]
+enum BifrostManagementAuth {
+    Bearer(String),
+    Cookie(String),
+}
+
 #[derive(Debug, Deserialize)]
 struct LoginResponse {
-    token: String,
+    token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +55,9 @@ struct VirtualKeyProviderConfig<'a> {
     weight: f32,
 }
 
+#[cfg(test)]
+mod tests;
+
 impl BifrostGovernanceClient {
     #[must_use]
     pub fn new(config: &Config) -> Self {
@@ -77,7 +86,7 @@ impl BifrostGovernanceClient {
         Ok(())
     }
 
-    async fn login(&self) -> Result<String, DenError> {
+    async fn login(&self) -> Result<BifrostManagementAuth, DenError> {
         self.ensure_configured()?;
         let url = format!("{}/session/login", self.management_url);
         let response = self
@@ -91,6 +100,16 @@ impl BifrostGovernanceClient {
             .await
             .map_err(|err| DenError::System(format!("Bifrost management login failed: {err}")))?;
         let status = response.status();
+        let cookie_header = response
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter_map(|value| value.split(';').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
         let text = response
             .text()
             .await
@@ -112,12 +131,17 @@ impl BifrostGovernanceClient {
                 "Bifrost management login JSON: {err}; body: {text}"
             ))
         })?;
-        if payload.token.trim().is_empty() {
-            return Err(DenError::System(
-                "Bifrost management login returned an empty token".to_string(),
-            ));
+        if let Some(token) = payload.token.map(|token| token.trim().to_string()) {
+            if !token.is_empty() {
+                return Ok(BifrostManagementAuth::Bearer(token));
+            }
         }
-        Ok(payload.token)
+        if !cookie_header.is_empty() {
+            return Ok(BifrostManagementAuth::Cookie(cookie_header));
+        }
+        Err(DenError::System(format!(
+            "Bifrost management login succeeded but returned neither a token nor a session cookie; body: {text}"
+        )))
     }
 
     pub async fn create_bear_virtual_key(
@@ -125,7 +149,7 @@ impl BifrostGovernanceClient {
         bear_id: uuid::Uuid,
         bear_slug: &str,
     ) -> Result<BifrostVirtualKeyProvisioned, DenError> {
-        let token = self.login().await?;
+        let auth = self.login().await?;
         let short_id = bear_id.simple().to_string();
         let short_id = &short_id[..12];
         let name = format!("bear:{bear_slug}:{short_id}");
@@ -142,11 +166,14 @@ impl BifrostGovernanceClient {
             }],
         };
         let url = format!("{}/governance/virtual-keys", self.management_url);
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(token)
-            .json(&request)
+        let mut builder = self.http.post(&url).json(&request);
+        builder = match auth {
+            BifrostManagementAuth::Bearer(token) => builder.bearer_auth(token),
+            BifrostManagementAuth::Cookie(cookie) => {
+                builder.header(reqwest::header::COOKIE, cookie)
+            }
+        };
+        let response = builder
             .send()
             .await
             .map_err(|err| DenError::System(format!("Bifrost virtual key create failed: {err}")))?;
