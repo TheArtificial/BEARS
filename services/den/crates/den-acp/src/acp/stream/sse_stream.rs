@@ -39,6 +39,10 @@ use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};
 
 /// Maximum silence before emitting a phase-aware status heartbeat to the adapter.
 const ACP_STATUS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(6);
+const CONTINUATION_FAILURE_TIMEOUT: &str = "runtime_tool_result_followup_timeout";
+const CONTINUATION_FAILURE_EMPTY: &str = "runtime_tool_result_missing_terminal";
+const CONTINUATION_FAILURE_PROGRESS_ONLY: &str =
+    "runtime_tool_result_progress_only_terminal_missing";
 
 pub(in crate::acp) struct AcpRuntimeSseStream {
     pub(in crate::acp) inner:
@@ -708,9 +712,9 @@ impl Stream for AcpRuntimeSseStream {
                                 let continuation_terminal_failure = matches!(
                                     &event,
                                     GatewayEvent::Error { error_type: Some(error_type), .. }
-                                        if error_type == "runtime_tool_result_followup_timeout"
-                                            || error_type == "runtime_tool_result_missing_terminal"
-                                            || error_type == "runtime_tool_result_progress_only_terminal_missing"
+                                        if error_type == CONTINUATION_FAILURE_TIMEOUT
+                                            || error_type == CONTINUATION_FAILURE_EMPTY
+                                            || error_type == CONTINUATION_FAILURE_PROGRESS_ONLY
                                 );
                                 for event in this.text_chunker.push(event) {
                                     this.push_adapter_event(event);
@@ -961,12 +965,13 @@ impl Stream for AcpRuntimeSseStream {
                                                 "No assistant message or terminal event arrived within {}ms after the completed tool result was submitted.",
                                                 followup_timeout.as_millis(),
                                             )),
-                                            error_type: Some("runtime_tool_result_followup_timeout".to_string()),
+                                            error_type: Some(CONTINUATION_FAILURE_TIMEOUT.to_string()),
                                             request_id: Some(request_id.clone()),
                                             context: Some(serde_json::json!({
                                                 "component": "den.acp",
                                                 "acp_session_id": acp_session_id,
                                                 "timeout_ms": followup_timeout.as_millis(),
+                                                "continuation_failure_kind": "timeout",
                                             })),
                                         });
                                         saw_terminal_event = true;
@@ -975,22 +980,24 @@ impl Stream for AcpRuntimeSseStream {
                                         queued_events.push(GatewayEvent::Error {
                                             message: "Tool finished and the runtime emitted progress, but no terminal response followed.".to_string(),
                                             detail: Some("The continuation stream ended after non-terminal progress/status events without assistant completion or a terminal event.".to_string()),
-                                            error_type: Some("runtime_tool_result_progress_only_terminal_missing".to_string()),
+                                            error_type: Some(CONTINUATION_FAILURE_PROGRESS_ONLY.to_string()),
                                             request_id: Some(request_id.clone()),
                                             context: Some(serde_json::json!({
                                                 "component": "den.acp",
                                                 "acp_session_id": acp_session_id,
+                                                "continuation_failure_kind": "progress_only_terminal_missing",
                                             })),
                                         });
                                     } else if !saw_terminal_event {
                                         queued_events.push(GatewayEvent::Error {
                                             message: "Tool finished but the runtime did not send a follow-up assistant response.".to_string(),
                                             detail: Some("The continuation stream ended after a completed tool result without assistant text or a terminal event.".to_string()),
-                                            error_type: Some("runtime_tool_result_missing_terminal".to_string()),
+                                            error_type: Some(CONTINUATION_FAILURE_EMPTY.to_string()),
                                             request_id: Some(request_id.clone()),
                                             context: Some(serde_json::json!({
                                                 "component": "den.acp",
                                                 "acp_session_id": acp_session_id,
+                                                "continuation_failure_kind": "empty_terminal_missing",
                                             })),
                                         });
                                     }
