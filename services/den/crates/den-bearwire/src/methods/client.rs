@@ -34,6 +34,8 @@ use crate::methods::run::{
 };
 use crate::methods::{param_string, required_param_string};
 
+const MAX_PERMISSION_RESULTS_PER_RUN: i64 = 8;
+
 fn continuation_watchdog_timeout() -> Duration {
     let millis = std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
         .ok()
@@ -482,6 +484,33 @@ pub(crate) async fn client_tool_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+    let permission_result_count = bearwire_runs::client_result_count_for_run_kind(
+        &state.sqlx_pool,
+        &run_id,
+        "permission",
+    )
+    .await?;
+    if permission_result_count >= MAX_PERMISSION_RESULTS_PER_RUN {
+        persist_run_failed(
+            &state.sqlx_pool,
+            &session_id,
+            &run_id,
+            bear.id,
+            user_id,
+            "permission_continuation_limit_exceeded",
+            format!(
+                "BearWire run exceeded the permission continuation limit of {} approvals.",
+                MAX_PERMISSION_RESULTS_PER_RUN
+            ),
+        )
+        .await;
+        return Ok(json!({
+            "ok": false,
+            "status": "permission_continuation_limit_exceeded",
+            "run_state": "failed",
+            "max_permission_results": MAX_PERMISSION_RESULTS_PER_RUN,
+        }));
+    }
     let record = bearwire_runs::record_client_result(
         &state.sqlx_pool,
         &run_id,

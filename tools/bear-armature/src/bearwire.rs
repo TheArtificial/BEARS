@@ -1000,6 +1000,21 @@ async fn handle_bearwire_event(
             )
             .await?;
         }
+        "permission.granted" | "permission.denied" | "permission.expired" => {
+            diagnostics.saw_tool_activity = true;
+            outcome.saw_tool_activity = true;
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: BearWire permission event session_id={} type={} permission_id={}",
+                    session_id,
+                    ty,
+                    event
+                        .pointer("/data/permission_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<unknown>")
+                );
+            }
+        }
         "run.paused" => {
             let reason = event
                 .pointer("/data/reason")

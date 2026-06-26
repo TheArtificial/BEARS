@@ -280,6 +280,25 @@ pub async fn record_client_result(
     }
 }
 
+pub async fn client_result_count_for_run_kind(
+    pool: &PgPool,
+    run_id: &str,
+    obligation_kind: &str,
+) -> Result<i64, DenError> {
+    let count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM bearwire_client_results
+        WHERE run_id = $1 AND obligation_kind = $2
+        "#,
+    )
+    .bind(run_id)
+    .bind(obligation_kind)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
 pub async fn transition_run(
     pool: &PgPool,
     run_id: &str,
