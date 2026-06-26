@@ -50,12 +50,11 @@ fn bifrost_management_auth_config_flags_stale_disabled_runtime_config() {
 }
 
 #[test]
-fn bifrost_management_auth_config_flags_misnested_auth_config() {
+fn bifrost_management_auth_config_accepts_enabled_governance_auth() {
     let check = bifrost_management_auth_config_check_from_value(&serde_json::json!({
         "governance": { "auth_config": { "is_enabled": true } }
     }));
 
-    assert_eq!(check.state, CheckState::Fail);
-    assert!(check.detail.contains("governance.auth_config"));
-    assert!(check.detail.contains("top-level auth_config"));
+    assert_eq!(check.state, CheckState::Ok);
+    assert!(check.detail.contains("auth_config.is_enabled=true"));
 }

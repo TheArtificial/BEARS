@@ -182,28 +182,32 @@ def validate_bifrost_model_metadata_config() -> None:
                 "Bifrost config bears.models must be an array when bears metadata is present"
             )
 
-    misplaced_governance = config.get("governance")
-    if isinstance(misplaced_governance, dict) and "auth_config" in misplaced_governance:
+    if "auth_config" in config:
         fail(
-            "Bifrost config auth_config must be top-level, not governance.auth_config; otherwise /api/session/login reports authentication is not enabled"
+            "Bifrost config top-level auth_config is deprecated; use governance.auth_config so /api/session/login is enabled after config-store reconciliation"
         )
 
-    auth_config = config.get("auth_config")
+    governance = config.get("governance")
+    if not isinstance(governance, dict):
+        fail(
+            "Bifrost config must include governance.auth_config for runtime virtual-key provisioning"
+        )
+    auth_config = governance.get("auth_config")
     if not isinstance(auth_config, dict):
         fail(
-            "Bifrost config must include top-level auth_config for runtime virtual-key provisioning"
+            "Bifrost config must include governance.auth_config for runtime virtual-key provisioning"
         )
     if auth_config.get("is_enabled") is not True:
         fail(
-            "Bifrost config auth_config.is_enabled must be true for Den to provision virtual keys"
+            "Bifrost config governance.auth_config.is_enabled must be true for Den to provision virtual keys"
         )
     if auth_config.get("admin_username") != "env.BIFROST_ADMIN_USERNAME":
         fail(
-            "Bifrost config auth_config.admin_username must be env.BIFROST_ADMIN_USERNAME"
+            "Bifrost config governance.auth_config.admin_username must be env.BIFROST_ADMIN_USERNAME"
         )
     if auth_config.get("admin_password") != "env.BIFROST_ADMIN_PASSWORD":
         fail(
-            "Bifrost config auth_config.admin_password must be env.BIFROST_ADMIN_PASSWORD"
+            "Bifrost config governance.auth_config.admin_password must be env.BIFROST_ADMIN_PASSWORD"
         )
 
     providers = config.get("providers")

@@ -284,7 +284,7 @@ async fn auth_disabled_login_error_includes_config_store_reset_hint() {
     let message = err.to_string();
 
     assert!(message.contains("Authentication is not enabled"));
-    assert!(message.contains("auth_config.is_enabled=true"));
+    assert!(message.contains("governance.auth_config.is_enabled=true"));
     assert!(message.contains("/app/data/config.db"));
     let records = records.lock().expect("records mutex");
     assert_eq!(records.len(), 1);

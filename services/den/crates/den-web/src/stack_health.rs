@@ -519,24 +519,17 @@ async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
 }
 
 fn bifrost_management_auth_config_check_from_value(value: &serde_json::Value) -> HealthCheck {
-    if value
-        .get("governance")
-        .and_then(|governance| governance.get("auth_config"))
-        .is_some()
-        && value.get("auth_config").is_none()
-    {
-        return HealthCheck {
-            id: "bifrost_management_auth",
-            label: "Bifrost management auth",
-            state: CheckState::Fail,
-            detail: "runtime config exposes governance.auth_config but no top-level auth_config; redeploy Bifrost with top-level auth_config and reset stale /app/data/config.db if needed".into(),
-        };
-    }
-
-    match value
+    let auth_enabled = value
         .get("auth_config")
+        .or_else(|| {
+            value
+                .get("governance")
+                .and_then(|governance| governance.get("auth_config"))
+        })
         .and_then(|auth_config| auth_config.get("is_enabled"))
-        .and_then(serde_json::Value::as_bool)
+        .and_then(serde_json::Value::as_bool);
+
+    match auth_enabled
     {
         Some(true) => HealthCheck {
             id: "bifrost_management_auth",
@@ -551,7 +544,7 @@ fn bifrost_management_auth_config_check_from_value(value: &serde_json::Value) ->
             id: "bifrost_management_auth",
             label: "Bifrost management auth",
             state: CheckState::Fail,
-            detail: "runtime /api/config does not expose auth_config.is_enabled; Den cannot verify Bifrost virtual-key management auth".into(),
+            detail: "runtime /api/config does not expose auth_config.is_enabled or governance.auth_config.is_enabled; Den cannot verify Bifrost virtual-key management auth".into(),
         },
     }
 }
@@ -562,7 +555,7 @@ fn stale_bifrost_auth_config_check(observed: String) -> HealthCheck {
         label: "Bifrost management auth",
         state: CheckState::Fail,
         detail: format!(
-            "{observed}. Bifrost virtual-key provisioning will fail. If services/bifrost/config.json has top-level auth_config.is_enabled=true, Bifrost is likely serving stale config-store state from /app/data/config.db; recreate/reset bears-bifrost config.db after redeploying the corrected image."
+            "{observed}. Bifrost virtual-key provisioning will fail. If services/bifrost/config.json has governance.auth_config.is_enabled=true, Bifrost is likely serving stale config-store state from /app/data/config.db or reading a different config file; recreate/reset bears-bifrost config.db after redeploying the corrected image."
         ),
     }
 }

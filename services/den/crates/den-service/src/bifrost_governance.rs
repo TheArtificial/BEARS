@@ -140,7 +140,7 @@ impl BifrostGovernanceClient {
             let hint = if status == reqwest::StatusCode::FORBIDDEN
                 && text.contains("Authentication is not enabled")
             {
-                "; Bifrost management auth is disabled. Den cannot create virtual keys without a management session token. Ensure Bifrost runtime /api/config reports top-level auth_config.is_enabled=true; if the checked-in config is correct, reset stale /app/data/config.db and recreate bears-bifrost."
+                "; Bifrost management auth is disabled. Den cannot create virtual keys without a management session token. Ensure services/bifrost/config.json uses governance.auth_config.is_enabled=true and Bifrost runtime /api/config reports auth enabled; if the checked-in config is correct, reset stale /app/data/config.db and recreate bears-bifrost."
             } else {
                 ""
             };
