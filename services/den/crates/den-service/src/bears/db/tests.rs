@@ -11,14 +11,14 @@ fn row(id: Option<&str>, value: Option<&str>, encrypted: Option<String>) -> Bear
 }
 
 #[test]
-fn bifrost_inference_header_prefers_virtual_key_id() {
+fn bifrost_inference_header_uses_virtual_key_secret_value_not_id() {
     let selected = bifrost_virtual_key_for_inference_from_row(
         row(Some("vk_123"), Some("sk-bf-secret"), None),
         "unused-secret-key",
     )
     .expect("select inference key");
 
-    assert_eq!(selected.as_deref(), Some("vk_123"));
+    assert_eq!(selected.as_deref(), Some("sk-bf-secret"));
 }
 
 #[test]
@@ -33,9 +33,9 @@ fn bifrost_inference_header_falls_back_to_legacy_plaintext_value_without_id() {
 }
 
 #[test]
-fn bifrost_inference_header_trims_blank_id_before_fallback() {
+fn bifrost_inference_header_ignores_id_when_selecting_secret_value() {
     let selected = bifrost_virtual_key_for_inference_from_row(
-        row(Some("   "), Some("sk-bf-legacy"), None),
+        row(Some("vk_123"), Some("sk-bf-legacy"), None),
         "unused-secret-key",
     )
     .expect("select inference key");

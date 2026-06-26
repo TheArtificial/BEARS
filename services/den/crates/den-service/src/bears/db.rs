@@ -729,14 +729,6 @@ fn bifrost_virtual_key_for_inference_from_row(
     row: BearBifrostVirtualKey,
     secret_encryption_key: &str,
 ) -> Result<Option<String>, DenError> {
-    if let Some(id) = row
-        .virtual_key_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(Some(id.to_string()));
-    }
     bifrost_virtual_key_secret_from_row(row, secret_encryption_key)
 }
 

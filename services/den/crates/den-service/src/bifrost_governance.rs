@@ -20,7 +20,6 @@ pub struct BifrostVirtualKeyProvisioned {
 enum BifrostManagementAuth {
     Bearer(String),
     Cookie(String),
-    Unauthenticated,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,18 +115,15 @@ impl BifrostGovernanceClient {
             .await
             .map_err(|err| DenError::System(format!("Bifrost management login body: {err}")))?;
         if !status.is_success() {
-            if status == reqwest::StatusCode::FORBIDDEN
+            let hint = if status == reqwest::StatusCode::FORBIDDEN
                 && text.contains("Authentication is not enabled")
             {
-                tracing::warn!(
-                    status = %status,
-                    response_body = %text,
-                    "Bifrost management auth is disabled; attempting unauthenticated governance request"
-                );
-                return Ok(BifrostManagementAuth::Unauthenticated);
-            }
+                "; Bifrost management auth is disabled. Den cannot create virtual keys without a management session token. Ensure Bifrost runtime /api/config reports top-level auth_config.is_enabled=true; if the checked-in config is correct, reset stale /app/data/config.db and recreate bears-bifrost."
+            } else {
+                ""
+            };
             return Err(DenError::System(format!(
-                "Bifrost management login HTTP {status}: {text}"
+                "Bifrost management login HTTP {status}: {text}{hint}"
             )));
         }
         let payload = serde_json::from_str::<LoginResponse>(&text).map_err(|err| {
@@ -176,7 +172,6 @@ impl BifrostGovernanceClient {
             BifrostManagementAuth::Cookie(cookie) => {
                 builder.header(reqwest::header::COOKIE, cookie)
             }
-            BifrostManagementAuth::Unauthenticated => builder,
         };
         let response = builder
             .send()

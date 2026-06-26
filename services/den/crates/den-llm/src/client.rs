@@ -434,6 +434,28 @@ fn apply_bears_telemetry_headers(
     apply_optional_header(req, "x-bears-stance", telemetry.field("stance"))
 }
 
+fn has_bifrost_virtual_key(telemetry: Option<&LlmRequestTelemetry>) -> bool {
+    telemetry
+        .and_then(|telemetry| telemetry.field("bifrost_virtual_key"))
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn require_bifrost_virtual_key(telemetry: Option<&LlmRequestTelemetry>) -> Result<(), DenError> {
+    if has_bifrost_virtual_key(telemetry) {
+        return Ok(());
+    }
+    let bear_id = telemetry
+        .and_then(|telemetry| telemetry.bear_id.as_deref())
+        .unwrap_or("unknown");
+    let conversation_id = telemetry
+        .and_then(|telemetry| telemetry.conversation_id.as_deref())
+        .unwrap_or("unknown");
+    Err(DenError::System(format!(
+        "Bifrost virtual key is required for LLM inference, but none is configured for this request. Provision a Bear-scoped Bifrost virtual key before running this Bear. Context: bear_id={bear_id}, conversation_id={conversation_id}."
+    )))
+}
+
 fn apply_bifrost_virtual_key_header(
     req: reqwest::RequestBuilder,
     telemetry: Option<&LlmRequestTelemetry>,
@@ -441,7 +463,11 @@ fn apply_bifrost_virtual_key_header(
     let Some(telemetry) = telemetry else {
         return req;
     };
-    apply_optional_header(req, "x-bf-vk", telemetry.field("bifrost_virtual_key"))
+    // Bifrost virtual keys are inference credentials. Per Bifrost's OpenAPI
+    // docs, virtual keys (`sk-bf...`) can be supplied as `x-api-key` or as a
+    // bearer token. Use `x-api-key` so it does not conflict with deployments
+    // that still set LLM_API_KEY/OPENAI_API_KEY for non-virtual-key traffic.
+    apply_optional_header(req, "x-api-key", telemetry.field("bifrost_virtual_key"))
 }
 
 fn apply_bifrost_session_cache_headers(
@@ -496,7 +522,7 @@ fn bifrost_virtual_key_not_found_diagnostic(
         .unwrap_or(false);
     let api_style = api_style.as_str();
     format!(
-        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent x-bf-vk (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored virtual_key_id exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. If Bifrost expects a different x-bf-vk value shape for this version, compare the stored virtual_key_id and generated secret value. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
+        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent a Bifrost virtual key as x-api-key (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored encrypted virtual-key secret still exists, that the corresponding key exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
     )
 }
 
@@ -648,7 +674,6 @@ impl Drop for TimedLlmByteStream {
 pub struct LlmClient {
     http: reqwest::Client,
     base_url: String,
-    api_key: String,
     default_model: String,
 }
 
@@ -662,7 +687,6 @@ impl LlmClient {
         Self {
             http,
             base_url: config.llm_api_url.trim_end_matches('/').to_string(),
-            api_key: config.llm_api_key.clone(),
             default_model: normalize_llm_model_handle(&config.default_llm_model),
         }
     }
@@ -692,6 +716,7 @@ impl LlmClient {
                 "LLM API is not configured (set LLM_API_URL or BIFROST_BASE_URL)".to_string(),
             ));
         }
+        require_bifrost_virtual_key(request.telemetry.as_ref())?;
         let url = format!("{}/chat/completions", self.base_url);
         let message_chain_diagnostic = chat_message_chain_diagnostic(&request.messages);
         if message_chain_diagnostic
@@ -733,9 +758,6 @@ impl LlmClient {
         req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
         req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
         req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
-        if !self.api_key.is_empty() {
-            req = req.bearer_auth(&self.api_key);
-        }
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(
                 model = %request.model,
@@ -785,9 +807,6 @@ impl LlmClient {
                 let mut retry_req = self.http.post(&url).json(&body);
                 retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
                 retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
-                if !self.api_key.is_empty() {
-                    retry_req = retry_req.bearer_auth(&self.api_key);
-                }
                 let retry_resp = retry_req.send().await.map_err(|e| {
                     let diagnostic = bifrost_key_selection_diagnostic(
                         LlmApiStyle::ChatCompletionsStream,
@@ -858,6 +877,7 @@ impl LlmClient {
                 "LLM API is not configured (set LLM_API_URL or BIFROST_BASE_URL)".to_string(),
             ));
         }
+        require_bifrost_virtual_key(request.telemetry.as_ref())?;
         let url = format!("{}/responses", self.base_url);
         let model_handle = DenModelHandle::normalize(&request.model);
         tracing::info!(
@@ -879,9 +899,6 @@ impl LlmClient {
         req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
         req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
         req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
-        if !self.api_key.is_empty() {
-            req = req.bearer_auth(&self.api_key);
-        }
         let resp = req.send().await.map_err(|e| {
             tracing::warn!(
                 model_handle = %model_handle,
@@ -930,9 +947,6 @@ impl LlmClient {
                 let mut retry_req = self.http.post(&url).json(&body);
                 retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
                 retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
-                if !self.api_key.is_empty() {
-                    retry_req = retry_req.bearer_auth(&self.api_key);
-                }
                 let retry_resp = retry_req.send().await.map_err(|e| {
                     let diagnostic = bifrost_key_selection_diagnostic(
                         LlmApiStyle::ResponsesStream,
