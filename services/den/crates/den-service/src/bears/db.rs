@@ -31,6 +31,14 @@ pub struct BearProfileModelSetting {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct BearBifrostVirtualKey {
+    pub bear_id: Uuid,
+    pub virtual_key_id: Option<String>,
+    pub virtual_key_name: Option<String>,
+    pub virtual_key_value: Option<String>,
+}
+
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
@@ -671,6 +679,82 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
+pub async fn get_bear_bifrost_virtual_key(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Option<BearBifrostVirtualKey>, DenError> {
+    match sqlx::query_as::<_, BearBifrostVirtualKey>(
+        r#"
+        SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value
+        FROM bear_bifrost_virtual_keys
+        WHERE bear_id = $1
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(row) => Ok(row),
+        Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42P01") => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub async fn bifrost_virtual_key_value_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Option<String>, DenError> {
+    Ok(get_bear_bifrost_virtual_key(pool, bear_id)
+        .await?
+        .and_then(|row| row.virtual_key_value)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
+}
+
+pub async fn set_bear_bifrost_virtual_key(
+    pool: &PgPool,
+    bear_id: Uuid,
+    virtual_key_id: Option<&str>,
+    virtual_key_name: Option<&str>,
+    virtual_key_value: Option<&str>,
+) -> Result<(), DenError> {
+    let virtual_key_id = virtual_key_id.map(str::trim).filter(|s| !s.is_empty());
+    let virtual_key_name = virtual_key_name.map(str::trim).filter(|s| !s.is_empty());
+    let virtual_key_value = virtual_key_value.map(str::trim).filter(|s| !s.is_empty());
+    if virtual_key_id.is_none() && virtual_key_name.is_none() && virtual_key_value.is_none() {
+        clear_bear_bifrost_virtual_key(pool, bear_id).await?;
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO bear_bifrost_virtual_keys (
+            bear_id, virtual_key_id, virtual_key_name, virtual_key_value, updated_at
+        )
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (bear_id) DO UPDATE
+        SET virtual_key_id = EXCLUDED.virtual_key_id,
+            virtual_key_name = EXCLUDED.virtual_key_name,
+            virtual_key_value = EXCLUDED.virtual_key_value,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(virtual_key_id)
+    .bind(virtual_key_name)
+    .bind(virtual_key_value)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn clear_bear_bifrost_virtual_key(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {
+    sqlx::query("DELETE FROM bear_bifrost_virtual_keys WHERE bear_id = $1")
+        .bind(bear_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn list_profile_model_settings(
     pool: &PgPool,
     bear_id: Uuid,
@@ -705,10 +789,12 @@ pub async fn profile_model_setting(
     .bind(profile.as_str())
     .fetch_optional(pool)
     .await
-    .map(|row| row.flatten().and_then(|model| {
-        let trimmed = model.trim().to_string();
-        (!trimmed.is_empty()).then_some(trimmed)
-    }))
+    .map(|row| {
+        row.flatten().and_then(|model| {
+            let trimmed = model.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+    })
     .map_err(Into::into)
 }
 

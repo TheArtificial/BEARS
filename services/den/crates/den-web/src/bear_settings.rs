@@ -138,6 +138,14 @@ struct BearModelsForm {
     watch_model: String,
     #[serde(default)]
     watch_model_custom: String,
+    #[serde(default)]
+    bifrost_virtual_key_id: String,
+    #[serde(default)]
+    bifrost_virtual_key_name: String,
+    #[serde(default)]
+    bifrost_virtual_key_value: String,
+    #[serde(default)]
+    bifrost_virtual_key_clear: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1018,6 +1026,8 @@ async fn models_view(
     let bear_default_availability_status =
         model_availability_status(&live_model_options, bear_default_model);
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
+    let bifrost_virtual_key =
+        bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
     web::render_template(
         &state,
         "bear/settings/models.html",
@@ -1031,6 +1041,9 @@ async fn models_view(
             bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
             bear_default_availability_status,
             bear_default_metadata_status,
+            bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
+            bifrost_virtual_key_name => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_name.as_deref()).unwrap_or(""),
+            bifrost_virtual_key_configured => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_value.as_deref()).map(|value| !value.trim().is_empty()).unwrap_or(false),
             message => query.message,
             error => query.error,
             can_manage_bear,
@@ -1127,6 +1140,36 @@ async fn models_post(
         let model = configured_model_from_form(raw);
         bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
             .await?;
+    }
+
+    let clear_bifrost_key = matches!(
+        form.bifrost_virtual_key_clear.trim(),
+        "on" | "true" | "1" | "yes"
+    );
+    if clear_bifrost_key {
+        bears_db::clear_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
+    } else {
+        let existing = bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
+        let key_id = form.bifrost_virtual_key_id.trim();
+        let key_name = form.bifrost_virtual_key_name.trim();
+        let new_value = form.bifrost_virtual_key_value.trim();
+        let value = if new_value.is_empty() {
+            existing
+                .as_ref()
+                .and_then(|row| row.virtual_key_value.as_deref())
+        } else {
+            Some(new_value)
+        };
+        if !key_id.is_empty() || !key_name.is_empty() || value.is_some() {
+            bears_db::set_bear_bifrost_virtual_key(
+                state.sqlx_pool(),
+                bear.id,
+                (!key_id.is_empty()).then_some(key_id),
+                (!key_name.is_empty()).then_some(key_name),
+                value,
+            )
+            .await?;
+        }
     }
 
     Ok(Redirect::to(&format!(

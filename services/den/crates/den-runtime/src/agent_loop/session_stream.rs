@@ -8,7 +8,6 @@ use futures::Stream;
 
 use crate::{
     agent_loop::{
-        AgentStepOverflowContext,
         approvals::create_native_approval,
         run_agent_step_stream,
         session_store::AgentLoopSessionStore,
@@ -17,6 +16,7 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
+        AgentStepOverflowContext,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     memory::MemoryStoreManager,
@@ -31,7 +31,7 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
-use den_core::{DenError, config::Config, profile::BearProfile};
+use den_core::{config::Config, profile::BearProfile, DenError};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -798,8 +798,8 @@ mod tests {
     use super::*;
     use std::{
         sync::{
-            Arc,
             atomic::{AtomicUsize, Ordering},
+            Arc,
         },
         task::{RawWaker, RawWakerVTable, Waker},
     };
@@ -847,6 +847,7 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             model: "openai/test".to_string(),
+            bifrost_virtual_key: None,
             api_style: None,
             step: 0,
             max_steps: 4,

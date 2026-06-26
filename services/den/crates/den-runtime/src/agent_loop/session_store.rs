@@ -24,6 +24,7 @@ pub struct AgentLoopSession {
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
     pub model: String,
+    pub bifrost_virtual_key: Option<String>,
     pub api_style: Option<LlmApiStyle>,
     pub step: u32,
     pub max_steps: u32,
@@ -44,6 +45,7 @@ impl AgentLoopSession {
             conversation_id: Some(self.conversation_id.clone()),
             bear_id: Some(self.bear_id.to_string()),
             stance: Some(self.profile.as_str().to_string()),
+            bifrost_virtual_key: self.bifrost_virtual_key.clone(),
         }
     }
 }

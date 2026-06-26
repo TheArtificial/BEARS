@@ -311,6 +311,8 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
+    let bifrost_virtual_key =
+        crate::bears::db::bifrost_virtual_key_value_for_bear(deps.pool, bear.id).await?;
     let session = AgentLoopSession {
         session_key,
         bear_id,
@@ -323,6 +325,7 @@ async fn build_session(
         messages,
         tools,
         model,
+        bifrost_virtual_key,
         api_style,
         step: 0,
         max_steps: profile.max_steps,

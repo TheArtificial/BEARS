@@ -45,7 +45,19 @@
     <option value="{{ m.handle | e }}"{% if bear.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
     {% endfor %}
   </select>
-  <p class="form-hint">The shortcut list is curated. The Model field above accepts any value from Bifrost's live model catalog.</p>
+  <p class="form-hint">The shortcut list is curated. The Model field accepts configured Den model options and any live Bifrost options shown in autocomplete.</p>
+
+  <h3>Bifrost virtual key</h3>
+  <p class="form-hint">Optional Bear-scoped gateway governance. When configured, Den sends this value as <code>x-bf-vk</code> on this Bear's LLM requests so Bifrost can enforce usage, budgets, and model policy for the Bear.</p>
+  <label for="bifrost_virtual_key_id">Virtual key ID</label>
+  <input id="bifrost_virtual_key_id" name="bifrost_virtual_key_id" value="{{ bifrost_virtual_key_id | e }}" placeholder="Bifrost virtual key id" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
+  <label for="bifrost_virtual_key_name">Virtual key name</label>
+  <input id="bifrost_virtual_key_name" name="bifrost_virtual_key_name" value="{{ bifrost_virtual_key_name | e }}" placeholder="Bifrost virtual key name" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
+  <label for="bifrost_virtual_key_value">Virtual key value</label>
+  <input id="bifrost_virtual_key_value" name="bifrost_virtual_key_value" type="password" value="" placeholder="{% if bifrost_virtual_key_configured %}Configured — leave blank to keep current value{% else %}sk-bf-…{% endif %}" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
+  {% if bifrost_virtual_key_configured %}
+  <label><input type="checkbox" name="bifrost_virtual_key_clear"{% if not can_manage_bear %} disabled{% endif %}> Clear configured Bifrost virtual key value</label>
+  {% endif %}
 
   <h3>Stance defaults</h3>
   <p class="form-hint">Use <code>inherit</code> unless a stance needs a different tradeoff.</p>
@@ -109,7 +121,7 @@
     var value = input.value.trim();
     var allowed = allowedValues();
     if (!value) {
-      input.setCustomValidity("Choose inherit or a Bifrost model.");
+      input.setCustomValidity("Choose inherit or a configured model.");
     } else if (!allowed.has(value)) {
       input.setCustomValidity("Choose a value from the model list.");
     } else {

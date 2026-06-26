@@ -120,6 +120,7 @@ pub struct LlmRequestTelemetry {
     pub conversation_id: Option<String>,
     pub bear_id: Option<String>,
     pub stance: Option<String>,
+    pub bifrost_virtual_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +255,7 @@ impl LlmRequestTelemetry {
             "conversation_id" => self.conversation_id.as_deref(),
             "bear_id" => self.bear_id.as_deref(),
             "stance" => self.stance.as_deref(),
+            "bifrost_virtual_key" => self.bifrost_virtual_key.as_deref(),
             _ => None,
         }
     }
@@ -426,6 +428,16 @@ fn apply_bears_telemetry_headers(
     );
     req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
     apply_optional_header(req, "x-bears-stance", telemetry.field("stance"))
+}
+
+fn apply_bifrost_virtual_key_header(
+    req: reqwest::RequestBuilder,
+    telemetry: Option<&LlmRequestTelemetry>,
+) -> reqwest::RequestBuilder {
+    let Some(telemetry) = telemetry else {
+        return req;
+    };
+    apply_optional_header(req, "x-bf-vk", telemetry.field("bifrost_virtual_key"))
 }
 
 fn apply_bifrost_session_cache_headers(
@@ -681,6 +693,7 @@ impl LlmClient {
         let body = request.to_body();
         let mut req = self.http.post(&url).json(&body);
         req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+        req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
         req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -724,6 +737,7 @@ impl LlmClient {
                 );
                 let mut retry_req = self.http.post(&url).json(&body);
                 retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
+                retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
                 if !self.api_key.is_empty() {
                     retry_req = retry_req.bearer_auth(&self.api_key);
                 }
@@ -816,6 +830,7 @@ impl LlmClient {
         let body = request.to_responses_body();
         let mut req = self.http.post(&url).json(&body);
         req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+        req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
         req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -858,6 +873,7 @@ impl LlmClient {
                 );
                 let mut retry_req = self.http.post(&url).json(&body);
                 retry_req = apply_bears_telemetry_headers(retry_req, request.telemetry.as_ref());
+                retry_req = apply_bifrost_virtual_key_header(retry_req, request.telemetry.as_ref());
                 if !self.api_key.is_empty() {
                     retry_req = retry_req.bearer_auth(&self.api_key);
                 }
