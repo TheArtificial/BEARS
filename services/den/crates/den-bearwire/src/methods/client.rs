@@ -204,9 +204,26 @@ fn spawn_continuation_task(
                 )
                 .await;
                 let mut first_event_seen = false;
+                let mut runtime_event_count = 0usize;
+                let mut terminal_event_seen = false;
+                let mut last_event_kind: Option<&'static str> = None;
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
+                            runtime_event_count += 1;
+                            let event_kind = crate::methods::run::runtime_event_kind(&runtime_event);
+                            last_event_kind = Some(event_kind);
+                            if matches!(
+                                &runtime_event,
+                                den_protocol::RuntimeStreamEvent::Semantic(
+                                    den_protocol::RuntimeSemanticEvent::TurnCompleted { .. }
+                                        | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
+                                        | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
+                                        | den_protocol::RuntimeSemanticEvent::Error { .. }
+                                )
+                            ) {
+                                terminal_event_seen = true;
+                            }
                             if !first_event_seen {
                                 first_event_seen = true;
                                 persist_run_progress(
@@ -220,7 +237,7 @@ fn spawn_continuation_task(
                                     "Received first runtime event after continuation.",
                                     json!({
                                         "request_id": request_id,
-                                        "event_kind": crate::methods::run::runtime_event_kind(&runtime_event),
+                                        "event_kind": event_kind,
                                     }),
                                 )
                                 .await;
@@ -252,6 +269,32 @@ fn spawn_continuation_task(
                         }
                     }
                 }
+                persist_run_progress(
+                    &pool,
+                    &run.session_id,
+                    &run.run_id,
+                    run.bear_id,
+                    run.user_id,
+                    continuation_started_at,
+                    if terminal_event_seen {
+                        "continuation_stream_ended_after_terminal"
+                    } else {
+                        "continuation_stream_ended_without_terminal"
+                    },
+                    if terminal_event_seen {
+                        "Continuation stream ended after a terminal runtime event."
+                    } else {
+                        "Continuation stream ended without a terminal runtime event."
+                    },
+                    json!({
+                        "request_id": request_id,
+                        "runtime_event_count": runtime_event_count,
+                        "first_event_seen": first_event_seen,
+                        "terminal_event_seen": terminal_event_seen,
+                        "last_event_kind": last_event_kind,
+                    }),
+                )
+                .await;
             }
             Err(err) => {
                 persist_run_failed(
