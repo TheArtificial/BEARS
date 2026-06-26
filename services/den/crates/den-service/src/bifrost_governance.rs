@@ -39,6 +39,12 @@ pub struct BifrostVirtualKeyValidation {
 }
 
 #[derive(Debug, Clone)]
+pub struct BifrostVirtualKeyQuota {
+    pub auth_mode: BifrostVirtualKeyAuthMode,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
 enum BifrostManagementAuth {
     Bearer(String),
     Cookie(String),
@@ -67,6 +73,14 @@ struct CreateVirtualKeyRequest<'a> {
     description: &'a str,
     is_active: bool,
     provider_configs: Vec<VirtualKeyProviderConfig<'a>>,
+    budgets: Vec<CreateBudgetRequest<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateBudgetRequest<'a> {
+    max_limit: f64,
+    reset_duration: &'a str,
+    calendar_aligned: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,11 +180,11 @@ impl BifrostGovernanceClient {
         )))
     }
 
-    async fn validate_virtual_key_value_with_mode(
+    async fn virtual_key_quota_with_mode(
         &self,
         value: &str,
         mode: BifrostVirtualKeyAuthMode,
-    ) -> Result<BifrostVirtualKeyValidation, DenError> {
+    ) -> Result<BifrostVirtualKeyQuota, DenError> {
         self.ensure_configured()?;
         let value = value.trim();
         if value.is_empty() {
@@ -199,7 +213,16 @@ impl BifrostGovernanceClient {
             ))
         })?;
         if status.is_success() {
-            return Ok(BifrostVirtualKeyValidation { auth_mode: mode });
+            let payload = serde_json::from_str::<serde_json::Value>(&text).map_err(|err| {
+                DenError::Parsing(format!(
+                    "Bifrost virtual key quota JSON failed using {}: {err}; body: {text}",
+                    mode.as_str()
+                ))
+            })?;
+            return Ok(BifrostVirtualKeyQuota {
+                auth_mode: mode,
+                payload,
+            });
         }
         Err(DenError::System(format!(
             "Bifrost virtual key validation HTTP {status} using {}: {text}",
@@ -217,13 +240,38 @@ impl BifrostGovernanceClient {
             BifrostVirtualKeyAuthMode::XBfVk,
             BifrostVirtualKeyAuthMode::Bearer,
         ] {
-            match self.validate_virtual_key_value_with_mode(value, mode).await {
-                Ok(validation) => return Ok(validation),
+            match self.virtual_key_quota_with_mode(value, mode).await {
+                Ok(quota) => {
+                    return Ok(BifrostVirtualKeyValidation {
+                        auth_mode: quota.auth_mode,
+                    })
+                }
                 Err(err) => errors.push(format!("{}: {err}", mode.as_str())),
             }
         }
         Err(DenError::System(format!(
             "Bifrost did not recognize the provisioned virtual key via any supported auth header; {}",
+            errors.join("; ")
+        )))
+    }
+
+    pub async fn get_virtual_key_quota(
+        &self,
+        value: &str,
+    ) -> Result<BifrostVirtualKeyQuota, DenError> {
+        let mut errors = Vec::new();
+        for mode in [
+            BifrostVirtualKeyAuthMode::XApiKey,
+            BifrostVirtualKeyAuthMode::XBfVk,
+            BifrostVirtualKeyAuthMode::Bearer,
+        ] {
+            match self.virtual_key_quota_with_mode(value, mode).await {
+                Ok(quota) => return Ok(quota),
+                Err(err) => errors.push(format!("{}: {err}", mode.as_str())),
+            }
+        }
+        Err(DenError::System(format!(
+            "Bifrost did not recognize the virtual key via any supported auth header; {}",
             errors.join("; ")
         )))
     }
@@ -247,6 +295,14 @@ impl BifrostGovernanceClient {
                 allowed_models: vec!["*"],
                 key_ids: vec!["*"],
                 weight: 1.0,
+            }],
+            // A high calendar-month budget gives Bifrost a budget cycle to attach
+            // usage to without acting as a practical cap for normal operation.
+            // Operators can later replace this with a real Bear budget.
+            budgets: vec![CreateBudgetRequest {
+                max_limit: 1_000_000.0,
+                reset_duration: "1M",
+                calendar_aligned: true,
             }],
         };
         let url = format!("{}/governance/virtual-keys", self.management_url);

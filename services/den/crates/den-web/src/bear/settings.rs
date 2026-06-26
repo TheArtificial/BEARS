@@ -47,6 +47,7 @@ use crate::web::admin::bears::{
 };
 use crate::web::bear::create_support::{
     all_model_catalog_options_context, canonical_default_model_handle,
+    provision_bifrost_virtual_key_for_bear,
 };
 use den_llm::ModelOption;
 
@@ -162,6 +163,46 @@ struct BearProfileModelRow {
     source: String,
     availability_status: String,
     metadata_status: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BifrostUsageBudgetRow {
+    scope: String,
+    max_limit: String,
+    current_usage: String,
+    remaining: String,
+    reset_duration: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BifrostUsageModelRow {
+    model: String,
+    provider: String,
+    total_requests: String,
+    total_tokens: String,
+    total_cost: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BifrostUsageProviderRow {
+    provider: String,
+    allowed_models: String,
+    budget_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct BifrostUsageView {
+    status: String,
+    error: String,
+    virtual_key_name: String,
+    is_active: String,
+    auth_mode: String,
+    budget_rows: Vec<BifrostUsageBudgetRow>,
+    model_usage_rows: Vec<BifrostUsageModelRow>,
+    provider_rows: Vec<BifrostUsageProviderRow>,
+    has_budgets: bool,
+    has_model_usage: bool,
+    has_providers: bool,
 }
 
 const BEAR_BUNDLE_FORMAT: &str = "bear";
@@ -1002,6 +1043,233 @@ async fn model_page_rows(
     Ok(rows)
 }
 
+fn display_number(value: Option<f64>) -> String {
+    value
+        .map(|value| {
+            if value.fract().abs() < f64::EPSILON {
+                format!("{}", value as i64)
+            } else {
+                format!("{value:.4}")
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_string()
+            }
+        })
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn display_money(value: Option<f64>) -> String {
+    value
+        .map(|value| {
+            format!("${value:.4}")
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string()
+        })
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn json_f64(value: &serde_json::Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(serde_json::Value::as_f64)
+}
+
+fn json_str(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("—")
+        .to_string()
+}
+
+fn add_budget_rows(
+    rows: &mut Vec<BifrostUsageBudgetRow>,
+    model_rows: &mut Vec<BifrostUsageModelRow>,
+    scope: String,
+    budgets: Option<&Vec<serde_json::Value>>,
+) {
+    let Some(budgets) = budgets else {
+        return;
+    };
+    for budget in budgets {
+        let max_limit = json_f64(budget, "max_limit");
+        let current_usage = json_f64(budget, "current_usage");
+        rows.push(BifrostUsageBudgetRow {
+            scope: scope.clone(),
+            max_limit: display_money(max_limit),
+            current_usage: display_money(current_usage),
+            remaining: display_money(
+                max_limit
+                    .zip(current_usage)
+                    .map(|(max, current)| max - current),
+            ),
+            reset_duration: json_str(budget, "reset_duration"),
+        });
+        if let Some(per_model) = budget
+            .get("per_model_usage")
+            .and_then(serde_json::Value::as_array)
+        {
+            for model in per_model {
+                model_rows.push(BifrostUsageModelRow {
+                    model: json_str(model, "model"),
+                    provider: json_str(model, "provider"),
+                    total_requests: display_number(json_f64(model, "total_requests")),
+                    total_tokens: display_number(json_f64(model, "total_tokens")),
+                    total_cost: display_money(json_f64(model, "total_cost")),
+                });
+            }
+        }
+    }
+}
+
+fn bifrost_usage_from_quota(
+    quota: &den_service::bifrost_governance::BifrostVirtualKeyQuota,
+) -> BifrostUsageView {
+    let payload = &quota.payload;
+    let mut budget_rows = Vec::new();
+    let mut model_usage_rows = Vec::new();
+    let top_level_budgets = payload.get("budgets").and_then(serde_json::Value::as_array);
+    add_budget_rows(
+        &mut budget_rows,
+        &mut model_usage_rows,
+        "Virtual key".to_string(),
+        top_level_budgets,
+    );
+
+    let mut provider_rows = Vec::new();
+    if let Some(providers) = payload
+        .get("provider_configs")
+        .and_then(serde_json::Value::as_array)
+    {
+        for provider in providers {
+            let provider_name = json_str(provider, "provider");
+            let allowed_models = provider
+                .get("allowed_models")
+                .and_then(serde_json::Value::as_array)
+                .map(|models| {
+                    models
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "—".to_string());
+            let budgets = provider
+                .get("budgets")
+                .and_then(serde_json::Value::as_array);
+            add_budget_rows(
+                &mut budget_rows,
+                &mut model_usage_rows,
+                format!("Provider {provider_name}"),
+                budgets,
+            );
+            provider_rows.push(BifrostUsageProviderRow {
+                provider: provider_name,
+                allowed_models,
+                budget_count: budgets.map(Vec::len).unwrap_or(0),
+            });
+        }
+    }
+
+    if let Some(model_configs) = payload
+        .get("model_configs")
+        .and_then(serde_json::Value::as_array)
+    {
+        for model_config in model_configs {
+            let model_name = json_str(model_config, "model_name");
+            let provider = json_str(model_config, "provider");
+            let scope = if provider == "—" {
+                format!("Model {model_name}")
+            } else {
+                format!("Model {provider}/{model_name}")
+            };
+            add_budget_rows(
+                &mut budget_rows,
+                &mut model_usage_rows,
+                scope,
+                model_config
+                    .get("budgets")
+                    .and_then(serde_json::Value::as_array),
+            );
+        }
+    }
+
+    BifrostUsageView {
+        status: "ok".to_string(),
+        error: String::new(),
+        virtual_key_name: json_str(payload, "virtual_key_name"),
+        is_active: payload
+            .get("is_active")
+            .and_then(serde_json::Value::as_bool)
+            .map(|value| if value { "yes" } else { "no" }.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        auth_mode: quota.auth_mode.as_str().to_string(),
+        has_budgets: !budget_rows.is_empty(),
+        has_model_usage: !model_usage_rows.is_empty(),
+        has_providers: !provider_rows.is_empty(),
+        budget_rows,
+        model_usage_rows,
+        provider_rows,
+    }
+}
+
+async fn bifrost_usage_view_for_bear(state: &AppState, bear_id: Uuid) -> BifrostUsageView {
+    let Ok(value) = bears_db::bifrost_virtual_key_value_for_bear(
+        state.sqlx_pool(),
+        bear_id,
+        &state.config.den_secret_encryption_key,
+    )
+    .await
+    else {
+        return BifrostUsageView {
+            status: "error".to_string(),
+            error: "Could not read/decrypt the Bear's Bifrost virtual key from Den storage."
+                .to_string(),
+            virtual_key_name: String::new(),
+            is_active: String::new(),
+            auth_mode: String::new(),
+            budget_rows: Vec::new(),
+            model_usage_rows: Vec::new(),
+            provider_rows: Vec::new(),
+            has_budgets: false,
+            has_model_usage: false,
+            has_providers: false,
+        };
+    };
+    let Some(value) = value else {
+        return BifrostUsageView {
+            status: "missing".to_string(),
+            error: "No Bifrost virtual key value is configured for this Bear.".to_string(),
+            virtual_key_name: String::new(),
+            is_active: String::new(),
+            auth_mode: String::new(),
+            budget_rows: Vec::new(),
+            model_usage_rows: Vec::new(),
+            provider_rows: Vec::new(),
+            has_budgets: false,
+            has_model_usage: false,
+            has_providers: false,
+        };
+    };
+    let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
+    match client.get_virtual_key_quota(&value).await {
+        Ok(quota) => bifrost_usage_from_quota(&quota),
+        Err(err) => BifrostUsageView {
+            status: "error".to_string(),
+            error: err.to_string(),
+            virtual_key_name: String::new(),
+            is_active: String::new(),
+            auth_mode: String::new(),
+            budget_rows: Vec::new(),
+            model_usage_rows: Vec::new(),
+            provider_rows: Vec::new(),
+            has_budgets: false,
+            has_model_usage: false,
+            has_providers: false,
+        },
+    }
+}
+
 async fn models_view(
     Path(slug): Path<String>,
     Query(query): Query<DomainQuery>,
@@ -1032,6 +1300,7 @@ async fn models_view(
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
     let bifrost_virtual_key =
         bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
+    let bifrost_usage = bifrost_usage_view_for_bear(&state, bear.id).await;
     web::render_template(
         &state,
         "bear/settings/models.html",
@@ -1051,6 +1320,7 @@ async fn models_view(
                 row.virtual_key_value_encrypted.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
                     || row.virtual_key_value.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
             }).unwrap_or(false),
+            bifrost_usage,
             message => query.message,
             error => query.error,
             can_manage_bear,
@@ -1197,17 +1467,7 @@ async fn provision_bifrost_virtual_key_action(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
-    let key = client.create_bear_virtual_key(bear.id, &bear.slug).await?;
-    bears_db::set_bear_bifrost_virtual_key(
-        state.sqlx_pool(),
-        bear.id,
-        Some(&key.id),
-        Some(&key.name),
-        Some(&key.value),
-        &state.config.den_secret_encryption_key,
-    )
-    .await?;
+    provision_bifrost_virtual_key_for_bear(&state, bear.id, &bear.slug).await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/models?message={}",
         bear.slug,
