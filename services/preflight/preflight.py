@@ -67,6 +67,13 @@ def require_non_empty(name: str) -> str:
     return value
 
 
+def require_min_length(name: str, min_length: int) -> str:
+    value = require_non_empty(name)
+    if len(value) < min_length:
+        fail(f"{name} must be at least {min_length} characters")
+    return value
+
+
 def parse_sql_uri(name: str, value: str) -> None:
     u = urlparse(value)
     if u.scheme not in ("postgres", "postgresql"):
@@ -274,6 +281,9 @@ def validate_config_shape() -> None:
 
     require_non_empty("JWT_SECRET")
     info("JWT_SECRET is set")
+
+    require_min_length("DEN_SECRET_ENCRYPTION_KEY", 16)
+    info("DEN_SECRET_ENCRYPTION_KEY is set")
 
     validate_database_url(reachable=False)
 

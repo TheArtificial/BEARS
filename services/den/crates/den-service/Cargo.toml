@@ -16,6 +16,8 @@ production = ["den-core/production", "den-protocol/production"]
 test-util = ["den-core/test-util"]
 
 [dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-llm = { path = "../den-llm" }

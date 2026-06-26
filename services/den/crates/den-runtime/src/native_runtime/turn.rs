@@ -311,8 +311,12 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
-    let bifrost_virtual_key =
-        crate::bears::db::bifrost_virtual_key_value_for_bear(deps.pool, bear.id).await?;
+    let bifrost_virtual_key = crate::bears::db::bifrost_virtual_key_value_for_bear(
+        deps.pool,
+        bear.id,
+        &deps.config.den_secret_encryption_key,
+    )
+    .await?;
     let session = AgentLoopSession {
         session_key,
         bear_id,

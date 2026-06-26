@@ -1043,7 +1043,10 @@ async fn models_view(
             bear_default_metadata_status,
             bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
             bifrost_virtual_key_name => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_name.as_deref()).unwrap_or(""),
-            bifrost_virtual_key_configured => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_value.as_deref()).map(|value| !value.trim().is_empty()).unwrap_or(false),
+            bifrost_virtual_key_configured => bifrost_virtual_key.as_ref().map(|row| {
+                row.virtual_key_value_encrypted.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
+                    || row.virtual_key_value.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
+            }).unwrap_or(false),
             message => query.message,
             error => query.error,
             can_manage_bear,
@@ -1149,24 +1152,25 @@ async fn models_post(
     if clear_bifrost_key {
         bears_db::clear_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
     } else {
-        let existing = bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear.id).await?;
         let key_id = form.bifrost_virtual_key_id.trim();
         let key_name = form.bifrost_virtual_key_name.trim();
         let new_value = form.bifrost_virtual_key_value.trim();
-        let value = if new_value.is_empty() {
-            existing
-                .as_ref()
-                .and_then(|row| row.virtual_key_value.as_deref())
+        if new_value.is_empty() {
+            bears_db::set_bear_bifrost_virtual_key_metadata(
+                state.sqlx_pool(),
+                bear.id,
+                (!key_id.is_empty()).then_some(key_id),
+                (!key_name.is_empty()).then_some(key_name),
+            )
+            .await?;
         } else {
-            Some(new_value)
-        };
-        if !key_id.is_empty() || !key_name.is_empty() || value.is_some() {
             bears_db::set_bear_bifrost_virtual_key(
                 state.sqlx_pool(),
                 bear.id,
                 (!key_id.is_empty()).then_some(key_id),
                 (!key_name.is_empty()).then_some(key_name),
-                value,
+                Some(new_value),
+                &state.config.den_secret_encryption_key,
             )
             .await?;
         }

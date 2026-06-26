@@ -37,6 +37,7 @@ pub struct BearBifrostVirtualKey {
     pub virtual_key_id: Option<String>,
     pub virtual_key_name: Option<String>,
     pub virtual_key_value: Option<String>,
+    pub virtual_key_value_encrypted: Option<String>,
 }
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
@@ -685,7 +686,7 @@ pub async fn get_bear_bifrost_virtual_key(
 ) -> Result<Option<BearBifrostVirtualKey>, DenError> {
     match sqlx::query_as::<_, BearBifrostVirtualKey>(
         r#"
-        SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value
+        SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted
         FROM bear_bifrost_virtual_keys
         WHERE bear_id = $1
         "#,
@@ -696,6 +697,19 @@ pub async fn get_bear_bifrost_virtual_key(
     {
         Ok(row) => Ok(row),
         Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42P01") => Ok(None),
+        Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42703") => {
+            sqlx::query_as::<_, BearBifrostVirtualKey>(
+                r#"
+                SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, NULL::TEXT AS virtual_key_value_encrypted
+                FROM bear_bifrost_virtual_keys
+                WHERE bear_id = $1
+                "#,
+            )
+            .bind(bear_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(Into::into)
+        }
         Err(err) => Err(err.into()),
     }
 }
@@ -703,10 +717,21 @@ pub async fn get_bear_bifrost_virtual_key(
 pub async fn bifrost_virtual_key_value_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
+    secret_encryption_key: &str,
 ) -> Result<Option<String>, DenError> {
-    Ok(get_bear_bifrost_virtual_key(pool, bear_id)
-        .await?
-        .and_then(|row| row.virtual_key_value)
+    let Some(row) = get_bear_bifrost_virtual_key(pool, bear_id).await? else {
+        return Ok(None);
+    };
+    if let Some(encrypted) = row
+        .virtual_key_value_encrypted
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return crate::secrets::decrypt_secret(encrypted, secret_encryption_key).map(Some);
+    }
+    Ok(row
+        .virtual_key_value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty()))
 }
@@ -717,31 +742,70 @@ pub async fn set_bear_bifrost_virtual_key(
     virtual_key_id: Option<&str>,
     virtual_key_name: Option<&str>,
     virtual_key_value: Option<&str>,
+    secret_encryption_key: &str,
 ) -> Result<(), DenError> {
     let virtual_key_id = virtual_key_id.map(str::trim).filter(|s| !s.is_empty());
     let virtual_key_name = virtual_key_name.map(str::trim).filter(|s| !s.is_empty());
     let virtual_key_value = virtual_key_value.map(str::trim).filter(|s| !s.is_empty());
-    if virtual_key_id.is_none() && virtual_key_name.is_none() && virtual_key_value.is_none() {
+    let virtual_key_value_encrypted = virtual_key_value
+        .map(|value| crate::secrets::encrypt_secret(value, secret_encryption_key))
+        .transpose()?;
+    if virtual_key_id.is_none()
+        && virtual_key_name.is_none()
+        && virtual_key_value_encrypted.is_none()
+    {
         clear_bear_bifrost_virtual_key(pool, bear_id).await?;
         return Ok(());
     }
     sqlx::query(
         r#"
         INSERT INTO bear_bifrost_virtual_keys (
-            bear_id, virtual_key_id, virtual_key_name, virtual_key_value, updated_at
+            bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted, updated_at
         )
-        VALUES ($1, $2, $3, $4, NOW())
+        VALUES ($1, $2, $3, NULL, $4, NOW())
         ON CONFLICT (bear_id) DO UPDATE
         SET virtual_key_id = EXCLUDED.virtual_key_id,
             virtual_key_name = EXCLUDED.virtual_key_name,
-            virtual_key_value = EXCLUDED.virtual_key_value,
+            virtual_key_value = NULL,
+            virtual_key_value_encrypted = EXCLUDED.virtual_key_value_encrypted,
             updated_at = NOW()
         "#,
     )
     .bind(bear_id)
     .bind(virtual_key_id)
     .bind(virtual_key_name)
-    .bind(virtual_key_value)
+    .bind(virtual_key_value_encrypted)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_bear_bifrost_virtual_key_metadata(
+    pool: &PgPool,
+    bear_id: Uuid,
+    virtual_key_id: Option<&str>,
+    virtual_key_name: Option<&str>,
+) -> Result<(), DenError> {
+    let virtual_key_id = virtual_key_id.map(str::trim).filter(|s| !s.is_empty());
+    let virtual_key_name = virtual_key_name.map(str::trim).filter(|s| !s.is_empty());
+    if virtual_key_id.is_none() && virtual_key_name.is_none() {
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO bear_bifrost_virtual_keys (
+            bear_id, virtual_key_id, virtual_key_name, updated_at
+        )
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (bear_id) DO UPDATE
+        SET virtual_key_id = EXCLUDED.virtual_key_id,
+            virtual_key_name = EXCLUDED.virtual_key_name,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(virtual_key_id)
+    .bind(virtual_key_name)
     .execute(pool)
     .await?;
     Ok(())

@@ -107,6 +107,9 @@ pub struct Config {
 
     /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty = internal auth disabled.
     pub den_internal_token: String,
+    /// Secret used to encrypt Den-managed credentials at rest (`DEN_SECRET_ENCRYPTION_KEY`).
+    /// Empty means no new encrypted secret values can be stored.
+    pub den_secret_encryption_key: String,
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
@@ -341,6 +344,8 @@ impl Config {
         });
 
         let den_internal_token = std::env::var("DEN_INTERNAL_TOKEN").unwrap_or_default();
+        let den_secret_encryption_key =
+            std::env::var("DEN_SECRET_ENCRYPTION_KEY").unwrap_or_default();
 
         let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
         let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
@@ -491,6 +496,7 @@ impl Config {
             web_server_url,
             api_server_url,
             den_internal_token,
+            den_secret_encryption_key,
             bifrost_base_url,
             bifrost_catalog_refresh_secs,
             llm_api_url,
@@ -567,6 +573,7 @@ impl Config {
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
             den_internal_token: String::new(),
+            den_secret_encryption_key: String::new(),
             bifrost_base_url: String::new(),
             bifrost_catalog_refresh_secs: 300,
             llm_api_url: String::new(),

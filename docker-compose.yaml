@@ -25,6 +25,7 @@ x-preflight-build: &preflight-build
 x-preflight-environment: &preflight-environment
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
+    DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-SETME}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
@@ -190,6 +191,7 @@ services:
             DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
             SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
             JWT_SECRET: ${JWT_SECRET:-SETME}
+            DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
             RUN_WORKERS: ${RUN_WORKERS:-false}

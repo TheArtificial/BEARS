@@ -15,6 +15,7 @@ pub mod pair_reflection;
 pub mod prompt_memory_block_store;
 pub mod prompt_memory_blocks;
 pub mod recall;
+pub mod secrets;
 pub mod state;
 pub mod tool_turns;
 pub mod turn_controller;
