@@ -691,6 +691,7 @@ impl Stream for AcpRuntimeSseStream {
                                     GatewayEvent::Error { error_type: Some(error_type), .. }
                                         if error_type == "runtime_tool_result_followup_timeout"
                                             || error_type == "runtime_tool_result_missing_terminal"
+                                            || error_type == "runtime_tool_result_progress_only_terminal_missing"
                                 );
                                 for event in this.text_chunker.push(event) {
                                     this.push_adapter_event(event);
@@ -840,6 +841,7 @@ impl Stream for AcpRuntimeSseStream {
                                 async move {
                                     let mut queued_events = Vec::new();
                                     let mut saw_terminal_event = false;
+                                    let mut saw_nonterminal_progress = false;
                                     let followup_timeout = std::time::Duration::from_millis(
                                         acp_tool_result_followup_timeout_ms(),
                                     );
@@ -864,9 +866,11 @@ impl Stream for AcpRuntimeSseStream {
                                                     match event {
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
                                                     queued_events.push(GatewayEvent::AssistantTextDelta { text });
+                                                    saw_nonterminal_progress = true;
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
                                                     queued_events.push(GatewayEvent::StatusText { text });
+                                                    saw_nonterminal_progress = true;
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { kind, text, phase: _, detail: _ }) => {
                                                     let rendered = if kind == "status_text" {
@@ -875,6 +879,7 @@ impl Stream for AcpRuntimeSseStream {
                                                         text.unwrap_or(kind)
                                                     };
                                                     queued_events.push(GatewayEvent::StatusText { text: rendered });
+                                                    saw_nonterminal_progress = true;
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. }) => {
                                                     if let RuntimeStreamEvent::Semantic(semantic) = event {
@@ -919,6 +924,7 @@ impl Stream for AcpRuntimeSseStream {
                                                         guard.merge_from(temp_diagnostics);
                                                     }
                                                     queued_events.extend(events);
+                                                    saw_nonterminal_progress = true;
                                                 }
                                                 RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
                                                 | RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. })
@@ -956,7 +962,18 @@ impl Stream for AcpRuntimeSseStream {
                                         });
                                         saw_terminal_event = true;
                                     }
-                                    if !saw_terminal_event {
+                                    if !saw_terminal_event && saw_nonterminal_progress {
+                                        queued_events.push(GatewayEvent::Error {
+                                            message: "Tool finished and the runtime emitted progress, but no terminal response followed.".to_string(),
+                                            detail: Some("The continuation stream ended after non-terminal progress/status events without assistant completion or a terminal event.".to_string()),
+                                            error_type: Some("runtime_tool_result_progress_only_terminal_missing".to_string()),
+                                            request_id: Some(request_id.clone()),
+                                            context: Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                            })),
+                                        });
+                                    } else if !saw_terminal_event {
                                         queued_events.push(GatewayEvent::Error {
                                             message: "Tool finished but the runtime did not send a follow-up assistant response.".to_string(),
                                             detail: Some("The continuation stream ended after a completed tool result without assistant text or a terminal event.".to_string()),
