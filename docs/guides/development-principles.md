@@ -11,6 +11,11 @@ Agent- and product-agnostic practices for building a **small surface-area** web 
 - **Treat optional integrations as optional**: if a feature is not in use, remove it from the dependency graph rather than carrying commented “maybe later” stacks.
 - **Separate dev-only tools** from production dependencies so release binaries and security audits stay focused.
 - **Favor compile-time verification** for high-risk boundaries (e.g. SQL, routing contracts) when the cost is acceptable—fail at build time, not only in production.
+- **Put dependencies at the lowest correct layer.** A web-only dependency belongs in the web crate; runtime-only dependencies belong in runtime crates; broad crates such as `den-core`, `den-service`, and the root binary should not accumulate dependencies just because they are convenient.
+- **Use workspace dependency versions, not workspace feature supersets.** Centralize versions where useful, but keep feature flags local to each crate so leaf crates do not inherit unrelated capabilities.
+- **Prefer existing dependencies before adding new ones.** For example, prompt rendering should reuse `minijinja`; YAML/frontmatter parsing should reuse the existing serde YAML dependency unless there is a concrete reason not to.
+- **Avoid dependency-backed architecture drift.** If a small feature starts pulling significant parsing, watching, embedding, or framework behavior into a central crate, stop and consider a focused leaf crate or a smaller hand-rolled adapter.
+- **Verify dependency impact.** For manifest changes, run a focused `cargo check` and inspect whether `Cargo.lock` gained new packages or whether only an existing workspace dependency became direct for one crate.
 
 ---
 

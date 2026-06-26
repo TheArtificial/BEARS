@@ -48,6 +48,16 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 ./scripts/smoke-stack.sh
 ```
 
+## Dependency Hygiene
+
+- Before adding a dependency, check whether an existing crate in the workspace already solves the problem. Prefer reusing existing dependencies over adding parallel libraries for the same concern.
+- Keep new dependencies in the narrowest crate that needs them. Do not add a dependency to `den-core`, `den-service`, or the root `den` package unless the functionality is genuinely shared by that layer.
+- Prefer focused modules over broad utility crates. If dependency-backed functionality starts growing in a central crate, consider a narrow leaf crate before broadening core/service layers.
+- Use workspace dependency declarations for shared versions, but keep feature flags crate-local and surgical. Avoid enabling a broad feature superset just because another crate needs it.
+- Keep dev/test dependencies in `[dev-dependencies]`; do not let test-only tooling affect production build graphs.
+- When adding prompt, template, or config parsing support, first consider existing workspace dependencies such as `minijinja`, `serde`, and `serde_yml`. Do not introduce filesystem watching, embedding, or markdown-rendering crates unless the implementation truly needs them.
+- After changing `Cargo.toml`, inspect the relevant `cargo tree` or focused `cargo check` output and state whether the change adds new packages, broadens features, or only exposes an already-present workspace dependency to another crate.
+
 ## Project Concepts
 
 - A Bear's **charter** is a descriptive property of the Bear: its durable purpose/responsibility boundary. Do not model `charter_id`, `charters[]`, or a separate Charter entity unless explicitly requested.
