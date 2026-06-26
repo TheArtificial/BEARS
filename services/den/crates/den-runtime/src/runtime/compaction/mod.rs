@@ -16,9 +16,7 @@ pub mod render;
 pub mod service;
 pub mod summarize;
 
-pub use grouping::{
-    semantic_groups_from_conversation_messages, TranscriptGroupingRow,
-};
+pub use grouping::{semantic_groups_from_conversation_messages, TranscriptGroupingRow};
 pub use lifecycle::{
     enqueue_compaction_after_turn, load_compaction_context, on_turn_assemble_compaction,
     prepare_turn_compaction, render_compaction_prompt_context, run_compaction_job,
@@ -132,7 +130,9 @@ pub fn choose_compaction_decision(
         return None;
     }
 
-    let eligible_end = groups.len().saturating_sub(policy.protected_recent_group_count);
+    let eligible_end = groups
+        .len()
+        .saturating_sub(policy.protected_recent_group_count);
     if eligible_end == 0 {
         return None;
     }
@@ -273,4 +273,4 @@ pub fn build_runtime_context_envelope(
 #[cfg(test)]
 mod eval_tests;
 #[cfg(test)]
-mod test;
+mod tests;

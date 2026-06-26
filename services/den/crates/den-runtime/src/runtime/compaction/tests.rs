@@ -2,16 +2,14 @@ use serde_json::json;
 
 use crate::{
     runtime::compaction::{
-        artifact_ref_from_decision, build_runtime_context_envelope,
-        choose_compaction_decision, merge_iterative_summary,
-        semantic_groups_from_conversation_messages, semantic_groups_from_runtime_messages,
-        RuntimeCompactionDecision, RuntimeCompactionPolicy, RuntimeCompactionStrategy,
-        RuntimeContextEnvelopeInput, TranscriptGroupingRow,
+        artifact_ref_from_decision, build_runtime_context_envelope, choose_compaction_decision,
+        merge_iterative_summary, semantic_groups_from_conversation_messages,
+        semantic_groups_from_runtime_messages, RuntimeCompactionDecision, RuntimeCompactionPolicy,
+        RuntimeCompactionStrategy, RuntimeContextEnvelopeInput, TranscriptGroupingRow,
     },
     runtime_conversations::{
-        RuntimeCompactionArtifactKind, RuntimeCompactionBoundary,
-        RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
-        RuntimeSemanticGroupKind,
+        RuntimeCompactionArtifactKind, RuntimeCompactionBoundary, RuntimeCompactionTriggerKind,
+        RuntimeIterativeSummary, RuntimeSemanticGroup, RuntimeSemanticGroupKind,
     },
 };
 
@@ -30,7 +28,10 @@ fn semantic_grouping_classifies_user_assistant_tool_and_approval_messages() {
     assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::AssistantReply);
     assert_eq!(groups[2].kind, RuntimeSemanticGroupKind::ToolInteraction);
     assert!(groups[2].protected);
-    assert_eq!(groups[3].kind, RuntimeSemanticGroupKind::ApprovalInteraction);
+    assert_eq!(
+        groups[3].kind,
+        RuntimeSemanticGroupKind::ApprovalInteraction
+    );
     assert!(groups[3].protected);
     assert_eq!(groups[4].kind, RuntimeSemanticGroupKind::WorkflowUpdate);
     assert_eq!(groups[5].kind, RuntimeSemanticGroupKind::ArtifactUpdate);
@@ -91,7 +92,10 @@ fn compaction_policy_skips_protected_groups_and_recent_tail() {
 
     assert_eq!(decision.selected_group_start, 0);
     assert_eq!(decision.selected_group_end, 1);
-    assert_eq!(decision.strategy, RuntimeCompactionStrategy::UpdateIterativeSummary);
+    assert_eq!(
+        decision.strategy,
+        RuntimeCompactionStrategy::UpdateIterativeSummary
+    );
     assert_eq!(decision.boundary.compacted_group_count, 2);
 }
 
@@ -155,7 +159,10 @@ fn artifact_ref_carries_policy_version_and_source_range() {
     };
 
     let artifact = artifact_ref_from_decision("artifact-1", &decision, &policy);
-    assert_eq!(artifact.kind, RuntimeCompactionArtifactKind::CollapsedToolBundle);
+    assert_eq!(
+        artifact.kind,
+        RuntimeCompactionArtifactKind::CollapsedToolBundle
+    );
     assert_eq!(artifact.source_group_start, 1);
     assert_eq!(artifact.source_group_end, 2);
     assert_eq!(artifact.policy_version, "policy-7");
@@ -197,8 +204,14 @@ fn iterative_summary_merge_accumulates_unique_entries_and_protected_markers() {
 
     let merged = merge_iterative_summary(Some(&prior), &groups);
     assert_eq!(merged.active_user_goals.len(), 1);
-    assert!(merged.workflow_state_refs.iter().any(|v| v.contains("WorkflowUpdate:w1:w2")));
-    assert!(merged.artifact_refs.iter().any(|v| v.contains("ArtifactUpdate:a1:a1")));
+    assert!(merged
+        .workflow_state_refs
+        .iter()
+        .any(|v| v.contains("WorkflowUpdate:w1:w2")));
+    assert!(merged
+        .artifact_refs
+        .iter()
+        .any(|v| v.contains("ArtifactUpdate:a1:a1")));
     assert!(merged
         .important_constraints
         .iter()
@@ -349,9 +362,15 @@ fn transcript_grouping_classifies_pending_approval_tool_span() {
     ]);
 
     assert_eq!(groups.len(), 2);
-    assert_eq!(groups[0].kind, RuntimeSemanticGroupKind::ApprovalInteraction);
+    assert_eq!(
+        groups[0].kind,
+        RuntimeSemanticGroupKind::ApprovalInteraction
+    );
     assert!(groups[0].protected);
-    assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::ApprovalInteraction);
+    assert_eq!(
+        groups[1].kind,
+        RuntimeSemanticGroupKind::ApprovalInteraction
+    );
     assert!(groups[1].protected);
 }
 
@@ -418,7 +437,10 @@ fn transcript_grouping_treats_compaction_marker_as_protected_boundary() {
     ]);
 
     assert_eq!(groups.len(), 3);
-    assert_eq!(groups[1].kind, RuntimeSemanticGroupKind::PriorCompactionArtifact);
+    assert_eq!(
+        groups[1].kind,
+        RuntimeSemanticGroupKind::PriorCompactionArtifact
+    );
     assert!(groups[1].protected);
     assert_eq!(groups[1].start_message_id.as_deref(), Some("msg-marker"));
 }

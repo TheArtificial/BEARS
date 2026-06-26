@@ -1,8 +1,8 @@
 use crate::runtime::provider::{
     acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
     ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
-    RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory,
-    RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeToolResultStatus,
+    RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory, RuntimeStartupCapabilities,
+    RuntimeStreamContinuation, RuntimeToolResultStatus,
 };
 use den_core::config::Config;
 use den_core::DenError;
@@ -18,7 +18,8 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
     );
     assert!(runtime_error_is_conflict_pending_approval(&approval));
 
-    let misconfigured = DenError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
+    let misconfigured =
+        DenError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
     assert_eq!(
         classify_runtime_error(&misconfigured),
         RuntimeErrorCategory::Misconfigured
