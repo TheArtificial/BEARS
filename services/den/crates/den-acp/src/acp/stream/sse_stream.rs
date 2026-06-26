@@ -351,6 +351,25 @@ impl AcpRuntimeSseStream {
         );
     }
 
+    pub(in crate::acp) fn force_stream_error_terminal(&mut self, error: &'static str) {
+        if self.turn_controller.phase() == TurnPhase::Terminal {
+            return;
+        }
+        self.turn_controller.on_stream_error();
+        let role_result = self.context.role_runtime.turn_result(
+            TurnResultStatus::Failed,
+            TurnResultReason::RuntimeCleanup,
+            self.context.request_id,
+            self.context.turn_scope.clone(),
+            false,
+            serde_json::json!({
+                "error": error,
+                "stream": self.diagnostics.diagnostic_json_with_turn_controller(&self.context, Some(&self.turn_controller)),
+            }),
+        );
+        self.push_terminal_result_when_ready(role_result);
+    }
+
     pub(in crate::acp) fn new(
         inner: impl Stream<Item = Result<den_protocol::RuntimeStreamEvent, CustomError>>
             + Send
@@ -699,19 +718,9 @@ impl Stream for AcpRuntimeSseStream {
                                 if continuation_terminal_failure
                                     && this.turn_controller.phase() != TurnPhase::Terminal
                                 {
-                                    this.turn_controller.on_stream_error();
-                                    let role_result = this.context.role_runtime.turn_result(
-                                        TurnResultStatus::Failed,
-                                        TurnResultReason::RuntimeCleanup,
-                                        this.context.request_id,
-                                        this.context.turn_scope.clone(),
-                                        false,
-                                        serde_json::json!({
-                                            "error": "runtime_tool_result_followup_missing_terminal",
-                                            "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
-                                        }),
+                                    this.force_stream_error_terminal(
+                                        "runtime_tool_result_followup_missing_terminal",
                                     );
-                                    this.push_terminal_result_when_ready(role_result);
                                 }
                             }
                             if has_tool_effect {
