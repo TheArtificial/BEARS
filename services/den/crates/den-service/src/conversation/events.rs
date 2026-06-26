@@ -1207,20 +1207,5 @@ pub fn spawn_persist_assistant_summary_message(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn canonical_persistence_enabled_for_den_conv_ids() {
-        assert!(canonical_persistence_enabled_for_conversation("default"));
-        assert!(canonical_persistence_enabled_for_conversation(
-            "conv-abc123"
-        ));
-        assert!(canonical_persistence_enabled_for_conversation(
-            "den-conv-abc123"
-        ));
-        assert!(!canonical_persistence_enabled_for_conversation(
-            "letta-only-id"
-        ));
-    }
-}
