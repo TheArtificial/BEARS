@@ -2,6 +2,7 @@ use crate::ToolPolicy;
 use anyhow::{anyhow, Result};
 use reqwest::Url;
 use serde_json::{json, Value};
+#[cfg(test)]
 use std::net::IpAddr;
 use std::time::Duration;
 

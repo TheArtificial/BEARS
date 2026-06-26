@@ -1544,12 +1544,34 @@ async fn run() -> Result<()> {
                     .await
                 {
                     let diagnostics = adapter_state.transport.diagnostics().await;
+                    let pending = diagnostics
+                        .pending
+                        .iter()
+                        .map(|p| {
+                            format!(
+                                "{}:{} elapsed_ms={} timeout_ms={}",
+                                p.id, p.method, p.elapsed_ms, p.timeout_ms
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let recent_timeouts = diagnostics
+                        .recent_timeouts
+                        .iter()
+                        .map(|t| {
+                            format!(
+                                "{}:{} elapsed_ms={} timeout_ms={}",
+                                t.id, t.method, t.elapsed_ms, t.timeout_ms
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     eprintln!(
-                        "bear-armature: unmatched JSON-RPC response id={} value={} pending={:?} recent_timeouts={:?}",
+                        "bear-armature: unmatched JSON-RPC response id={} value={} pending=[{}] recent_timeouts=[{}]",
                         id_key(&id),
                         truncate_for_log(&value.to_string(), 1200),
-                        diagnostics.pending,
-                        diagnostics.recent_timeouts,
+                        pending,
+                        recent_timeouts,
                     );
                 }
                 continue;
@@ -1737,7 +1759,7 @@ fn parse_acp_connection_args(mut args: impl Iterator<Item = String>) -> Result<A
 
 impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
-        let mut args: Vec<String> = env::args().skip(1).collect();
+        let args: Vec<String> = env::args().skip(1).collect();
         let mut update_command: Option<UpdateCommand> = None;
         let mut browser_bridge: Option<BrowserBridgeConfig> = None;
 
@@ -1792,7 +1814,7 @@ impl RuntimeConfig {
             mut api_url,
             mut bear,
             mut token,
-            mut token_env,
+            token_env,
             mut client,
             check_config,
             check_server,

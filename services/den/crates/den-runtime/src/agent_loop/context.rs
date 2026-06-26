@@ -12,8 +12,7 @@ use crate::{
         canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
     },
     llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
-    runtime::compaction::{semantic_groups_from_conversation_messages, TranscriptGroupingRow},
-    runtime_conversations::RuntimeSemanticGroup,
+    runtime::compaction::TranscriptGroupingRow,
 };
 
 #[derive(Debug, Clone)]
@@ -407,16 +406,6 @@ pub async fn load_transcript_grouping_rows(
         .await
         .unwrap_or_default();
     Ok(transcript_grouping_rows_from_history(history_rows))
-}
-
-/// Loads persisted transcript rows and derives semantic compaction groups.
-pub async fn load_transcript_semantic_groups(
-    pool: &PgPool,
-    bear_id: Uuid,
-    conversation_id: &str,
-) -> Result<Vec<RuntimeSemanticGroup>, DenError> {
-    let rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
-    Ok(semantic_groups_from_conversation_messages(&rows))
 }
 
 pub async fn load_transcript_messages(

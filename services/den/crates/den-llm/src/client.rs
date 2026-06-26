@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use den_core::{config::Config, DenError};
 
+#[cfg(test)]
 use crate::model_registry;
 
 /// Canonical Den model handle used in product/UI/DB/policy state, e.g. `openai/gpt-5.5`.
@@ -49,9 +50,11 @@ impl std::fmt::Display for DenModelHandle {
 }
 
 /// Provider/Bifrost request model id, e.g. `gpt-5.5` for Den handle `openai/gpt-5.5`.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderModelId(String);
 
+#[cfg(test)]
 impl ProviderModelId {
     pub fn for_den_handle(handle: &DenModelHandle) -> Self {
         Self(
@@ -66,6 +69,7 @@ impl ProviderModelId {
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Display for ProviderModelId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())

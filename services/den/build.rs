@@ -1,5 +1,4 @@
 use std::env;
-use std::time::Instant;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -19,9 +18,6 @@ fn build_time_utc_rfc3339() -> String {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let build_start = Instant::now();
-    println!("cargo:warning=Build script starting...");
-
     let built_at = build_time_utc_rfc3339();
     println!("cargo:rustc-env=DEN_BUILT_AT_UTC={}", built_at);
 
@@ -36,9 +32,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // den-http, api -> den-api), each embedded by its own build.rs in production.
     // The thin binary embeds nothing.
 
-    println!(
-        "cargo:warning=Build script completed in {:.2}s",
-        build_start.elapsed().as_secs_f64()
-    );
     Ok(())
 }
