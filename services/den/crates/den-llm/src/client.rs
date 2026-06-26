@@ -464,10 +464,11 @@ fn apply_bifrost_virtual_key_header(
         return req;
     };
     // Bifrost virtual keys are inference credentials. Per Bifrost's OpenAPI
-    // docs, virtual keys (`sk-bf...`) can be supplied as `x-api-key` or as a
-    // bearer token. Use `x-api-key` so it does not conflict with deployments
-    // that still set LLM_API_KEY/OPENAI_API_KEY for non-virtual-key traffic.
-    apply_optional_header(req, "x-api-key", telemetry.field("bifrost_virtual_key"))
+    // docs, virtual keys (`sk-bf...`) can be supplied as `x-api-key`, `x-bf-vk`,
+    // or as a bearer token. Send both supported API-key headers with the same
+    // Bear-scoped virtual key secret to tolerate version-specific precedence.
+    let req = apply_optional_header(req, "x-api-key", telemetry.field("bifrost_virtual_key"));
+    apply_optional_header(req, "x-bf-vk", telemetry.field("bifrost_virtual_key"))
 }
 
 fn apply_bifrost_session_cache_headers(
@@ -522,7 +523,7 @@ fn bifrost_virtual_key_not_found_diagnostic(
         .unwrap_or(false);
     let api_style = api_style.as_str();
     format!(
-        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent a Bifrost virtual key as x-api-key (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored encrypted virtual-key secret still exists, that the corresponding key exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
+        "Bifrost virtual-key lookup failed for {api_style} model {model}. Bifrost reported HTTP {status}: {text}. Meaning: Den sent a Bifrost virtual key as x-api-key and x-bf-vk (present={virtual_key_present}), but Bifrost could not find that virtual key in its runtime governance config store. Check that the Bear's stored encrypted virtual-key secret still exists, that the corresponding key exists in Bifrost /api/governance/virtual-keys, that Bifrost config_store is persistent, and that /app/data/config.db was not reset after Den stored the Bear mapping. Context: request_id={request_id}, session_id={session_id}, conversation_id={conversation_id}, bear_id={bear_id}."
     )
 }
 

@@ -682,6 +682,25 @@ pub async fn provision_bifrost_virtual_key_for_bear(
         &state.config.den_secret_encryption_key,
     )
     .await?;
+
+    let stored_value = bears_db::bifrost_virtual_key_value_for_bear(
+        state.sqlx_pool(),
+        bear_id,
+        &state.config.den_secret_encryption_key,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::System(
+            "Bifrost virtual key was saved but could not be read back from Den storage".to_string(),
+        )
+    })?;
+    let validation = client.validate_virtual_key_value(&stored_value).await?;
+    tracing::info!(
+        %bear_id,
+        virtual_key_id = %key.id,
+        auth_mode = validation.auth_mode.as_str(),
+        "validated provisioned Bifrost virtual key after encrypted Den storage round trip"
+    );
     Ok(())
 }
 

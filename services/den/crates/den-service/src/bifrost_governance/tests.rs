@@ -12,6 +12,8 @@ struct RequestRecord {
     path: String,
     authorization: Option<String>,
     cookie: Option<String>,
+    x_api_key: Option<String>,
+    x_bf_vk: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -83,6 +85,57 @@ fn spawn_bifrost_management_mock(mode: LoginMode) -> (String, Arc<Mutex<Vec<Requ
     (format!("http://{addr}/api"), records)
 }
 
+fn spawn_quota_validation_mock(
+    accepted_mode: Option<BifrostVirtualKeyAuthMode>,
+) -> (String, Arc<Mutex<Vec<RequestRecord>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock quota server");
+    let addr = listener.local_addr().expect("mock quota server addr");
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let records_for_thread = Arc::clone(&records);
+    let expected_requests = if accepted_mode.is_some() { 1 } else { 3 };
+
+    thread::spawn(move || {
+        for _ in 0..expected_requests {
+            let (mut stream, _) = listener.accept().expect("accept mock quota request");
+            let request = read_request(&mut stream);
+            let record = request_record(&request);
+            let recognized = match accepted_mode {
+                Some(BifrostVirtualKeyAuthMode::XApiKey) => {
+                    record.x_api_key.as_deref() == Some("sk-bf-test")
+                }
+                Some(BifrostVirtualKeyAuthMode::XBfVk) => {
+                    record.x_bf_vk.as_deref() == Some("sk-bf-test")
+                }
+                Some(BifrostVirtualKeyAuthMode::Bearer) => {
+                    record.authorization.as_deref() == Some("Bearer sk-bf-test")
+                }
+                None => false,
+            };
+            records_for_thread
+                .lock()
+                .expect("records mutex")
+                .push(record);
+            if recognized {
+                write_response(
+                    &mut stream,
+                    200,
+                    &[],
+                    r#"{"virtual_key_name":"bear:test","is_active":true,"budgets":null,"rate_limit":null,"provider_configs":[],"model_configs":[]}"#,
+                );
+            } else {
+                write_response(
+                    &mut stream,
+                    401,
+                    &[],
+                    r#"{"error":"virtual key not found"}"#,
+                );
+            }
+        }
+    });
+
+    (format!("http://{addr}/api"), records)
+}
+
 fn read_request(stream: &mut TcpStream) -> String {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 1024];
@@ -126,6 +179,8 @@ fn request_record(request: &str) -> RequestRecord {
         .to_string();
     let mut authorization = None;
     let mut cookie = None;
+    let mut x_api_key = None;
+    let mut x_bf_vk = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -134,18 +189,25 @@ fn request_record(request: &str) -> RequestRecord {
             authorization = Some(value.trim().to_string());
         } else if name.eq_ignore_ascii_case("cookie") {
             cookie = Some(value.trim().to_string());
+        } else if name.eq_ignore_ascii_case("x-api-key") {
+            x_api_key = Some(value.trim().to_string());
+        } else if name.eq_ignore_ascii_case("x-bf-vk") {
+            x_bf_vk = Some(value.trim().to_string());
         }
     }
     RequestRecord {
         path,
         authorization,
         cookie,
+        x_api_key,
+        x_bf_vk,
     }
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, headers: &[(&str, &str)], body: &str) {
     let reason = match status {
         200 => "OK",
+        401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
         _ => "Status",
@@ -227,4 +289,40 @@ async fn auth_disabled_login_error_includes_config_store_reset_hint() {
     let records = records.lock().expect("records mutex");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].path, "/api/session/login");
+}
+
+#[tokio::test]
+async fn validate_virtual_key_value_accepts_x_api_key() {
+    let (management_url, records) =
+        spawn_quota_validation_mock(Some(BifrostVirtualKeyAuthMode::XApiKey));
+    let client = BifrostGovernanceClient::new(&test_config(management_url));
+
+    let validation = client
+        .validate_virtual_key_value("sk-bf-test")
+        .await
+        .expect("validate virtual key");
+
+    assert_eq!(validation.auth_mode, BifrostVirtualKeyAuthMode::XApiKey);
+    let records = records.lock().expect("records mutex");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].path, "/api/governance/virtual-keys/quota");
+    assert_eq!(records[0].x_api_key.as_deref(), Some("sk-bf-test"));
+}
+
+#[tokio::test]
+async fn validate_virtual_key_value_reports_all_failed_header_modes() {
+    let (management_url, records) = spawn_quota_validation_mock(None);
+    let client = BifrostGovernanceClient::new(&test_config(management_url));
+
+    let err = client
+        .validate_virtual_key_value("sk-bf-test")
+        .await
+        .expect_err("validation should fail");
+    let message = err.to_string();
+
+    assert!(message.contains("x-api-key"));
+    assert!(message.contains("x-bf-vk"));
+    assert!(message.contains("bearer"));
+    let records = records.lock().expect("records mutex");
+    assert_eq!(records.len(), 3);
 }

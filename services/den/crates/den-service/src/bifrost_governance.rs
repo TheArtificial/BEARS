@@ -16,6 +16,28 @@ pub struct BifrostVirtualKeyProvisioned {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BifrostVirtualKeyAuthMode {
+    XApiKey,
+    XBfVk,
+    Bearer,
+}
+
+impl BifrostVirtualKeyAuthMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::XApiKey => "x-api-key",
+            Self::XBfVk => "x-bf-vk",
+            Self::Bearer => "bearer",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BifrostVirtualKeyValidation {
+    pub auth_mode: BifrostVirtualKeyAuthMode,
+}
+
 #[derive(Debug, Clone)]
 enum BifrostManagementAuth {
     Bearer(String),
@@ -141,6 +163,68 @@ impl BifrostGovernanceClient {
         }
         Err(DenError::System(format!(
             "Bifrost management login succeeded but returned neither a token nor a session cookie; body: {text}"
+        )))
+    }
+
+    async fn validate_virtual_key_value_with_mode(
+        &self,
+        value: &str,
+        mode: BifrostVirtualKeyAuthMode,
+    ) -> Result<BifrostVirtualKeyValidation, DenError> {
+        self.ensure_configured()?;
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(DenError::ValidationError(
+                "Bifrost virtual key value is empty".to_string(),
+            ));
+        }
+        let url = format!("{}/governance/virtual-keys/quota", self.management_url);
+        let builder = self.http.get(&url);
+        let builder = match mode {
+            BifrostVirtualKeyAuthMode::XApiKey => builder.header("x-api-key", value),
+            BifrostVirtualKeyAuthMode::XBfVk => builder.header("x-bf-vk", value),
+            BifrostVirtualKeyAuthMode::Bearer => builder.bearer_auth(value),
+        };
+        let response = builder.send().await.map_err(|err| {
+            DenError::System(format!(
+                "Bifrost virtual key validation request failed using {}: {err}",
+                mode.as_str()
+            ))
+        })?;
+        let status = response.status();
+        let text = response.text().await.map_err(|err| {
+            DenError::System(format!(
+                "Bifrost virtual key validation body failed using {}: {err}",
+                mode.as_str()
+            ))
+        })?;
+        if status.is_success() {
+            return Ok(BifrostVirtualKeyValidation { auth_mode: mode });
+        }
+        Err(DenError::System(format!(
+            "Bifrost virtual key validation HTTP {status} using {}: {text}",
+            mode.as_str()
+        )))
+    }
+
+    pub async fn validate_virtual_key_value(
+        &self,
+        value: &str,
+    ) -> Result<BifrostVirtualKeyValidation, DenError> {
+        let mut errors = Vec::new();
+        for mode in [
+            BifrostVirtualKeyAuthMode::XApiKey,
+            BifrostVirtualKeyAuthMode::XBfVk,
+            BifrostVirtualKeyAuthMode::Bearer,
+        ] {
+            match self.validate_virtual_key_value_with_mode(value, mode).await {
+                Ok(validation) => return Ok(validation),
+                Err(err) => errors.push(format!("{}: {err}", mode.as_str())),
+            }
+        }
+        Err(DenError::System(format!(
+            "Bifrost did not recognize the provisioned virtual key via any supported auth header; {}",
+            errors.join("; ")
         )))
     }
 
