@@ -253,6 +253,8 @@ tools:    [merged Den + client descriptors]
 
 See also [`agent-and-bear-environments.md`](agent-and-bear-environments.md) (Environment Projection → Turn Context).
 
+For scenario-oriented examples of how these layers combine, see [Context Compilation Scenarios](context-compilation-scenarios.md).
+
 ## Memory model under SQLite
 
 Per ADR-0031, canonical memory is append-only records, not a markdown file tree:

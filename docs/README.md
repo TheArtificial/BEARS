@@ -17,6 +17,7 @@ Human-oriented docs for the Bear Den product.
 ## Suggested entry points
 
 - [architecture/README.md](architecture/README.md)
+- [architecture/context-compilation-scenarios.md](architecture/context-compilation-scenarios.md)
 - [decisions/README.md](decisions/README.md)
 - [guides/README.md](guides/README.md)
 - [roadmap/PLAN.md](roadmap/PLAN.md)
