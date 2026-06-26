@@ -1,158 +1,391 @@
-{% extends "base.html" %}
-
-{% block title %}Models · {{ bear.slug }}{% endblock %}
-
-{% block content %}
-{% include "bear/settings/_bear_nav.html" %}
+{% extends "base.html" %} {% block title %}Models · {{ bear.slug }}{% endblock
+%} {% block content %} {% include "bear/settings/_bear_nav.html" %}
 <div class="box">
-<h2>Models · {{ bear.name }}</h2>
+    <h2>Models · {{ bear.name }}</h2>
 
-{% if message %}
-<p><strong>{{ message | e }}</strong></p>
-{% endif %}
-{% if error %}
-<p class="form-errors">{{ error | e }}</p>
-{% endif %}
-
-<p class="form-hint">
-  Model selection is resolved in layers: Bear default, then stance override, then future lane-specific assignments.
-  Lane-specific model assignments are TBD.
-</p>
-
-{% if models_fetch_error %}
-<p class="form-errors">{{ models_fetch_error | e }}</p>
-{% endif %}
-
-<form method="post" class="box full-width" data-model-settings>
-  <h3>Bear default</h3>
-  <p class="form-hint">Used when a stance is set to inherit. Choose <code>inherit</code> to use the deployment default.</p>
-  <p class="form-hint">
-    Bear default status:
-    <strong>{{ bear_default_availability_status | e }}</strong> · metadata <strong>{{ bear_default_metadata_status | e }}</strong>
-  </p>
-  <p class="form-hint">Auto mode is planned for conversation/model routing work and is not available for Bear or stance defaults yet.</p>
-
-  <label for="bear_default_model">Model</label>
-  <input id="bear_default_model" name="bear_default_model" list="all-bifrost-models" value="{% if bear.default_model %}{{ bear.default_model | e }}{% else %}inherit{% endif %}" placeholder="inherit or provider/model" required data-model-input{% if not can_manage_bear %} disabled{% endif %}>
-
-  <label for="bear_default_model_shortcut">Recommended shortcuts</label>
-  <select id="bear_default_model_shortcut" data-model-shortcut-target="bear_default_model"{% if not can_manage_bear %} disabled{% endif %}>
-    <option value="inherit"{% if not bear.default_model %} selected{% endif %}>Inherit deployment default</option>
-    {% if bear_default_custom_model %}
-    <option value="{{ bear_default_custom_model | e }}" selected>Custom model — {{ bear_default_custom_model | e }}</option>
+    {% if message %}
+    <p><strong>{{ message | e }}</strong></p>
+    {% endif %} {% if error %}
+    <p class="form-errors">{{ error | e }}</p>
     {% endif %}
-    {% for m in model_options %}
-    <option value="{{ m.handle | e }}"{% if bear.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
-    {% endfor %}
-  </select>
-  <p class="form-hint">The shortcut list is curated. The Model field accepts configured Den model options and any live Bifrost options shown in autocomplete.</p>
 
-  <h3>Bifrost virtual key</h3>
-  <p class="form-hint">Optional Bear-scoped gateway governance. When configured, Den sends this value as <code>x-bf-vk</code> on this Bear's LLM requests so Bifrost can enforce usage, budgets, and model policy for the Bear.</p>
-  <label for="bifrost_virtual_key_id">Virtual key ID</label>
-  <input id="bifrost_virtual_key_id" name="bifrost_virtual_key_id" value="{{ bifrost_virtual_key_id | e }}" placeholder="Bifrost virtual key id" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
-  <label for="bifrost_virtual_key_name">Virtual key name</label>
-  <input id="bifrost_virtual_key_name" name="bifrost_virtual_key_name" value="{{ bifrost_virtual_key_name | e }}" placeholder="Bifrost virtual key name" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
-  <label for="bifrost_virtual_key_value">Virtual key value</label>
-  <input id="bifrost_virtual_key_value" name="bifrost_virtual_key_value" type="password" value="" placeholder="{% if bifrost_virtual_key_configured %}Configured — leave blank to keep current value{% else %}sk-bf-…{% endif %}" autocomplete="off"{% if not can_manage_bear %} disabled{% endif %}>
-  {% if bifrost_virtual_key_configured %}
-  <label><input type="checkbox" name="bifrost_virtual_key_clear"{% if not can_manage_bear %} disabled{% endif %}> Clear configured Bifrost virtual key value</label>
-  {% endif %}
+    <p class="form-hint">
+        Model selection is resolved in layers: Bear default, then stance
+        override, then future lane-specific assignments. Lane-specific model
+        assignments are TBD.
+    </p>
 
-  <h3>Stance defaults</h3>
-  <p class="form-hint">Use <code>inherit</code> unless a stance needs a different tradeoff.</p>
-  <table>
-    <thead><tr><th>Stance</th><th>Model</th><th>Resolved</th><th>Status</th><th>Source</th></tr></thead>
-    <tbody>
-      {% for row in rows %}
-      <tr>
-        <td><strong>{{ row.label | e }}</strong><br><code>{{ row.profile | e }}</code></td>
-        <td>
-          <label for="{{ row.profile | e }}_model" class="sr-only">{{ row.label | e }} model</label>
-          <input id="{{ row.profile | e }}_model" name="{{ row.profile | e }}_model" list="all-bifrost-models" value="{% if row.configured_model %}{{ row.configured_model | e }}{% else %}inherit{% endif %}" placeholder="inherit or provider/model" required data-model-input{% if not can_manage_bear %} disabled{% endif %}>
-          <select data-model-shortcut-target="{{ row.profile | e }}_model"{% if not can_manage_bear %} disabled{% endif %}>
-            <option value="inherit"{% if not row.configured_model %} selected{% endif %}>Inherit Bear default</option>
-            {% if row.configured_model_custom %}
-            <option value="{{ row.configured_model_custom | e }}" selected>Custom model — {{ row.configured_model_custom | e }}</option>
-            {% endif %}
-            {% for m in model_options %}
-            <option value="{{ m.handle | e }}"{% if row.configured_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
+    {% if models_fetch_error %}
+    <p class="form-errors">{{ models_fetch_error | e }}</p>
+    {% endif %}
+
+    <form method="post" class="box full-width" data-model-settings>
+        <h3>Bear default</h3>
+        <p class="form-hint">
+            Used when a stance is set to inherit. Choose <code>inherit</code> to
+            use the deployment default.
+        </p>
+        <p class="form-hint">
+            Bear default status:
+            <strong>{{ bear_default_availability_status | e }}</strong> ·
+            metadata <strong>{{ bear_default_metadata_status | e }}</strong>
+        </p>
+        <p class="form-hint">
+            Auto mode is planned for conversation/model routing work and is not
+            available for Bear or stance defaults yet.
+        </p>
+
+        <label for="bear_default_model">Model</label>
+        <input
+            id="bear_default_model"
+            name="bear_default_model"
+            list="all-bifrost-models"
+            value="{% if bear.default_model %}{{ bear.default_model | e }}{% else %}inherit{% endif %}"
+            placeholder="inherit or provider/model"
+            required
+            data-model-input{%
+            if
+            not
+            can_manage_bear
+            %}
+            disabled{%
+            endif
+            %}
+        />
+
+        <label for="bear_default_model_shortcut">Recommended shortcuts</label>
+        <select
+            id="bear_default_model_shortcut"
+            data-model-shortcut-target="bear_default_model"
+            {%
+            if
+            not
+            can_manage_bear
+            %}
+            disabled{%
+            endif
+            %}
+        >
+            <option
+                value="inherit"
+                {%
+                if
+                not
+                bear.default_model
+                %}
+                selected{%
+                endif
+                %}
+            >
+                Inherit deployment default
+            </option>
+            {% if bear_default_custom_model %}
+            <option value="{{ bear_default_custom_model | e }}" selected>
+                Custom model — {{ bear_default_custom_model | e }}
+            </option>
+            {% endif %} {% for m in model_options %}
+            <option
+                value="{{ m.handle | e }}"
+                {%
+                if
+                bear.default_model=""
+                ="m.handle"
+                %}
+                selected{%
+                endif
+                %}
+            >
+                {{ m.label | e }} — {{ m.handle | e }}
+            </option>
             {% endfor %}
-          </select>
-        </td>
-        <td>{% if row.resolved_model %}<code>{{ row.resolved_model | e }}</code>{% else %}<em>none</em>{% endif %}</td>
-        <td><span title="Bifrost availability">{{ row.availability_status | e }}</span> · <span title="Den metadata overlay">metadata {{ row.metadata_status | e }}</span></td>
-        <td>{{ row.source | e }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+        </select>
+        <p class="form-hint">
+            The shortcut list is curated. The Model field accepts configured Den
+            model options and any live Bifrost options shown in autocomplete.
+        </p>
 
-  <datalist id="all-bifrost-models">
-    <option value="inherit">Inherit from the relevant default</option>
-    {% for m in all_model_options %}
-    <option value="{{ m.handle | e }}">{{ m.label | e }}</option>
-    {% endfor %}
-  </datalist>
+        <h3>Bifrost virtual key</h3>
+        <p class="form-hint">
+            Optional Bear-scoped gateway governance. When configured, Den sends
+            this value as <code>x-bf-vk</code> on this Bear's LLM requests so
+            Bifrost can enforce usage, budgets, and model policy for the Bear.
+        </p>
+        <label for="bifrost_virtual_key_id">Virtual key ID</label>
+        <input
+            id="bifrost_virtual_key_id"
+            name="bifrost_virtual_key_id"
+            value="{{ bifrost_virtual_key_id | e }}"
+            placeholder="Bifrost virtual key id"
+            autocomplete="off"
+            {%
+            if
+            not
+            can_manage_bear
+            %}
+            disabled{%
+            endif
+            %}
+        />
+        <label for="bifrost_virtual_key_name">Virtual key name</label>
+        <input
+            id="bifrost_virtual_key_name"
+            name="bifrost_virtual_key_name"
+            value="{{ bifrost_virtual_key_name | e }}"
+            placeholder="Bifrost virtual key name"
+            autocomplete="off"
+            {%
+            if
+            not
+            can_manage_bear
+            %}
+            disabled{%
+            endif
+            %}
+        />
+        <label for="bifrost_virtual_key_value">Virtual key value</label>
+        <input
+            id="bifrost_virtual_key_value"
+            name="bifrost_virtual_key_value"
+            type="password"
+            value=""
+            placeholder="{% if bifrost_virtual_key_configured %}Configured — leave blank to keep current value{% else %}sk-bf-…{% endif %}"
+            autocomplete="off"
+            {%
+            if
+            not
+            can_manage_bear
+            %}
+            disabled{%
+            endif
+            %}
+        />
+        {% if bifrost_virtual_key_configured %}
+        <label
+            ><input
+                type="checkbox"
+                name="bifrost_virtual_key_clear"
+                {%
+                if
+                not
+                can_manage_bear
+                %}
+                disabled{%
+                endif
+                %}
+            />
+            Clear configured Bifrost virtual key value</label
+        >
+        {% endif %} {% if can_manage_bear %}
+        <p>
+            <button
+                type="submit"
+                formaction="/bear/{{ bear.slug | e }}/models/provision-bifrost-key"
+            >
+                Provision new Bifrost virtual key
+            </button>
+        </p>
+        <p class="form-hint">
+            Provisioning creates a Bear-scoped virtual key in Bifrost and stores
+            its value encrypted in Den. It will replace the currently configured
+            value.
+        </p>
+        {% endif %}
 
-  {% if can_manage_bear %}
-  <p><button type="submit">Save model settings</button></p>
-  {% else %}
-  <p class="form-hint">Only Bear admins can edit model settings.</p>
-  {% endif %}
-</form>
+        <h3>Stance defaults</h3>
+        <p class="form-hint">
+            Use <code>inherit</code> unless a stance needs a different tradeoff.
+        </p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Stance</th>
+                    <th>Model</th>
+                    <th>Resolved</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td>
+                        <strong>{{ row.label | e }}</strong><br /><code
+                            >{{ row.profile | e }}</code
+                        >
+                    </td>
+                    <td>
+                        <label for="{{ row.profile | e }}_model" class="sr-only"
+                            >{{ row.label | e }} model</label
+                        >
+                        <input
+                            id="{{ row.profile | e }}_model"
+                            name="{{ row.profile | e }}_model"
+                            list="all-bifrost-models"
+                            value="{% if row.configured_model %}{{ row.configured_model | e }}{% else %}inherit{% endif %}"
+                            placeholder="inherit or provider/model"
+                            required
+                            data-model-input{%
+                            if
+                            not
+                            can_manage_bear
+                            %}
+                            disabled{%
+                            endif
+                            %}
+                        />
+                        <select
+                            data-model-shortcut-target="{{ row.profile | e }}_model"
+                            {%
+                            if
+                            not
+                            can_manage_bear
+                            %}
+                            disabled{%
+                            endif
+                            %}
+                        >
+                            <option
+                                value="inherit"
+                                {%
+                                if
+                                not
+                                row.configured_model
+                                %}
+                                selected{%
+                                endif
+                                %}
+                            >
+                                Inherit Bear default
+                            </option>
+                            {% if row.configured_model_custom %}
+                            <option
+                                value="{{ row.configured_model_custom | e }}"
+                                selected
+                            >
+                                Custom model — {{ row.configured_model_custom |
+                                e }}
+                            </option>
+                            {% endif %} {% for m in model_options %}
+                            <option
+                                value="{{ m.handle | e }}"
+                                {%
+                                if
+                                row.configured_model=""
+                                ="m.handle"
+                                %}
+                                selected{%
+                                endif
+                                %}
+                            >
+                                {{ m.label | e }} — {{ m.handle | e }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        {% if row.resolved_model %}<code
+                            >{{ row.resolved_model | e }}</code
+                        >{% else %}<em>none</em>{% endif %}
+                    </td>
+                    <td>
+                        <span title="Bifrost availability"
+                            >{{ row.availability_status | e }}</span
+                        >
+                        ·
+                        <span title="Den metadata overlay"
+                            >metadata {{ row.metadata_status | e }}</span
+                        >
+                    </td>
+                    <td>{{ row.source | e }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <datalist id="all-bifrost-models">
+            <option value="inherit">Inherit from the relevant default</option>
+            {% for m in all_model_options %}
+            <option value="{{ m.handle | e }}">{{ m.label | e }}</option>
+            {% endfor %}
+        </datalist>
+
+        {% if can_manage_bear %}
+        <p><button type="submit">Save model settings</button></p>
+        {% else %}
+        <p class="form-hint">Only Bear admins can edit model settings.</p>
+        {% endif %}
+    </form>
 </div>
 
 <script>
-(function () {
-  var datalist = document.getElementById("all-bifrost-models");
-  var form = document.querySelector("form[data-model-settings]");
-  if (!datalist || !form) {
-    return;
-  }
+    (function () {
+        var datalist = document.getElementById("all-bifrost-models");
+        var form = document.querySelector("form[data-model-settings]");
+        if (!datalist || !form) {
+            return;
+        }
 
-  function allowedValues() {
-    return new Set(Array.prototype.map.call(datalist.options, function (option) {
-      return option.value;
-    }));
-  }
+        function allowedValues() {
+            return new Set(
+                Array.prototype.map.call(datalist.options, function (option) {
+                    return option.value;
+                }),
+            );
+        }
 
-  function validateModelInput(input) {
-    var value = input.value.trim();
-    var allowed = allowedValues();
-    if (!value) {
-      input.setCustomValidity("Choose inherit or a configured model.");
-    } else if (!allowed.has(value)) {
-      input.setCustomValidity("Choose a value from the model list.");
-    } else {
-      input.setCustomValidity("");
-    }
-  }
+        function validateModelInput(input) {
+            var value = input.value.trim();
+            var allowed = allowedValues();
+            if (!value) {
+                input.setCustomValidity(
+                    "Choose inherit or a configured model.",
+                );
+            } else if (!allowed.has(value)) {
+                input.setCustomValidity("Choose a value from the model list.");
+            } else {
+                input.setCustomValidity("");
+            }
+        }
 
-  Array.prototype.forEach.call(document.querySelectorAll("[data-model-input]"), function (input) {
-    validateModelInput(input);
-    input.addEventListener("input", function () { validateModelInput(input); });
-    input.addEventListener("change", function () { validateModelInput(input); });
-  });
+        Array.prototype.forEach.call(
+            document.querySelectorAll("[data-model-input]"),
+            function (input) {
+                validateModelInput(input);
+                input.addEventListener("input", function () {
+                    validateModelInput(input);
+                });
+                input.addEventListener("change", function () {
+                    validateModelInput(input);
+                });
+            },
+        );
 
-  Array.prototype.forEach.call(document.querySelectorAll("[data-model-shortcut-target]"), function (select) {
-    select.addEventListener("change", function () {
-      var target = document.getElementById(select.getAttribute("data-model-shortcut-target"));
-      if (!target || !select.value) {
-        return;
-      }
-      target.value = select.value;
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  });
+        Array.prototype.forEach.call(
+            document.querySelectorAll("[data-model-shortcut-target]"),
+            function (select) {
+                select.addEventListener("change", function () {
+                    var target = document.getElementById(
+                        select.getAttribute("data-model-shortcut-target"),
+                    );
+                    if (!target || !select.value) {
+                        return;
+                    }
+                    target.value = select.value;
+                    target.dispatchEvent(new Event("input", { bubbles: true }));
+                });
+            },
+        );
 
-  form.addEventListener("submit", function (event) {
-    Array.prototype.forEach.call(document.querySelectorAll("[data-model-input]"), validateModelInput);
-    if (!form.checkValidity()) {
-      event.preventDefault();
-      form.reportValidity();
-    }
-  });
-}());
+        form.addEventListener("submit", function (event) {
+            Array.prototype.forEach.call(
+                document.querySelectorAll("[data-model-input]"),
+                validateModelInput,
+            );
+            if (!form.checkValidity()) {
+                event.preventDefault();
+                form.reportValidity();
+            }
+        });
+    })();
 </script>
 {% endblock %}

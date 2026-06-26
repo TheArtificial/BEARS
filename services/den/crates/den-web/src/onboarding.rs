@@ -16,8 +16,8 @@ use crate::{
     web::{
         bear_create_support::{
             bear_new_form_context, build_context_profile_json_for_template,
-            insert_new_bear_row_with_context_profile, validate_default_model_for_catalog,
-            NewBearForm,
+            insert_new_bear_row_with_context_profile, provision_bifrost_virtual_key_for_bear,
+            validate_default_model_for_catalog, NewBearForm,
         },
         render_template, AppState,
     },
@@ -196,8 +196,7 @@ async fn first_bear_post(
         return Ok(Redirect::to("/").into_response());
     }
 
-    let model_context =
-        crate::web::bear_create_support::model_catalog_select_context(&state).await;
+    let model_context = crate::web::bear_create_support::model_catalog_select_context(&state).await;
     let letta_fetch = model_context
         .0
         .then_some(Ok::<_, CustomError>(model_context.1));
@@ -226,7 +225,8 @@ async fn first_bear_post(
     }
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
-    let default_model_opt = crate::web::bear_create_support::canonical_default_model_handle(default_model_trim);
+    let default_model_opt =
+        crate::web::bear_create_support::canonical_default_model_handle(default_model_trim);
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
         validation_errors.add(
@@ -265,33 +265,33 @@ async fn first_bear_post(
     )
     .await?;
 
-    bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
-
-    if let Err(e) = provision::provision_bear_if_configured(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        id,
-    )
-    .await
+    if let Err(e) =
+        provision_bifrost_virtual_key_for_bear(&state, id, new_bear_form.slug.trim()).await
     {
-        tracing::warn!(%id, "Native profile provision failed during first-bear onboarding: {e}");
+        let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
         return render_first_bear_form(
             &state,
             auth_session,
             form,
             None,
-            Some(e.to_string()),
+            Some(format!("Bifrost virtual key provisioning failed: {e}")),
             None,
         )
         .await;
     }
 
-    if let Err(err) = provision::reconcile_bear_native(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        id,
-    )
-    .await
+    bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
+
+    if let Err(e) =
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id).await
+    {
+        tracing::warn!(%id, "Native profile provision failed during first-bear onboarding: {e}");
+        return render_first_bear_form(&state, auth_session, form, None, Some(e.to_string()), None)
+            .await;
+    }
+
+    if let Err(err) =
+        provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), id).await
     {
         tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after first-bear onboarding failed");
     }

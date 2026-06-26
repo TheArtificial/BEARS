@@ -285,7 +285,21 @@ def validate_config_shape() -> None:
     require_min_length("DEN_SECRET_ENCRYPTION_KEY", 16)
     info("DEN_SECRET_ENCRYPTION_KEY is set")
 
+    require_min_length("BIFROST_ENCRYPTION_KEY", 16)
+    info("BIFROST_ENCRYPTION_KEY is set")
+    require_non_empty("BIFROST_ADMIN_USERNAME")
+    info("BIFROST_ADMIN_USERNAME is set")
+    require_min_length("BIFROST_ADMIN_PASSWORD", 8)
+    info("BIFROST_ADMIN_PASSWORD is set")
+
     validate_database_url(reachable=False)
+
+    management = (
+        os.environ.get("BIFROST_MANAGEMENT_URL", "").strip()
+        or "http://bears-bifrost:8080/api"
+    )
+    validate_http_url("BIFROST_MANAGEMENT_URL", management)
+    info(f"BIFROST_MANAGEMENT_URL OK ({management})")
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)

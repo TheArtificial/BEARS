@@ -27,7 +27,8 @@ use crate::{
     web::{
         bear_create_support::{
             bear_configuration_page_context, bear_new_form_context, canonical_default_model_handle,
-            insert_new_bear_row, model_catalog_select_context, validate_default_model_for_catalog,
+            insert_new_bear_row, model_catalog_select_context,
+            provision_bifrost_virtual_key_for_bear, validate_default_model_for_catalog,
             BearConfigurationEditForm, BearOverviewEditForm, BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
@@ -904,6 +905,23 @@ async fn new_bear_post(
             default_model_opt.as_deref(),
         )
         .await?;
+
+        if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
+            let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+            let page = bear_new_form_context(&state, &form).await;
+            return render_template(
+                &state,
+                "bear/new.html",
+                auth_session,
+                context! {
+                    form => form,
+                    validation_errors => validation_errors,
+                    provision_error => format!("Bifrost virtual key provisioning failed: {e}"),
+                    ..page
+                },
+            )
+            .await;
+        }
 
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 

@@ -26,6 +26,10 @@ x-preflight-environment: &preflight-environment
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
     DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-SETME}
+    BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-SETME}
+    BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+    BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+    BIFROST_MANAGEMENT_URL: ${BIFROST_MANAGEMENT_URL:-http://bears-bifrost:8080/api}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
@@ -133,6 +137,11 @@ services:
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-SETME}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+        volumes:
+            - bears-bifrost-data:/app/data
         healthcheck:
             test:
                 [
@@ -211,6 +220,9 @@ services:
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
             TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
             BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
+            BIFROST_MANAGEMENT_URL: ${BIFROST_MANAGEMENT_URL:-http://bears-bifrost:8080/api}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
@@ -254,3 +266,4 @@ volumes:
     bears-den-sqlite-data:
     bears-qdrant-data:
     bears-valkey-data:
+    bears-bifrost-data:

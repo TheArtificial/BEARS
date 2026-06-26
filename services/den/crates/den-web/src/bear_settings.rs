@@ -63,6 +63,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/stances", get(stances_view))
         .route_with_tsr("/bear/{slug}/profiles", get(stances_view))
         .route_with_tsr("/bear/{slug}/models", get(models_view).post(models_post))
+        .route_with_tsr(
+            "/bear/{slug}/models/provision-bifrost-key",
+            post(provision_bifrost_virtual_key_action),
+        )
         .route_with_tsr("/bear/{slug}/stances/{stance}", get(stance_detail_view))
         .route_with_tsr("/bear/{slug}/profiles/{stance}", get(stance_detail_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
@@ -1180,6 +1184,34 @@ async fn models_post(
         "/bear/{}/models?message={}",
         bear.slug,
         urlencoding::encode("Model settings saved.")
+    ))
+    .into_response())
+}
+
+async fn provision_bifrost_virtual_key_action(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
+    let key = client.create_bear_virtual_key(bear.id, &bear.slug).await?;
+    bears_db::set_bear_bifrost_virtual_key(
+        state.sqlx_pool(),
+        bear.id,
+        Some(&key.id),
+        Some(&key.name),
+        Some(&key.value),
+        &state.config.den_secret_encryption_key,
+    )
+    .await?;
+    Ok(Redirect::to(&format!(
+        "/bear/{}/models?message={}",
+        bear.slug,
+        urlencoding::encode("Bifrost virtual key provisioned for this Bear.")
     ))
     .into_response())
 }

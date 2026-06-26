@@ -32,8 +32,8 @@ use den_service::bears::{
 
 use crate::web::bear_create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
-    model_catalog_select_context, validate_default_model_for_catalog, AdminBearPromptForm,
-    AdminNewBearForm, NewBearForm,
+    model_catalog_select_context, provision_bifrost_virtual_key_for_bear,
+    validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
 
 async fn redirect_bear_slug(
@@ -647,6 +647,26 @@ pub async fn new_action(
             },
         )
         .await?;
+
+        if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
+            let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+            tracing::warn!(%id, "Bifrost virtual key provision failed: {e}");
+            let users = user_db::get_users(state.sqlx_pool()).await?;
+            let page = admin_bear_new_form_context(&state, &form).await;
+            return web::render_template(
+                &state,
+                "admin/bears/new.html",
+                auth_session,
+                context! {
+                    form => form,
+                    admin_form => admin_form,
+                    users,
+                    provision_error => format!("Bifrost virtual key provisioning failed: {e}"),
+                    ..page
+                },
+            )
+            .await;
+        }
 
         if let Err(e) =
             provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)

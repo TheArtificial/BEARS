@@ -1,9 +1,18 @@
 {
     "$schema": "https://www.getbifrost.ai/schema",
     "source_of_truth": "config.json",
+    "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
     "client": {
         "drop_excess_requests": false,
         "disable_db_pings_in_health": true
+    },
+    "governance": {
+        "auth_config": {
+            "is_enabled": true,
+            "admin_username": "env.BIFROST_ADMIN_USERNAME",
+            "admin_password": "env.BIFROST_ADMIN_PASSWORD",
+            "disable_auth_on_inference": true
+        }
     },
     "providers": {
         "openai": {
@@ -57,6 +66,10 @@
         }
     ],
     "config_store": {
-        "enabled": false
+        "enabled": true,
+        "type": "sqlite",
+        "config": {
+            "path": "/app/data/config.db"
+        }
     }
 }

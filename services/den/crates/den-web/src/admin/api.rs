@@ -117,6 +117,15 @@ async fn create_bear(
     .await?;
 
     if let Err(e) =
+        bear_create_support::provision_bifrost_virtual_key_for_bear(&state, id, slug).await
+    {
+        let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+        return Err(CustomError::System(format!(
+            "Bifrost virtual key provisioning failed: {e}"
+        )));
+    }
+
+    if let Err(e) =
         provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id).await
     {
         tracing::warn!(%id, "Bear provision failed after admin API create: {e}");

@@ -666,6 +666,25 @@ pub async fn insert_new_bear_row(
 }
 
 /// Shared DB write for creating a role-aware context-profile bear row.
+pub async fn provision_bifrost_virtual_key_for_bear(
+    state: &AppState,
+    bear_id: Uuid,
+    bear_slug: &str,
+) -> Result<(), CustomError> {
+    let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
+    let key = client.create_bear_virtual_key(bear_id, bear_slug).await?;
+    bears_db::set_bear_bifrost_virtual_key(
+        state.sqlx_pool(),
+        bear_id,
+        Some(&key.id),
+        Some(&key.name),
+        Some(&key.value),
+        &state.config.den_secret_encryption_key,
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn insert_new_bear_row_with_context_profile(
     pool: &sqlx::PgPool,
     form: &NewBearForm,

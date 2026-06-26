@@ -113,6 +113,12 @@ pub struct Config {
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
+    /// Bifrost management API base URL, e.g. `http://bears-bifrost:8080/api`.
+    pub bifrost_management_url: String,
+    /// Bifrost management admin username (`BIFROST_ADMIN_USERNAME`).
+    pub bifrost_admin_username: String,
+    /// Bifrost management admin password (`BIFROST_ADMIN_PASSWORD`).
+    pub bifrost_admin_password: String,
     /// Seconds between background Bifrost model-catalog refreshes
     /// (`BIFROST_CATALOG_REFRESH_SECS`, default 300). `0` warms once at startup
     /// with no periodic refresh.
@@ -349,6 +355,19 @@ impl Config {
 
         let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
         let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
+        let bifrost_management_url = std::env::var("BIFROST_MANAGEMENT_URL")
+            .ok()
+            .map(|value| value.trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                if bifrost_base_url.is_empty() {
+                    String::new()
+                } else {
+                    format!("{bifrost_base_url}/api")
+                }
+            });
+        let bifrost_admin_username = std::env::var("BIFROST_ADMIN_USERNAME").unwrap_or_default();
+        let bifrost_admin_password = std::env::var("BIFROST_ADMIN_PASSWORD").unwrap_or_default();
         let bifrost_catalog_refresh_secs = std::env::var("BIFROST_CATALOG_REFRESH_SECS")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
@@ -463,11 +482,11 @@ impl Config {
                 1536
             });
 
-        let compaction_mode = std::env::var("COMPACTION_MODE")
-            .unwrap_or_else(|_| "observe".to_string());
+        let compaction_mode =
+            std::env::var("COMPACTION_MODE").unwrap_or_else(|_| "observe".to_string());
 
-        let compaction_timing = std::env::var("COMPACTION_TIMING")
-            .unwrap_or_else(|_| "async".to_string());
+        let compaction_timing =
+            std::env::var("COMPACTION_TIMING").unwrap_or_else(|_| "async".to_string());
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
@@ -498,6 +517,9 @@ impl Config {
             den_internal_token,
             den_secret_encryption_key,
             bifrost_base_url,
+            bifrost_management_url,
+            bifrost_admin_username,
+            bifrost_admin_password,
             bifrost_catalog_refresh_secs,
             llm_api_url,
             llm_api_key,
@@ -575,6 +597,9 @@ impl Config {
             den_internal_token: String::new(),
             den_secret_encryption_key: String::new(),
             bifrost_base_url: String::new(),
+            bifrost_management_url: String::new(),
+            bifrost_admin_username: String::new(),
+            bifrost_admin_password: String::new(),
             bifrost_catalog_refresh_secs: 300,
             llm_api_url: String::new(),
             llm_api_key: String::new(),

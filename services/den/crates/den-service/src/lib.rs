@@ -7,6 +7,7 @@ pub mod acp_sessions;
 pub mod archived_conversations;
 pub mod bears;
 pub mod bifrost;
+pub mod bifrost_governance;
 pub mod conversation;
 pub mod conversation_ids;
 pub mod memory_proposals;
