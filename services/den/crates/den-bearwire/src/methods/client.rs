@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::time::Duration;
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
@@ -32,6 +33,15 @@ use crate::methods::run::{
     persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
 };
 use crate::methods::{param_string, required_param_string};
+
+fn continuation_watchdog_timeout() -> Duration {
+    let millis = std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(1_000, 600_000))
+        .unwrap_or(30_000);
+    Duration::from_millis(millis)
+}
 
 fn continuation_conversation_id(session: &acp_sessions::AcpSessionRow) -> String {
     session
@@ -207,7 +217,30 @@ fn spawn_continuation_task(
                 let mut runtime_event_count = 0usize;
                 let mut terminal_event_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
-                while let Some(item) = stream.next().await {
+                let watchdog_timeout = continuation_watchdog_timeout();
+                loop {
+                    let item = match tokio::time::timeout(watchdog_timeout, stream.next()).await {
+                        Ok(item) => item,
+                        Err(_) => {
+                            persist_run_failed(
+                                &pool,
+                                &run.session_id,
+                                &run.run_id,
+                                run.bear_id,
+                                run.user_id,
+                                "continuation_watchdog_timeout",
+                                format!(
+                                    "Continuation produced no runtime event within {}ms after client result.",
+                                    watchdog_timeout.as_millis()
+                                ),
+                            )
+                            .await;
+                            break;
+                        }
+                    };
+                    let Some(item) = item else {
+                        break;
+                    };
                     match item {
                         Ok(runtime_event) => {
                             runtime_event_count += 1;
