@@ -8236,6 +8236,7 @@ async fn handle_den_event(
             handle_permission_request_event(
                 config,
                 adapter_state,
+                shared_state,
                 &shared_state.mcp_registry,
                 session_id,
                 event,
@@ -8387,6 +8388,7 @@ async fn handle_den_event(
 async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     mcp_registry: &McpRegistry,
     session_id: &str,
     event: &Value,
@@ -8538,18 +8540,13 @@ async fn handle_permission_request_event(
             ),
         ]
     } else if is_command_permission {
-        vec![
-            agent_client_protocol::schema::PermissionOption::new(
-                "allow_once",
-                "Allow this command once",
-                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
-            ),
-            agent_client_protocol::schema::PermissionOption::new(
-                "reject_once",
-                "Deny this command",
-                agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
-            ),
-        ]
+        permission_options_for_context(
+            adapter_state.session_contexts.get(session_id),
+            None,
+            None,
+            command_line.as_deref(),
+            "commands",
+        )
     } else {
         let mut options = vec![agent_client_protocol::schema::PermissionOption::new(
             "allow_once",
@@ -8578,7 +8575,37 @@ async fn handle_permission_request_event(
         options
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
-    let decision =
+    let context_for_approval = adapter_state
+        .session_contexts
+        .get(session_id)
+        .cloned()
+        .or_else(|| {
+            shared_state
+                .session_contexts
+                .try_lock()
+                .ok()?
+                .get(session_id)
+                .cloned()
+        });
+    let auto_allowed = if let Some(context) = context_for_approval.as_ref() {
+        shared_state
+            .approval_cache
+            .is_allowed_for_target(context, tool_name, None, url, command_line.as_deref())
+            .await
+    } else {
+        false
+    };
+    let decision = if auto_allowed {
+        eprintln!(
+            "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
+            session_id, tool_name, target_label
+        );
+        PermissionDecision {
+            approved: true,
+            remember: false,
+            scope: ApprovalScope::Workspace,
+        }
+    } else {
         match send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
             .await
         {
@@ -8619,7 +8646,26 @@ async fn handle_permission_request_event(
                 .await;
                 return Ok(());
             }
-        };
+        }
+    };
+    if decision.approved && decision.remember {
+        if let Some(context) = context_for_approval.as_ref() {
+            shared_state
+                .approval_cache
+                .remember_for_target(
+                    context,
+                    tool_name,
+                    "command_run",
+                    decision.scope,
+                    ApprovalTarget {
+                        path: None,
+                        url,
+                        command: command_line.as_deref(),
+                    },
+                )
+                .await;
+        }
+    }
     let decision_str = if is_plan_mode {
         if decision.approved {
             "approve"
@@ -8632,6 +8678,8 @@ async fn handle_permission_request_event(
             ApprovalScope::Workspace
             | ApprovalScope::Directory
             | ApprovalScope::Command
+            | ApprovalScope::CommandExactWorkspace
+            | ApprovalScope::CommandFamilyWorkspace
             | ApprovalScope::Global
                 if decision.approved =>
             {

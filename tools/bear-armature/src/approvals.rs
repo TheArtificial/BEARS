@@ -69,6 +69,8 @@ pub(crate) enum ApprovalScope {
     Workspace,
     Host,
     Command,
+    CommandExactWorkspace,
+    CommandFamilyWorkspace,
     Global,
 }
 
@@ -79,6 +81,8 @@ impl ApprovalScope {
             Self::Workspace => "workspace",
             Self::Host => "host",
             Self::Command => "command",
+            Self::CommandExactWorkspace => "command_exact_workspace",
+            Self::CommandFamilyWorkspace => "command_family_workspace",
             Self::Global => "global",
         }
     }
@@ -347,7 +351,44 @@ pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
 }
 
 fn normalize_command_scope(command: &str) -> String {
-    command.trim().to_string()
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn command_family(command: &str) -> Option<&str> {
+    let mut parts = command.split_whitespace();
+    let executable = parts.next()?;
+    let subcommand = parts.next();
+    match (executable, subcommand) {
+        ("cargo", Some("build" | "check" | "test" | "clippy" | "fmt")) => Some("cargo"),
+        ("pytest", _) => Some("pytest"),
+        ("python" | "python3", Some("-m")) if parts.next() == Some("pytest") => Some("pytest"),
+        ("git", Some("status" | "diff" | "log" | "show" | "blame")) => Some("git_read"),
+        _ => None,
+    }
+}
+
+fn command_workspace_fingerprint(
+    context: &SessionContext,
+    prefix: &str,
+    command: &str,
+) -> Option<String> {
+    let command = normalize_command_scope(command);
+    if command.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{prefix}:{command}|workspace:{}",
+        approval_root_fingerprint(context)
+    ))
+}
+
+fn command_family_workspace_fingerprint(context: &SessionContext, command: &str) -> Option<String> {
+    command_family(command).map(|family| {
+        format!(
+            "command_family:{family}|workspace:{}",
+            approval_root_fingerprint(context)
+        )
+    })
 }
 
 fn approval_cache_path() -> PathBuf {
@@ -407,6 +448,12 @@ fn approval_scope_fingerprint(
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
         ApprovalScope::Host => target.url.and_then(approval_url_host_scope),
         ApprovalScope::Command => target.command.map(normalize_command_scope),
+        ApprovalScope::CommandExactWorkspace => target
+            .command
+            .and_then(|command| command_workspace_fingerprint(context, "command_exact", command)),
+        ApprovalScope::CommandFamilyWorkspace => target
+            .command
+            .and_then(|command| command_family_workspace_fingerprint(context, command)),
         ApprovalScope::Global => Some("global".to_string()),
     }
 }
@@ -421,7 +468,8 @@ pub(crate) fn candidate_approval_scopes(
     }
     if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
         return vec![
-            ApprovalScope::Command,
+            ApprovalScope::CommandExactWorkspace,
+            ApprovalScope::CommandFamilyWorkspace,
             ApprovalScope::Workspace,
             ApprovalScope::Global,
         ];
@@ -492,11 +540,19 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
+        let exact = normalize_command_scope(command);
         options.push(PermissionOption::new(
-            "allow_command_workspace",
-            format!("Always allow `{}` in this workspace", command),
+            "allow_command_exact_workspace",
+            format!("Always allow `{exact}` in this workspace"),
             PermissionOptionKind::AllowAlways,
         ));
+        if let Some(family) = command_family(command) {
+            options.push(PermissionOption::new(
+                "allow_command_family_workspace",
+                format!("Always allow safe `{family}` commands in this workspace"),
+                PermissionOptionKind::AllowAlways,
+            ));
+        }
         if let Some(context) = context {
             options.push(PermissionOption::new(
                 "allow_workspace",
@@ -610,10 +666,15 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             remember: true,
             scope: ApprovalScope::Host,
         },
-        "allow_command_workspace" => PermissionDecision {
+        "allow_command_workspace" | "allow_command_exact_workspace" => PermissionDecision {
             approved: true,
             remember: true,
-            scope: ApprovalScope::Command,
+            scope: ApprovalScope::CommandExactWorkspace,
+        },
+        "allow_command_family_workspace" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::CommandFamilyWorkspace,
         },
         "allow_global" => PermissionDecision {
             approved: true,
@@ -998,13 +1059,64 @@ mod tests {
             ]
         );
         assert_eq!(
-            candidate_approval_scopes(None, None, Some("cargo")),
+            candidate_approval_scopes(None, None, Some("cargo build")),
             vec![
-                ApprovalScope::Command,
+                ApprovalScope::CommandExactWorkspace,
+                ApprovalScope::CommandFamilyWorkspace,
                 ApprovalScope::Workspace,
                 ApprovalScope::Global
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_command_family_scope_is_workspace_bounded() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let workspace_a = workspace_context("/workspace/a");
+        let workspace_b = workspace_context("/workspace/b");
+        cache
+            .remember_for_target(
+                &workspace_a,
+                "process_run",
+                "command_run",
+                ApprovalScope::CommandFamilyWorkspace,
+                ApprovalTarget {
+                    path: None,
+                    url: None,
+                    command: Some("cargo build"),
+                },
+            )
+            .await;
+
+        assert!(cache
+            .is_allowed_for_target(
+                &workspace_a,
+                "process_run",
+                None,
+                None,
+                Some("cargo check"),
+            )
+            .await);
+        assert!(
+            !cache
+                .is_allowed_for_target(
+                    &workspace_a,
+                    "process_run",
+                    None,
+                    None,
+                    Some("cargo publish"),
+                )
+                .await
+        );
+        assert!(!cache
+            .is_allowed_for_target(
+                &workspace_b,
+                "process_run",
+                None,
+                None,
+                Some("cargo check"),
+            )
+            .await);
     }
 
     #[test]
@@ -1169,7 +1281,7 @@ mod tests {
             Some(&context),
             None,
             None,
-            Some("cargo"),
+            Some("cargo build"),
             "command execution tools",
         );
         let serialized = serde_json::to_value(&options).unwrap();
@@ -1183,7 +1295,8 @@ mod tests {
             option_ids,
             vec![
                 "allow_once",
-                "allow_command_workspace",
+                "allow_command_exact_workspace",
+                "allow_command_family_workspace",
                 "allow_workspace",
                 "allow_global",
                 "reject_once",
@@ -1192,7 +1305,7 @@ mod tests {
         );
         assert!(serialized
             .to_string()
-            .contains("Always allow `cargo` in this workspace"));
+            .contains("Always allow `cargo build` in this workspace"));
     }
 
     #[test]
