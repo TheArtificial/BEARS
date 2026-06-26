@@ -38,6 +38,9 @@ pub mod user;
 pub mod v1;
 pub mod web_chat_runtime;
 
+#[cfg(test)]
+mod tests;
+
 use indexmap::IndexMap;
 use std::sync::OnceLock;
 
@@ -205,12 +208,10 @@ pub async fn server_with_state(
     .await
 }
 
-pub async fn server_with_state_and_runtime(
-    sqlx_pool: PgPool,
-    session_store: PostgresStore,
-    config: Arc<Config>,
-    web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
-) -> Result<Router, Box<dyn std::error::Error>> {
+pub fn template_environment(config: &Config) -> Environment<'static> {
+    #[cfg(feature = "production")]
+    let _ = config;
+
     let mut env = Environment::new();
     env.add_filter("hexadecimal", filters::hexadecimal);
     env.add_filter("urlencode", filters::urlencode);
@@ -229,6 +230,17 @@ pub async fn server_with_state_and_runtime(
         let template_path = &config.templates_dir;
         env.set_loader(minijinja::path_loader(template_path));
     }
+
+    env
+}
+
+pub async fn server_with_state_and_runtime(
+    sqlx_pool: PgPool,
+    session_store: PostgresStore,
+    config: Arc<Config>,
+    web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let env = template_environment(config.as_ref());
 
     let memory_serve =
         MemoryServe::new(load_assets!("src/assets")).cache_control(CacheControl::Short);
@@ -441,3 +453,4 @@ pub async fn render_template(
         )))
     }
 }
+
