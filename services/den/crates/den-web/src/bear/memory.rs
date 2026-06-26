@@ -21,21 +21,25 @@ use std::path::{Path as FsPath, PathBuf};
 use uuid::Uuid;
 
 use crate::{
-    bear_settings::{bear_nav_context, load_session_bear, session_user},
     errors::CustomError,
     web::{self, AppState},
 };
-use den_service::bears::{db as bears_db, BearProfile};
+
+use super::settings::{bear_nav_context, load_session_bear, session_user};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
     get_memory_record_detail, head_entry_count, import_memfs_bundle, list_path_summaries,
     list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
     search_memory_records, MemfsImportOptions, MemoryRecordRow, MemoryStoreManager, PathSummary,
 };
-use den_service::{memory_proposals::{self, CreateMemoryProposal}, pair_reflection};
+use den_service::bears::{db as bears_db, BearProfile};
 use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
+use den_service::{
+    memory_proposals::{self, CreateMemoryProposal},
+    pair_reflection,
+};
 
-use super::bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
+use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -1210,10 +1214,10 @@ mod tests {
     /// `/memory/browse` redirect colliding with the real browse page.
     #[test]
     fn bear_routers_merge_without_conflict() {
-        // Mirrors `lib.rs`: `bear_management::router()` already merges `bear_settings::router()`.
+        // Mirrors `lib.rs`: `management::router()` already merges `settings::router()`.
         let _router: Router<AppState> = Router::new()
             .merge(router())
-            .merge(crate::bear_management::router());
+            .merge(crate::bear::management::router());
     }
 
     /// Compile every new memory/entity template via the path loader to catch MiniJinja

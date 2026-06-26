@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::web::bear_create_support::{
+use crate::web::bear::create_support::{
     canonical_default_model_handle, model_catalog_select_context,
 };
 use crate::{

@@ -30,7 +30,7 @@ use den_service::bears::{
     db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding,
 };
 
-use crate::web::bear_create_support::{
+use crate::web::bear::create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
     model_catalog_select_context, provision_bifrost_virtual_key_for_bear,
     validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,

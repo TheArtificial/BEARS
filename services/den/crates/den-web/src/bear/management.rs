@@ -1,7 +1,7 @@
 //! Member-facing bear lifecycle: create bears (you become admin), details, membership, edit/delete for bear admins (or site operators).
 //! When changing routes, update `src/web/ROUTES.md`.
 // TODO(den-web extraction): several detail/edit/member handlers here were superseded
-// by `bear_settings.rs` + legacy redirects and are now dead. Remove during the den-web
+// by `bear::settings` + legacy redirects and are now dead. Remove during the den-web
 // move rather than blind-deleting now. `allow(dead_code)` keeps the clippy gate green.
 #![allow(dead_code)]
 
@@ -25,7 +25,7 @@ use crate::{
     core::{acp_tokens, user::db as user_db},
     errors::CustomError,
     web::{
-        bear_create_support::{
+        bear::create_support::{
             bear_configuration_page_context, bear_new_form_context, canonical_default_model_handle,
             insert_new_bear_row, model_catalog_select_context,
             provision_bifrost_virtual_key_for_bear, validate_default_model_for_catalog,
@@ -43,13 +43,11 @@ use den_service::bears::{
     provision, Bear, BearProfile,
 };
 
-pub(crate) use super::bear_member::{
-    email_verify_redirect, load_bear_member, viewer_can_manage_bear,
-};
-use super::bear_settings;
+pub(crate) use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
+use super::settings;
 
 pub fn router() -> Router<AppState> {
-    bear_settings::router()
+    settings::router()
         .merge(Router::new())
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(legacy_details_redirect))

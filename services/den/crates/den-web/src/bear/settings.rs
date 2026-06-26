@@ -45,14 +45,14 @@ use crate::web::admin::bears::{
     BearMemberAdminRow, BearPlanModeRow, BearProfileBindingHealthRow, BearWebApprovalRow,
     BearWebFetchRow, BearWebSourceRow,
 };
-use crate::web::bear_create_support::{
+use crate::web::bear::create_support::{
     all_model_catalog_options_context, canonical_default_model_handle,
 };
 use den_llm::ModelOption;
 
 use super::{
-    bear_member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
-    bear_profile::build_role_detail_view,
+    member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear},
+    profile::build_role_detail_view,
 };
 
 pub fn router() -> Router<AppState> {

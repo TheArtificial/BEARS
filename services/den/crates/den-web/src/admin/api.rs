@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     core::user::db as user_db,
     errors::CustomError,
-    web::{bear_create_support, AppState},
+    web::{bear::create_support, AppState},
 };
 use den_service::bears::{
     db::{self as bears_db, BearParams, MembershipRow},
@@ -91,7 +91,7 @@ async fn create_bear(
                     .to_string(),
             ));
         }
-        if !bear_create_support::default_model_available_in_catalog(&catalog_models, model) {
+        if !create_support::default_model_available_in_catalog(&catalog_models, model) {
             return Err(CustomError::ValidationError(format!(
                 "default_model `{model}` is not configured as a selectable Den model"
             )));
@@ -116,9 +116,7 @@ async fn create_bear(
     )
     .await?;
 
-    if let Err(e) =
-        bear_create_support::provision_bifrost_virtual_key_for_bear(&state, id, slug).await
-    {
+    if let Err(e) = create_support::provision_bifrost_virtual_key_for_bear(&state, id, slug).await {
         let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
         return Err(CustomError::System(format!(
             "Bifrost virtual key provisioning failed: {e}"
