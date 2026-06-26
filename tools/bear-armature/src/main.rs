@@ -8417,19 +8417,50 @@ async fn handle_permission_request_event(
     let plan_mode_id = target.get("plan_mode_id").and_then(Value::as_str);
     let target_kind = target.get("kind").and_then(Value::as_str);
     let is_plan_mode = target_kind == Some("acp_plan_mode") || plan_mode_id.is_some();
+    let command = target.get("command").and_then(Value::as_str);
+    let command_args = target
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let cwd = target.get("cwd").and_then(Value::as_str);
+    let timeout_ms = target.get("timeout_ms").and_then(Value::as_u64);
+    let max_output_bytes = target.get("max_output_bytes").and_then(Value::as_u64);
+    let is_command_permission =
+        matches!(tool_name, "process_run" | "terminal_run_command") || command.is_some();
     let mut display = tool_display(tool_name);
     if is_plan_mode {
         display.title = "Approve implementation plan".to_string();
         display.kind = ToolKind::SwitchMode;
         display.verb = "Reviewing plan".to_string();
         display.permission_operation = "approve this implementation plan".to_string();
+    } else if is_command_permission {
+        display.title = "Approve command".to_string();
+        display.kind = ToolKind::Execute;
+        display.verb = "Reviewing command".to_string();
+        display.permission_operation = "run this command".to_string();
     }
     let plan_body = target.get("body").and_then(Value::as_str);
     let artifact_path = target.get("artifact_path").and_then(Value::as_str);
+    let command_line = command.map(|command| {
+        if command_args.is_empty() {
+            command.to_string()
+        } else {
+            format!("{command} {command_args}")
+        }
+    });
     let target_label = if is_plan_mode {
         artifact_path
             .or(plan_mode_id)
             .unwrap_or("submitted plan artifact")
+    } else if let Some(command_line) = command_line.as_deref() {
+        command_line
     } else {
         url.or(host).unwrap_or("the requested target")
     };
@@ -8440,14 +8471,30 @@ async fn handle_permission_request_event(
             plan_body
                 .unwrap_or("Plan body is unavailable; use the artifact path for audit context.")
         )
+    } else if is_command_permission {
+        format!(
+            "{reason}\n\nTool: {tool_name}\nCommand: {}\nWorking directory: {}\nTimeout: {}\nMax output bytes: {}\n\nApprove only if this command matches the user's requested task.",
+            command_line.as_deref().unwrap_or("<missing command>"),
+            cwd.unwrap_or("<missing cwd>"),
+            timeout_ms.map(|value| format!("{value}ms")).unwrap_or_else(|| "default".to_string()),
+            max_output_bytes.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string()),
+        )
     } else {
         format!("{reason}\n\nTool: {tool_name}\nTarget: {target_label}")
+    };
+    let request_title = if is_command_permission {
+        command_line
+            .as_deref()
+            .map(|command| format!("Run command: {command}"))
+            .unwrap_or_else(|| "Run command".to_string())
+    } else {
+        title.to_string()
     };
     let mut content = vec![ToolCallContent::from(permission_body)];
     let fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
-        .title(Some(title.to_string()))
+        .title(Some(request_title))
         .content(Some(std::mem::take(&mut content)))
         .raw_input(Some(target.clone()));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some({
@@ -8459,6 +8506,15 @@ async fn handle_permission_request_event(
         }
         if let Some(host) = host {
             meta.insert("targetHost".to_string(), json!(host));
+        }
+        if let Some(command) = command {
+            meta.insert("targetCommand".to_string(), json!(command));
+        }
+        if !command_args.is_empty() {
+            meta.insert("targetCommandArgs".to_string(), json!(command_args));
+        }
+        if let Some(cwd) = cwd {
+            meta.insert("targetCwd".to_string(), json!(cwd));
         }
         if let Some(plan_mode_id) = plan_mode_id {
             meta.insert("planModeId".to_string(), json!(plan_mode_id));
@@ -8478,6 +8534,19 @@ async fn handle_permission_request_event(
             agent_client_protocol::schema::PermissionOption::new(
                 "reject",
                 "Reject this plan and keep implementation blocked",
+                agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
+            ),
+        ]
+    } else if is_command_permission {
+        vec![
+            agent_client_protocol::schema::PermissionOption::new(
+                "allow_once",
+                "Allow this command once",
+                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            ),
+            agent_client_protocol::schema::PermissionOption::new(
+                "reject_once",
+                "Deny this command",
                 agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
             ),
         ]
