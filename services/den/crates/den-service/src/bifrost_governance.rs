@@ -96,8 +96,15 @@ impl BifrostGovernanceClient {
             .await
             .map_err(|err| DenError::System(format!("Bifrost management login body: {err}")))?;
         if !status.is_success() {
+            let hint = if status == reqwest::StatusCode::FORBIDDEN
+                && text.contains("Authentication is not enabled")
+            {
+                "; Bifrost management auth is disabled. Ensure services/bifrost/config.json uses top-level auth_config.is_enabled=true (not governance.auth_config) and redeploy/recreate bears-bifrost so /app/data/config.json is refreshed."
+            } else {
+                ""
+            };
             return Err(DenError::System(format!(
-                "Bifrost management login HTTP {status}: {text}"
+                "Bifrost management login HTTP {status}: {text}{hint}"
             )));
         }
         let payload = serde_json::from_str::<LoginResponse>(&text).map_err(|err| {

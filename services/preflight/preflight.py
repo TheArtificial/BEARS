@@ -182,6 +182,30 @@ def validate_bifrost_model_metadata_config() -> None:
                 "Bifrost config bears.models must be an array when bears metadata is present"
             )
 
+    misplaced_governance = config.get("governance")
+    if isinstance(misplaced_governance, dict) and "auth_config" in misplaced_governance:
+        fail(
+            "Bifrost config auth_config must be top-level, not governance.auth_config; otherwise /api/session/login reports authentication is not enabled"
+        )
+
+    auth_config = config.get("auth_config")
+    if not isinstance(auth_config, dict):
+        fail(
+            "Bifrost config must include top-level auth_config for runtime virtual-key provisioning"
+        )
+    if auth_config.get("is_enabled") is not True:
+        fail(
+            "Bifrost config auth_config.is_enabled must be true for Den to provision virtual keys"
+        )
+    if auth_config.get("admin_username") != "env.BIFROST_ADMIN_USERNAME":
+        fail(
+            "Bifrost config auth_config.admin_username must be env.BIFROST_ADMIN_USERNAME"
+        )
+    if auth_config.get("admin_password") != "env.BIFROST_ADMIN_PASSWORD":
+        fail(
+            "Bifrost config auth_config.admin_password must be env.BIFROST_ADMIN_PASSWORD"
+        )
+
     providers = config.get("providers")
     if not isinstance(providers, dict) or not providers:
         fail("Bifrost config providers must be a non-empty object")
