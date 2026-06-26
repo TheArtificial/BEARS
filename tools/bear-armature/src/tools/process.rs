@@ -2,7 +2,10 @@ use crate::{
     paths::{
         ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path,
     },
-    tools::rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
+    tools::{
+        command_policy::rtk_wrap_allowed,
+        rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
+    },
     SessionContext, ToolPolicy,
 };
 use anyhow::{anyhow, Context, Result};
@@ -66,7 +69,9 @@ pub(crate) async fn handle_process_run(
         .unwrap_or(policy_max_output);
     let env = parse_env(args)?;
     let reducer_mode = ReducerMode::from_args(args);
-    let rtk_execute = reducer_mode == ReducerMode::ExecuteViaRtk && rtk_available().await;
+    let rtk_wrap_allowed = rtk_wrap_allowed(command, &command_args);
+    let rtk_execute =
+        reducer_mode == ReducerMode::ExecuteViaRtk && rtk_wrap_allowed && rtk_available().await;
     let effective_command = if rtk_execute { "rtk" } else { command };
     let effective_args = if rtk_execute {
         let mut args = Vec::with_capacity(command_args.len() + 1);
@@ -162,6 +167,7 @@ pub(crate) async fn handle_process_run(
                 "effective_args": effective_args,
                 "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
                 "reducer_mode": reducer_mode.as_str(),
+                "rtk_wrap_allowed": rtk_wrap_allowed,
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
             }));
         }
@@ -232,6 +238,7 @@ pub(crate) async fn handle_process_run(
         "effective_args": effective_args,
         "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
         "reducer_mode": reducer_mode.as_str(),
+        "rtk_wrap_allowed": rtk_wrap_allowed,
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
     }))
 }

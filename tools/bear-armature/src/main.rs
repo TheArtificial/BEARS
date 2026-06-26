@@ -12818,8 +12818,9 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             std::env::remove_var("BEARS_PROCESS_RUN_RTK");
         }
 
-        assert_eq!(result["execution_wrapper"], "rtk");
-        assert_eq!(result["effective_command"], "rtk");
+        assert_eq!(result["execution_wrapper"], Value::Null);
+        assert_eq!(result["rtk_wrap_allowed"], false);
+        assert_eq!(result["reduction"]["reducer"], "rtk");
         assert!(result["content"]
             .as_str()
             .unwrap()

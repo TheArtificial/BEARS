@@ -1,4 +1,9 @@
-use crate::{env_bool, paths::session_workspace_roots, RuntimeConfig, SessionContext};
+use crate::{
+    env_bool,
+    paths::session_workspace_roots,
+    tools::command_policy::{command_family_key, command_policy_for, normalize_command},
+    RuntimeConfig, SessionContext,
+};
 use agent_client_protocol::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
 };
@@ -350,29 +355,12 @@ pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
     }
 }
 
-fn normalize_command_scope(command: &str) -> String {
-    command.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn command_family(command: &str) -> Option<&str> {
-    let mut parts = command.split_whitespace();
-    let executable = parts.next()?;
-    let subcommand = parts.next();
-    match (executable, subcommand) {
-        ("cargo", Some("build" | "check" | "test" | "clippy" | "fmt")) => Some("cargo"),
-        ("pytest", _) => Some("pytest"),
-        ("python" | "python3", Some("-m")) if parts.next() == Some("pytest") => Some("pytest"),
-        ("git", Some("status" | "diff" | "log" | "show" | "blame")) => Some("git_read"),
-        _ => None,
-    }
-}
-
 fn command_workspace_fingerprint(
     context: &SessionContext,
     prefix: &str,
     command: &str,
 ) -> Option<String> {
-    let command = normalize_command_scope(command);
+    let command = normalize_command(command);
     if command.is_empty() {
         return None;
     }
@@ -383,7 +371,7 @@ fn command_workspace_fingerprint(
 }
 
 fn command_family_workspace_fingerprint(context: &SessionContext, command: &str) -> Option<String> {
-    command_family(command).map(|family| {
+    command_family_key(command).map(|family| {
         format!(
             "command_family:{family}|workspace:{}",
             approval_root_fingerprint(context)
@@ -447,7 +435,7 @@ fn approval_scope_fingerprint(
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
         ApprovalScope::Host => target.url.and_then(approval_url_host_scope),
-        ApprovalScope::Command => target.command.map(normalize_command_scope),
+        ApprovalScope::Command => target.command.map(normalize_command),
         ApprovalScope::CommandExactWorkspace => target
             .command
             .and_then(|command| command_workspace_fingerprint(context, "command_exact", command)),
@@ -470,6 +458,7 @@ pub(crate) fn candidate_approval_scopes(
         return vec![
             ApprovalScope::CommandExactWorkspace,
             ApprovalScope::CommandFamilyWorkspace,
+            ApprovalScope::Command,
             ApprovalScope::Workspace,
             ApprovalScope::Global,
         ];
@@ -540,18 +529,25 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
-        let exact = normalize_command_scope(command);
+        let exact = normalize_command(command);
         options.push(PermissionOption::new(
             "allow_command_exact_workspace",
             format!("Always allow `{exact}` in this workspace"),
             PermissionOptionKind::AllowAlways,
         ));
-        if let Some(family) = command_family(command) {
-            options.push(PermissionOption::new(
-                "allow_command_family_workspace",
-                format!("Always allow safe `{family}` commands in this workspace"),
-                PermissionOptionKind::AllowAlways,
-            ));
+        if let Some(policy) = command_policy_for(command) {
+            if policy.approval_mode
+                == crate::tools::command_policy::CommandApprovalMode::FamilyAllowed
+            {
+                options.push(PermissionOption::new(
+                    "allow_command_family_workspace",
+                    format!(
+                        "Always allow safe {} commands in this workspace",
+                        policy.family_label
+                    ),
+                    PermissionOptionKind::AllowAlways,
+                ));
+            }
         }
         if let Some(context) = context {
             options.push(PermissionOption::new(
@@ -1063,6 +1059,7 @@ mod tests {
             vec![
                 ApprovalScope::CommandExactWorkspace,
                 ApprovalScope::CommandFamilyWorkspace,
+                ApprovalScope::Command,
                 ApprovalScope::Workspace,
                 ApprovalScope::Global
             ]

@@ -2,7 +2,10 @@ use crate::{
     client_supports_terminal,
     paths::ensure_path_allowed_for_session,
     send_terminal_tool_call_update,
-    tools::rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
+    tools::{
+        command_policy::{rtk_wrap_allowed, terminal_command_allowed},
+        rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
+    },
     AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
     ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse,
     ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
@@ -157,7 +160,9 @@ pub(crate) async fn handle_terminal_run_command(
     let timeout_ms = terminal_timeout_ms(args, policy);
     let output_byte_limit = terminal_output_byte_limit(args, policy);
     let reducer_mode = ReducerMode::from_args(args);
-    let rtk_execute = reducer_mode == ReducerMode::ExecuteViaRtk && rtk_available().await;
+    let rtk_wrap_allowed = rtk_wrap_allowed(command, &command_args);
+    let rtk_execute =
+        reducer_mode == ReducerMode::ExecuteViaRtk && rtk_wrap_allowed && rtk_available().await;
     let effective_command = if rtk_execute { "rtk" } else { command };
     let effective_args = if rtk_execute {
         let mut args = Vec::with_capacity(command_args.len() + 1);
@@ -295,6 +300,7 @@ pub(crate) async fn handle_terminal_run_command(
                 "effective_args": effective_args,
                 "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
                 "reducer_mode": reducer_mode.as_str(),
+                "rtk_wrap_allowed": rtk_wrap_allowed,
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
             }));
         }
@@ -353,6 +359,7 @@ pub(crate) async fn handle_terminal_run_command(
         "effective_args": effective_args,
         "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
         "reducer_mode": reducer_mode.as_str(),
+        "rtk_wrap_allowed": rtk_wrap_allowed,
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
     }))
 }
@@ -477,10 +484,10 @@ fn validate_build_command(command: &str) -> Result<()> {
             "terminal_run_command command must be an executable name, not a shell string or path"
         ));
     }
-    let allowed = [
+    let allowed_executables = [
         "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
     ];
-    if !allowed.contains(&command) {
+    if !allowed_executables.contains(&command) {
         return Err(anyhow!(
             "terminal_run_command command {command:?} is not in the build/test allowlist"
         ));
@@ -496,42 +503,16 @@ fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
             ));
         }
     }
-    match command {
-        "cargo" => validate_first_arg(args, &["check", "test", "build", "clippy", "fmt"]),
-        "npm" => validate_first_arg(args, &["test", "run", "exec"]),
-        "pnpm" | "yarn" => validate_first_arg(args, &["test", "run", "exec"]),
-        "pytest" => Ok(()),
-        "python" | "python3" => {
-            if args.first().is_some_and(|arg| arg == "-m") {
-                match args.get(1).map(String::as_str) {
-                    Some("pytest") => Ok(()),
-                    _ => Err(anyhow!(
-                        "terminal_run_command python -m is limited to pytest"
-                    )),
-                }
-            } else {
-                Err(anyhow!(
-                    "terminal_run_command python is limited to `python -m pytest`"
-                ))
-            }
-        }
-        _ => Err(anyhow!(
-            "terminal_run_command command {command:?} is not allowed"
-        )),
-    }
-}
-
-fn validate_first_arg(args: &[String], allowed: &[&str]) -> Result<()> {
-    let Some(first) = args.first().map(String::as_str) else {
-        return Err(anyhow!(
-            "terminal_run_command requires a subcommand argument"
-        ));
-    };
-    if allowed.contains(&first) {
+    if terminal_command_allowed(command, args) {
         Ok(())
     } else {
         Err(anyhow!(
-            "terminal_run_command subcommand {first:?} is not in the allowlist"
+            "terminal_run_command command `{}` is not allowed by command policy",
+            if args.is_empty() {
+                command.to_string()
+            } else {
+                format!("{} {}", command, args.join(" "))
+            }
         ))
     }
 }
