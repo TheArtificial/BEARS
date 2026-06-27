@@ -37,7 +37,7 @@ fn spawn_bifrost_management_mock(mode: LoginMode) -> (String, Arc<Mutex<Vec<Requ
     let records = Arc::new(Mutex::new(Vec::new()));
     let records_for_thread = Arc::clone(&records);
     let expected_requests = match mode {
-        LoginMode::AuthDisabled => 1,
+        LoginMode::AuthDisabled => 4,
         LoginMode::BearerToken | LoginMode::CookieSession => 2,
     };
 
@@ -285,10 +285,12 @@ async fn auth_disabled_login_error_includes_config_store_reset_hint() {
 
     assert!(message.contains("Authentication is not enabled"));
     assert!(message.contains("governance.auth_config.is_enabled=true"));
-    assert!(message.contains("/app/data/config.db"));
+    assert!(message.contains("Den retries this response before failing"));
     let records = records.lock().expect("records mutex");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].path, "/api/session/login");
+    assert_eq!(records.len(), 4);
+    assert!(records
+        .iter()
+        .all(|record| record.path == "/api/session/login"));
 }
 
 #[tokio::test]

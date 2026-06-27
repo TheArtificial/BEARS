@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use den_core::{config::Config, DenError};
 use serde::{Deserialize, Serialize};
 
@@ -110,6 +112,15 @@ struct UpdateVirtualKeyRequest<'a> {
 #[cfg(test)]
 mod tests;
 
+fn bifrost_auth_not_enabled_response(text: &str) -> bool {
+    text.to_ascii_lowercase()
+        .contains("authentication is not enabled")
+}
+
+fn bifrost_auth_not_enabled_error(err: &DenError) -> bool {
+    bifrost_auth_not_enabled_response(&err.to_string())
+}
+
 impl BifrostGovernanceClient {
     #[must_use]
     pub fn new(config: &Config) -> Self {
@@ -138,7 +149,7 @@ impl BifrostGovernanceClient {
         Ok(())
     }
 
-    async fn login(&self) -> Result<BifrostManagementAuth, DenError> {
+    async fn login_once(&self) -> Result<BifrostManagementAuth, DenError> {
         self.ensure_configured()?;
         let url = format!("{}/session/login", self.management_url);
         let response = self
@@ -168,9 +179,9 @@ impl BifrostGovernanceClient {
             .map_err(|err| DenError::System(format!("Bifrost management login body: {err}")))?;
         if !status.is_success() {
             let hint = if status == reqwest::StatusCode::FORBIDDEN
-                && text.contains("Authentication is not enabled")
+                && bifrost_auth_not_enabled_response(&text)
             {
-                "; Bifrost management auth is disabled. Den cannot create virtual keys without a management session token. Ensure services/bifrost/config.json uses governance.auth_config.is_enabled=true and Bifrost runtime /api/config reports auth enabled; if the checked-in config is correct, reset stale /app/data/config.db and recreate bears-bifrost."
+                "; Bifrost management auth reported not enabled. This can be transient during Bifrost auth/config-store warmup; Den retries this response before failing. If it persists, ensure services/bifrost/config.json uses governance.auth_config.is_enabled=true and Bifrost runtime /api/session/is-auth-enabled reports true."
             } else {
                 ""
             };
@@ -194,6 +205,38 @@ impl BifrostGovernanceClient {
         Err(DenError::System(format!(
             "Bifrost management login succeeded but returned neither a token nor a session cookie; body: {text}"
         )))
+    }
+
+    async fn login(&self) -> Result<BifrostManagementAuth, DenError> {
+        let mut last_err: Option<DenError> = None;
+        for attempt in 1..=4 {
+            match self.login_once().await {
+                Ok(auth) => {
+                    if attempt > 1 {
+                        tracing::warn!(
+                            attempt,
+                            management_url = %self.management_url,
+                            "Bifrost management login succeeded after transient auth-not-enabled response"
+                        );
+                    }
+                    return Ok(auth);
+                }
+                Err(err) if bifrost_auth_not_enabled_error(&err) && attempt < 4 => {
+                    tracing::warn!(
+                        attempt,
+                        management_url = %self.management_url,
+                        error = %err,
+                        "Bifrost management login reported auth not enabled; retrying after short delay"
+                    );
+                    last_err = Some(err);
+                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            DenError::System("Bifrost management login failed after retries".to_string())
+        }))
     }
 
     async fn virtual_key_quota_with_mode(
