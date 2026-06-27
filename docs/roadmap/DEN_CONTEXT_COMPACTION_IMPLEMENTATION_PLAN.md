@@ -376,13 +376,21 @@ This section tracks Den-owned compaction on the `test` branch (through commit `7
 - **Phase 9 rollout docs**
   - Observe→active checklist, production gates, and rollback runbook in [Context Compaction Guide](../guides/context-compaction-guide.md)
 
+- **LLM summarization scaffolding**
+  - `agent_compaction` summarizer adapter contract and prompt shape (`summarize.rs`)
+  - Validation merges generated artifacts with deterministic fallback fields so compaction can fail open
+
+- **`archive_harvest` mining**
+  - Queued `archive_harvest` Reflection lane
+  - Compaction artifacts mined into review-required memory proposals with artifact/source-span provenance
+  - Worker loop started with Den workers and enqueued after active compaction artifact creation
+
 - **Validation**
   - `cargo test -p den-runtime compaction` and overflow classifier tests
 
 ### Still open (prioritize in roadmap)
 
-1. **LLM-backed summarization** — replace deterministic v1 summary merge with model-generated summaries
-2. **`archive_harvest` mining** — compaction artifacts → memory proposals via reflection lane
+1. **Provider-backed LLM summarization execution** — wire the `agent_compaction` summarizer adapter to the Den model task/provider layer once a non-streaming structured model-task runner is available
 
 ### Practical migration summary
 
@@ -390,4 +398,5 @@ This section tracks Den-owned compaction on the `test` branch (through commit `7
 - **End-to-end transcript-backed compaction (turn-start + post-turn):** complete on test branch
 - **Reactive overflow recovery:** complete on test branch (`COMPACTION_MODE=active` required for retry to shrink prompt)
 - **Operator UI and rollout docs:** complete
-- **LLM summaries and archive harvest:** not yet complete
+- **LLM summarizer contract and archive harvest:** complete
+- **Provider-backed LLM summarization execution:** not yet complete
