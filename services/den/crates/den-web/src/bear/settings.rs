@@ -1214,72 +1214,209 @@ fn bifrost_usage_from_quota(
 }
 
 async fn bifrost_usage_view_for_bear(state: &AppState, bear_id: Uuid) -> BifrostUsageView {
-    let Ok(value) = bears_db::bifrost_virtual_key_value_for_bear(
+    let row = match bears_db::get_bear_bifrost_virtual_key(state.sqlx_pool(), bear_id).await {
+        Ok(row) => row,
+        Err(_) => {
+            return BifrostUsageView {
+                status: "error".to_string(),
+                error: "Could not read the Bear's Bifrost virtual key metadata from Den storage."
+                    .to_string(),
+                virtual_key_name: String::new(),
+                is_active: String::new(),
+                auth_mode: String::new(),
+                budget_rows: Vec::new(),
+                model_usage_rows: Vec::new(),
+                provider_rows: Vec::new(),
+                has_budgets: false,
+                has_model_usage: false,
+                has_providers: false,
+            };
+        }
+    };
+    let Some(row) = row else {
+        return BifrostUsageView {
+            status: "missing".to_string(),
+            error: "No Bifrost virtual key is configured for this Bear.".to_string(),
+            virtual_key_name: String::new(),
+            is_active: String::new(),
+            auth_mode: String::new(),
+            budget_rows: Vec::new(),
+            model_usage_rows: Vec::new(),
+            provider_rows: Vec::new(),
+            has_budgets: false,
+            has_model_usage: false,
+            has_providers: false,
+        };
+    };
+
+    let value = match bears_db::bifrost_virtual_key_value_for_bear(
         state.sqlx_pool(),
         bear_id,
         &state.config.den_secret_encryption_key,
     )
     .await
-    else {
-        return BifrostUsageView {
-            status: "error".to_string(),
-            error: "Could not read/decrypt the Bear's Bifrost virtual key from Den storage."
-                .to_string(),
-            virtual_key_name: String::new(),
-            is_active: String::new(),
-            auth_mode: String::new(),
-            budget_rows: Vec::new(),
-            model_usage_rows: Vec::new(),
-            provider_rows: Vec::new(),
-            has_budgets: false,
-            has_model_usage: false,
-            has_providers: false,
-        };
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return BifrostUsageView {
+                status: "missing".to_string(),
+                error: "No Bifrost virtual key value is configured for this Bear.".to_string(),
+                virtual_key_name: String::new(),
+                is_active: String::new(),
+                auth_mode: String::new(),
+                budget_rows: Vec::new(),
+                model_usage_rows: Vec::new(),
+                provider_rows: Vec::new(),
+                has_budgets: false,
+                has_model_usage: false,
+                has_providers: false,
+            };
+        }
+        Err(_) => {
+            return BifrostUsageView {
+                status: "error".to_string(),
+                error: "Could not decrypt the Bear's Bifrost virtual key from Den storage."
+                    .to_string(),
+                virtual_key_name: String::new(),
+                is_active: String::new(),
+                auth_mode: String::new(),
+                budget_rows: Vec::new(),
+                model_usage_rows: Vec::new(),
+                provider_rows: Vec::new(),
+                has_budgets: false,
+                has_model_usage: false,
+                has_providers: false,
+            };
+        }
     };
-    let Some(value) = value else {
-        return BifrostUsageView {
-            status: "missing".to_string(),
-            error: "No Bifrost virtual key value is configured for this Bear.".to_string(),
-            virtual_key_name: String::new(),
-            is_active: String::new(),
-            auth_mode: String::new(),
-            budget_rows: Vec::new(),
-            model_usage_rows: Vec::new(),
-            provider_rows: Vec::new(),
-            has_budgets: false,
-            has_model_usage: false,
-            has_providers: false,
-        };
-    };
+
     let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
     match client.get_virtual_key_quota(&value).await {
-        Ok(quota) => bifrost_usage_from_quota(&quota),
-        Err(err) => BifrostUsageView {
-            status: "error".to_string(),
-            error: err.to_string(),
-            virtual_key_name: String::new(),
-            is_active: String::new(),
-            auth_mode: String::new(),
-            budget_rows: Vec::new(),
-            model_usage_rows: Vec::new(),
-            provider_rows: Vec::new(),
-            has_budgets: false,
-            has_model_usage: false,
-            has_providers: false,
-        },
+        Ok(quota) => return bifrost_usage_from_quota(&quota),
+        Err(first_err) => {
+            if let Some(virtual_key_id) = row
+                .virtual_key_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                match client.get_virtual_key_by_id(virtual_key_id).await {
+                    Ok(Some(fresh_key)) if !fresh_key.value.trim().is_empty() => {
+                        match client.get_virtual_key_quota(&fresh_key.value).await {
+                            Ok(quota) => {
+                                if let Err(err) = bears_db::set_bear_bifrost_virtual_key(
+                                    state.sqlx_pool(),
+                                    bear_id,
+                                    Some(&fresh_key.id),
+                                    Some(&fresh_key.name),
+                                    Some(&fresh_key.value),
+                                    &state.config.den_secret_encryption_key,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(%bear_id, %virtual_key_id, error = %err, "Bifrost key value refreshed from management API but Den storage update failed");
+                                } else {
+                                    tracing::warn!(%bear_id, %virtual_key_id, "refreshed stale Bifrost virtual key value in Den storage after quota validation failed");
+                                }
+                                return bifrost_usage_from_quota(&quota);
+                            }
+                            Err(second_err) => {
+                                return BifrostUsageView {
+                                    status: "error".to_string(),
+                                    error: format!(
+                                        "Stored Bifrost virtual key value was not recognized ({first_err}). Fetched key by stored ID {virtual_key_id}, but Bifrost still did not recognize the returned value: {second_err}"
+                                    ),
+                                    virtual_key_name: String::new(),
+                                    is_active: String::new(),
+                                    auth_mode: String::new(),
+                                    budget_rows: Vec::new(),
+                                    model_usage_rows: Vec::new(),
+                                    provider_rows: Vec::new(),
+                                    has_budgets: false,
+                                    has_model_usage: false,
+                                    has_providers: false,
+                                };
+                            }
+                        }
+                    }
+                    Ok(Some(_)) => {
+                        return BifrostUsageView {
+                            status: "error".to_string(),
+                            error: format!(
+                                "Stored Bifrost virtual key value was not recognized ({first_err}). Bifrost returned key ID {virtual_key_id} via management API, but its value was empty."
+                            ),
+                            virtual_key_name: String::new(),
+                            is_active: String::new(),
+                            auth_mode: String::new(),
+                            budget_rows: Vec::new(),
+                            model_usage_rows: Vec::new(),
+                            provider_rows: Vec::new(),
+                            has_budgets: false,
+                            has_model_usage: false,
+                            has_providers: false,
+                        };
+                    }
+                    Ok(None) => {
+                        return BifrostUsageView {
+                            status: "error".to_string(),
+                            error: format!(
+                                "Stored Bifrost virtual key value was not recognized ({first_err}), and Bifrost management API could not find stored key ID {virtual_key_id}. Reprovision this Bear's virtual key."
+                            ),
+                            virtual_key_name: String::new(),
+                            is_active: String::new(),
+                            auth_mode: String::new(),
+                            budget_rows: Vec::new(),
+                            model_usage_rows: Vec::new(),
+                            provider_rows: Vec::new(),
+                            has_budgets: false,
+                            has_model_usage: false,
+                            has_providers: false,
+                        };
+                    }
+                    Err(lookup_err) => {
+                        return BifrostUsageView {
+                            status: "error".to_string(),
+                            error: format!(
+                                "Stored Bifrost virtual key value was not recognized ({first_err}), and management lookup by stored key ID {virtual_key_id} failed: {lookup_err}"
+                            ),
+                            virtual_key_name: String::new(),
+                            is_active: String::new(),
+                            auth_mode: String::new(),
+                            budget_rows: Vec::new(),
+                            model_usage_rows: Vec::new(),
+                            provider_rows: Vec::new(),
+                            has_budgets: false,
+                            has_model_usage: false,
+                            has_providers: false,
+                        };
+                    }
+                }
+            }
+            BifrostUsageView {
+                status: "error".to_string(),
+                error: first_err.to_string(),
+                virtual_key_name: String::new(),
+                is_active: String::new(),
+                auth_mode: String::new(),
+                budget_rows: Vec::new(),
+                model_usage_rows: Vec::new(),
+                provider_rows: Vec::new(),
+                has_budgets: false,
+                has_model_usage: false,
+                has_providers: false,
+            }
+        }
     }
 }
 
-async fn models_view(
-    Path(slug): Path<String>,
-    Query(query): Query<DomainQuery>,
-    State(state): State<AppState>,
+async fn render_models_page(
+    state: AppState,
     auth_session: AuthSession,
+    bear: den_service::bears::Bear,
+    can_manage_bear: bool,
+    message: Option<String>,
+    error: Option<String>,
 ) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
     let model_options =
         den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
             .await
@@ -1321,12 +1458,33 @@ async fn models_view(
                     || row.virtual_key_value.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false)
             }).unwrap_or(false),
             bifrost_usage,
-            message => query.message,
-            error => query.error,
+            message,
+            error,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "models"),
         },
+    )
+    .await
+}
+
+async fn models_view(
+    Path(slug): Path<String>,
+    Query(query): Query<DomainQuery>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    render_models_page(
+        state,
+        auth_session,
+        bear,
+        can_manage_bear,
+        query.message,
+        query.error,
     )
     .await
 }
@@ -1474,12 +1632,15 @@ async fn provision_bifrost_virtual_key_action(
     } else {
         "Bifrost virtual key provisioned for this Bear."
     };
-    Ok(Redirect::to(&format!(
-        "/bear/{}/models?message={}",
-        bear.slug,
-        urlencoding::encode(message)
-    ))
-    .into_response())
+    render_models_page(
+        state,
+        auth_session,
+        bear,
+        true,
+        Some(message.to_string()),
+        None,
+    )
+    .await
 }
 
 async fn stance_detail_view(

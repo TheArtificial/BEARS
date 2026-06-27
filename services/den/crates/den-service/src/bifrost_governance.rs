@@ -321,7 +321,7 @@ impl BifrostGovernanceClient {
             .find(|virtual_key| virtual_key.name == name))
     }
 
-    async fn get_virtual_key_by_id(
+    async fn get_virtual_key_by_id_with_auth(
         &self,
         auth: &BifrostManagementAuth,
         virtual_key_id: &str,
@@ -398,12 +398,34 @@ impl BifrostGovernanceClient {
         Ok(archived_name)
     }
 
+    pub async fn get_virtual_key_by_id(
+        &self,
+        virtual_key_id: &str,
+    ) -> Result<Option<BifrostVirtualKeyProvisioned>, DenError> {
+        let auth = self.login().await?;
+        let Some(virtual_key) = self
+            .get_virtual_key_by_id_with_auth(&auth, virtual_key_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(BifrostVirtualKeyProvisioned {
+            id: virtual_key.id,
+            name: virtual_key.name,
+            value: virtual_key.value,
+            reset_usage_tracking: false,
+        }))
+    }
+
     pub async fn archive_virtual_key_by_id(
         &self,
         virtual_key_id: &str,
     ) -> Result<Option<String>, DenError> {
         let auth = self.login().await?;
-        let Some(existing) = self.get_virtual_key_by_id(&auth, virtual_key_id).await? else {
+        let Some(existing) = self
+            .get_virtual_key_by_id_with_auth(&auth, virtual_key_id)
+            .await?
+        else {
             return Ok(None);
         };
         let archived_name = self
