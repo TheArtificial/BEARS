@@ -368,19 +368,26 @@ This section tracks Den-owned compaction on the `test` branch (through commit `7
   - One-shot reassemble + LLM retry in `LazyAgentStepStream` (`step.rs`, `overflow_retry.rs`)
   - ACP terminal `TurnResultReason::CompactedRetry` + `TurnResultStatus::Recovered` when retry succeeds
 
+- **Operator/admin visibility (Phase 7 UI)**
+  - Conversation list compaction status in `/bear/{slug}/conversations`
+  - Conversation detail compaction event history, trigger/policy provenance, source spans, diagnostics, and artifact refs
+  - Persisted compaction artifact drill-down with source message/group provenance and artifact JSON
+
+- **Phase 9 rollout docs**
+  - Observe→active checklist, production gates, and rollback runbook in [Context Compaction Guide](../guides/context-compaction-guide.md)
+
 - **Validation**
   - `cargo test -p den-runtime compaction` and overflow classifier tests
 
 ### Still open (prioritize in roadmap)
 
-1. **Operator/admin compaction visibility (Phase 7 UI)** — session compaction history, artifact drill-down, trigger/policy provenance in admin surfaces
-2. **LLM-backed summarization** — replace deterministic v1 summary merge with model-generated summaries
-3. **Phase 9 rollout checklist** — observe→active env guide, rollback runbook, production gating
-4. **`archive_harvest` mining** — compaction artifacts → memory proposals via reflection lane
+1. **LLM-backed summarization** — replace deterministic v1 summary merge with model-generated summaries
+2. **`archive_harvest` mining** — compaction artifacts → memory proposals via reflection lane
 
 ### Practical migration summary
 
 - **Architecture, schema, and contract:** complete
 - **End-to-end transcript-backed compaction (turn-start + post-turn):** complete on test branch
 - **Reactive overflow recovery:** complete on test branch (`COMPACTION_MODE=active` required for retry to shrink prompt)
-- **Operator UI, LLM summaries, rollout docs, archive harvest:** not yet complete
+- **Operator UI and rollout docs:** complete
+- **LLM summaries and archive harvest:** not yet complete

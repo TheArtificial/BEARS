@@ -237,8 +237,9 @@ As of the `test` branch (commit `79b1ee62` and follow-on work):
 
 - Phases A–H are implemented in `den-runtime`: semantic grouping from transcript, compaction service/events, artifact persistence, compaction-aware assembly with transcript cutoff, token-pressure triggers, deterministic summarization, continuation eval probes, manual compaction, and async post-turn compaction via the `context_compact` worker.
 - Reactive overflow recovery classifies LLM context-length errors, runs emergency compaction with `ModelSafetyMargin`, reassembles the prompt, retries the LLM step once, and surfaces ACP outcomes as `CompactedRetry` when recovery succeeds.
+- Operator visibility is available from `/bear/{slug}/conversations` and `/bear/{slug}/conversations/{conversation_id}`. The list view shows whether compaction events exist; the detail view shows event history, trigger/policy provenance, source spans, diagnostics, and persisted artifact JSON.
 
-Still open: operator/admin compaction UI (Phase 7), LLM-backed summarization, Phase 9 rollout checklist, and `archive_harvest` mining of compaction artifacts into memory proposals.
+Still open: LLM-backed summarization and `archive_harvest` mining of compaction artifacts into memory proposals.
 
 ## Reactive overflow recovery
 
@@ -251,3 +252,60 @@ When the LLM provider rejects a prompt for exceeding its context window, Den can
 5. **Outcome** — on ACP/`pair`, a successful retry emits terminal turn result `status=recovered`, `reason=compacted_retry`. Web chat benefits from the same retry path but does not persist ACP-style turn outcomes.
 
 In `observe` mode, compaction events may still be recorded for telemetry, but the prompt is not cut and overflow retry is skipped — use `active` mode where emergency shrink is required.
+
+## Rollout Checklist
+
+Use this checklist when enabling Den-owned compaction on a new environment or surface.
+
+1. **Confirm prerequisites**
+   - Database migrations are applied through `conversation_compaction_artifacts` and `runtime_compaction_events`.
+   - Canonical conversation persistence is active for the target surface.
+   - Operators can access `/bear/{slug}/conversations` for the target Bear.
+   - Focused tests pass: `cargo test --manifest-path services/den/Cargo.toml -p den-runtime compaction` and `cargo test --manifest-path services/den/Cargo.toml -p den-web source_templates_parse`.
+
+2. **Start in observe mode**
+   - Set `COMPACTION_MODE=observe`.
+   - Keep `COMPACTION_TIMING=async` unless debugging a synchronous turn-start path.
+   - Run representative `pair` and/or `chat` sessions long enough to trigger event recording.
+   - Inspect the conversation detail page for event trigger, policy version, selected source spans, diagnostics, and artifact JSON.
+
+3. **Compare continuation signals**
+   - Confirm recent uncompacted transcript still contains active tool/approval spans.
+   - Confirm the latest artifact preserves active goals, constraints, decisions, artifact refs, workflow state, and unresolved follow-ups.
+   - Confirm `Skipped` events explain safety-floor or eligibility reasons rather than silently dropping context.
+
+4. **Enable active mode on a bounded surface**
+   - Set `COMPACTION_MODE=active` for an internal/test Bear or a limited `pair`/`chat` population first.
+   - Leave `COMPACTION_TIMING=async` for normal rollout; use sync only for targeted debugging or emergency behavior validation.
+   - Exercise manual compaction and a long session that naturally crosses token/group pressure.
+   - For overflow recovery, verify an ACP/`pair` recovered turn reports `status=recovered`, `reason=compacted_retry` when the retry succeeds.
+
+5. **Production gate**
+   - No active protected span is compacted across in operator-visible source ranges.
+   - Continuation probes or manual continuation checks preserve active constraints and next-step state.
+   - Operators can find the latest artifact and event history for impacted sessions.
+   - Disabling active mode has been tested in the target environment.
+
+## Rollback Runbook
+
+Compaction rollback is execution rollback, not transcript rollback. Canonical transcript rows remain the source of truth.
+
+1. **Disable authoritative compaction**
+   - Set `COMPACTION_MODE=observe` to keep telemetry without cutting prompt history.
+   - Set `COMPACTION_MODE=off` if event generation itself is suspected of causing trouble.
+   - Restart the affected Den service after changing environment configuration.
+
+2. **Ignore derived artifacts**
+   - Do not delete `conversation_compaction_artifacts` during ordinary rollback.
+   - In `observe` or `off`, prompt assembly must continue from canonical transcript and active runtime inputs rather than making new artifacts authoritative.
+   - Use the operator conversation detail page to identify which artifact/policy version was active when the issue happened.
+
+3. **Recover the session**
+   - Retry the turn after disabling active compaction.
+   - If the issue involved unresolved approvals or tools, resolve those through the appropriate operator recovery path; compaction is not an approval repair mechanism.
+   - If a session remains too large without active compaction, start a new session with a human-authored handoff from the latest trusted transcript/artifact view.
+
+4. **Rebuild artifacts when safe**
+   - Keep existing artifacts for audit until an explicit cleanup/backfill job exists.
+   - When a future policy version changes summary semantics, rebuild derived artifacts from canonical transcript rows rather than mutating transcript history.
+   - Validate rebuilt artifacts with continuation checks before re-enabling active mode.
