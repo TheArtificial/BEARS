@@ -383,6 +383,23 @@ pub async fn run() -> Result<(), StartupError> {
         });
     }
 
+    if let Some(token) = worker_token_opt.clone() {
+        let t = token;
+        let worker_pool = sqlx_pool.clone();
+        let worker_config = config.clone();
+        task_set.spawn(async move {
+            tracing::info!("Workers: archive_harvest runner loop enabled");
+            den_runtime::reflection_conductor::run_archive_harvest_worker_loop(
+                worker_pool,
+                worker_config,
+                t,
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .map_err(std::io::Error::other)
+        });
+    }
+
     tracing::info!("All services started successfully. Waiting for shutdown signal...");
 
     shutdown_signal().await;

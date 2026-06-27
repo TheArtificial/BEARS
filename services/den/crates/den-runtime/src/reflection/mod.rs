@@ -3,3 +3,4 @@
 
 pub mod conductor;
 pub mod conversations;
+pub mod archive_harvest;

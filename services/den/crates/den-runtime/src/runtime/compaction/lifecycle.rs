@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::load_transcript_grouping_rows,
+    reflection::conductor::enqueue_archive_harvest_for_bear,
     runtime_compaction_observability::{
         build_compaction_applied_event, build_compaction_skipped_event,
         RuntimeCompactionEvent, RuntimeCompactionEventStatus,
@@ -190,6 +191,20 @@ pub async fn run_compaction_job(
                     &summary,
                 )
                 .await?;
+                if let Err(error) = enqueue_archive_harvest_for_bear(
+                    pool,
+                    bear_id,
+                    "compaction_artifact_created",
+                )
+                .await
+                {
+                    tracing::warn!(
+                        bear_id = %bear_id,
+                        conversation_id,
+                        error = %error,
+                        "failed to enqueue archive_harvest after compaction artifact creation"
+                    );
+                }
                 let cutoff = Some(end_seq);
                 let context = Some(render_compacted_context_block(&summary));
                 (cutoff, context)

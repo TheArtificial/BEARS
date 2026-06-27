@@ -25,6 +25,7 @@ use crate::{
         bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
         touch_memory_curate_conversation,
     },
+    reflection::archive_harvest::harvest_compaction_artifacts_once,
     recall::{reconcile_bear, QdrantRecall},
 };
 use std::str::FromStr;
@@ -50,6 +51,197 @@ pub struct ReflectionRunRow {
     pub started_at: Option<OffsetDateTime>,
     pub completed_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
+}
+
+// ---------------------------------------------------------------------------
+// archive_harvest lane: mine compaction artifacts into memory proposals.
+// ---------------------------------------------------------------------------
+
+const ARCHIVE_HARVEST_RETURNING: &str = r"
+    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+              conversation_id, conversation_key, conversation_date,
+              input_summary, output_summary, error,
+              started_at, completed_at, created_at
+";
+
+pub async fn enqueue_archive_harvest_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    trigger: &str,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
+        SELECT $1, 'archive_harvest', $2, 'queued', '{}'::jsonb, '{}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM bear_reflection_runs
+            WHERE bear_id = $1 AND lane = 'archive_harvest' AND status = 'queued'
+        )
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(trigger)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_from_sql))
+}
+
+async fn claim_next_archive_harvest_run(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        WITH next_run AS (
+            SELECT id
+            FROM bear_reflection_runs
+            WHERE bear_id = $1 AND lane = 'archive_harvest' AND status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE bear_reflection_runs runs
+        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        FROM next_run
+        WHERE runs.id = next_run.id
+        RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
+                  runs.role_agent_id, runs.conversation_id, runs.conversation_key,
+                  runs.conversation_date, runs.input_summary, runs.output_summary,
+                  runs.error, runs.started_at, runs.completed_at, runs.created_at
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_from_sql))
+}
+
+async fn mark_archive_harvest_completed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    output_summary: serde_json::Value,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
+         error = NULL, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(output_summary)
+        .fetch_one(pool)
+        .await?;
+    Ok(row_from_sql(row))
+}
+
+async fn mark_archive_harvest_failed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    error: &str,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(error)
+        .fetch_one(pool)
+        .await?;
+    Ok(row_from_sql(row))
+}
+
+async fn list_bears_with_queued_archive_harvest_runs(
+    pool: &PgPool,
+) -> Result<Vec<Uuid>, DenError> {
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT DISTINCT bear_id
+        FROM bear_reflection_runs
+        WHERE lane = 'archive_harvest' AND status = 'queued'
+        ORDER BY bear_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn run_next_archive_harvest_once(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let Some(run) = claim_next_archive_harvest_run(pool, bear_id).await? else {
+        return Ok(None);
+    };
+
+    match harvest_compaction_artifacts_once(pool, config, stores, bear_id, 20).await {
+        Ok(output) => {
+            let completed = mark_archive_harvest_completed(
+                pool,
+                bear_id,
+                run.id,
+                serde_json::json!({
+                    "scanned_artifacts": output.scanned_artifacts,
+                    "created_proposal_ids": output.created_proposal_ids,
+                }),
+            )
+            .await?;
+            Ok(Some(completed))
+        }
+        Err(error) => {
+            let failed = mark_archive_harvest_failed(pool, bear_id, run.id, &error.to_string()).await?;
+            Ok(Some(failed))
+        }
+    }
+}
+
+pub async fn run_archive_harvest_worker_loop(
+    pool: PgPool,
+    config: Arc<Config>,
+    worker_token: tokio_util::sync::CancellationToken,
+    poll_interval: std::time::Duration,
+) -> Result<(), DenError> {
+    loop {
+        tokio::select! {
+            () = worker_token.cancelled() => { break; }
+            () = tokio::time::sleep(poll_interval) => {}
+        }
+
+        let bear_ids = list_bears_with_queued_archive_harvest_runs(&pool).await?;
+        let stores = MemoryStoreManager::new(config.as_ref());
+        for bear_id in bear_ids {
+            if worker_token.is_cancelled() {
+                break;
+            }
+            match run_next_archive_harvest_once(&pool, config.as_ref(), &stores, bear_id).await {
+                Ok(Some(run)) => tracing::info!(
+                    bear_id = %bear_id,
+                    reflection_run_id = %run.id,
+                    status = %run.status,
+                    output = %run.output_summary,
+                    "archive_harvest worker processed queued run"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    bear_id = %bear_id,
+                    error = %error,
+                    "archive_harvest worker run failed; continuing"
+                ),
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
