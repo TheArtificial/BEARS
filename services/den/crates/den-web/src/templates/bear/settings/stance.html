@@ -8,6 +8,9 @@
 <h2><code>{{ role_detail.profile | e }}</code> — {{ role_detail.plain_name | e }}</h2>
 <p>{{ role_detail.description | e }}</p>
 
+{% if message %}<p><strong>{{ message | e }}</strong></p>{% endif %}
+{% if error %}<p class="form-errors">{{ error | e }}</p>{% endif %}
+
 {% if role_detail.actions and role_detail.actions | length > 0 %}
 <ul class="button-row">
   {% for action in role_detail.actions %}
@@ -57,6 +60,38 @@
       {% if role_detail.last_provisioning_error %}<p class="form-errors">{{ role_detail.last_provisioning_error | e }}</p>{% endif %}
     </div>
   </div>
+  <div>
+    <div class="box full-width">
+      <h3>Model</h3>
+      <p class="form-hint">Assign a model for this stance, or inherit the Bear default.</p>
+      <dl class="fields-grid">
+        <dt>Resolved</dt><dd>{% if role_detail.resolved_model %}<code>{{ role_detail.resolved_model | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+        <dt>Source</dt><dd>{{ role_detail.model_source | e }}</dd>
+        <dt>Status</dt><dd>{{ role_detail.model_availability_status | e }} · metadata {{ role_detail.model_metadata_status | e }}</dd>
+      </dl>
+      <form method="post" action="/bear/{{ bear.slug | e }}/stances/{{ role_detail.profile | e }}/model" data-model-settings>
+        <label for="stance_model">Model</label>
+        <input id="stance_model" name="model" list="stance-model-options" value="{% if role_detail.configured_model %}{{ role_detail.configured_model | e }}{% else %}inherit{% endif %}" placeholder="inherit or provider/model" required data-model-input{% if not can_manage_bear %} disabled{% endif %} />
+        <label for="stance_model_shortcut">Recommended shortcuts</label>
+        <select id="stance_model_shortcut" data-model-shortcut-target="stance_model"{% if not can_manage_bear %} disabled{% endif %}>
+          <option value="inherit"{% if not role_detail.configured_model %} selected{% endif %}>Inherit Bear default</option>
+          {% if role_detail.configured_model_custom %}<option value="{{ role_detail.configured_model_custom | e }}" selected>Custom model — {{ role_detail.configured_model_custom | e }}</option>{% endif %}
+          {% for m in role_detail.model_options %}
+          <option value="{{ m.handle | e }}"{% if role_detail.configured_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
+          {% endfor %}
+        </select>
+        <datalist id="stance-model-options">
+          <option value="inherit">Inherit Bear default</option>
+          {% for m in role_detail.all_model_options %}<option value="{{ m.handle | e }}">{{ m.label | e }}</option>{% endfor %}
+        </datalist>
+        {% if can_manage_bear %}<p><button type="submit">Save {{ role_detail.profile | e }} model</button></p>{% else %}<p class="form-hint">Only Bear admins can edit model settings.</p>{% endif %}
+      </form>
+      <p class="form-hint"><a href="/bear/{{ bear.slug | e }}/models">Back to all model settings</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="two-columns">
   <div>
     <div class="box full-width">
       <h3>Contract</h3>

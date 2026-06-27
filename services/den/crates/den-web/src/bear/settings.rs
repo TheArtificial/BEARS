@@ -17,6 +17,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path as FsPath, PathBuf};
+use std::str::FromStr;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
@@ -72,6 +73,8 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/stances/{stance}", get(stance_detail_view))
         .route_with_tsr("/bear/{slug}/profiles/{stance}", get(stance_detail_view))
+        .route_with_tsr("/bear/{slug}/stances/{stance}/model", post(stance_model_post))
+        .route_with_tsr("/bear/{slug}/profiles/{stance}/model", post(stance_model_post))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
@@ -153,6 +156,14 @@ struct BearModelsForm {
     bifrost_virtual_key_value: String,
     #[serde(default)]
     bifrost_virtual_key_clear: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StanceModelForm {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    model_custom: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1869,6 +1880,7 @@ async fn provision_bifrost_virtual_key_action(
 
 async fn stance_detail_view(
     Path((slug, stance)): Path<(String, String)>,
+    Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -1886,12 +1898,70 @@ async fn stance_detail_view(
         auth_session,
         context! {
             role_detail,
+            message => query.message,
+            error => query.error,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "stances"),
         },
     )
     .await
+}
+
+async fn stance_model_post(
+    Path((slug, stance)): Path<(String, String)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<StanceModelForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let role = BearProfile::from_str(&stance)
+        .map_err(|_| CustomError::NotFound("stance not found".to_string()))?;
+    let model_options =
+        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
+            .await
+            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
+    let (_, live_model_options, fetch_error) = all_model_catalog_options_context(&state).await;
+    let validation_options = merge_model_options(&model_options, &live_model_options);
+    if validation_options.is_empty() {
+        let message = fetch_error
+            .unwrap_or_else(|| "No Den model selection options are configured.".to_string());
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/stances/{}?error={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode(&message)
+        ))
+        .into_response());
+    }
+
+    let raw = selected_or_custom_model(&form.model, &form.model_custom).trim();
+    if !is_inherit_model_value(raw) && !model_available(&validation_options, raw) {
+        let message = format!(
+            "{} model must be inherit or a configured Den model selection option.",
+            profile_label(role)
+        );
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/stances/{}?error={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode(&message)
+        ))
+        .into_response());
+    }
+    let model = configured_model_from_form(raw);
+    bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, role, model.as_deref())
+        .await?;
+    Ok(Redirect::to(&format!(
+        "/bear/{}/stances/{}?message={}",
+        bear.slug,
+        role.as_str(),
+        urlencoding::encode("Stance model setting saved.")
+    ))
+    .into_response())
 }
 
 async fn conversations_view(

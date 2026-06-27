@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use crate::{errors::CustomError, web::AppState};
+use den_llm::ModelOption;
 use den_service::bears::{
     compose_role_context, db as bears_db, Bear, BearProfile, BearProfileBinding,
 };
@@ -21,6 +22,14 @@ pub(crate) struct RoleDetailView {
     pub(crate) last_provisioning_error: Option<String>,
     pub(crate) memory_status_label: String,
     pub(crate) memory_file_count: usize,
+    pub(crate) configured_model: String,
+    pub(crate) resolved_model: String,
+    pub(crate) model_source: String,
+    pub(crate) model_availability_status: String,
+    pub(crate) model_metadata_status: String,
+    pub(crate) configured_model_custom: String,
+    pub(crate) model_options: Vec<ModelOption>,
+    pub(crate) all_model_options: Vec<ModelOption>,
     pub(crate) role_contract: String,
     pub(crate) composed_prompt: String,
 }
@@ -210,6 +219,33 @@ pub(crate) async fn build_role_detail_view(
         composed.role_contract
     };
 
+    let model_options = den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
+        .await
+        .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
+    let (_, live_model_options, _) = crate::web::bear::create_support::all_model_catalog_options_context(state).await;
+    let all_model_options = merge_model_options(&model_options, &live_model_options);
+    let profile_settings = bears_db::list_profile_model_settings(state.sqlx_pool(), bear.id).await?;
+    let configured_model = profile_settings
+        .iter()
+        .find(|row| row.profile == role.as_str())
+        .and_then(|row| row.model.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let resolved_model = if configured_model.is_empty() {
+        bear.default_model.clone().unwrap_or_default()
+    } else {
+        configured_model.clone()
+    };
+    let configured_model_custom = if configured_model.is_empty()
+        || model_available(&model_options, &configured_model)
+    {
+        String::new()
+    } else {
+        configured_model.clone()
+    };
+
     let mut actions = Vec::new();
     match role {
         BearProfile::Chat => {
@@ -249,7 +285,68 @@ pub(crate) async fn build_role_detail_view(
         last_provisioning_error: role_row.last_provisioning_error,
         memory_status_label,
         memory_file_count,
+        configured_model: configured_model.clone(),
+        resolved_model: resolved_model.clone(),
+        model_source: if configured_model.is_empty() {
+            "Bear default".to_string()
+        } else {
+            "Stance override".to_string()
+        },
+        model_availability_status: model_availability_status(&all_model_options, &resolved_model).to_string(),
+        model_metadata_status: model_metadata_status(&resolved_model).to_string(),
+        configured_model_custom,
+        model_options,
+        all_model_options,
         role_contract,
         composed_prompt: composed.composed_prompt,
     })
+}
+
+fn merge_model_options(primary: &[ModelOption], secondary: &[ModelOption]) -> Vec<ModelOption> {
+    let mut merged = primary.to_vec();
+    for option in secondary {
+        if !merged.iter().any(|existing| existing.handle == option.handle) {
+            merged.push(option.clone());
+        }
+    }
+    merged.sort_by(|a, b| a.label.cmp(&b.label));
+    merged
+}
+
+fn model_available(options: &[ModelOption], raw: &str) -> bool {
+    let requested = raw.trim();
+    if requested.is_empty() {
+        return false;
+    }
+    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
+    options.iter().any(|model| {
+        if model.handle == requested {
+            return true;
+        }
+        let Some(resolved) = requested_resolved else {
+            return false;
+        };
+        resolved == model.handle
+            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
+    })
+}
+
+fn model_availability_status(options: &[ModelOption], raw: &str) -> &'static str {
+    if raw.trim().is_empty() {
+        "unset"
+    } else if model_available(options, raw) {
+        "available"
+    } else {
+        "unavailable"
+    }
+}
+
+fn model_metadata_status(raw: &str) -> &'static str {
+    if raw.trim().is_empty() {
+        "unknown"
+    } else if den_llm::model_registry::entry_for_handle(raw).is_some() {
+        "known"
+    } else {
+        "unknown"
+    }
 }

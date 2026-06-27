@@ -302,6 +302,7 @@
                     <th>Resolved</th>
                     <th>Status</th>
                     <th>Source</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -395,6 +396,7 @@
                         >
                     </td>
                     <td>{{ row.source | e }}</td>
+                    <td><a href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}">Configure stance</a></td>
                 </tr>
                 {% endfor %}
             </tbody>
