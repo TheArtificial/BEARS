@@ -21,7 +21,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Letta/Codepool/MemFS removal** | **Done** in code + compose; schema/UI still has transitional `letta_*` naming; Phase 8 backfill not run | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md), [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md) |
 | **Crate split / build time** | **v0–v2 complete**: workspace (`den-core`, `den-llm`, `den-memory`, `den-docket`, `den-runtime`, `den-http`, `den-oauth`, `den-web`, `den-acp`, `den-api`); clippy pedantic/nursery gated | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
-| **ACP `pair`** | Native loop + client-armature local tools; hardening active (continuation, approval ledger, wedge prevention) | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) |
+| **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
 | **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` exposure open | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
 | **Derived recall** | **Phases 0–3.5 + 5 landed** (indexer, turn recall, hybrid search, temporal + graph legs, `den reindex`); Cabinet + embedding v2 deferred | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
@@ -32,6 +32,9 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
 | **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
+| **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
+| **Channels** | Draft first-party channel layer; web chat exists as Den surface, Slack/WhatsApp/macOS channel adapters planned; channels must not inherit armature/local-tool assumptions | [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md), [`MACOS_BEARS_CLIENT_APP_PLAN.md`](MACOS_BEARS_CLIENT_APP_PLAN.md) |
+| **Prompt registry** | Proposed ADR-0046 extraction of long-lived prompt prose into file-backed fragments while preserving `bear_compiled_configs` as runtime hot-path contract | [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md), [`PROMPT_TEXT_HARDCODE_AUDIT.md`](PROMPT_TEXT_HARDCODE_AUDIT.md) |
 | **Phase 1 product** | Operator console, auth, Garage artifacts, routines, skills/MCP — **partially native-aligned**; several Phase 1 docs still describe Letta paths | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
 
 ### What is working today
@@ -40,7 +43,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 - **Runtime:** One native agent loop (`den-runtime`) streams tool-calling turns to Bifrost; stances differ by descriptor roster + compiled prompts, not separate external agents.
 - **Memory:** Per-Bear SQLite `memory_records` with logical paths; `core/` promotion via `curate`; key memory projection at turn start.
 - **Web chat:** Den-hosted Deep Chat; canonical conversation persistence; native tool loop for server-side Den tools.
-- **ACP pair:** Native turn execution with adapter-local tool relay; golden trace tests for SSE projection.
+- **ACP/BearWire pair:** Native turn execution over BearWire with `bear-armature` owning local filesystem/git/terminal/MCP execution; legacy ACP HTTP/SSE is compatibility only.
 - **Recall (optional):** Passage indexer + `recall_index` worker; turn-start `## Recalled memory` when Qdrant + embeddings configured.
 - **Build:** Cargo workspace with per-crate `cargo test -p …`; CI clippy `-D warnings`.
 
@@ -52,15 +55,17 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 4. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
 5. **Entity layer Phases 5–6** — entity anchors, `entity_browse`/`entity_resolve`, curate merge/split tools.
 6. **Context compaction** — Den-owned transcript compaction per ADR-0032.
-7. **Phase 8 migration** — operator backfill runbook (Letta history / residual MemFS → native stores); schema/UI rename cleanup.
-8. **ACP hardening** — durable pending-tool ledger, active-turn locks ([`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md)).
-9. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
+7. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
+8. **Phase 8 migration** — operator backfill runbook (Letta history / residual MemFS → native stores); schema/UI rename cleanup.
+9. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
+10. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
+11. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
 
 ### Important contradictions resolved here
 
 - **Den-native supersedes Letta-era paths everywhere in §1–Summary.** Web chat is **Den → native loop → Bifrost**, not Den → Letta Code → Letta. Memory is **SQLite-canonical**, not "no Den memory store."
 - **Trust stances, not Letta agent types.** `chat`/`pair`/`curate`/`work`/`watch` are Den capability stances with `den-native:{bear_id}:{stance}` bindings — not per-role Letta agent ids (legacy columns may remain for compat).
-- **ACP direct mode supersedes Codepool relay.** [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical.
+- **BearWire supersedes ACP direct-mode transport.** The active armature path is ACP client/editor → `bear-armature` → BearWire → `den-bearwire` → native `pair` runtime. [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md), and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical for architecture, though diagnostics lessons still apply.
 - **Workplan ≠ semantic memory.** Activity/workplan artifacts stay in the workflow-state ontology ([`workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md)), not `den.memory.*`.
 - **`memory_search` is hybrid when Qdrant is configured** (vector + keyword + graph + temporal); keyword-only fallback when recall disabled. See [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md).
 
@@ -75,17 +80,19 @@ See [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md):
 
 ### 2. Complete the memory/recall stack
 
-1. Hybrid `memory_search` ([`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) Phase 3).
-2. Entity-aware recall legs (Phase 3.5) + entity tools ( [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phases 5–6).
-3. Harvest/consolidation automation ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P1+).
+1. Migration/operator readiness for legacy Bears: validate `den import-memfs` on real bundles, snapshot/rollback, then `den reindex`.
+2. ADR-0041 harvest/consolidation schema: `salience`, `memory_harvest_marks`, live supersession writes, `invalid_at` updates.
+3. Entity anchors + tools ([`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phases 5–6).
+4. Expose scoped memory tools to `work`/`watch` after their read/write policies are explicit.
+5. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
 
 ### 3. Land Docket and task handoff
 
 [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) relational realization + [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) handoff/dispatch — gated on `work` sandbox.
 
-### 4. Harden ACP `pair` and web chat
+### 4. Harden BearWire `pair` and web chat
 
-- [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md).
+- [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md).
 - Web chat: interactive approval for mutating tools; continued stream/persistence reliability.
 
 ### 5. Phase 1 operator/product (native-aligned)
@@ -113,9 +120,13 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - [Docket implementation](DOCKET_IMPLEMENTATION_PLAN.md)
 - [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
 - [Context compaction](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md)
-- [ACP direct local-tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
+- [BearWire armature wire](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
+- [BearWire v1 protocol refinement](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md)
 - [ACP adapter improvements](ACP_ADAPTER_IMPROVEMENT_PLAN.md)
 - [Role runtime wedge prevention](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md)
+- [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
+- [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
+- [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
 - [Migration backfill](den-migration-backfill-and-rollback-plan.md)
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — **partially superseded**; use for operator/product scope, not runtime path
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md)
@@ -126,6 +137,7 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - [`archives/`](archives/) — capability management, skills brokering, context composition, ACP relay, etc.
 - [Letta dependency matrix](../architecture/letta-dependency-matrix.md) — historical inventory
 - [Bear channel plans](BEAR_CHANNEL_PLANS.md) — channel UX; not the canonical `pair` runtime path
+- [ACP direct local-tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — superseded by Den-native runtime + BearWire; retain for historical diagnostics and local-tool design context
 
 **Architecture sources of truth:**
 
@@ -151,6 +163,8 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - **BEARS** — deployment stack: **Den**, **Bifrost**, Postgres, optional **Qdrant**/**Garage**, frontends. Not a single bear.
 - **Bear** — logical assistant: identity, membership, policy. **Runtime:** multi-stance native loop ([bear roles](../architecture/bear-roles.md)).
 - **Trust stance** — `chat`, `pair`, `curate`, `work`, `watch`: capability surface (tools, memory scopes, sandbox). Bound as `den-native:{bear_id}:{stance}`.
+- **Armature** — trusted local work-surface harness such as ACP/Zed via `bear-armature` and BearWire. Armatures own local filesystem/git/terminal/MCP execution and permission UX.
+- **Channel** — conversation surface such as web chat, Slack, WhatsApp, or macOS app chat. Channels reuse Den run services but are not armatures unless they expose a trusted work-surface boundary.
 - **Users ↔ bears** — many-to-many membership; Den enforces on every chat/ACP call.
 - **Den** — control plane + gateway: auth, bear lifecycle, native runtime, reflection workers, operator UI, `/v1` chat, ACP surface. **Inference:** Den-native loop → **Bifrost** (`LLM_API_URL`).
 - **Canonical memory** — per-Bear SQLite (`memory_records`, proposals, promotions). **Derived recall** — Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), not source of truth.

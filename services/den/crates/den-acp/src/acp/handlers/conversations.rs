@@ -15,7 +15,9 @@ use den_runtime::{
             count_visible_messages, ensure_conversation_for_external_id, list_conversations_for_bear,
             list_messages_page,
         },
-    runtime_compaction_store::list_runtime_compaction_events,
+    runtime_compaction_store::{
+        latest_compaction_artifact_for_conversation, list_runtime_compaction_events,
+    },
 };
 
 use crate::acp::{
@@ -145,15 +147,26 @@ pub(super) async fn conversation_history_inner(
     .await?;
     let canonical_visible_count = count_visible_messages(&state.sqlx_pool, canonical_conversation.id).await?;
     let (messages, has_more, next_before) = map_canonical_history_page(&canonical_rows, limit);
-    let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
+    let mut compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
         .await
         .unwrap_or_default();
+    let latest_artifact = latest_compaction_artifact_for_conversation(
+        &state.sqlx_pool,
+        canonical_conversation.id,
+    )
+    .await
+    .unwrap_or_default();
+    if let (Some(latest), Some(first_event)) = (latest_artifact, compaction_history.first_mut()) {
+        first_event.latest_artifact = Some(latest);
+    }
     let compaction = if canonical_visible_count > 0 {
-        None
+        compaction_history.first().cloned()
     } else {
         Some(crate::acp::AcpCompactionStatusResponse {
             status: "unavailable".to_string(),
             policy_version: "canonical_only".to_string(),
+            trigger: None,
+            created_at: None,
             source_group_start: None,
             source_group_end: None,
             diagnostic: Some(
@@ -162,6 +175,7 @@ pub(super) async fn conversation_history_inner(
             artifact: None,
             context_envelope: None,
             prompt_memory_diagnostic: None,
+            latest_artifact: None,
         })
     };
     Ok(Json(AcpConversationHistoryResponse {

@@ -180,6 +180,11 @@
             <button
                 type="submit"
                 formaction="/bear/{{ bear.slug | e }}/models/provision-bifrost-key"
+                onclick="
+                    return confirm(
+                        'Provision a new Bifrost virtual key for this Bear? The current key will be archived, and Bifrost usage and budget metrics will start fresh for the replacement key.',
+                    );
+                "
             >
                 Provision new Bifrost virtual key
             </button>
@@ -194,9 +199,10 @@
         <h3>Bifrost usage</h3>
         {% if bifrost_usage.status == "ok" %}
         <p class="form-hint">
-            Virtual key <strong>{{ bifrost_usage.virtual_key_name | e }}</strong>
-            · active <strong>{{ bifrost_usage.is_active | e }}</strong> · validated
-            via <code>{{ bifrost_usage.auth_mode | e }}</code>.
+            Virtual key
+            <strong>{{ bifrost_usage.virtual_key_name | e }}</strong> · active
+            <strong>{{ bifrost_usage.is_active | e }}</strong> · validated via
+            <code>{{ bifrost_usage.auth_mode | e }}</code>.
         </p>
 
         {% if bifrost_usage.has_budgets %}
@@ -224,13 +230,11 @@
         </table>
         {% else %}
         <p class="form-hint">
-            No Bifrost budget rows were reported for this key. New BEARS-provisioned
-            keys include a high monthly tracking budget so usage can appear here
-            after requests are logged.
+            No Bifrost budget rows were reported for this key. New
+            BEARS-provisioned keys include a high monthly tracking budget so
+            usage can appear here after requests are logged.
         </p>
-        {% endif %}
-
-        {% if bifrost_usage.has_model_usage %}
+        {% endif %} {% if bifrost_usage.has_model_usage %}
         <h4>Model usage this budget period</h4>
         <table>
             <thead>
@@ -256,13 +260,11 @@
         </table>
         {% else %}
         <p class="form-hint">
-            No per-model usage has been reported yet. It may appear after this Bear
-            completes Bifrost-backed requests and Bifrost logging/cost calculation
-            has recorded them.
+            No per-model usage has been reported yet. It may appear after this
+            Bear completes Bifrost-backed requests and Bifrost logging/cost
+            calculation has recorded them.
         </p>
-        {% endif %}
-
-        {% if bifrost_usage.has_providers %}
+        {% endif %} {% if bifrost_usage.has_providers %}
         <h4>Allowed providers</h4>
         <table>
             <thead>
@@ -282,8 +284,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        {% endif %}
-        {% elif bifrost_usage.status == "missing" %}
+        {% endif %} {% elif bifrost_usage.status == "missing" %}
         <p class="form-hint">{{ bifrost_usage.error | e }}</p>
         {% else %}
         <p class="form-errors">{{ bifrost_usage.error | e }}</p>
