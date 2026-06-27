@@ -321,6 +321,43 @@ impl BifrostGovernanceClient {
             .find(|virtual_key| virtual_key.name == name))
     }
 
+    async fn get_virtual_key_by_id(
+        &self,
+        auth: &BifrostManagementAuth,
+        virtual_key_id: &str,
+    ) -> Result<Option<VirtualKey>, DenError> {
+        let virtual_key_id = virtual_key_id.trim();
+        if virtual_key_id.is_empty() {
+            return Ok(None);
+        }
+        let url = format!(
+            "{}/governance/virtual-keys/{virtual_key_id}",
+            self.management_url
+        );
+        let response = self
+            .apply_management_auth(self.http.get(&url), auth)
+            .send()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key get failed: {err}")))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key get body: {err}")))?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost virtual key get HTTP {status}: {text}"
+            )));
+        }
+        let payload = serde_json::from_str::<VirtualKeyResponse>(&text).map_err(|err| {
+            DenError::Parsing(format!("Bifrost virtual key get JSON: {err}; body: {text}"))
+        })?;
+        Ok(Some(payload.virtual_key))
+    }
+
     async fn archive_existing_virtual_key_name(
         &self,
         auth: &BifrostManagementAuth,
@@ -359,6 +396,20 @@ impl BifrostGovernanceClient {
             )));
         }
         Ok(archived_name)
+    }
+
+    pub async fn archive_virtual_key_by_id(
+        &self,
+        virtual_key_id: &str,
+    ) -> Result<Option<String>, DenError> {
+        let auth = self.login().await?;
+        let Some(existing) = self.get_virtual_key_by_id(&auth, virtual_key_id).await? else {
+            return Ok(None);
+        };
+        let archived_name = self
+            .archive_existing_virtual_key_name(&auth, &existing)
+            .await?;
+        Ok(Some(archived_name))
     }
 
     pub async fn get_virtual_key_quota(
