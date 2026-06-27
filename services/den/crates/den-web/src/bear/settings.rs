@@ -13,6 +13,7 @@ use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path as FsPath, PathBuf};
 use time::format_description::well_known::Rfc3339;
@@ -257,6 +258,9 @@ struct ConversationAdminRow {
     title: String,
     source_session: String,
     updated_at: String,
+    compaction_status: String,
+    compaction_event_count: i64,
+    latest_compaction_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -266,6 +270,33 @@ struct MessageAdminRow {
     role: String,
     visibility: String,
     preview: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CompactionEventAdminRow {
+    trigger: String,
+    status: String,
+    policy_version: String,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
+    diagnostic: Option<String>,
+    artifact_json: String,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CompactionArtifactAdminRow {
+    id: Uuid,
+    artifact_kind: String,
+    policy_version: String,
+    trigger: String,
+    source_message_start_seq: i64,
+    source_message_end_seq: i64,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
+    artifact_json: String,
+    superseded_by: Option<Uuid>,
+    created_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -362,6 +393,156 @@ fn slug_base(raw: &str) -> String {
     } else {
         trimmed
     }
+}
+
+fn pretty_json(value: serde_json::Value) -> String {
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+}
+
+async fn conversation_compaction_events(
+    pool: &sqlx::PgPool,
+    external_conversation_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<CompactionEventAdminRow>, CustomError> {
+    let Some(external_conversation_id) = external_conversation_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            Option<i32>,
+            Option<i32>,
+            Option<String>,
+            Option<serde_json::Value>,
+            time::OffsetDateTime,
+        ),
+    >(
+        r"
+        SELECT trigger,
+               status,
+               policy_version,
+               source_group_start,
+               source_group_end,
+               diagnostic,
+               artifact,
+               created_at
+        FROM runtime_compaction_events
+        WHERE conversation_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        ",
+    )
+    .bind(external_conversation_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list compaction events: {err}")))?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                trigger,
+                status,
+                policy_version,
+                source_group_start,
+                source_group_end,
+                diagnostic,
+                artifact,
+                created_at,
+            )| CompactionEventAdminRow {
+                trigger,
+                status,
+                policy_version,
+                source_group_start,
+                source_group_end,
+                diagnostic,
+                artifact_json: artifact.map(pretty_json).unwrap_or_else(|| "null".to_string()),
+                created_at: created_at.to_string(),
+            },
+        )
+        .collect())
+}
+
+async fn conversation_compaction_artifacts(
+    pool: &sqlx::PgPool,
+    conversation_id: Uuid,
+    limit: i64,
+) -> Result<Vec<CompactionArtifactAdminRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<i32>,
+            Option<i32>,
+            serde_json::Value,
+            Option<Uuid>,
+            time::OffsetDateTime,
+        ),
+    >(
+        r"
+        SELECT id,
+               artifact_kind,
+               policy_version,
+               trigger,
+               source_message_start_seq,
+               source_message_end_seq,
+               source_group_start,
+               source_group_end,
+               artifact_json,
+               superseded_by,
+               created_at
+        FROM conversation_compaction_artifacts
+        WHERE conversation_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        ",
+    )
+    .bind(conversation_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list compaction artifacts: {err}")))?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                artifact_kind,
+                policy_version,
+                trigger,
+                source_message_start_seq,
+                source_message_end_seq,
+                source_group_start,
+                source_group_end,
+                artifact_json,
+                superseded_by,
+                created_at,
+            )| CompactionArtifactAdminRow {
+                id,
+                artifact_kind,
+                policy_version,
+                trigger,
+                source_message_start_seq,
+                source_message_end_seq,
+                source_group_start,
+                source_group_end,
+                artifact_json: pretty_json(artifact_json),
+                superseded_by,
+                created_at: created_at.to_string(),
+            },
+        )
+        .collect())
 }
 
 async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<String, CustomError> {
@@ -1682,19 +1863,58 @@ async fn conversations_view(
     let rows =
         conversation_persistence::list_conversations_for_bear(state.sqlx_pool(), bear.id, 50)
             .await?;
+    let external_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|c| c.external_conversation_id.clone())
+        .collect();
+    let compaction_stats: HashMap<String, (i64, String, time::OffsetDateTime)> =
+        if external_ids.is_empty() {
+            HashMap::new()
+        } else {
+            sqlx::query_as::<_, (String, i64, String, time::OffsetDateTime)>(
+                r"
+                SELECT DISTINCT ON (conversation_id)
+                       conversation_id,
+                       COUNT(*) OVER (PARTITION BY conversation_id)::bigint AS event_count,
+                       status,
+                       created_at
+                FROM runtime_compaction_events
+                WHERE conversation_id = ANY($1)
+                ORDER BY conversation_id, created_at DESC
+                ",
+            )
+            .bind(&external_ids)
+            .fetch_all(state.sqlx_pool())
+            .await
+            .map_err(|err| CustomError::Database(format!("list compaction stats: {err}")))?
+            .into_iter()
+            .map(|(conversation_id, count, status, created_at)| {
+                (conversation_id, (count, status, created_at))
+            })
+            .collect()
+        };
     let conversations: Vec<ConversationAdminRow> = rows
         .into_iter()
-        .map(|c| ConversationAdminRow {
-            id: c.id,
-            external_id: c
+        .map(|c| {
+            let external_id = c
                 .external_conversation_id
-                .unwrap_or_else(|| "(none)".to_string()),
+                .unwrap_or_else(|| "(none)".to_string());
+            let stats = compaction_stats.get(&external_id);
+            ConversationAdminRow {
+            id: c.id,
+            external_id,
             title: c
                 .current_title
                 .filter(|t| !t.is_empty())
                 .unwrap_or_else(|| "Untitled".to_string()),
             source_session: c.source_acp_session_id.unwrap_or_else(|| "—".to_string()),
             updated_at: c.updated_at.to_string(),
+            compaction_status: stats
+                .map(|(_, status, _)| status.clone())
+                .unwrap_or_else(|| "none".to_string()),
+            compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
+            latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
+            }
         })
         .collect();
     web::render_template(
@@ -1727,6 +1947,14 @@ async fn conversation_detail_view(
         return Err(CustomError::NotFound("conversation not found".to_string()));
     }
     let messages = list_messages_page(state.sqlx_pool(), conversation_id, None, 40).await?;
+    let compaction_events = conversation_compaction_events(
+        state.sqlx_pool(),
+        conv.external_conversation_id.as_deref(),
+        20,
+    )
+    .await?;
+    let compaction_artifacts =
+        conversation_compaction_artifacts(state.sqlx_pool(), conversation_id, 10).await?;
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -1748,6 +1976,8 @@ async fn conversation_detail_view(
         context! {
             conv,
             message_rows,
+            compaction_events,
+            compaction_artifacts,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "conversations"),
