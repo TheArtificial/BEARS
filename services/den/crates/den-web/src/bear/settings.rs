@@ -10,6 +10,7 @@ use axum::{
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
+use axum_login::tower_sessions::Session;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -206,6 +207,9 @@ struct BifrostUsageView {
     has_providers: bool,
 }
 
+const MODELS_FLASH_MESSAGE_KEY: &str = "bear_models_flash_message";
+const MODELS_FLASH_ERROR_KEY: &str = "bear_models_flash_error";
+
 const BEAR_BUNDLE_FORMAT: &str = "bear";
 const BEAR_BUNDLE_VERSION: u32 = 1;
 const BEAR_BUNDLE_MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
@@ -321,6 +325,47 @@ pub(crate) fn bear_nav_context(bear: &den_service::bears::Bear, active: &str) ->
         bear,
         bear_nav_active => active,
     }
+}
+
+async fn set_models_flash(session: &Session, message: &str) -> Result<(), CustomError> {
+    session
+        .insert(MODELS_FLASH_MESSAGE_KEY, message.to_string())
+        .await
+        .map_err(|err| CustomError::System(format!("could not set models flash message: {err}")))
+}
+
+async fn take_models_flash(
+    session: &Session,
+) -> Result<(Option<String>, Option<String>), CustomError> {
+    let message = session
+        .get::<String>(MODELS_FLASH_MESSAGE_KEY)
+        .await
+        .map_err(|err| {
+            CustomError::System(format!("could not read models flash message: {err}"))
+        })?;
+    if message.is_some() {
+        session
+            .remove::<String>(MODELS_FLASH_MESSAGE_KEY)
+            .await
+            .map_err(|err| {
+                CustomError::System(format!("could not clear models flash message: {err}"))
+            })?;
+    }
+
+    let error = session
+        .get::<String>(MODELS_FLASH_ERROR_KEY)
+        .await
+        .map_err(|err| CustomError::System(format!("could not read models flash error: {err}")))?;
+    if error.is_some() {
+        session
+            .remove::<String>(MODELS_FLASH_ERROR_KEY)
+            .await
+            .map_err(|err| {
+                CustomError::System(format!("could not clear models flash error: {err}"))
+            })?;
+    }
+
+    Ok((message, error))
 }
 
 pub(crate) async fn session_user(auth_session: &AuthSession) -> Result<&SessionUser, CustomError> {
@@ -462,7 +507,9 @@ async fn conversation_compaction_events(
                 source_group_start,
                 source_group_end,
                 diagnostic,
-                artifact_json: artifact.map(pretty_json).unwrap_or_else(|| "null".to_string()),
+                artifact_json: artifact
+                    .map(pretty_json)
+                    .unwrap_or_else(|| "null".to_string()),
                 created_at: created_at.to_string(),
             },
         )
@@ -1654,18 +1701,20 @@ async fn models_view(
     Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
     let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let (flash_message, flash_error) = take_models_flash(&session).await?;
     render_models_page(
         state,
         auth_session,
         bear,
         can_manage_bear,
-        query.message,
-        query.error,
+        flash_message.or(query.message),
+        flash_error.or(query.error),
     )
     .await
 }
@@ -1801,6 +1850,7 @@ async fn provision_bifrost_virtual_key_action(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
+    session: Session,
 ) -> Result<Response, CustomError> {
     let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
         Ok(v) => v,
@@ -1813,15 +1863,8 @@ async fn provision_bifrost_virtual_key_action(
     } else {
         "Bifrost virtual key provisioned for this Bear."
     };
-    render_models_page(
-        state,
-        auth_session,
-        bear,
-        true,
-        Some(message.to_string()),
-        None,
-    )
-    .await
+    set_models_flash(&session, message).await?;
+    Ok(Redirect::to(&format!("/bear/{}/models", bear.slug)).into_response())
 }
 
 async fn stance_detail_view(
@@ -1901,19 +1944,19 @@ async fn conversations_view(
                 .unwrap_or_else(|| "(none)".to_string());
             let stats = compaction_stats.get(&external_id);
             ConversationAdminRow {
-            id: c.id,
-            external_id,
-            title: c
-                .current_title
-                .filter(|t| !t.is_empty())
-                .unwrap_or_else(|| "Untitled".to_string()),
-            source_session: c.source_acp_session_id.unwrap_or_else(|| "—".to_string()),
-            updated_at: c.updated_at.to_string(),
-            compaction_status: stats
-                .map(|(_, status, _)| status.clone())
-                .unwrap_or_else(|| "none".to_string()),
-            compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
-            latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
+                id: c.id,
+                external_id,
+                title: c
+                    .current_title
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "Untitled".to_string()),
+                source_session: c.source_acp_session_id.unwrap_or_else(|| "—".to_string()),
+                updated_at: c.updated_at.to_string(),
+                compaction_status: stats
+                    .map(|(_, status, _)| status.clone())
+                    .unwrap_or_else(|| "none".to_string()),
+                compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
+                latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
             }
         })
         .collect();
