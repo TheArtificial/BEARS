@@ -670,7 +670,7 @@ pub async fn provision_bifrost_virtual_key_for_bear(
     state: &AppState,
     bear_id: Uuid,
     bear_slug: &str,
-) -> Result<(), CustomError> {
+) -> Result<bool, CustomError> {
     let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
     let key = client.create_bear_virtual_key(bear_id, bear_slug).await?;
     bears_db::set_bear_bifrost_virtual_key(
@@ -701,7 +701,7 @@ pub async fn provision_bifrost_virtual_key_for_bear(
         auth_mode = validation.auth_mode.as_str(),
         "validated provisioned Bifrost virtual key after encrypted Den storage round trip"
     );
-    Ok(())
+    Ok(key.reset_usage_tracking)
 }
 
 pub async fn insert_new_bear_row_with_context_profile(

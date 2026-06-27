@@ -1467,11 +1467,17 @@ async fn provision_bifrost_virtual_key_action(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    provision_bifrost_virtual_key_for_bear(&state, bear.id, &bear.slug).await?;
+    let reset_usage_tracking =
+        provision_bifrost_virtual_key_for_bear(&state, bear.id, &bear.slug).await?;
+    let message = if reset_usage_tracking {
+        "Bifrost virtual key provisioned for this Bear. The previous key with this Bear name was archived, so Bifrost usage and budget tracking start fresh for the replacement key."
+    } else {
+        "Bifrost virtual key provisioned for this Bear."
+    };
     Ok(Redirect::to(&format!(
         "/bear/{}/models?message={}",
         bear.slug,
-        urlencoding::encode("Bifrost virtual key provisioned for this Bear.")
+        urlencoding::encode(message)
     ))
     .into_response())
 }

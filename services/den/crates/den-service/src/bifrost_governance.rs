@@ -14,6 +14,10 @@ pub struct BifrostVirtualKeyProvisioned {
     pub id: String,
     pub name: String,
     pub value: String,
+    /// True when the deterministic Bear virtual-key name already existed, so Den
+    /// created a replacement with a unique reprovisioning suffix. The new key has
+    /// fresh Bifrost budget/usage state.
+    pub reset_usage_tracking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +65,11 @@ struct VirtualKeyResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct ListVirtualKeysResponse {
+    virtual_keys: Vec<VirtualKey>,
+}
+
+#[derive(Debug, Deserialize)]
 struct VirtualKey {
     id: String,
     name: String,
@@ -89,6 +98,13 @@ struct VirtualKeyProviderConfig<'a> {
     allowed_models: Vec<&'a str>,
     key_ids: Vec<&'a str>,
     weight: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateVirtualKeyRequest<'a> {
+    name: &'a str,
+    description: &'a str,
+    is_active: bool,
 }
 
 #[cfg(test)]
@@ -255,6 +271,96 @@ impl BifrostGovernanceClient {
         )))
     }
 
+    fn apply_management_auth(
+        &self,
+        builder: reqwest::RequestBuilder,
+        auth: &BifrostManagementAuth,
+    ) -> reqwest::RequestBuilder {
+        match auth {
+            BifrostManagementAuth::Bearer(token) => builder.bearer_auth(token),
+            BifrostManagementAuth::Cookie(cookie) => {
+                builder.header(reqwest::header::COOKIE, cookie)
+            }
+        }
+    }
+
+    async fn find_virtual_key_by_name(
+        &self,
+        auth: &BifrostManagementAuth,
+        name: &str,
+    ) -> Result<Option<VirtualKey>, DenError> {
+        let url = format!("{}/governance/virtual-keys", self.management_url);
+        let response = self
+            .apply_management_auth(
+                self.http
+                    .get(&url)
+                    .query(&[("search", name), ("limit", "100")]),
+                auth,
+            )
+            .send()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key list failed: {err}")))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key list body: {err}")))?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost virtual key list HTTP {status}: {text}"
+            )));
+        }
+        let payload = serde_json::from_str::<ListVirtualKeysResponse>(&text).map_err(|err| {
+            DenError::Parsing(format!(
+                "Bifrost virtual key list JSON: {err}; body: {text}"
+            ))
+        })?;
+        Ok(payload
+            .virtual_keys
+            .into_iter()
+            .find(|virtual_key| virtual_key.name == name))
+    }
+
+    async fn archive_existing_virtual_key_name(
+        &self,
+        auth: &BifrostManagementAuth,
+        virtual_key: &VirtualKey,
+    ) -> Result<String, DenError> {
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let archived_name = format!("{}:replaced:{}", virtual_key.name, &suffix[..8]);
+        let description = format!(
+            "Archived by BEARS during virtual-key reprovisioning; replaced original key named {}",
+            virtual_key.name
+        );
+        let request = UpdateVirtualKeyRequest {
+            name: &archived_name,
+            description: &description,
+            is_active: false,
+        };
+        let url = format!(
+            "{}/governance/virtual-keys/{}",
+            self.management_url, virtual_key.id
+        );
+        let response = self
+            .apply_management_auth(self.http.put(&url).json(&request), auth)
+            .send()
+            .await
+            .map_err(|err| {
+                DenError::System(format!("Bifrost virtual key archive failed: {err}"))
+            })?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key archive body: {err}")))?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost virtual key archive HTTP {status}: {text}"
+            )));
+        }
+        Ok(archived_name)
+    }
+
     pub async fn get_virtual_key_quota(
         &self,
         value: &str,
@@ -276,19 +382,15 @@ impl BifrostGovernanceClient {
         )))
     }
 
-    pub async fn create_bear_virtual_key(
+    async fn create_virtual_key_with_name(
         &self,
-        bear_id: uuid::Uuid,
-        bear_slug: &str,
-    ) -> Result<BifrostVirtualKeyProvisioned, DenError> {
-        let auth = self.login().await?;
-        let short_id = bear_id.simple().to_string();
-        let short_id = &short_id[..12];
-        let name = format!("bear:{bear_slug}:{short_id}");
-        let description = format!("Bifrost virtual key for BEARS Bear {bear_slug} ({bear_id})");
+        auth: &BifrostManagementAuth,
+        name: &str,
+        description: &str,
+    ) -> Result<VirtualKeyResponse, (reqwest::StatusCode, String)> {
         let request = CreateVirtualKeyRequest {
-            name: &name,
-            description: &description,
+            name,
+            description,
             is_active: true,
             provider_configs: vec![VirtualKeyProviderConfig {
                 provider: "openai",
@@ -306,36 +408,86 @@ impl BifrostGovernanceClient {
             }],
         };
         let url = format!("{}/governance/virtual-keys", self.management_url);
-        let mut builder = self.http.post(&url).json(&request);
-        builder = match auth {
-            BifrostManagementAuth::Bearer(token) => builder.bearer_auth(token),
-            BifrostManagementAuth::Cookie(cookie) => {
-                builder.header(reqwest::header::COOKIE, cookie)
-            }
-        };
-        let response = builder
+        let response = self
+            .apply_management_auth(self.http.post(&url).json(&request), auth)
             .send()
             .await
-            .map_err(|err| DenError::System(format!("Bifrost virtual key create failed: {err}")))?;
+            .map_err(|err| (reqwest::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         let status = response.status();
         let text = response
             .text()
             .await
-            .map_err(|err| DenError::System(format!("Bifrost virtual key create body: {err}")))?;
+            .map_err(|err| (reqwest::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         if !status.is_success() {
-            return Err(DenError::System(format!(
-                "Bifrost virtual key create HTTP {status}: {text}"
-            )));
+            return Err((status, text));
         }
-        let payload = serde_json::from_str::<VirtualKeyResponse>(&text).map_err(|err| {
-            DenError::Parsing(format!(
-                "Bifrost virtual key create JSON: {err}; body: {text}"
-            ))
-        })?;
+        serde_json::from_str::<VirtualKeyResponse>(&text).map_err(|err| {
+            (
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Bifrost virtual key create JSON: {err}; body: {text}"),
+            )
+        })
+    }
+
+    pub async fn create_bear_virtual_key(
+        &self,
+        bear_id: uuid::Uuid,
+        bear_slug: &str,
+    ) -> Result<BifrostVirtualKeyProvisioned, DenError> {
+        let auth = self.login().await?;
+        let short_id = bear_id.simple().to_string();
+        let short_id = &short_id[..12];
+        let base_name = format!("bear:{bear_slug}:{short_id}");
+        let description = format!("Bifrost virtual key for BEARS Bear {bear_slug} ({bear_id})");
+
+        let (payload, reset_usage_tracking) = match self
+            .create_virtual_key_with_name(&auth, &base_name, &description)
+            .await
+        {
+            Ok(payload) => (payload, false),
+            Err((status, text))
+                if status == reqwest::StatusCode::CONFLICT && text.contains("already exists") =>
+            {
+                let existing = self
+                    .find_virtual_key_by_name(&auth, &base_name)
+                    .await?
+                    .ok_or_else(|| {
+                        DenError::System(format!(
+                            "Bifrost reported virtual key name conflict for {base_name}, but list/search did not return an exact matching key; original HTTP {status}: {text}"
+                        ))
+                    })?;
+                let archived_name = self
+                    .archive_existing_virtual_key_name(&auth, &existing)
+                    .await?;
+                tracing::warn!(
+                    %bear_id,
+                    base_name,
+                    existing_virtual_key_id = %existing.id,
+                    archived_name,
+                    "Bifrost virtual key name already exists; archived old key and creating replacement with fresh usage/budget tracking"
+                );
+                let payload = self
+                    .create_virtual_key_with_name(&auth, &base_name, &description)
+                    .await
+                    .map_err(|(retry_status, retry_text)| {
+                        DenError::System(format!(
+                            "Bifrost virtual key create retry after archiving existing key failed HTTP {retry_status}: {retry_text}; original HTTP {status}: {text}"
+                        ))
+                    })?;
+                (payload, true)
+            }
+            Err((status, text)) => {
+                return Err(DenError::System(format!(
+                    "Bifrost virtual key create HTTP {status}: {text}"
+                )));
+            }
+        };
+
         Ok(BifrostVirtualKeyProvisioned {
             id: payload.virtual_key.id,
             name: payload.virtual_key.name,
             value: payload.virtual_key.value,
+            reset_usage_tracking,
         })
     }
 }
