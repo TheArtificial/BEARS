@@ -13,7 +13,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 | Track | Landed (high level) | Next unblocker | Canonical detail plan |
 |---|---|---|---|
 | **Canonical store + tools** | Per-Bear SQLite, logical paths, `pair`/`chat`/`curate` tools, admin + member memory UI | `work`/`watch` tool exposure | [MEMORY_TOOLS_IMPLEMENTATION_PLAN.md](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
-| **MemFS → SQLite import tooling** | `den import-memfs`, git-dir + bundle, history/supersession import, fixture tests, bear-admin Letta bundle upload UI | Optional archived-bundle use only; no production migration required | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
+| **Legacy memory import tooling** | `den import-legacy-memory`, git-dir + bundle, history/supersession import, fixture tests, bear-admin legacy bundle upload UI | Optional archived-bundle use only; no production migration required | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Derived recall index** | Qdrant optional stack, indexer worker, turn-start recall, hybrid `memory_search` (vector + keyword + graph + temporal), `den reindex` | Cabinet leg (blocked); embedding-standard migration | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) |
 | **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg, explicit anchors, read/write/governance tools, `session_info.entities` | Portability/export-import | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
 | **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close) | Model-assisted pair reflection; `archive_harvest`; consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
@@ -47,10 +47,10 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 
 ### MemFS → SQLite ETL
 
-- **`den import-memfs`**: `--bundle` | `--git-dir`, `--dry-run`, `--import-history`, `--include-workflow-artifacts`, `--report`.
+- **`den import-legacy-memory`**: `--bundle` | `--git-dir`, `--dry-run`, `--import-history`, `--include-workflow-artifacts`, `--report`.
 - Idempotent re-import (commit+path metadata); branch→scope mapping (`talk` → `chat` profile); supersession chain when `--import-history`.
 - Fixture tests in `den-memory/src/import.rs`.
-- **Bear-admin UI:** multipart Letta/MemFS bundle upload (`POST /bear/{slug}/memory/import-letta`); disabled when bear already has memory (guard commit `e0eff97e`).
+- **Bear-admin UI:** multipart legacy bundle upload (`POST /bear/{slug}/memory/import-legacy`); disabled when bear already has memory (guard commit `e0eff97e`).
 - This is retained for archived/ad hoc bundles only. There are no production Letta-runtime Bears to migrate.
 
 ### Derived recall index (ADR-0038)
@@ -79,7 +79,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 
 ### 1. ADR-0041 canonical schema deltas — **unblocks harvest + consolidation**
 
-Legacy MemFS/Letta migration readiness is retired: there are no production Letta-runtime Bears to migrate. `den import-memfs` remains optional tooling for archived bundles, not a roadmap blocker.
+Legacy memory migration readiness is retired: there are no production legacy-runtime Bears to migrate. `den import-legacy-memory` remains optional tooling for archived bundles, not a roadmap blocker.
 
 ---
 

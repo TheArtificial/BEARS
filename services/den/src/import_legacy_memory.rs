@@ -1,4 +1,4 @@
-//! `den import-memfs` CLI: operator-facing MemFS bundle import into per-Bear SQLite.
+//! `den import-legacy-memory` CLI: optional archived bundle import into per-Bear SQLite.
 
 use std::path::PathBuf;
 
@@ -7,21 +7,21 @@ use uuid::Uuid;
 
 use crate::config::Config;
 
-pub struct ImportMemfsArgs {
+pub struct ImportLegacyMemoryArgs {
     pub bear_id: Uuid,
-    pub source: ImportMemfsCliSource,
+    pub source: ImportLegacyMemoryCliSource,
     pub dry_run: bool,
     pub import_history: bool,
     pub include_workflow_artifacts: bool,
     pub report_path: PathBuf,
 }
 
-pub enum ImportMemfsCliSource {
+pub enum ImportLegacyMemoryCliSource {
     Bundle(PathBuf),
     GitDir(PathBuf),
 }
 
-pub fn parse_args(args: &[String]) -> anyhow::Result<ImportMemfsArgs> {
+pub fn parse_args(args: &[String]) -> anyhow::Result<ImportLegacyMemoryArgs> {
     let mut bear_id: Option<Uuid> = None;
     let mut bundle_path: Option<PathBuf> = None;
     let mut git_dir_path: Option<PathBuf> = None;
@@ -80,23 +80,23 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportMemfsArgs> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: den import-memfs --bear <uuid> (--bundle <path> | --git-dir <path>) [--dry-run] [--import-history] [--include-workflow-artifacts] [--report <path>]"
+                    "Usage: den import-legacy-memory --bear <uuid> (--bundle <path> | --git-dir <path>) [--dry-run] [--import-history] [--include-workflow-artifacts] [--report <path>]"
                 );
                 std::process::exit(0);
             }
-            other => bail!("unknown import-memfs argument {other:?}"),
+            other => bail!("unknown import-legacy-memory argument {other:?}"),
         }
     }
 
     let source = match (bundle_path, git_dir_path) {
         (Some(_), Some(_)) => bail!("use either --bundle or --git-dir, not both"),
-        (Some(path), None) => ImportMemfsCliSource::Bundle(path),
-        (None, Some(path)) => ImportMemfsCliSource::GitDir(path),
-        (None, None) => bail!("import-memfs requires --bundle <path> or --git-dir <path>"),
+        (Some(path), None) => ImportLegacyMemoryCliSource::Bundle(path),
+        (None, Some(path)) => ImportLegacyMemoryCliSource::GitDir(path),
+        (None, None) => bail!("import-legacy-memory requires --bundle <path> or --git-dir <path>"),
     };
 
-    Ok(ImportMemfsArgs {
-        bear_id: bear_id.ok_or_else(|| anyhow!("import-memfs requires --bear <uuid>"))?,
+    Ok(ImportLegacyMemoryArgs {
+        bear_id: bear_id.ok_or_else(|| anyhow!("import-legacy-memory requires --bear <uuid>"))?,
         source,
         dry_run,
         import_history,
@@ -105,7 +105,7 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportMemfsArgs> {
     })
 }
 
-pub async fn run_import_memfs(args: ImportMemfsArgs) -> anyhow::Result<()> {
+pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::load();
     let stores = den_runtime::memory::MemoryStoreManager::new(&config);
@@ -121,15 +121,15 @@ pub async fn run_import_memfs(args: ImportMemfsArgs) -> anyhow::Result<()> {
     };
 
     let report = match &args.source {
-        ImportMemfsCliSource::Bundle(path) => {
+        ImportLegacyMemoryCliSource::Bundle(path) => {
             den_runtime::memory::import_memfs_bundle(&store, path, &options)
                 .await
-                .context("import memfs bundle")?
+                .context("import legacy bundle")?
         }
-        ImportMemfsCliSource::GitDir(path) => {
+        ImportLegacyMemoryCliSource::GitDir(path) => {
             den_runtime::memory::import_memfs_git_dir(&store, path, &options)
                 .await
-                .context("import memfs git dir")?
+                .context("import legacy git dir")?
         }
     };
 
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn parses_bundle_import_args() {
         let args = vec![
-            "import-memfs".to_string(),
+            "import-legacy-memory".to_string(),
             "--bear".to_string(),
             "00000000-0000-0000-0000-000000000123".to_string(),
             "--bundle".to_string(),
@@ -182,7 +182,7 @@ mod tests {
             Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap()
         );
         assert!(
-            matches!(parsed.source, ImportMemfsCliSource::Bundle(ref path) if path == &PathBuf::from("/tmp/sample.bundle"))
+            matches!(parsed.source, ImportLegacyMemoryCliSource::Bundle(ref path) if path == &PathBuf::from("/tmp/sample.bundle"))
         );
         assert!(parsed.dry_run);
         assert!(parsed.import_history);
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn parses_git_dir_import_args() {
         let args = vec![
-            "import-memfs".to_string(),
+            "import-legacy-memory".to_string(),
             "--bear".to_string(),
             "00000000-0000-0000-0000-000000000123".to_string(),
             "--git-dir".to_string(),
@@ -201,7 +201,7 @@ mod tests {
         ];
         let parsed = parse_args(&args).expect("parse args");
         assert!(
-            matches!(parsed.source, ImportMemfsCliSource::GitDir(ref path) if path == &PathBuf::from("/tmp/repo.git"))
+            matches!(parsed.source, ImportLegacyMemoryCliSource::GitDir(ref path) if path == &PathBuf::from("/tmp/repo.git"))
         );
         assert!(parsed.include_workflow_artifacts);
         assert_eq!(parsed.report_path, PathBuf::from("report.json"));

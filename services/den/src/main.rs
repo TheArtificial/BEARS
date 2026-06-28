@@ -22,8 +22,11 @@ async fn run_main() -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("seed") => run_seed(&args).await,
         Some("reindex") => den::reindex::run_reindex(den::reindex::parse_args(&args)?).await,
-        Some("import-memfs") => {
-            den::import_memfs::run_import_memfs(den::import_memfs::parse_args(&args)?).await
+        Some("import-legacy-memory") => {
+            den::import_legacy_memory::run_import_legacy_memory(
+                den::import_legacy_memory::parse_args(&args)?,
+            )
+            .await
         }
         _ => {
             den::run().await?;

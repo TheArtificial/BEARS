@@ -10,7 +10,7 @@ pub use den_http::auth_backend;
 pub use den_http::build_info;
 pub mod core;
 pub use den_http::errors;
-pub mod import_memfs;
+pub mod import_legacy_memory;
 pub mod reindex;
 pub mod seeds;
 pub mod startup;

@@ -172,10 +172,10 @@
     </div>
 </section>
 
-<div class="box" id="letta-import">
-    <h3>Letta memory upload</h3>
+<div class="box" id="legacy-memory-import">
+    <h3>Legacy memory upload</h3>
     <p class="form-hint">
-        Upload a Letta git bundle to import current memory heads into this
+        Upload an archived legacy memory git bundle to import current memory heads into this
         Bear's SQLite store. Failed uploads are discarded after the importer
         logs the error.
     </p>
@@ -185,16 +185,16 @@
         the
         <code>admin</code> Bear access level from the Access page.
     </p>
-    {% endif %} {% if letta_import_locked %}
+    {% endif %} {% if legacy_import_locked %}
     <p class="form-hint">
         This import is disabled because this Bear already has memory records.
-        Letta bundle import is intended only for the initial backfill into an
+        Legacy bundle import is intended only for the initial backfill into an
         empty Bear memory store.
     </p>
     {% endif %}
     <form
         method="post"
-        action="/bear/{{ bear.slug | e }}/memory/import-letta"
+        action="/bear/{{ bear.slug | e }}/memory/import-legacy"
         enctype="multipart/form-data"
     >
         <label for="bundle"><strong>Bundle file</strong></label>
@@ -204,7 +204,7 @@
             type="file"
             required{%
             if
-            letta_import_locked
+            legacy_import_locked
             or
             not
             can_manage_bear
@@ -218,7 +218,7 @@
                 type="submit"
                 {%
                 if
-                letta_import_locked
+                legacy_import_locked
                 or
                 not
                 can_manage_bear
@@ -227,7 +227,7 @@
                 endif
                 %}
             >
-                Upload Letta memory
+                Upload legacy memory
             </button>
         </p>
     </form>

@@ -1007,7 +1007,7 @@ async fn overview_view(
             roles_ready,
             roles_error,
             memory_stats,
-            letta_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
+            legacy_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
             conversation_count,
             can_manage_bear,
             bear_nav_active => "overview",

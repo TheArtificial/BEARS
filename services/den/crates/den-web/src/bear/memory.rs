@@ -44,7 +44,10 @@ use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_b
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/memory", get(dashboard_view))
-        .route_with_tsr("/bear/{slug}/memory/import-letta", post(import_letta_post))
+        .route_with_tsr(
+            "/bear/{slug}/memory/import-legacy",
+            post(import_legacy_memory_post),
+        )
         .route_with_tsr("/bear/{slug}/memory/recent", get(recent_view))
         .route_with_tsr("/bear/{slug}/memory/search", get(search_view))
         .route_with_tsr(
@@ -317,7 +320,7 @@ async fn import_staged_bundle(
             .await?;
     if record_count > 0 {
         return Err(CustomError::ValidationError(
-            "Letta memory import is disabled for Bears that already have memory records."
+            "Legacy memory import is disabled for Bears that already have memory records."
                 .to_string(),
         ));
     }
@@ -336,7 +339,7 @@ async fn import_staged_bundle(
     let report_path = bundle_path.with_extension("report.json");
     if let Ok(report_json) = serde_json::to_string_pretty(&report) {
         if let Err(err) = std::fs::write(&report_path, report_json) {
-            tracing::warn!(bear_id = %bear_id, error = %err, path = %report_path.display(), "failed to write Letta import report next to staged bundle");
+            tracing::warn!(bear_id = %bear_id, error = %err, path = %report_path.display(), "failed to write legacy import report next to staged bundle");
         }
     }
 
@@ -358,7 +361,7 @@ async fn dashboard_view(
     let manager = MemoryStoreManager::new(config);
 
     let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
-    let letta_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
+    let legacy_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
     let head_count = head_entry_count(&manager, id).await.unwrap_or(0);
     let by_kind = count_records_by_kind(&manager, id)
         .await
@@ -414,7 +417,7 @@ async fn dashboard_view(
             pair_reflection_runs,
             import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-            letta_import_locked,
+            legacy_import_locked,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
@@ -639,7 +642,7 @@ fn group_rank(label: &str) -> usize {
     }
 }
 
-async fn import_letta_post(
+async fn import_legacy_memory_post(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: crate::auth_backend::AuthSession,
@@ -660,7 +663,7 @@ async fn import_letta_post(
     while let Some(mut field) = match multipart.next_field().await {
         Ok(field) => field,
         Err(err) => {
-            tracing::warn!(bear_id = %bear.id, error = %err, "invalid Letta bundle multipart upload");
+            tracing::warn!(bear_id = %bear.id, error = %err, "invalid legacy bundle multipart upload");
             return Ok(dashboard_redirect_with_query(
                 &bear.slug,
                 "import_error",
@@ -675,7 +678,7 @@ async fn import_letta_post(
         while let Some(chunk) = match field.chunk().await {
             Ok(chunk) => chunk,
             Err(err) => {
-                tracing::warn!(bear_id = %bear.id, error = %err, "failed reading Letta bundle upload field");
+                tracing::warn!(bear_id = %bear.id, error = %err, "failed reading legacy bundle upload field");
                 return Ok(dashboard_redirect_with_query(
                     &bear.slug,
                     "import_error",
@@ -726,25 +729,25 @@ async fn import_letta_post(
         return Ok(dashboard_redirect_with_query(
             &bear.slug,
             "import_error",
-            "Letta memory import is disabled for Bears that already have memory records.",
+            "Legacy memory import is disabled for Bears that already have memory records.",
         ));
     }
 
     let import_dir = import_dir_for_bear(state.config.as_ref(), bear.id);
     std::fs::create_dir_all(&import_dir).map_err(|err| {
-        CustomError::System(format!("failed to create Letta import directory: {err}"))
+        CustomError::System(format!("failed to create legacy import directory: {err}"))
     })?;
 
-    let file_path = import_dir.join(format!("letta-memory-{}.bundle", Uuid::new_v4()));
+    let file_path = import_dir.join(format!("legacy-memory-{}.bundle", Uuid::new_v4()));
     std::fs::write(&file_path, &bundle_bytes)
-        .map_err(|err| CustomError::System(format!("failed to stage Letta bundle: {err}")))?;
+        .map_err(|err| CustomError::System(format!("failed to stage legacy bundle: {err}")))?;
 
     let report = match import_staged_bundle(&state, bear.id, &file_path).await {
         Ok(report) => report,
         Err(err) => {
-            tracing::warn!(bear_id = %bear.id, error = %err, path = %file_path.display(), "Letta bundle import failed after staging");
+            tracing::warn!(bear_id = %bear.id, error = %err, path = %file_path.display(), "legacy bundle import failed after staging");
             if let Err(delete_err) = std::fs::remove_file(&file_path) {
-                tracing::warn!(bear_id = %bear.id, error = %delete_err, path = %file_path.display(), "failed to discard staged Letta bundle after import failure");
+                tracing::warn!(bear_id = %bear.id, error = %delete_err, path = %file_path.display(), "failed to discard staged legacy bundle after import failure");
             }
             return Ok(dashboard_redirect_with_query(
                 &bear.slug,
@@ -758,7 +761,7 @@ async fn import_letta_post(
         &bear.slug,
         "import_notice",
         &format!(
-            "Imported {} memory paths (skipped {}, quarantined {}) from the uploaded Letta bundle.",
+            "Imported {} memory paths (skipped {}, quarantined {}) from the uploaded legacy bundle.",
             report.imported_count, report.skipped_count, report.quarantined_count
         ),
     ))
@@ -1207,4 +1210,3 @@ async fn proposal_post(
 
 #[cfg(test)]
 mod tests;
-

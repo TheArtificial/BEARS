@@ -1,6 +1,6 @@
 # MemFS → SQLite ETL — Implementation Plan
 
-**Status:** Optional historical/operator tooling. Phases 1–3 landed (`den import-memfs`, git-dir + bundle, history/supersession, fixture tests, bear-admin Letta bundle upload). Phases 4–5 are retired because there are no production Letta-runtime Bears to migrate.  
+**Status:** Optional historical/operator tooling. Phases 1–3 landed (`den import-legacy-memory`, git-dir + bundle, history/supersession, fixture tests, bear-admin legacy bundle upload). Phases 4–5 are retired because there are no production legacy-runtime Bears to migrate.  
 **Architecture:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [Memory model](../architecture/memory-model.md)  
 **Related:** [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md), [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) (post-import `recall_index`), [ADR-0013 — MemFS sidecar](../decisions/adr-0013-memfs-sidecar-repo-views.md) (historical source layout)
 
@@ -244,8 +244,8 @@ Import branches in dependency-friendly order:
 ### Phase 3 — CLI + operator UX  ◻
 
 ```bash
-den import-memfs --bear <uuid> --bundle /path/to/bear-{id}-memfs.bundle [--heads-only] [--dry-run]
-den import-memfs --bear <uuid> --git-dir /path/to/{id}.git   # dev only
+den import-legacy-memory --bear <uuid> --bundle /path/to/bear-{id}-legacy.bundle [--heads-only] [--dry-run]
+den import-legacy-memory --bear <uuid> --git-dir /path/to/{id}.git   # dev only
 ```
 
 - Optional admin UI: upload bundle + trigger import job (later; CLI first per [lazy migration tooling preference from prior elicitation]).
@@ -280,8 +280,8 @@ Not part of the ETL binary, but required for parity:
 
 1. **Snapshot** the target bear SQLite file (`BEAR_SQLITE_DATA_DIR/{bear_id}.sqlite` → `{bear_id}.pre-import.sqlite`).
 2. **Export** canonical bare repo to `bear-{bear_id}-memfs.bundle` (see [Export](#export--acquisition)).
-3. **Dry-run:** `den import-memfs --bear {bear_id} --bundle … --dry-run` — review counts and quarantines.
-4. **Import:** `den import-memfs --bear {bear_id} --bundle … --heads-only`.
+3. **Dry-run:** `den import-legacy-memory --bear {bear_id} --bundle … --dry-run` — review counts and quarantines.
+4. **Import:** `den import-legacy-memory --bear {bear_id} --bundle … --heads-only`.
 5. **Validate:** admin memory browse; optional SHA spot checks against bundle.
 6. **Reindex recall (if enabled):** `den reindex --bear {bear_id}`.
 7. **Archive** bundle + `report.json` under `imports/{bear_id}/`.

@@ -107,7 +107,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 ### Phase 8 — Retired
 
 - No production Bears use the old Letta runtime, so one-time Letta conversation/MemFS backfill is no longer required.
-- Keep `den import-memfs` as optional historical/operator tooling for ad hoc archived bundles, not an active release gate.
+- Keep `den import-legacy-memory` as optional historical/operator tooling for ad hoc archived bundles, not an active release gate.
 - Transitional Letta/MemFS naming cleanup is no longer tracked as a Phase 8 milestone; handle it as ordinary cleanup when touching affected schema/UI surfaces.
 
 ## Risks and sequencing notes
