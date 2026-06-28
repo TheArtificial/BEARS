@@ -90,8 +90,8 @@ Several ADR-0041 fields are still missing or not wired on the **write path**:
 | `valid_from` / `invalid_at` on `memory_records` | ✅ landed | Recall temporal leg uses them |
 | `salience` on **`memory_records`** | ✅ landed | Append path defaults to `normal`; options path accepts `low|normal|high|critical` |
 | `memory_harvest_marks` table | ✅ landed | Idempotent source provenance helpers in `den-memory` |
-| **`supersedes_memory_id` writes** in curate/consolidation | 🟡 partial | Store append options can write supersession; curate/consolidation policy still open |
-| `invalid_at` on supersession | ◻ | Forward-looking; set when consolidating contradictions |
+| **`supersedes_memory_id` writes** in curate/consolidation | 🟡 partial | Store append options can write supersession and invalidate predecessor; curate/consolidation policy still open |
+| `invalid_at` on supersession | ✅ landed | Append options set predecessor `invalid_at` when superseding |
 | Freshness trend (derived `stable|strengthening|weakening|stale`) | ◻ | Derived signal for re-harvest triggers; not stored canonically |
 
 **Exit:** migration applied; consolidation writes supersession; salience readable for recall ranking.
@@ -151,7 +151,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 | Richer turn recall query (session focus / work surface, not raw human message) | ◻ | Topical work-surface field in assembler `client_context` |
 | Persist `recall_diagnostic` to turn telemetry | ◻ | No turn-telemetry sink (diagnostic on `AssembledNativeTurn` + admin today) |
 | Live end-to-end with real embedding API key | ◻ | Operator/smoke env |
-| Recall ranking uses **`salience`** once on `memory_records` | ◻ | ADR-0041 §5 |
+| Recall ranking uses **`salience`** once on `memory_records` | 🟡 partial | Vector payload carries salience and applies score multiplier; deeper cross-leg scoring still open |
 | **`supersedes_memory_id` in indexer head selection** (vs sequence-only heads) | 🟡 | Consolidation write path |
 
 **Plan:** [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).

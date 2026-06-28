@@ -6,6 +6,7 @@
             logical_path: Some(path.into()),
             kind: Some("note".into()),
             score,
+            salience: "normal".into(),
             text: "the quick brown fox jumps over the lazy dog".into(),
         }
     }

@@ -31,6 +31,7 @@ pub struct IndexRequest {
     pub kind: String,
     pub visibility: String,
     pub content_text: String,
+    pub salience: String,
     /// Resolved **descriptive** entity ids linked to this record (ADR-0042 §7 `recall_effect =
     /// boost`); denormalized into the passage payload so recall can filter/boost by entity. The
     /// access-bearing gate is excluded. Empty when the record has no descriptive relations.
@@ -98,6 +99,7 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
         "logical_path": req.logical_path,
         "kind": req.kind,
         "visibility": req.visibility,
+        "salience": req.salience,
         // Resolved descriptive entities for entity-scoped recall (filter/boost); derived data,
         // canonical relations remain the source of truth (ADR-0042 Phase 4 recall leg).
         "entity_ids": req.entity_ids,
@@ -106,4 +108,3 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
 
 #[cfg(test)]
 mod tests;
-

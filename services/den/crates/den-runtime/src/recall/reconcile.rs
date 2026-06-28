@@ -38,6 +38,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
         Option<String>, // scope_profile
         String,         // kind
         String,         // visibility
+        String,         // salience
         Option<String>, // logical_path
         Option<String>, // work_surface_ref
         String,         // content_text
@@ -45,7 +46,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
         SELECT m.memory_id, m.scope_type, m.scope_profile, m.kind, m.visibility,
-               m.logical_path, m.work_surface_ref, m.content_text
+               m.salience, m.logical_path, m.work_surface_ref, m.content_text
         FROM memory_records m
         WHERE m.bear_id = ?
           AND m.visibility = 'normal'
@@ -80,6 +81,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                 scope_profile,
                 kind,
                 visibility,
+                salience,
                 logical_path,
                 work_surface_ref,
                 content_text,
@@ -100,6 +102,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                     work_surface_ref,
                     kind,
                     visibility,
+                    salience,
                     content_text,
                     entity_ids,
                 })

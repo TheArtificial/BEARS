@@ -48,6 +48,7 @@
             kind: "overview".into(),
             visibility: "normal".into(),
             content_text: "body".into(),
+            salience: "high".into(),
             entity_ids: vec!["ent-1".into(), "ent-2".into()],
         };
         let chunk = Chunk {
@@ -63,6 +64,7 @@
         assert_eq!(payload["content_hash"], "abc");
         assert_eq!(payload["work_surface_ref"], "x");
         assert_eq!(payload["kind"], "overview");
+        assert_eq!(payload["salience"], "high");
         assert_eq!(payload["text"], "body");
         assert_eq!(payload["entity_ids"], serde_json::json!(["ent-1", "ent-2"]));
     }

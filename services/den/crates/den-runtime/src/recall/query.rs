@@ -29,7 +29,17 @@ pub struct RecalledPassage {
     pub logical_path: Option<String>,
     pub kind: Option<String>,
     pub score: f32,
+    pub salience: String,
     pub text: String,
+}
+
+fn salience_multiplier(salience: &str) -> f32 {
+    match salience {
+        "low" => 0.9,
+        "high" => 1.15,
+        "critical" => 1.3,
+        _ => 1.0,
+    }
 }
 
 /// The outcome of a recall query: the selected passages plus a diagnostic for observability.
@@ -141,6 +151,12 @@ async fn search_passages<E: PassageEmbedder + ?Sized>(
         if text.is_empty() {
             continue;
         }
+        let salience = hit
+            .payload
+            .get("salience")
+            .and_then(Value::as_str)
+            .unwrap_or("normal")
+            .to_string();
         passages.push(RecalledPassage {
             memory_id,
             logical_path: hit
@@ -153,7 +169,8 @@ async fn search_passages<E: PassageEmbedder + ?Sized>(
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            score: hit.score,
+            score: hit.score * salience_multiplier(&salience),
+            salience,
             text,
         });
         if passages.len() >= limit {
@@ -370,6 +387,7 @@ pub async fn graph_expand_hits(
                 "kind": rec.kind,
                 "score": Value::Null,
                 "snippet": truncate_chars(&rec.content_text, SNIPPET_CHARS),
+                "salience": rec.salience,
                 "source": "graph",
                 "hop": reach.hop,
                 "entity_overlap": entity_overlap,
@@ -548,6 +566,7 @@ fn merge_search_results(
             "path": passage.logical_path,
             "kind": passage.kind,
             "score": passage.score,
+            "salience": passage.salience,
             "snippet": truncate_chars(&passage.text, SNIPPET_CHARS),
             "source": "vector",
         }));
@@ -570,6 +589,7 @@ fn merge_search_results(
                 "kind": hit.get("kind").cloned().unwrap_or(Value::Null),
                 "score": Value::Null,
                 "snippet": hit.get("snippet").cloned().unwrap_or(Value::Null),
+                "salience": hit.get("salience").cloned().unwrap_or_else(|| json!("normal")),
                 "source": "keyword",
             }));
         }
@@ -674,6 +694,7 @@ mod tests {
             logical_path: Some(path.into()),
             kind: Some("note".into()),
             score,
+            salience: "normal".into(),
             text: "the quick brown fox jumps over the lazy dog".into(),
         }
     }

@@ -319,6 +319,7 @@ pub struct RecallRecordMin {
     pub logical_path: Option<String>,
     pub kind: String,
     pub content_text: String,
+    pub salience: String,
 }
 
 /// Fetch minimal fields for a set of memory ids, **role-scoped** to memory visible to `role`
@@ -334,12 +335,12 @@ pub async fn fetch_records_min(
     }
     let placeholders = vec!["?"; memory_ids.len()].join(",");
     let sql = format!(
-        "SELECT memory_id, logical_path, kind, content_text FROM memory_records \
+        "SELECT memory_id, logical_path, kind, content_text, salience FROM memory_records \
          WHERE bear_id = ? AND visibility = 'normal' \
-           AND (scope_type = 'shared' OR scope_profile = ?) \
-           AND memory_id IN ({placeholders})"
+          AND (scope_type = 'shared' OR scope_profile = ?) \
+          AND memory_id IN ({placeholders})"
     );
-    let mut query = sqlx::query_as::<_, (String, Option<String>, String, String)>(&sql)
+    let mut query = sqlx::query_as::<_, (String, Option<String>, String, String, String)>(&sql)
         .bind(store.bear_id().to_string())
         .bind(role);
     for id in memory_ids {
@@ -351,11 +352,12 @@ pub async fn fetch_records_min(
         .map_err(|e| DenError::System(format!("fetch records min failed: {e}")))?;
     Ok(rows
         .into_iter()
-        .map(|(memory_id, logical_path, kind, content_text)| RecallRecordMin {
+        .map(|(memory_id, logical_path, kind, content_text, salience)| RecallRecordMin {
             memory_id,
             logical_path,
             kind,
             content_text,
+            salience,
         })
         .collect())
 }
@@ -596,6 +598,15 @@ mod as_of_tests {
             .unwrap()
             .unwrap();
         assert_eq!(head.memory_id, second.memory_id);
+        let invalidated: Option<String> = sqlx::query_scalar(
+            "SELECT invalid_at FROM memory_records WHERE bear_id = ? AND memory_id = ?",
+        )
+        .bind(store.bear_id().to_string())
+        .bind(&first.memory_id)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert!(invalidated.is_some());
     }
 }
 

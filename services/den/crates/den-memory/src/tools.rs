@@ -171,9 +171,9 @@ pub async fn sqlite_memory_search(
     limit: i64,
 ) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String)>(
+    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String, String)>(
         r"
-        SELECT memory_id, logical_path, content_text, sequence_no, kind
+        SELECT memory_id, logical_path, content_text, sequence_no, kind, salience
         FROM memory_records
         WHERE bear_id = ?
           AND (scope_type = 'shared' OR scope_profile = ?)
@@ -191,11 +191,12 @@ pub async fn sqlite_memory_search(
     .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
-        .map(|(memory_id, path, content, sequence_no, kind)| {
+        .map(|(memory_id, path, content, sequence_no, kind, salience)| {
             json!({
                 "memory_id": memory_id,
                 "path": path,
                 "kind": kind,
+                "salience": salience,
                 "score": Value::Null,
                 "snippet": content.chars().take(240).collect::<String>(),
                 "sequence_no": sequence_no,
