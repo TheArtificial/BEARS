@@ -3,7 +3,7 @@
 //! The inference / slug / payload builders are pure `den-tools` free functions;
 //! only the scaffold memory I/O is a capability. `ScaffoldRequest` is the
 //! runtime-neutral file descriptor the builder emits; the `den` impl maps it onto
-//! the native SQLite write path or the legacy MemFS core-update request.
+//! the native SQLite write path.
 
 use crate::{BearProfile, DenError};
 use serde_json::Value;
@@ -23,8 +23,7 @@ pub struct ScaffoldRequest {
     pub new_text: Option<String>,
 }
 
-/// The result of writing a scaffold: per-file responses plus the storage tag the
-/// native path reports (`Some("sqlite")`); the legacy MemFS path reports `None`.
+/// The result of writing a scaffold: per-file responses plus the storage tag.
 #[derive(Debug, Clone)]
 pub struct WorkSurfaceScaffoldOutcome {
     pub storage: Option<String>,
@@ -44,9 +43,9 @@ pub trait WorkSurfaceOps: Send + Sync {
         requests: Vec<ScaffoldRequest>,
     ) -> Result<WorkSurfaceScaffoldOutcome, DenError>;
 
-    /// Render the work-surface orientation payload (native + legacy MemFS paths).
+    /// Render the work-surface orientation payload.
     ///
-    /// The native vs. MemFS listing/shaping differs enough that this stays a
+    /// The native listing/shaping differs enough that this stays a
     /// coarse capability returning the finished payload.
     async fn orient(
         &self,

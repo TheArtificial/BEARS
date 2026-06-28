@@ -21,7 +21,7 @@ use den_runtime::{
     memory::{tools as sqlite_memory, MemoryStoreManager},
 };
 
-/// Concrete [`RoleMemoryStore`] over the runtime config (native SQLite + legacy MemFS).
+/// Concrete [`RoleMemoryStore`] over the native SQLite memory runtime.
 pub(crate) struct DenRoleMemoryStore<'a> {
     pool: &'a PgPool,
     config: &'a Config,

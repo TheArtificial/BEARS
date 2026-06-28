@@ -27,10 +27,6 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         true
     }
 
-    fn memfs_configured(&self) -> bool {
-        false
-    }
-
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,

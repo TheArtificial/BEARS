@@ -19,7 +19,6 @@ use crate::tools::{
 
 pub fn bear_environment_payload(
     context: &DenToolInvocationContext,
-    memfs_configured: bool,
     role: BearProfile,
     current_user: Option<&CurrentUser>,
     member_count: i64,
@@ -212,7 +211,7 @@ pub fn bear_environment_payload(
             "state": runtime.get("state").cloned().unwrap_or_else(|| json!("unknown")),
             "channel": context.channel,
             "context_budget": context.context_budget,
-            "memfs_configured": memfs_configured,
+            "memory_runtime": "sqlite",
         },
         "session": session,
         "workspace": workspace,

@@ -11,7 +11,6 @@ pub mod provision;
 mod provision_native_tests {
     include!("provision_native_tests.rs");
 }
-pub mod rollout;
 pub mod runtime_plan;
 pub mod sync;
 pub mod templates;

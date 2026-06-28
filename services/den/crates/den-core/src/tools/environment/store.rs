@@ -19,9 +19,6 @@ pub trait EnvironmentOps: Send + Sync {
     /// Whether the native (SQLite) agent runtime is active.
     fn uses_native_runtime(&self) -> bool;
 
-    /// Whether the legacy MemFS sidecar is configured.
-    fn memfs_configured(&self) -> bool;
-
     /// Raw memory-status snapshot for this Bear/role (may error; callers degrade).
     async fn memory_status_value(
         &self,

@@ -282,7 +282,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_STATUS,
             "Memory status",
-            "Return MemFS memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
+            "Return SQLite memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
             MEMORY_READ_PROFILES,

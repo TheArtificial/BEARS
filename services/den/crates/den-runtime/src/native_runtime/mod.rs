@@ -8,7 +8,7 @@
 //! `run_native_profile_turn_collect_assistant_text` can add an LLM briefing turn projected into the
 //! memory_curate conversation.
 
-pub mod memfs;
+pub mod legacy_memory_tools;
 mod openai_stream;
 #[cfg(test)]
 mod openai_stream_tests;

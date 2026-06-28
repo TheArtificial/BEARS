@@ -7,7 +7,9 @@ use den_core::tools::descriptor::{
     builtin_den_tool_descriptors_for_profile,
 };
 
-use super::memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name};
+use super::legacy_memory_tools::{
+    filter_client_tools_for_native_runtime, is_legacy_memory_client_tool_name,
+};
 
 fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> LlmToolDefinition {
     LlmToolDefinition {
@@ -163,7 +165,7 @@ pub fn merge_den_and_client_tools(
         let Some(name) = name else {
             continue;
         };
-        if is_memfs_client_tool_name(name) {
+        if is_legacy_memory_client_tool_name(name) {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {

@@ -206,7 +206,6 @@
         };
         let payload = bear_environment_payload(
             &context,
-            false,
             BearProfile::Pair,
             None,
             2,

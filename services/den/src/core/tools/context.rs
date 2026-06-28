@@ -472,10 +472,6 @@ impl EnvironmentOps for DenToolContext<'_> {
         self.environment().uses_native_runtime()
     }
 
-    fn memfs_configured(&self) -> bool {
-        self.environment().memfs_configured()
-    }
-
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,

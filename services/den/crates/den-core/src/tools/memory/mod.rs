@@ -3,7 +3,7 @@
 //!
 //! Runtime-agnostic: depends only on [`RoleMemoryStore`] (and, for the status
 //! diagnostic, [`PromptMemoryStore`]) plus `den-core` types. The `den` crate
-//! provides the concrete store (native SQLite + legacy MemFS branch) and thin
+//! provides the concrete SQLite store and thin
 //! `CustomError`-mapping wrappers.
 
 pub mod store;
@@ -59,8 +59,8 @@ pub struct MemoryWriteEntryArguments {
 
 /// A fully-prepared role-memory entry handed to [`RoleMemoryStore::write_entry`].
 ///
-/// Carries every field both the native SQLite path and the legacy MemFS request
-/// need; the executor populates it after validation + source merging.
+/// Carries the validated fields the native SQLite write path needs; the executor
+/// populates it after validation + source merging.
 #[derive(Debug, Clone)]
 pub struct RoleMemoryEntryWrite {
     pub kind: String,
@@ -289,4 +289,3 @@ pub async fn memory_search(
 
 #[cfg(test)]
 mod tests;
-

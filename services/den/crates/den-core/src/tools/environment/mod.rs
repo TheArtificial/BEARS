@@ -35,24 +35,13 @@ async fn memory_status_for_environment(
                 })
             });
     }
-    if !env.memfs_configured() {
-        return json!({
-            "configured": false,
-            "available": false,
-            "status": "unavailable",
-            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
-        });
-    }
-    env.memory_status_value(context, role)
-        .await
-        .unwrap_or_else(|err| {
-            json!({
-                "configured": env.memfs_configured(),
-                "available": false,
-                "status": "degraded",
-                "error": err.to_string()
-            })
-        })
+    json!({
+        "configured": true,
+        "available": false,
+        "storage": "sqlite",
+        "status": "degraded",
+        "error": "native runtime memory status is unavailable"
+    })
 }
 
 pub async fn session_info(
@@ -108,7 +97,6 @@ pub async fn bear_environment(
     };
     Ok(bear_environment_payload(
         context,
-        env.memfs_configured(),
         role,
         current_user.as_ref(),
         member_count,

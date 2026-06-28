@@ -6,7 +6,7 @@ use crate::{
     core::{
         tools::{
         descriptor::builtin_den_tool_descriptors_for_pair_acp_surface,
-        memfs::filter_client_tools_for_native_runtime,
+        legacy_memory_tools::filter_client_tools_for_native_runtime,
     },
     },
 };
@@ -100,4 +100,3 @@ pub(crate) fn merge_acp_pair_tool_descriptors(
     }
     serde_json::json!(merged)
 }
-

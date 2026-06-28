@@ -4,7 +4,7 @@
 //! session state, switching the ACP session permission mode, and writing the plan
 //! artifact. The `den-tools` executors own argument parsing/validation and the
 //! static envelope text; the `den` implementation owns the `plan_mode` DB
-//! rows, `turn_state` rendering, and native-vs-MemFS artifact writes. See
+//! rows and `turn_state` rendering. See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B).
 
 use serde_json::Value;
