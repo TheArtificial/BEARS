@@ -1,4 +1,4 @@
-//! Present Letta `GET /v1/agents/{id}` JSON in the admin UI without pinning the full schema.
+//! Present provider `GET /v1/agents/{id}` JSON in the admin UI without pinning the full schema.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -14,9 +14,9 @@ pub struct AgentSummary {
     pub updated_at: Option<String>,
     pub memory_block_count: Option<usize>,
     pub tool_count: Option<usize>,
-    /// Full top-level `system` / `system_prompt` from Letta when present.
+    /// Full top-level `system` / `system_prompt` from provider when present.
     pub system: Option<String>,
-    /// Short excerpt when Letta exposes a top-level system string.
+    /// Short excerpt when the provider exposes a top-level system string.
     pub system_excerpt: Option<String>,
 }
 
@@ -67,7 +67,7 @@ fn memory_block_count(v: &Value) -> Option<usize> {
 }
 
 impl AgentSummary {
-    pub fn from_letta_agent_state(v: &Value) -> Self {
+    pub fn from_provider_agent_state(v: &Value) -> Self {
         let v = super::unwrap_agent_document(v);
         let id = v
             .get("id")
@@ -119,7 +119,7 @@ mod tests {
             "blocks": [{"id": "b1"}],
             "tools": [{"id": "t1"}, {"id": "t2"}]
         });
-        let s = AgentSummary::from_letta_agent_state(&v);
+        let s = AgentSummary::from_provider_agent_state(&v);
         assert_eq!(s.id, "agent-test");
         assert_eq!(s.name.as_deref(), Some("Helper"));
         assert_eq!(s.agent_type.as_deref(), Some("memgpt_agent"));
@@ -136,7 +136,7 @@ mod tests {
             "memory": {"blocks": [{"id": "b1"}, {"id": "b2"}]},
             "tools": []
         });
-        let s = AgentSummary::from_letta_agent_state(&v);
+        let s = AgentSummary::from_provider_agent_state(&v);
         assert_eq!(s.memory_block_count, Some(2));
     }
 }

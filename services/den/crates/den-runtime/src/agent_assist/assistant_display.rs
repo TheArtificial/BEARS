@@ -1,4 +1,4 @@
-//! Strip Letta / model harness text that should not appear in end-user chat or derived titles.
+//! Strip model harness text that should not appear in end-user chat or derived titles.
 //!
 //! This includes `<system-reminder>…` (and `system_reminder` variants), role-local resource
 //! payloads, ACP workflow scaffolding, and plain-text subagent fork notices the primary thread

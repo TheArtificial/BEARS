@@ -141,7 +141,7 @@ pub fn map_provider_stream_event_to_gateway_event(
                     message: format!(
                         "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
                     ),
-                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside Letta/model provider, or the run hit a continuation budget. Check `Posting Letta ACP tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
+                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside model provider, or the run hit a continuation budget. Check `Posting provider ACP tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
                     error_type: Some("pseudo_tool_call_text".to_string()),
                     request_id: None,
                     context: Some(serde_json::json!({
@@ -203,7 +203,7 @@ pub fn map_provider_stream_event_to_gateway_event(
             } else {
                 Some(GatewayEvent::Error {
                     message: format!(
-                        "Letta stopped before producing assistant output: {stop_reason}"
+                        "Runtime stopped before producing assistant output: {stop_reason}"
                     ),
                     detail: None,
                     error_type: Some(stop_reason.to_string()),
@@ -213,7 +213,7 @@ pub fn map_provider_stream_event_to_gateway_event(
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => {
-            native_letta_tool_request_event(
+            native_provider_tool_request_event(
                 event,
                 inner,
                 message_type == "approval_request_message",
@@ -348,18 +348,18 @@ fn pseudo_tool_call_name(text: &str) -> Option<String> {
     None
 }
 
-fn native_letta_tool_request_event(
+fn native_provider_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    has_letta_approval_request: bool,
+    has_provider_approval_request: bool,
 ) -> Option<GatewayEvent> {
-    native_letta_tool_request_event_with_args(event, inner, has_letta_approval_request, None, None)
+    native_provider_tool_request_event_with_args(event, inner, has_provider_approval_request, None, None)
 }
 
-fn native_letta_tool_request_event_with_args(
+fn native_provider_tool_request_event_with_args(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    has_letta_approval_request: bool,
+    has_provider_approval_request: bool,
     args_override: Option<serde_json::Value>,
     tool_name_override: Option<&str>,
 ) -> Option<GatewayEvent> {
@@ -415,7 +415,7 @@ fn native_letta_tool_request_event_with_args(
             }
             return Some(GatewayEvent::Error {
                 message: format!(
-                    "Letta requested {} without a {missing} argument.",
+                    "Runtime requested {} without a {missing} argument.",
                     descriptor.provider_name
                 ),
                 detail: Some(format!(
@@ -440,9 +440,9 @@ fn native_letta_tool_request_event_with_args(
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
     let adapter_approval_required =
         client_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
-    let letta_approval_request_id = has_letta_approval_request.then(|| {
+    let provider_approval_request_id = has_provider_approval_request.then(|| {
         // Prefer an explicit `approval_request_id` (carried by the runtime-parser seed
-        // value) before the raw Letta `id` field. Reading only `id` regenerated a fresh
+        // value) before the raw provider `id` field. Reading only `id` regenerated a fresh
         // UUID for the seed path, so the registered obligation's approval id no longer
         // matched the one the client echoes back, rejecting the result with a 400.
         event
@@ -467,7 +467,7 @@ fn native_letta_tool_request_event_with_args(
         request_id,
         turn_id,
         tool_call_id,
-        approval_request_id: letta_approval_request_id,
+        approval_request_id: provider_approval_request_id,
         tool_name: tool_name.to_string(),
         title: client_tool
             .map(|tool| tool.descriptor().title.to_string())
@@ -495,11 +495,11 @@ fn native_letta_tool_request_event_with_args(
     })
 }
 
-/// Defensive compatibility layer for Letta tool-call streaming.
+/// Defensive compatibility layer for provider tool-call streaming.
 ///
-/// The preferred ACP path uses the conversation-scoped Letta messages endpoint with
+/// The preferred ACP path uses the conversation-scoped provider messages endpoint with
 /// `streaming=true` and `stream_tokens=false`, which should normally yield coherent
-/// step-level tool events. Older/deployed Letta builds and some provider paths may
+/// step-level tool events. Older/deployed provider builds and some provider paths may
 /// still surface tool calls as repeated delta-like `approval_request_message` events:
 /// the tool name can appear in one event, arguments can arrive later as string
 /// fragments, and duplicate events for the same `tool_call_id` may be emitted.
@@ -551,7 +551,7 @@ impl ToolCallAccumulator {
         }
         let args = self.parse_args_fragment(&tool_call_id, tool_call, inner, event)?;
         let tool_name = self.names.get(&tool_call_id).map(String::as_str)?;
-        let mapped = native_letta_tool_request_event_with_args(
+        let mapped = native_provider_tool_request_event_with_args(
             event,
             inner,
             message_type == "approval_request_message",
@@ -601,7 +601,7 @@ impl ToolCallAccumulator {
                 "arguments": args,
             }
         });
-        let mapped = native_letta_tool_request_event_with_args(
+        let mapped = native_provider_tool_request_event_with_args(
             &synthetic,
             &synthetic,
             false,
@@ -906,7 +906,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                     .unwrap_or_else(|| client_tool_policy_json_for_provider(&tool_name)),
                 "diagnostic": {
                     "component": "den.acp",
-                    "phase": diag_phase::LETTA_TOOL_CALL_MAPPED,
+                    "phase": diag_phase::RUNTIME_TOOL_CALL_MAPPED,
                     "transport_version": 4,
                 },
             })
@@ -1130,7 +1130,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_message_requires_adapter_approval_without_letta_approval_id() {
+    fn tool_call_message_requires_adapter_approval_without_provider_approval_id() {
         let event = tool_call_event(
             "fs_edit_file",
             serde_json::json!({
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn raw_path_approval_request_id_falls_back_to_id() {
-        // Compatibility: the raw Letta SSE nests identity under `tool_call` and carries the
+        // Compatibility: the raw provider SSE nests identity under `tool_call` and carries the
         // approval id in top-level `id`.
         let event = serde_json::json!({
             "id": "approval-raw",
@@ -1437,7 +1437,7 @@ mod tests {
         assert!(raw.contains("\"tool_name\":\"fs_edit_file\""));
         assert!(raw.contains("\"required\":true"));
         assert!(raw.contains("\"risk\":\"writes_workspace\""));
-        assert!(raw.contains("\"phase\":\"letta_tool_call_mapped\""));
+        assert!(raw.contains("\"phase\":\"runtime_tool_call_mapped\""));
     }
 
     #[test]

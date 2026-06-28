@@ -1,5 +1,5 @@
 //! Bear registry and membership (Phase 1).
-//! Admin HTTP routes and Letta provisioning wire up in later milestones.
+//! Admin HTTP routes and native provisioning helpers.
 
 pub mod context_composition;
 pub mod db;

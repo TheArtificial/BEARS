@@ -53,7 +53,7 @@ pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Va
         .map_err(|e| DenError::System(format!("invalid continuation SSE JSON: {e}")))
 }
 
-pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
+pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
     let inner = match event.get("contents") {
         Some(contents) if contents.get("message_type").is_some() => contents,
         _ => event,
@@ -141,14 +141,14 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     turn: None,
                     category: crate::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
                     message: format!(
-                        "Letta stopped before producing assistant output: {stop_reason}"
+                        "Runtime stopped before producing assistant output: {stop_reason}"
                     ),
                 }))
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                // The Letta tool-call SSE nests identity and arguments under `tool_call`
+                // The provider tool-call SSE nests identity and arguments under `tool_call`
                 // (e.g. `{ "id": "approval-…", "tool_call": { "name", "tool_call_id",
                 // "arguments" } }`). Check the nested locations before top-level fallbacks,
                 // mirroring the legacy native mapper. Missing this dropped `tool_call_id`,

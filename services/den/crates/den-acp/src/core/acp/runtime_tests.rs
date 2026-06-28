@@ -58,7 +58,7 @@ impl RuntimeConversationBackend for MockConversationBackend {
 #[test]
 fn runtime_error_classifier_maps_pending_approval_conflicts() {
     let err = DenError::System(
-        "Letta continue HTTP 409: waiting for approval".to_string(),
+        "Runtime continue HTTP 409: waiting for approval".to_string(),
     );
     assert_eq!(
         classify_runtime_error(&err),
@@ -81,7 +81,7 @@ async fn ensure_prompt_conversation_materializes_pending_new_selection() {
     };
     let binding = RoleRuntimeBinding {
         binding_id: "agent-materialize".to_string(),
-        compatibility_backend: Some("runtime:letta".to_string()),
+        compatibility_backend: Some("runtime:native".to_string()),
     };
     let pending_id = "new-acp-zed-abc123".to_string();
     let (resolution, result) = ensure_acp_session_conversation_with_backend(
@@ -120,7 +120,7 @@ async fn ensure_prompt_conversation_reuses_resolved_session_conversation() {
     };
     let binding = RoleRuntimeBinding {
         binding_id: "agent-resume".to_string(),
-        compatibility_backend: Some("runtime:letta".to_string()),
+        compatibility_backend: Some("runtime:native".to_string()),
     };
     let now = time::OffsetDateTime::now_utc();
     let session = AcpSessionRow {
@@ -208,7 +208,7 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
             bear_id,
             &RoleRuntimeBinding {
                 binding_id: "agent-test".to_string(),
-                compatibility_backend: Some("runtime:letta".to_string()),
+                compatibility_backend: Some("runtime:native".to_string()),
             },
             "conv-canonical-access",
         )

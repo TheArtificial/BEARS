@@ -3,7 +3,7 @@ use futures::StreamExt;
 
 use den_runtime::{
     runtime_stream_parser::runtime_byte_stream_to_event_stream,
-    runtime_stream_parser::runtime_stream_event_from_letta_json,
+    runtime_stream_parser::runtime_stream_event_from_provider_json,
     runtime_contracts::{RuntimeEventParser, RuntimeStreamEvent},
 };
 
@@ -16,7 +16,7 @@ async fn continuation_byte_stream_adapter_emits_semantic_event_and_terminal_comp
     let mut stream = runtime_byte_stream_to_event_stream(
         Box::pin(source),
         RuntimeEventParser {
-            parse_json_event: runtime_stream_event_from_letta_json,
+            parse_json_event: runtime_stream_event_from_provider_json,
         },
     );
 
@@ -53,7 +53,7 @@ async fn requires_approval_pause_does_not_synthesize_turn_completion() {
     let mut stream = runtime_byte_stream_to_event_stream(
         Box::pin(source),
         RuntimeEventParser {
-            parse_json_event: runtime_stream_event_from_letta_json,
+            parse_json_event: runtime_stream_event_from_provider_json,
         },
     );
 

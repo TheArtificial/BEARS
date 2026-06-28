@@ -1,6 +1,6 @@
 //! OpenAI-compatible streaming inference client (Bifrost / `LLM_API_URL`).
 //!
-//! Emits [`crate::runtime_contracts::RuntimeStreamEvent`] directly — no Letta JSON intermediate.
+//! Emits [`crate::runtime_contracts::RuntimeStreamEvent`] directly.
 
 pub mod bifrost;
 pub mod model_registry;

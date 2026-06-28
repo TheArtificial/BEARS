@@ -128,7 +128,7 @@ pub fn resolve_session_policy_for_mode(
 
 pub mod diag_phase {
     pub const DESCRIPTOR_ADVERTISED: &str = "descriptor_advertised";
-    pub const LETTA_TOOL_CALL_MAPPED: &str = "letta_tool_call_mapped";
+    pub const RUNTIME_TOOL_CALL_MAPPED: &str = "runtime_tool_call_mapped";
     pub const TOOL_REQUEST_REGISTERED: &str = "tool_request_registered";
     pub const ADAPTER_PERMISSION_REQUESTED: &str = "adapter_permission_requested";
     pub const ADAPTER_PERMISSION_DENIED: &str = "adapter_permission_denied";
@@ -136,8 +136,8 @@ pub mod diag_phase {
     pub const ADAPTER_EXECUTION_FAILED: &str = "adapter_execution_failed";
     pub const ADAPTER_RESULT_POSTED: &str = "adapter_result_posted";
     pub const DEN_RESULT_DELIVERED: &str = "den_result_delivered";
-    pub const LETTA_CONTINUATION_STARTED: &str = "letta_continuation_started";
-    pub const LETTA_CONTINUATION_FAILED: &str = "letta_continuation_failed";
+    pub const RUNTIME_CONTINUATION_STARTED: &str = "runtime_continuation_started";
+    pub const RUNTIME_CONTINUATION_FAILED: &str = "runtime_continuation_failed";
     pub const TOOL_RESULT_TIMEOUT: &str = "tool_result_timeout";
     pub const RECENTLY_SETTLED_RESULT: &str = "recently_settled_result";
 }

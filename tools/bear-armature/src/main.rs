@@ -6802,7 +6802,7 @@ async fn handle_sse_frame(
             if looks_like_waiting_for_approval_error(&formatted) {
                 outcome.recover_and_retry = true;
                 outcome.upstream_errors.push(
-                    "Letta reported unresolved approval state. Automatic compaction recovery is disabled because compaction does not unpoison unresolved approvals; Den-side recovery must settle or deny pending approvals directly."
+                    "The runtime reported unresolved approval state. Automatic compaction recovery is disabled because compaction does not settle unresolved approvals; Den-side recovery must settle or deny pending approvals directly."
                         .to_string(),
                 );
             } else {
@@ -9515,7 +9515,7 @@ async fn send_agent_thought_chunk_for_turn(
     }
 }
 
-/// Adapter-local mirror of Den's `core::letta::normalize_display_status_text`.
+/// Adapter-local mirror of Den runtime status text normalization.
 ///
 /// Keep this aligned with Den's shared chat display helper. It is intentionally limited to
 /// adapter-/Den-owned operational status units before they become ACP thought chunks; never apply

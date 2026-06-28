@@ -26,7 +26,7 @@ use den_runtime::prompt_memory_blocks::{
         let events = runtime_byte_stream_to_event_stream(
             Box::pin(bytes),
             RuntimeEventParser {
-                parse_json_event: runtime_stream_event_from_letta_json,
+                parse_json_event: runtime_stream_event_from_provider_json,
             },
         );
         Box::pin(futures::StreamExt::map(events, |item| {
@@ -68,7 +68,7 @@ use den_runtime::prompt_memory_blocks::{
         runtime_stream_parser::{
                 find_sse_frame_end, parse_sse_event_body_to_json,
                 runtime_byte_stream_to_event_stream,
-                runtime_stream_event_from_letta_json,
+                runtime_stream_event_from_provider_json,
             },
         runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
         acp_sessions,
@@ -2336,9 +2336,9 @@ use den_runtime::prompt_memory_blocks::{
     }
 
     #[test]
-    fn concurrent_letta_run_conflict_is_not_stale_approval() {
+    fn concurrent_runtime_conflict_is_not_stale_approval() {
         let err = den_http::errors::DenError::System(
-            "Letta send message HTTP 409 Conflict: another run is still processing this conversation"
+            "Runtime send message HTTP 409 Conflict: another run is still processing this conversation"
                 .to_string(),
         );
 
@@ -4501,7 +4501,7 @@ use den_runtime::prompt_memory_blocks::{
         assert!(output.matches("\"type\":\"turn_result\"").count() >= 1, "{output}");
         assert!(
             output.contains("\"status\":\"recovered\"")
-                || output.contains("Letta is not configured"),
+                || output.contains("Runtime is not configured"),
             "{output}"
         );
         assert!(
@@ -5671,14 +5671,14 @@ use den_runtime::prompt_memory_blocks::{
         while let Some(item) = stream.next().await {
             output.push_str(std::str::from_utf8(&item.unwrap()).unwrap());
             if output.contains("\"status\":\"recovered\"")
-                || output.contains("Letta is not configured")
+                || output.contains("Runtime is not configured")
             {
                 break;
             }
         }
         assert!(
             output.contains("\"status\":\"recovered\"")
-                || output.contains("Letta is not configured"),
+                || output.contains("Runtime is not configured"),
             "{output}"
         );
         assert!(
@@ -6220,7 +6220,7 @@ data: "hello"}"#;
     }
 
     #[test]
-    fn rejects_legacy_pending_acp_conversation_ids_that_exceed_letta_limit() {
+    fn rejects_legacy_pending_acp_conversation_ids_that_exceed_provider_limit() {
         let legacy = "new-acp-zed-acp-12345678-1234-1234-1234-123456789abc";
         assert!(normalize_acp_conversation_id(Some(legacy)).is_ok());
         assert!(!is_valid_pending_acp_conversation_id(legacy));

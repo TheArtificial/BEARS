@@ -19,7 +19,7 @@ fn provider_names_are_safe_and_unique() {
                 .provider_name
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
-            "provider name must be Letta/provider-safe: {}",
+            "provider name must be provider/provider-safe: {}",
             descriptor.provider_name
         );
         assert!(!descriptor.provider_name.contains('.'));

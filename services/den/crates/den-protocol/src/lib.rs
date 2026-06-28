@@ -17,7 +17,7 @@ pub struct RoleRuntimeBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConversationRef {
     /// Den-owned opaque runtime conversation handle. Backends may currently back this with a
-    /// Letta `conv-*` id, but ACP should treat it as opaque.
+    /// provider `conv-*` id, but ACP should treat it as opaque.
     pub id: String,
 }
 
@@ -372,7 +372,7 @@ pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
         RuntimeErrorCategory::ConflictPendingApproval
     } else if message.contains("no active runs to cancel") {
         RuntimeErrorCategory::Cancelled
-    } else if message.contains("not configured") || message.contains("letta is not configured") {
+    } else if message.contains("not configured") || message.contains("runtime is not configured") {
         RuntimeErrorCategory::Misconfigured
     } else if message.contains("not found for this bear") {
         RuntimeErrorCategory::InvalidIdentity

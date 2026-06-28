@@ -1,5 +1,5 @@
 use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
-use crate::agent_assist::runtime_stream_parser::runtime_stream_event_from_letta_json;
+use crate::agent_assist::runtime_stream_parser::runtime_stream_event_from_provider_json;
 
 #[test]
 fn reasoning_message_maps_to_semantic_status_text() {
@@ -7,7 +7,7 @@ fn reasoning_message_maps_to_semantic_status_text() {
         "message_type": "reasoning_message",
         "reasoning": "thinking"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
             assert_eq!(text, "thinking");
@@ -22,7 +22,7 @@ fn assistant_message_maps_to_semantic_assistant_text() {
         "message_type": "assistant_message",
         "content": "hello"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
             assert_eq!(text, "hello");
@@ -37,7 +37,7 @@ fn stop_reason_requires_approval_maps_to_semantic_pause() {
         "message_type": "stop_reason",
         "stop_reason": "requires_approval"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { reason, .. }) => {
             assert_eq!(reason, "awaiting_approval");
@@ -48,7 +48,7 @@ fn stop_reason_requires_approval_maps_to_semantic_pause() {
 
 #[test]
 fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
-    // Letta nests identity and arguments under `tool_call`, with the approval id in the
+    // provider nests identity and arguments under `tool_call`, with the approval id in the
     // top-level `id`. Earlier parsing only read top-level `tool_call_id`/`args`, dropping
     // them — which left adapter-local tool obligations unmatchable and `/tool-results`
     // posts rejected as `late_result_ignored`.
@@ -61,7 +61,7 @@ fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
             "arguments": "{\"limit\":10,\"line\":1,\"path\":\"/tmp/acp-workspace/README.md\"}"
         }
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -75,7 +75,7 @@ fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
             assert_eq!(tool_name, "fs_read_text_file");
             assert_eq!(approval_request_id.as_deref(), Some("approval-call-read-e2e"));
             assert!(approval_required);
-            // Arguments are carried as the raw JSON-string fragment Letta emits; downstream
+            // Arguments are carried as the raw JSON-string fragment provider emits; downstream
             // accumulation parses them. Assert the path is present rather than an empty object.
             let args_str = arguments.as_str().unwrap_or_default();
             assert!(
@@ -96,7 +96,7 @@ fn tool_call_with_top_level_fields_still_parses() {
         "tool_name": "fs_list_directory",
         "args": { "path": "/tmp" }
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -119,7 +119,7 @@ fn end_turn_stop_reason_maps_to_semantic_turn_completed() {
         "message_type": "stop_reason",
         "stop_reason": "end_turn"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {}
         other => panic!("unexpected mapping: {other:?}"),
@@ -132,7 +132,7 @@ fn unknown_stop_reason_maps_to_semantic_turn_failed() {
         "message_type": "stop_reason",
         "stop_reason": "max_steps_exceeded"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
             assert!(message.contains("max_steps_exceeded"));
@@ -147,7 +147,7 @@ fn conversation_resolved_event_maps_to_semantic_conversation_ref() {
         "message_type": "conversation_resolved",
         "conversation_id": "conv-resolved-789"
     });
-    let mapped = runtime_stream_event_from_letta_json(&event).expect("mapped event");
+    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved { conversation }) => {
             assert_eq!(conversation.id, "conv-resolved-789");

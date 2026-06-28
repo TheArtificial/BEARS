@@ -264,7 +264,7 @@ pub fn session_info_payload(
     let context_budget = context.context_budget.clone().unwrap_or_else(|| {
         json!({
             "status": "unavailable",
-            "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+            "reason": "Provider context usage data is not wired into Den session_info yet",
             "source": "den.session_info",
         })
     });

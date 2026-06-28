@@ -2,7 +2,7 @@
 
 use super::ToolOption;
 
-/// Tool `name` values (as returned by Letta `GET /v1/tools/`) to never attach to bears.
+/// Tool `name` values (as returned by provider `GET /v1/tools/`) to never attach to bears.
 pub const LEGACY_MEMORY_TOOL_NAMES: &[&str] = &[
     "memory_apply_patch",
     "core_memory_append",

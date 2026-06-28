@@ -1,6 +1,6 @@
 //! Pure option/value types retained for native code (Bifrost model catalog, bear create UI,
-//! tool-policy filtering). These were originally shaped from Letta `GET /v1/models/` and
-//! `GET /v1/tools/` responses; they survive the removal of the self-hosted Letta HTTP client.
+//! tool-policy filtering). These were originally shaped from provider `GET /v1/models/` and
+//! `GET /v1/tools/` responses; they survive the removal of the external runtime HTTP client.
 
 /// One selectable LLM model row for `<select>` options.
 ///

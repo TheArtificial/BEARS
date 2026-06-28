@@ -1,4 +1,4 @@
-//! Human-facing titles for Letta `conv-*` threads: `summary` when usable, else derived from
+//! Human-facing titles for provider `conv-*` threads: `summary` when usable, else derived from
 //! the first meaningful **human-entered** user message, else a generic label. Used by
 //! `/v1/chat/conversations`.
 //!
@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 
-/// Generic UI label when nothing better is available (not persisted to Letta).
+/// Generic UI label when nothing better is available (not persisted to provider).
 pub const UNTITLED_THREAD: &str = "Untitled thread";
 
 /// Returns true when `summary` is suitable to show as the thread title and to treat as canonical.
@@ -33,7 +33,7 @@ pub fn is_acceptable_derived_title(s: &str, conversation_id: &str) -> bool {
     !looks_like_machine_or_opaque_title(s, conversation_id) && !looks_like_json_blob(s)
 }
 
-/// Choose a display title: meaningful Letta summary, else derived from messages, else [`UNTITLED_THREAD`].
+/// Choose a display title: meaningful provider summary, else derived from messages, else [`UNTITLED_THREAD`].
 pub fn display_conversation_title(
     summary: Option<&str>,
     conversation_id: &str,
@@ -150,7 +150,7 @@ fn message_type<'a>(msg: &'a Value, inner: &'a Value) -> &'a str {
         .unwrap_or("")
 }
 
-/// Skip structured rows that are not end-user input (when Letta exposes `role` on the message).
+/// Skip structured rows that are not end-user input (when the provider exposes `role` on the message).
 fn user_message_role_is_human(inner: &Value, msg: &Value) -> bool {
     for v in [inner, msg] {
         let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn meaningful_preserves_good_summary() {
         assert!(is_meaningful_conversation_title(
-            Some("Research Letta thread titles"),
+            Some("Research runtime thread titles"),
             "conv-550e8400-e29b-41d4-a716-446655440000"
         ));
     }
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_new_conversation_placeholder_in_letta_summary() {
+    fn rejects_new_conversation_placeholder_in_provider_summary() {
         assert!(!is_meaningful_conversation_title(
             Some("New conversation"),
             "conv-x"
@@ -497,7 +497,7 @@ mod tests {
             {
                 "id": "1",
                 "message_type": "user_message",
-                "content": "<system-reminder>The user has just initiated a new connection via the Letta Code CLI client.</system-reminder>"
+                "content": "<system-reminder>The user has just initiated a new connection via the runtime CLI client.</system-reminder>"
             },
             {
                 "id": "2",

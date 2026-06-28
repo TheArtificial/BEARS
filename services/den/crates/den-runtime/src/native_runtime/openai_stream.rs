@@ -125,7 +125,7 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                                 for event in events {
                                     // Tool-call finishes are not turn terminals: the ACP layer must
                                     // park for tool results and continue. A synthetic TurnCompleted
-                                    // here preempts that continuation (same class of bug as Letta
+                                    // here preempts that continuation (same class of provider bug
                                     // requires_approval pauses in acp_turn_runner_stream_tests).
                                     if matches!(
                                         &event,

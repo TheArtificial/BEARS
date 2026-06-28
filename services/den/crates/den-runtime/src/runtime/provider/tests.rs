@@ -10,7 +10,7 @@ use den_core::DenError;
 #[test]
 fn runtime_error_categories_are_stable_for_acp_policy() {
     let approval = DenError::System(
-        "Letta continue HTTP 409: waiting on an unresolved tool approval".to_string(),
+        "Runtime continue HTTP 409: waiting on an unresolved tool approval".to_string(),
     );
     assert_eq!(
         classify_runtime_error(&approval),
@@ -19,7 +19,7 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
     assert!(runtime_error_is_conflict_pending_approval(&approval));
 
     let misconfigured =
-        DenError::System("Letta is not configured (set LETTA_BASE_URL)".to_string());
+        DenError::System("Runtime is not configured".to_string());
     assert_eq!(
         classify_runtime_error(&misconfigured),
         RuntimeErrorCategory::Misconfigured
@@ -34,14 +34,14 @@ fn acp_requires_runtime_when_gateway_enabled() {
 }
 
 #[test]
-fn acp_does_not_require_letta_runtime_when_gateway_disabled() {
+fn acp_does_not_require_provider_runtime_when_gateway_disabled() {
     let mut config = Config::test_stub();
     config.acp_gateway_enabled = false;
     assert!(!acp_requires_runtime(&config));
 }
 
 #[test]
-fn startup_capabilities_reflect_current_acp_to_letta_requirement() {
+fn startup_capabilities_reflect_current_acp_to_provider_requirement() {
     let mut config = Config::test_stub();
     config.acp_gateway_enabled = true;
     let caps = RuntimeStartupCapabilities::from_config(&config);

@@ -10,6 +10,6 @@
             "den-conv-abc123"
         ));
         assert!(!canonical_persistence_enabled_for_conversation(
-            "letta-only-id"
+            "provider-only-id"
         ));
     }

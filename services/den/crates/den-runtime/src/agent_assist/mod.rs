@@ -2,9 +2,9 @@
 //! runtime SSE stream parser, tool-policy filtering, assistant display/title helpers,
 //! agent JSON projections, and the model/tool option value types.
 //!
-//! History: these grew up alongside the (now removed) self-hosted Letta HTTP client; the
-//! client is gone and these native helpers were renamed off the `letta` name (this module
-//! was `core::letta`).
+//! History: these grew up alongside the (now removed) external runtime HTTP client; the
+//! client is gone and these native helpers were renamed off the provider name (this module
+//! was `agent_assist`).
 
 mod agent_diagnostics;
 mod agent_document;
