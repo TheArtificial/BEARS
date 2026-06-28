@@ -2,7 +2,7 @@ use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_memory::tools as sqlite_memory;
 use den_service::{
-    acp_sessions,
+    client_sessions,
     bears::{db as bears_db, BearProfile},
     memory_proposals::CreateMemoryProposal,
     pair_reflection::{CompletePairReflectionRun, CreatePairReflectionRun},
@@ -11,7 +11,7 @@ use den_runtime::{memory::create_proposal, reflection_conductor};
 
 pub(crate) async fn run_pair_reflection_summary(
     state: &DenState,
-    session: &acp_sessions::AcpSessionRow,
+    session: &client_sessions::ClientSessionRow,
     trigger: &str,
 ) -> Result<(), CustomError> {
     let conversation_id = session
@@ -65,7 +65,7 @@ pub(crate) async fn run_pair_reflection_summary(
         CreatePairReflectionRun {
             bear_id: session.bear_id,
             user_id: session.user_id,
-            acp_session_id: &session.acp_session_id,
+            acp_session_id: &session.client_session_id,
             conversation_id,
             trigger,
             considered_message_count: message_summaries.len() as i32,
@@ -79,12 +79,12 @@ pub(crate) async fn run_pair_reflection_summary(
     )
     .await?;
     let body = den_service::pair_reflection::render_pair_summary_markdown(
-        &session.acp_session_id,
+        &session.client_session_id,
         conversation_id,
         trigger,
         &message_summaries,
     );
-    let title = den_service::pair_reflection::summary_title_for_session(&session.acp_session_id);
+    let title = den_service::pair_reflection::summary_title_for_session(&session.client_session_id);
     let (summary_path, summary_commit) = {
         let artifact_id = format!("pair-reflection-{}", run.id);
         let logical_path = format!("pair/summaries/{artifact_id}.md");
@@ -101,7 +101,7 @@ pub(crate) async fn run_pair_reflection_summary(
                 "source": {
                     "human": { "user_id": session.user_id, "authenticated_by": "acp_token" },
                     "session": {
-                        "acp_session_id": session.acp_session_id,
+                        "acp_session_id": session.client_session_id,
                         "conversation_id": conversation_id,
                         "trigger": trigger
                     },
@@ -161,13 +161,13 @@ pub(crate) async fn run_pair_reflection_summary(
             source_agent_id: pair_agent_id.clone(),
             source_paths: vec![summary_path.clone()],
             source_refs: serde_json::json!({
-                "acp_session_id": session.acp_session_id,
+                "acp_session_id": session.client_session_id,
                 "conversation_id": conversation_id,
                 "reflection_run_id": completed_run.id,
             }),
             suggested_action: "unspecified",
             target_ref: None,
-            title: &format!("Review pair reflection summary: {}", session.acp_session_id),
+            title: &format!("Review pair reflection summary: {}", session.client_session_id),
             summary: "Pair reflection created a durable session summary; review for useful shared/work-visible knowledge.",
             rationale: "Pair reflection summaries may contain durable decisions, lessons, or work-visible knowledge that should be curated beyond pair-local memory.",
             proposed_content: None,

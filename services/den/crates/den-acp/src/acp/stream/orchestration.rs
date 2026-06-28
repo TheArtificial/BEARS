@@ -25,7 +25,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
 use den_service::{
-    acp_sessions,
+    client_sessions,
     bears::Bear,
     conversation::events::{
         persist_canonical_conversation_record, CanonicalConversationRecord,
@@ -139,7 +139,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
     prompt: &str,
     pair_runtime_binding: &RoleRuntimeBinding,
     conversation_resolution: &AcpConversationResolution,
-    synthetic_session: &den_service::acp_sessions::AcpSessionRow,
+    synthetic_session: &den_service::client_sessions::ClientSessionRow,
     resolved_policy: &ResolvedSessionPolicy,
     current_activity_plan: &Option<den_docket::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,
@@ -205,7 +205,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
         Err(err) => return Ok(Err(err.into())),
     };
 
-    let materialized_session = acp_sessions::find_for_user_bear_session(
+    let materialized_session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,

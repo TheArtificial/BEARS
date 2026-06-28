@@ -350,7 +350,7 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
 
 #[test]
 fn resolve_turn_context_returns_matching_policy_and_turn_state() {
-    let session = den_service::acp_sessions::AcpSessionRow {
+    let session = den_service::client_sessions::ClientSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),

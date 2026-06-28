@@ -25,7 +25,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_service::{
-    acp_sessions,
+    client_sessions,
     bears::{db as bears_db, BearProfile},
     conversation::persistence::{ensure_conversation_for_external_id, set_conversation_title},
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
@@ -46,7 +46,7 @@ use crate::acp::{
 
 use super::auth::{authenticate_acp_code_token, authenticate_acp_code_token_with_auth};
 
-fn den_canonical_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+fn den_canonical_conversation_id(session: &client_sessions::ClientSessionRow) -> Option<String> {
     let conversation_id = session.conversation_id.trim();
     if conversation_id.is_empty() {
         None
@@ -55,7 +55,7 @@ fn den_canonical_conversation_id(session: &acp_sessions::AcpSessionRow) -> Optio
     }
 }
 
-fn runtime_conversation_id(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+fn runtime_conversation_id(session: &client_sessions::ClientSessionRow) -> Option<String> {
     session
         .resolved_conversation_id
         .as_deref()
@@ -97,7 +97,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
         .ok_or_else(|| {
             CustomError::NotFound("bear not found or you do not have access".to_string())
         })?;
-    let row = acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id.trim())
+    let row = client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id.trim())
         .await?
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let mut blocks = list_prompt_memory_blocks_for_bear_profile(&state.sqlx_pool, bear.id, BearProfile::Pair.as_str()).await?;
@@ -119,7 +119,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| row.acp_session_id.clone());
+        .unwrap_or_else(|| row.client_session_id.clone());
     blocks.retain(|block| block.session_id.is_none() || block.session_id.as_deref() == Some(effective_session_id.as_str()));
     let blocks_json = blocks
         .iter()
@@ -177,9 +177,9 @@ pub(super) async fn list_acp_sessions_inner(
     let cursor = decode_acp_sessions_cursor(query.cursor.as_deref())?;
     let cwd_filter = optional_absolute_cwd_filter(query.cwd.as_deref())?;
     let fetch_limit = ACP_SESSIONS_PAGE_SIZE + 1;
-    let mut rows = acp_sessions::list_for_user_bear(
+    let mut rows = client_sessions::list_for_user_bear(
         &state.sqlx_pool,
-        acp_sessions::SessionListParams {
+        client_sessions::SessionListParams {
             user_id,
             bear_slug: &bear.slug,
             include_closed: query.include_closed,
@@ -207,7 +207,7 @@ pub(super) async fn list_acp_sessions_inner(
             .is_none()
         {
             tracing::warn!(
-                acp_session_id = %row.acp_session_id,
+                acp_session_id = %row.client_session_id,
                 bear_slug = %row.bear_slug,
                 "omitting ACP session list row with missing or non-absolute cwd"
             );
@@ -217,7 +217,7 @@ pub(super) async fn list_acp_sessions_inner(
             &state.sqlx_pool,
             user_id,
             bear.id,
-            &row.acp_session_id,
+            &row.client_session_id,
         )
         .await?
         .map(serde_json::to_value)
@@ -274,7 +274,7 @@ pub(super) async fn get_acp_session_runtime_inner(
         ));
     }
     let row =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
@@ -422,7 +422,7 @@ pub(super) async fn post_adapter_environment_inner(
             "ACP token is missing required acp:tools scope".to_string(),
         ));
     }
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         auth.user_id,
         &slug,
@@ -430,7 +430,7 @@ pub(super) async fn post_adapter_environment_inner(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
-    acp_sessions::update_adapter_environment(
+    client_sessions::update_adapter_environment(
         &state.sqlx_pool,
         auth.user_id,
         session.bear_id,
@@ -455,7 +455,7 @@ pub(super) async fn post_adapter_environment_inner(
                 })
         });
     if let Some(client_title) = client_title {
-        acp_sessions::update_client_conversation_title(
+        client_sessions::update_client_conversation_title(
             &state.sqlx_pool,
             auth.user_id,
             session.bear_id,
@@ -523,7 +523,7 @@ pub(super) async fn set_session_mode_inner(
         ));
     }
     let existing =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?;
     let Some(_existing) = existing else {
         return Err(CustomError::NotFound("ACP session not found".to_string()));
@@ -553,7 +553,7 @@ pub(super) async fn set_session_mode_inner(
                 },
             )
             .await?;
-            acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "plan")
+            client_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "plan")
                 .await?;
             effective_mode = "plan".to_string();
             message = "Plan mode entered. Planning is active; concrete tool use remains governed by Den policy and ACP client approval.".to_string();
@@ -575,7 +575,7 @@ pub(super) async fn set_session_mode_inner(
             } else {
                 message = "Returned to Ask according to Den session policy.".to_string();
             }
-            acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "ask")
+            client_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "ask")
                 .await?;
             effective_mode = "ask".to_string();
         }
@@ -614,7 +614,7 @@ pub(super) async fn set_session_mode_inner(
             } else {
                 message = "Write mode enabled by user request. Concrete tool use remains subject to Den policy and ACP client approval.".to_string();
             }
-            acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "write")
+            client_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "write")
                 .await?;
             effective_mode = "write".to_string();
             tracing::info!(
@@ -636,9 +636,9 @@ pub(super) async fn set_session_mode_inner(
         .clone()
         .map(serde_json::to_value)
         .transpose()?;
-    let synthetic_row = acp_sessions::AcpSessionRow {
+    let synthetic_row = client_sessions::ClientSessionRow {
         current_mode: effective_mode.clone(),
-        ..acp_sessions::find_for_user_bear_session(
+        ..client_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             user_id,
             &bear.slug,
@@ -678,7 +678,7 @@ pub(super) async fn get_acp_session_inner(
         ));
     }
     let row =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =

@@ -73,8 +73,9 @@ pub(in crate::acp) struct AcpRuntimeSseStream {
 pub(in crate::acp) fn runtime_terminal_events(
     event: RuntimeStreamEvent,
     request_id: &str,
-    acp_session_id: &str,
+    client_session_id: &str,
 ) -> Option<Vec<GatewayEvent>> {
+    let acp_session_id = client_session_id;
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
             Some(vec![
@@ -519,7 +520,7 @@ impl AcpRuntimeSseStream {
                 memory_stores: &api_state.memory_stores,
                 request_id,
                 run_id: None,
-                acp_session_id: &acp_session_id,
+                client_session_id: &acp_session_id,
                 conversation: continuation_conversation,
                 binding: &binding,
                 continuation: continuation_request,
@@ -1274,7 +1275,7 @@ impl Stream for AcpRuntimeSseStream {
                                 memory_stores: &api_state.memory_stores,
                                 request_id,
                                 run_id: None,
-                                acp_session_id: &acp_session_id,
+                                client_session_id: &acp_session_id,
                                 conversation: continuation_conversation,
                                 binding: &binding,
                                 continuation: continuation_request,

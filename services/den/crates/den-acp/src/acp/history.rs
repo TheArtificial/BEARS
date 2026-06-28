@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
-use den_service::{acp_sessions, conversation::persistence::PersistedConversationMessage};
+use den_service::{client_sessions, conversation::persistence::PersistedConversationMessage};
 use den_runtime::{
     agent_assist::sanitize_visible_transcript_text,
     gateway_events::GatewayEvent,
@@ -238,19 +238,19 @@ pub(super) async fn pending_session_title_update_event(
     acp_session_id: &str,
 ) -> Result<Option<GatewayEvent>, CustomError> {
     let Some(session) =
-        acp_sessions::find_for_user_bear_session(pool, user_id, bear_slug, acp_session_id).await?
+        client_sessions::find_for_user_bear_session(pool, user_id, bear_slug, acp_session_id).await?
     else {
         return Ok(None);
     };
     if let Some(event) = session_title_update_event_from_row(&session) {
-        acp_sessions::mark_title_synced(pool, user_id, bear_id, acp_session_id).await?;
+        client_sessions::mark_title_synced(pool, user_id, bear_id, acp_session_id).await?;
         Ok(Some(event))
     } else {
         Ok(None)
     }
 }
 
-pub(super) fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+pub(super) fn acp_auto_title_instruction(session: &client_sessions::ClientSessionRow) -> Option<String> {
     let has_title = session
         .conversation_title
         .as_deref()
@@ -278,7 +278,7 @@ pub(super) fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) 
 }
 
 fn session_title_update_event_from_row(
-    session: &acp_sessions::AcpSessionRow,
+    session: &client_sessions::ClientSessionRow,
 ) -> Option<GatewayEvent> {
     let title = session
         .conversation_title

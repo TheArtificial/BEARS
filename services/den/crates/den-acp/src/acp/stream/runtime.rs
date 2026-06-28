@@ -20,7 +20,7 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_service::{
-    acp_sessions,
+    client_sessions,
     bears::{db as bears_db, BearProfile},
     conversation::events::{
         canonical_persistence_context, spawn_persist_canonical_conversation_record,
@@ -231,7 +231,7 @@ pub(in crate::acp) async fn persist_stream_event_side_effects(
     let mut tool_request_effect = None;
     match event {
         GatewayEvent::ConversationResolved { conversation_id } => {
-            acp_sessions::mark_resolved(
+            client_sessions::mark_resolved(
                 &context.pool,
                 context.user_id,
                 context.bear_id,

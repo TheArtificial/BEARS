@@ -20,7 +20,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth;
 use den_core::client_tools::client_tool_policy_json_for_provider;
-use den_service::{acp_sessions, tool_turns::{ToolResultRequest, ToolTurnRegistration}};
+use den_service::{client_sessions, tool_turns::{ToolResultRequest, ToolTurnRegistration}};
 use den_runtime::plan_mode;
 
 use crate::acp::{
@@ -67,7 +67,7 @@ pub(super) async fn permission_result_inner(
             .strip_prefix("plan-mode-")
             .and_then(|raw| Uuid::parse_str(raw).ok())
     }) {
-        let session = acp_sessions::find_for_user_bear_session(
+        let session = client_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             auth.user_id,
             &slug,
@@ -77,7 +77,7 @@ pub(super) async fn permission_result_inner(
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
         let decision = body.decision.trim().to_ascii_lowercase();
         if decision == "timeout" {
-            acp_sessions::set_current_mode(
+            client_sessions::set_current_mode(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,
@@ -129,7 +129,7 @@ pub(super) async fn permission_result_inner(
             .await?
         };
         let effective_mode = if row.state == "approved" {
-            acp_sessions::set_current_mode(
+            client_sessions::set_current_mode(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,
@@ -139,7 +139,7 @@ pub(super) async fn permission_result_inner(
             .await?;
             "write"
         } else {
-            acp_sessions::set_current_mode(
+            client_sessions::set_current_mode(
                 &state.sqlx_pool,
                 auth.user_id,
                 session.bear_id,

@@ -71,7 +71,7 @@ use prompt_memory_blocks::{
                 runtime_stream_event_from_provider_json,
             },
         den_protocol::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
-        acp_sessions,
+        client_sessions,
         den_service::tool_turns::{
                 ToolResultDelivery, ToolResultRequest, ToolTurnCoordinator,
                 ToolTurnRegistration,
@@ -405,9 +405,9 @@ use prompt_memory_blocks::{
         let resolved_conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = Uuid::new_v4();
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -460,7 +460,7 @@ use prompt_memory_blocks::{
         let stored_session_resolved = sqlx::query_scalar::<_, Option<String>>(
             r"
             SELECT resolved_conversation_id
-            FROM acp_sessions
+            FROM client_sessions
             WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
             ",
         )
@@ -534,9 +534,9 @@ use prompt_memory_blocks::{
         let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -650,9 +650,9 @@ use prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -843,9 +843,9 @@ use prompt_memory_blocks::{
         let request_id = Uuid::new_v4();
         let tool_call_id = format!("tool-call-{}", Uuid::new_v4());
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -956,9 +956,9 @@ use prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = Uuid::new_v4();
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -1063,9 +1063,9 @@ use prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = Uuid::new_v4();
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -1171,9 +1171,9 @@ use prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = Uuid::new_v4();
 
-        acp_sessions::upsert_session(
+        client_sessions::upsert_session(
             &pool,
-            acp_sessions::UpsertAcpSession {
+            client_sessions::UpsertClientSession {
                 user_id,
                 bear_id,
                 bear_slug: "test-bear".to_string(),
@@ -4710,7 +4710,7 @@ use prompt_memory_blocks::{
 
     #[test]
     fn acp_auto_title_instruction_requires_saved_conversation_without_title() {
-        let base = acp_sessions::AcpSessionRow {
+        let base = client_sessions::ClientSessionRow {
             id: Uuid::nil(),
             user_id: 1,
             bear_id: Uuid::nil(),
@@ -4736,13 +4736,13 @@ use prompt_memory_blocks::{
         assert!(guidance.contains("currently untitled"));
         assert!(guidance.contains("without waiting for the user to ask"));
 
-        let titled = acp_sessions::AcpSessionRow {
+        let titled = client_sessions::ClientSessionRow {
             conversation_title: Some("Already titled".to_string()),
             ..base.clone()
         };
         assert!(acp_auto_title_instruction(&titled).is_none());
 
-        let unresolved = acp_sessions::AcpSessionRow {
+        let unresolved = client_sessions::ClientSessionRow {
             resolved_conversation_id: None,
             conversation_id: "pending-id".to_string(),
             ..base

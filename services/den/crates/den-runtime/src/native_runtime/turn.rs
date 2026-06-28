@@ -726,7 +726,7 @@ pub async fn continue_native_acp_turn_event_stream(
     request: TurnContinueRequest<'_>,
     profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    let acp_session_id = request.acp_session_id;
+    let acp_session_id = request.client_session_id;
     let conversation_id = request.conversation.id.clone();
     let session_key = agent_loop_session_key(&conversation_id, acp_session_id);
     let existing_session = SESSION_STORE.get(&session_key);

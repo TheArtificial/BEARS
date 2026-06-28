@@ -1,5 +1,5 @@
 use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
-use den_service::acp_sessions;
+use den_service::client_sessions;
 
 use super::ToolExecutionRoute;
 
@@ -8,7 +8,7 @@ pub(crate) fn is_acp_archive_target(conversation_id: &str) -> bool {
 }
 
 pub(crate) fn acp_archive_target_for_session(
-    session: &acp_sessions::AcpSessionRow,
+    session: &client_sessions::ClientSessionRow,
 ) -> Option<&str> {
     let selection = session.conversation_id.trim();
     if is_acp_archive_target(selection) {

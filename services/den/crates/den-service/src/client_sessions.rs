@@ -6,11 +6,11 @@ use uuid::Uuid;
 use den_core::DenError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertAcpSession {
+pub struct UpsertClientSession {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub runtime_session_id: String,
     pub conversation_id: String,
     pub resolved_conversation_id: Option<String>,
@@ -21,12 +21,12 @@ pub struct UpsertAcpSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcpSessionRow {
+pub struct ClientSessionRow {
     pub id: Uuid,
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub runtime_session_id: String,
     pub conversation_id: String,
     pub resolved_conversation_id: Option<String>,
@@ -51,30 +51,30 @@ pub struct AcpSessionRow {
 }
 
 const UPSERT_SESSION_SQL: &str = r"
-        INSERT INTO acp_sessions (
-            user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
+        INSERT INTO client_sessions (
+            user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
             conversation_id, resolved_conversation_id, client, cwd, current_mode
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 'ask'))
-        ON CONFLICT (user_id, bear_id, acp_session_id) DO UPDATE
+        ON CONFLICT (user_id, bear_id, client_session_id) DO UPDATE
         SET bear_slug = EXCLUDED.bear_slug,
             runtime_session_id = EXCLUDED.runtime_session_id,
-            conversation_id = COALESCE(NULLIF(EXCLUDED.conversation_id, ''), acp_sessions.conversation_id),
-            resolved_conversation_id = COALESCE(EXCLUDED.resolved_conversation_id, acp_sessions.resolved_conversation_id),
+            conversation_id = COALESCE(NULLIF(EXCLUDED.conversation_id, ''), client_sessions.conversation_id),
+            resolved_conversation_id = COALESCE(EXCLUDED.resolved_conversation_id, client_sessions.resolved_conversation_id),
             client = EXCLUDED.client,
-            cwd = COALESCE(EXCLUDED.cwd, acp_sessions.cwd),
-            current_mode = COALESCE(acp_sessions.current_mode, EXCLUDED.current_mode),
+            cwd = COALESCE(EXCLUDED.cwd, client_sessions.cwd),
+            current_mode = COALESCE(client_sessions.current_mode, EXCLUDED.current_mode),
             closed_at = NULL,
             archived_at = NULL,
             updated_at = NOW()
         ";
 
-pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<(), DenError> {
+pub async fn upsert_session(pool: &PgPool, session: UpsertClientSession) -> Result<(), DenError> {
     sqlx::query(UPSERT_SESSION_SQL)
         .bind(session.user_id)
         .bind(session.bear_id)
         .bind(session.bear_slug)
-        .bind(session.acp_session_id)
+        .bind(session.client_session_id)
         .bind(session.runtime_session_id)
         .bind(session.conversation_id)
         .bind(session.resolved_conversation_id)
@@ -90,24 +90,24 @@ pub async fn set_current_mode(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     mode: &str,
 ) -> Result<(), DenError> {
     if !matches!(mode, "ask" | "plan" | "write") {
         return Err(DenError::ValidationError(
-            "ACP session mode must be one of ask, plan, write".to_string(),
+            "client session mode must be one of ask, plan, write".to_string(),
         ));
     }
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET current_mode = $4, updated_at = NOW()
-        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .bind(mode)
     .execute(pool)
     .await?;
@@ -118,32 +118,32 @@ pub async fn mark_resolved(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     resolved_conversation_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET resolved_conversation_id = $4, updated_at = NOW()
-        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .bind(resolved_conversation_id)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-fn acp_session_row_from_sql(row: &PgRow) -> AcpSessionRow {
-    AcpSessionRow {
+fn client_session_row_from_sql(row: &PgRow) -> ClientSessionRow {
+    ClientSessionRow {
         id: row.get("id"),
         user_id: row.get("user_id"),
         bear_id: row.get("bear_id"),
         bear_slug: row.get("bear_slug"),
-        acp_session_id: row.get("acp_session_id"),
+        client_session_id: row.get("client_session_id"),
         runtime_session_id: row.get("runtime_session_id"),
         conversation_id: row.get("conversation_id"),
         resolved_conversation_id: row.get("resolved_conversation_id"),
@@ -165,28 +165,28 @@ pub async fn find_for_user_bear_session(
     pool: &PgPool,
     user_id: i32,
     bear_slug: &str,
-    acp_session_id: &str,
-) -> Result<Option<AcpSessionRow>, DenError> {
+    client_session_id: &str,
+) -> Result<Option<ClientSessionRow>, DenError> {
     let row = sqlx::query(
         r"
-        SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
-        FROM acp_sessions
-        WHERE user_id = $1 AND bear_slug = $2 AND acp_session_id = $3
+        FROM client_sessions
+        WHERE user_id = $1 AND bear_slug = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_slug)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.as_ref().map(acp_session_row_from_sql))
+    Ok(row.as_ref().map(client_session_row_from_sql))
 }
 
-/// Lists persisted ACP sessions for a user on a bear, newest activity first.
+/// Lists persisted client sessions for a user on a bear, newest activity first.
 pub struct SessionListParams<'a> {
     pub user_id: i32,
     pub bear_slug: &'a str,
@@ -200,16 +200,16 @@ pub struct SessionListParams<'a> {
 pub async fn list_for_user_bear(
     pool: &PgPool,
     params: SessionListParams<'_>,
-) -> Result<Vec<AcpSessionRow>, DenError> {
+) -> Result<Vec<ClientSessionRow>, DenError> {
     let limit = params.limit.clamp(1, 100);
     let cwd_filter = params.cwd_filter.map(str::trim).filter(|s| !s.is_empty());
     let rows = sqlx::query(
         r"
-        SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
-        FROM acp_sessions
+        FROM client_sessions
         WHERE user_id = $1 AND bear_slug = $2
           AND ($3 OR closed_at IS NULL)
           AND ($4::text IS NULL OR cwd IS NOT DISTINCT FROM $4)
@@ -232,27 +232,27 @@ pub async fn list_for_user_bear(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.iter().map(acp_session_row_from_sql).collect())
+    Ok(rows.iter().map(client_session_row_from_sql).collect())
 }
 
 pub async fn update_adapter_environment(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     adapter_environment: &serde_json::Value,
 ) -> Result<(), DenError> {
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET adapter_environment = $4,
             updated_at = NOW()
-        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .bind(adapter_environment)
     .execute(pool)
     .await?;
@@ -263,7 +263,7 @@ pub async fn update_client_conversation_title(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     title: Option<&str>,
 ) -> Result<(), DenError> {
     let normalized = title
@@ -272,7 +272,7 @@ pub async fn update_client_conversation_title(
         .map(|value| value.chars().take(120).collect::<String>());
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET conversation_title = $4,
             conversation_title_updated_at = CASE
                 WHEN $4::text IS NULL THEN conversation_title_updated_at
@@ -285,12 +285,12 @@ pub async fn update_client_conversation_title(
                 ELSE conversation_title_synced_at
             END,
             updated_at = NOW()
-        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .bind(normalized)
     .execute(pool)
     .await?;
@@ -300,7 +300,7 @@ pub async fn update_client_conversation_title(
 pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET closed_at = NOW(), updated_at = NOW()
         WHERE id = $1
         ",
@@ -319,7 +319,7 @@ pub async fn set_title_for_bear_conversation(
 ) -> Result<u64, DenError> {
     let result = sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET conversation_title = $3,
             conversation_title_updated_at = NOW(),
             conversation_title_synced_at = NULL,
@@ -340,18 +340,18 @@ pub async fn mark_title_synced(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
 ) -> Result<(), DenError> {
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET conversation_title_synced_at = NOW()
-        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
     )
     .bind(user_id)
     .bind(bear_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -364,7 +364,7 @@ pub async fn resolved_conversation_ids_for_bear(
     let rows = sqlx::query(
         r"
         SELECT DISTINCT resolved_conversation_id
-        FROM acp_sessions
+        FROM client_sessions
         WHERE bear_slug = $1
           AND resolved_conversation_id IS NOT NULL
           AND resolved_conversation_id LIKE 'conv-%'
@@ -383,7 +383,7 @@ pub async fn resolved_conversation_ids_for_bear(
 pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     sqlx::query(
         r"
-        UPDATE acp_sessions
+        UPDATE client_sessions
         SET archived_at = NOW(), updated_at = NOW()
         WHERE id = $1
         ",

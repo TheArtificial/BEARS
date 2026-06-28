@@ -33,7 +33,7 @@ use crate::{
     web_chat_runtime::WebChatRuntimeRequest,
 };
 use den_llm::ModelOption;
-use den_service::{acp_sessions, archived_conversations};
+use den_service::{client_sessions, archived_conversations};
 use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
@@ -354,7 +354,7 @@ async fn chat_conversation_patch(
             &title,
         )
         .await?;
-        let _ = acp_sessions::set_title_for_bear_conversation(
+        let _ = client_sessions::set_title_for_bear_conversation(
             state.sqlx_pool(),
             bear.id,
             &conv_id,
@@ -832,7 +832,7 @@ async fn maybe_handle_direct_set_conversation_title(
     conversation_persistence::set_conversation_title(state.sqlx_pool(), bear.id, conv_id, &title)
         .await?;
     let _ =
-        acp_sessions::set_title_for_bear_conversation(state.sqlx_pool(), bear.id, conv_id, &title)
+        client_sessions::set_title_for_bear_conversation(state.sqlx_pool(), bear.id, conv_id, &title)
             .await?;
     let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);

@@ -36,7 +36,7 @@ use crate::{
 };
 use den_core::client_tools::{client_tool_policy_json_for_provider, ClientToolName};
 use den_memory::tools::sqlite_collect_role_logical_paths;
-use den_service::acp_sessions;
+use den_service::client_sessions;
 use den_service::bears::{
     db as bears_db,
     db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -755,7 +755,7 @@ async fn acp_conversation_ids_for_bear(
     bear: &Bear,
 ) -> Result<std::collections::HashSet<String>, CustomError> {
     Ok(
-        acp_sessions::resolved_conversation_ids_for_bear(pool, &bear.slug)
+        client_sessions::resolved_conversation_ids_for_bear(pool, &bear.slug)
             .await?
             .into_iter()
             .collect(),

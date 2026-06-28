@@ -7,7 +7,7 @@ use den_protocol::{
     RuntimeConversationBackend, RuntimeConversationRef,
 };
 use den_service::{
-    acp_sessions,
+    client_sessions,
     bears::{model::BearProfile, Bear},
 };
 use den_runtime::{
@@ -82,7 +82,7 @@ impl AcpConversationResolution {
         session_selection: String,
         selection_source: AcpConversationSelectionSource,
         binding: &RoleRuntimeBinding,
-        existing_session: Option<&acp_sessions::AcpSessionRow>,
+        existing_session: Option<&client_sessions::ClientSessionRow>,
     ) -> Self {
         let resolved_conversation = if is_acp_history_target(&session_selection) {
             Some(RuntimeConversationRef {
@@ -136,7 +136,7 @@ impl AcpConversationResolution {
 
 pub fn resolve_acp_prompt_conversation(
     requested_raw: Option<&str>,
-    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    existing_session: Option<&client_sessions::ClientSessionRow>,
     binding: &RoleRuntimeBinding,
     generated_pending_id: String,
 ) -> Result<AcpConversationResolution, CustomError> {
@@ -182,7 +182,7 @@ pub fn resolve_acp_prompt_conversation(
 pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversationBackend>(
     backend: &B,
     request: EnsureConversationRequest,
-    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    existing_session: Option<&client_sessions::ClientSessionRow>,
     generated_pending_id: String,
 ) -> Result<(AcpConversationResolution, EnsureConversationResult), CustomError> {
     let mut resolution = resolve_acp_prompt_conversation(
@@ -218,7 +218,7 @@ pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversation
 }
 
 pub fn canonical_acp_conversation_id_for_session(
-    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    existing_session: Option<&client_sessions::ClientSessionRow>,
     conversation_resolution: &AcpConversationResolution,
 ) -> String {
     existing_session
@@ -295,7 +295,7 @@ impl<'a> AcpConversationService<'a> {
     pub async fn ensure_prompt_conversation(
         &self,
         request: EnsureConversationRequest,
-        existing_session: Option<&acp_sessions::AcpSessionRow>,
+        existing_session: Option<&client_sessions::ClientSessionRow>,
         generated_pending_id: String,
     ) -> Result<(AcpConversationResolution, EnsureConversationResult), CustomError> {
         ensure_acp_session_conversation_with_backend(

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use den_http::errors::CustomError;
-use den_service::{acp_sessions, DenState};
+use den_service::{client_sessions, DenState};
 use den_runtime::{
     bearwire_events,
     runtime::bearwire_projection::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent},
@@ -68,7 +68,7 @@ pub(crate) async fn events(
     Query(query): Query<EventStreamQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_for_bear_slug(&state, &headers, &query.bear_slug).await?;
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &query.bear_slug,
@@ -79,12 +79,12 @@ pub(crate) async fn events(
     let after = query.after.or_else(|| last_event_id(&headers));
     let events = bearwire_events::list_bearwire_events_after(
         &state.sqlx_pool,
-        &session.acp_session_id,
+        &session.client_session_id,
         after,
         100,
     )
     .await?;
-    let frame = events_sse_body(&session.acp_session_id, events)?;
+    let frame = events_sse_body(&session.client_session_id, events)?;
 
     Response::builder()
         .status(StatusCode::OK)

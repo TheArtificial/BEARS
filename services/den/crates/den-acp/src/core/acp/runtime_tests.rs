@@ -7,7 +7,7 @@ use crate::core::{
     },
 };
 use den_runtime::{
-    acp_sessions::AcpSessionRow,
+    client_sessions::ClientSessionRow,
     den_protocol::{
         classify_runtime_error, runtime_error_is_conflict_pending_approval,
         runtime_error_is_no_active_runs_cancel, EnsureConversationRequest, RoleRuntimeBinding,
@@ -123,7 +123,7 @@ async fn ensure_prompt_conversation_reuses_resolved_session_conversation() {
         compatibility_backend: Some("runtime:native".to_string()),
     };
     let now = time::OffsetDateTime::now_utc();
-    let session = AcpSessionRow {
+    let session = ClientSessionRow {
         id: Uuid::nil(),
         user_id: 1,
         bear_id: Uuid::nil(),

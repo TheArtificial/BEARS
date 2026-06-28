@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
-use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}, DenState};
+use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
@@ -741,7 +741,7 @@ pub(crate) async fn run_start_result(
     let session_id = required_param_string(params, "session_id")?;
     let prompt = required_param_string(params, "prompt")?;
     let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
-    let existing = acp_sessions::find_for_user_bear_session(
+    let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -776,13 +776,13 @@ pub(crate) async fn run_start_result(
     };
     let resolved_model =
         preflight_pair_run_model(&state, &bear, &session_id, &upstream_target).await?;
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         &state.sqlx_pool,
-        acp_sessions::UpsertAcpSession {
+        client_sessions::UpsertClientSession {
             user_id,
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
-            acp_session_id: session_id.clone(),
+            client_session_id: session_id.clone(),
             runtime_session_id: existing
                 .as_ref()
                 .map(|session| session.runtime_session_id.clone())
@@ -1063,7 +1063,7 @@ pub(crate) async fn run_cancel_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
-    let Some(session) = acp_sessions::find_for_user_bear_session(
+    let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -1081,8 +1081,8 @@ pub(crate) async fn run_cancel_result(
 
     let stream_cancel = state
         .turn_cancellations
-        .cancel_session(&session.acp_session_id);
-    let active_turn = state.tool_turns.cancel_active_turn(&session.acp_session_id);
+        .cancel_session(&session.client_session_id);
+    let active_turn = state.tool_turns.cancel_active_turn(&session.client_session_id);
     let active_run = bearwire_runs::active_run_for_session(&state.sqlx_pool, &session_id).await?;
     if let Some(run) = &active_run {
         let _ = bearwire_runs::transition_run(

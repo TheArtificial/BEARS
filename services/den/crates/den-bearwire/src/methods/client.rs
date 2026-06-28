@@ -17,7 +17,7 @@ use den_protocol::{
     RuntimeToolResultStatus,
 };
 use den_http::{errors::CustomError, web_policy};
-use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}, DenState};
+use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::continue_native_acp_turn_event_stream,
@@ -43,7 +43,7 @@ fn continuation_watchdog_timeout() -> Duration {
     Duration::from_millis(millis)
 }
 
-fn continuation_conversation_id(session: &acp_sessions::AcpSessionRow) -> String {
+fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> String {
     session
         .resolved_conversation_id
         .clone()
@@ -186,7 +186,7 @@ fn spawn_continuation_task(
                 memory_stores: &memory_stores,
                 request_id,
                 run_id: Some(&run.run_id),
-                acp_session_id: &run.session_id,
+                client_session_id: &run.session_id,
                 conversation: RuntimeConversationRef {
                     id: conversation_id,
                 },
@@ -458,7 +458,7 @@ pub(crate) async fn client_tool_result_result(
             })),
         };
     }
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -699,7 +699,7 @@ pub(crate) async fn client_permission_result_result(
             })),
         };
     }
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,

@@ -28,7 +28,7 @@ use crate::{
 use den_http::errors::CustomError;
 use den_oauth::auth::{self, ApiError};
 use den_service::{
-    acp_sessions::{self, UpsertAcpSession},
+    client_sessions::{self, UpsertClientSession},
     bears::{db as bears_db, BearProfile},
     conversation::events::{
         persist_canonical_conversation_record, CanonicalConversationRecord,
@@ -179,7 +179,7 @@ pub(in crate::acp) async fn run_prompt_flow(
             ApiError::new(status, code, message)
         })?;
     let existing_session =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await
             .map_err(|err| {
                 ApiError::new(
@@ -240,13 +240,13 @@ pub(in crate::acp) async fn run_prompt_flow(
         &conversation_resolution,
     );
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         &state.sqlx_pool,
-        UpsertAcpSession {
+        UpsertClientSession {
             user_id,
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
-            acp_session_id: session_id.to_string(),
+            client_session_id: session_id.to_string(),
             runtime_session_id: runtime_session_id.clone(),
             conversation_id: canonical_conversation_id.clone(),
             resolved_conversation_id: conversation_resolution
@@ -290,7 +290,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                     let (status, code, message) = acp_error_status_message(&err.into());
                     ApiError::new(status, code, message)
                 })?;
-                acp_sessions::set_current_mode(
+                client_sessions::set_current_mode(
                     &state.sqlx_pool,
                     user_id,
                     bear.id,
@@ -304,7 +304,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                 })?;
             }
             Some("write") => {
-                acp_sessions::set_current_mode(
+                client_sessions::set_current_mode(
                     &state.sqlx_pool,
                     user_id,
                     bear.id,
@@ -355,7 +355,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                 ApiError::new(status, code, message)
             })?;
     let session_mode =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await
             .map_err(|err| {
                 ApiError::new(
@@ -366,12 +366,12 @@ pub(in crate::acp) async fn run_prompt_flow(
             })?
             .map(|session| session.current_mode)
             .unwrap_or_else(|| "ask".to_string());
-    let synthetic_session_row = acp_sessions::AcpSessionRow {
+    let synthetic_session_row = client_sessions::ClientSessionRow {
         id: Uuid::nil(),
         user_id,
         bear_id: bear.id,
         bear_slug: bear.slug.clone(),
-        acp_session_id: session_id.to_string(),
+        client_session_id: session_id.to_string(),
         runtime_session_id: "runtime-test".to_string(),
         conversation_id: canonical_conversation_id.clone(),
         resolved_conversation_id: existing_session
@@ -387,7 +387,7 @@ pub(in crate::acp) async fn run_prompt_flow(
         cwd: Some(cwd.clone()),
         adapter_environment: None,
         current_mode: session_mode,
-        conversation_title: acp_sessions::find_for_user_bear_session(
+        conversation_title: client_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             user_id,
             &bear.slug,

@@ -11,7 +11,7 @@ use den_core::{config::Config, DenError};
 
 use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef};
-use den_service::acp_sessions;
+use den_service::client_sessions;
 
 use crate::{conversation_ids::is_native_runtime_conversation_id, llm::LlmApiStyle};
 
@@ -47,7 +47,7 @@ pub struct TurnContinueRequest<'a> {
     pub memory_stores: &'a MemoryStoreManager,
     pub request_id: Uuid,
     pub run_id: Option<&'a str>,
-    pub acp_session_id: &'a str,
+    pub client_session_id: &'a str,
     pub conversation: RuntimeConversationRef,
     pub binding: &'a den_protocol::RoleRuntimeBinding,
     pub continuation: RuntimeContinuation,
@@ -104,13 +104,13 @@ pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBa
         .create_conversation(request.binding)
         .await?
         .id;
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         request.sqlx_pool,
-        acp_sessions::UpsertAcpSession {
+        client_sessions::UpsertClientSession {
             user_id: request.user_id,
             bear_id: request.bear_id,
             bear_slug: request.bear_slug.to_string(),
-            acp_session_id: request.session_id.to_string(),
+            client_session_id: request.session_id.to_string(),
             runtime_session_id: format!(
                 "acp-api-direct:{}:{}:{}",
                 request.client, request.bear_id, request.session_id

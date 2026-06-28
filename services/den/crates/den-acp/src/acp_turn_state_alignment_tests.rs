@@ -1,11 +1,11 @@
 use serde_json::json;
 
 use crate::acp::acp_session_row_to_http_with_modes;
-use den_service::acp_sessions::AcpSessionRow;
+use den_service::client_sessions::ClientSessionRow;
 
 #[tokio::test]
 async fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
-    let row = AcpSessionRow {
+    let row = ClientSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),

@@ -12,7 +12,7 @@ use den_core::tools::constants::{
     DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
 };
 use den_memory::MemoryStoreManager;
-use den_service::acp_sessions;
+use den_service::client_sessions;
 use den_service::bears::BearProfile;
 
 // The per-call context value now lives in `den-tools` (it is data, not a
@@ -114,7 +114,7 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
         conversation_id: &str,
         title: &str,
     ) -> Result<u64, crate::errors::DenError> {
-        acp_sessions::set_title_for_bear_conversation(self.pool, bear_id, conversation_id, title)
+        client_sessions::set_title_for_bear_conversation(self.pool, bear_id, conversation_id, title)
             .await
     }
 }

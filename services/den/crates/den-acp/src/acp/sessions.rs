@@ -4,7 +4,7 @@ use uuid::Uuid;
 use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
 use den_service::{
-    acp_sessions,
+    client_sessions,
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
     prompt_memory_blocks::PromptMemoryBlockState,
 };
@@ -21,7 +21,7 @@ pub(super) struct AcpSessionsCursor {
     pub(super) id: Uuid,
 }
 
-pub(super) fn encode_acp_sessions_cursor(row: &acp_sessions::AcpSessionRow) -> String {
+pub(super) fn encode_acp_sessions_cursor(row: &client_sessions::ClientSessionRow) -> String {
     let payload = serde_json::json!({
         "updated_at": format_acp_session_timestamp(row.updated_at),
         "id": row.id,
@@ -68,7 +68,7 @@ pub(super) fn decode_acp_sessions_cursor(
 }
 
 pub(crate) fn resolve_acp_turn_context(
-    row: &acp_sessions::AcpSessionRow,
+    row: &client_sessions::ClientSessionRow,
     plan_mode_row: Option<&den_runtime::plan_mode::PlanModeSessionRow>,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> AcpResolvedTurnContext {
@@ -87,7 +87,7 @@ pub(crate) fn resolve_acp_turn_context(
 
 pub(crate) async fn acp_session_row_to_http_with_modes(
     pool: &sqlx::PgPool,
-    row: acp_sessions::AcpSessionRow,
+    row: client_sessions::ClientSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> Result<AcpSessionHttp, CustomError> {
     let plan_mode_row = plan_mode
@@ -120,7 +120,7 @@ pub(crate) async fn acp_session_row_to_http_with_modes(
         }),
     );
     Ok(AcpSessionHttp {
-        acp_session_id: row.acp_session_id,
+        acp_session_id: row.client_session_id,
         runtime_session_id: row.runtime_session_id,
         conversation_id: row.conversation_id,
         resolved_conversation_id: row.resolved_conversation_id,

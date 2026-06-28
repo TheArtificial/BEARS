@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::acp_tokens;
-use den_service::acp_sessions;
+use den_service::client_sessions;
 use den_runtime::{
     bears::{db as bears_db, db::BearParams},
     bearwire_obligations, bearwire_runs,
@@ -135,13 +135,13 @@ async fn upsert_test_session(
     bear_slug: &str,
     session_id: &str,
 ) {
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         pool,
-        acp_sessions::UpsertAcpSession {
+        client_sessions::UpsertClientSession {
             user_id,
             bear_id,
             bear_slug: bear_slug.to_string(),
-            acp_session_id: session_id.to_string(),
+            client_session_id: session_id.to_string(),
             runtime_session_id: format!("bearwire-test:{bear_id}:{session_id}"),
             conversation_id: format!("den-conv-{}", Uuid::new_v4().simple()),
             resolved_conversation_id: None,
@@ -503,7 +503,7 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["result"]["ok"], true, "{value}");
-    let session = acp_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+    let session = client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
         .await
         .expect("load session")
         .expect("session exists");
@@ -591,7 +591,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         .expect("first run_id")
         .to_string();
 
-    let session = acp_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+    let session = client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
         .await
         .expect("load session")
         .expect("session exists");
@@ -742,13 +742,13 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
     let pending_conversation_id = format!("new-acp-zed-{}", Uuid::new_v4().simple());
     let resolved_conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     let session_id = format!("session-{}", Uuid::new_v4().simple());
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         &pool,
-        acp_sessions::UpsertAcpSession {
+        client_sessions::UpsertClientSession {
             user_id,
             bear_id,
             bear_slug: bear_slug.clone(),
-            acp_session_id: session_id.clone(),
+            client_session_id: session_id.clone(),
             runtime_session_id: format!("bearwire:{bear_id}:{session_id}"),
             conversation_id: pending_conversation_id.clone(),
             resolved_conversation_id: Some(resolved_conversation_id.clone()),

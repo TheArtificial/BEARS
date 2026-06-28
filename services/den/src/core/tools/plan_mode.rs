@@ -18,7 +18,7 @@ use crate::{
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_core::client_tools::{ResolvedSessionPolicy, ToolEnablementState};
-use den_service::{acp_sessions, bears::BearProfile};
+use den_service::{client_sessions, bears::BearProfile};
 use den_runtime::{
     plan_mode::{
         self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
@@ -76,7 +76,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             },
         )
         .await?;
-        acp_sessions::set_current_mode(
+        client_sessions::set_current_mode(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -149,7 +149,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             current.id,
         )
         .await?;
-        acp_sessions::set_current_mode(
+        client_sessions::set_current_mode(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -231,7 +231,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             },
         )
         .await?;
-        acp_sessions::set_current_mode(
+        client_sessions::set_current_mode(
             self.pool,
             context.user_id,
             context.bear_id,
@@ -272,7 +272,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             plan_mode_id,
         )
         .await?;
-        acp_sessions::set_current_mode(
+        client_sessions::set_current_mode(
             self.pool,
             context.user_id,
             context.bear_id,

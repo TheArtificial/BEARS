@@ -2,7 +2,7 @@ use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
-use den_service::{acp_sessions, bears::BearProfile, DenState};
+use den_service::{client_sessions, bears::BearProfile, DenState};
 use den_runtime::{
     bearwire_events,
     runtime::bearwire_projection::wire::BearWireEvent,
@@ -18,7 +18,7 @@ pub(crate) async fn session_open_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
-    let existing = acp_sessions::find_for_user_bear_session(
+    let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -45,13 +45,13 @@ pub(crate) async fn session_open_result(
         .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
     let cwd = param_string(params, "cwd");
     let current_mode = param_string(params, "mode");
-    acp_sessions::upsert_session(
+    client_sessions::upsert_session(
         &state.sqlx_pool,
-        acp_sessions::UpsertAcpSession {
+        client_sessions::UpsertClientSession {
             user_id,
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
-            acp_session_id: session_id.clone(),
+            client_session_id: session_id.clone(),
             runtime_session_id,
             conversation_id,
             resolved_conversation_id,
@@ -61,7 +61,7 @@ pub(crate) async fn session_open_result(
         },
     )
     .await?;
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -100,7 +100,7 @@ pub(crate) async fn session_close_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
-    let Some(session) = acp_sessions::find_for_user_bear_session(
+    let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -110,7 +110,7 @@ pub(crate) async fn session_close_result(
     else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
-    acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
         json!({
@@ -161,7 +161,7 @@ pub(crate) async fn session_state_result(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        let session = acp_sessions::find_for_user_bear_session(
+        let session = client_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             user_id,
             bear_slug,
@@ -184,9 +184,9 @@ pub(crate) async fn session_state_result(
         .and_then(|v| v.as_i64())
         .unwrap_or(50)
         .clamp(1, 100);
-    let sessions = acp_sessions::list_for_user_bear(
+    let sessions = client_sessions::list_for_user_bear(
         &state.sqlx_pool,
-        acp_sessions::SessionListParams {
+        client_sessions::SessionListParams {
             user_id,
             bear_slug,
             include_closed,
@@ -211,7 +211,7 @@ async fn session_model_payload(
     session_id: &str,
 ) -> Result<Value, CustomError> {
     let session =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
     let conversation_id = session
@@ -223,7 +223,7 @@ async fn session_model_payload(
         bear.id,
         Some(user_id),
         conversation_id,
-        Some(&session.acp_session_id),
+        Some(&session.client_session_id),
         None,
     )
     .await?;
@@ -314,7 +314,7 @@ pub(crate) async fn session_model_set_result(
     } else {
         None
     };
-    let session = acp_sessions::find_for_user_bear_session(
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -331,7 +331,7 @@ pub(crate) async fn session_model_set_result(
         bear.id,
         Some(user_id),
         conversation_id,
-        Some(&session.acp_session_id),
+        Some(&session.client_session_id),
         None,
     )
     .await?;

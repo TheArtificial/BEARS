@@ -17,7 +17,7 @@ use crate::{
     service::DenState,
 };
 use den_http::errors::CustomError;
-use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}};
+use den_service::{client_sessions, bears::{db as bears_db, BearProfile}};
 use den_runtime::{
     plan_mode,
     runtime::compaction::{prepare_turn_compaction, CompactionMode, TurnCompactionTrigger},
@@ -55,7 +55,7 @@ pub(super) async fn compact_session_inner(
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let Some(session) =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
             .await?
     else {
         return Err(CustomError::NotFound("ACP session not found".to_string()));
@@ -169,7 +169,7 @@ pub(super) async fn cancel_session_inner(
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let Some(session) =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
             .await?
     else {
         return Ok(Json(serde_json::json!({
@@ -181,10 +181,10 @@ pub(super) async fn cancel_session_inner(
     };
     let stream_cancel = state
         .turn_cancellations
-        .cancel_session(&session.acp_session_id);
+        .cancel_session(&session.client_session_id);
     let active = state
         .tool_turns
-        .cancel_active_turn(&session.acp_session_id);
+        .cancel_active_turn(&session.client_session_id);
     let pair_agent_id =
         bears_db::profile_binding_id(&state.sqlx_pool, session.bear_id, BearProfile::Pair)
             .await?
@@ -196,7 +196,7 @@ pub(super) async fn cancel_session_inner(
         .unwrap_or_default();
     if stream_cancel.is_some() && run_ids.is_empty() {
         tracing::warn!(
-            acp_session_id = %session.acp_session_id,
+            acp_session_id = %session.client_session_id,
             bear_id = %session.bear_id,
             conversation_id = %session.conversation_id,
             active_request_id = ?stream_cancel.as_ref().map(|turn| turn.request_id),
@@ -214,10 +214,10 @@ pub(super) async fn cancel_session_inner(
     .await;
     state
         .tool_turns
-        .cleanup_session(&session.acp_session_id);
+        .cleanup_session(&session.client_session_id);
     tracing::info!(
         bear_id = %session.bear_id,
-        acp_session_id = %session.acp_session_id,
+        acp_session_id = %session.client_session_id,
         conversation_id = %session.conversation_id,
         active_request_id = ?active.as_ref().map(|turn| turn.request_id).or_else(|| stream_cancel.as_ref().map(|turn| turn.request_id)),
         active_conversation_id = ?active.as_ref().and_then(|turn| turn.conversation_id.clone()).or_else(|| stream_cancel.as_ref().and_then(|turn| turn.conversation_id.clone())),
@@ -250,7 +250,7 @@ pub(super) async fn close_session_inner(
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
 
     let Some(session) =
-        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
             .await?
     else {
         return Ok(Json(AcpCloseSessionResponse {
@@ -265,15 +265,15 @@ pub(super) async fn close_session_inner(
 
     tracing::info!(
         bear_id = %session.bear_id,
-        acp_session_id = %session.acp_session_id,
+        acp_session_id = %session.client_session_id,
         conversation_id = %session.conversation_id,
         "ACP close requested; marking API-direct pair session closed"
     );
-    acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     if let Err(err) = run_pair_reflection_summary(&state, &session, "session_close").await {
         tracing::warn!(
             bear_id = %session.bear_id,
-            acp_session_id = %session.acp_session_id,
+            acp_session_id = %session.client_session_id,
             error = %err,
             "Pair reflection summary failed during ACP close"
         );
@@ -290,7 +290,7 @@ pub(super) async fn close_session_inner(
             true,
         )
         .await?;
-        acp_sessions::mark_archived(&state.sqlx_pool, session.id).await?;
+        client_sessions::mark_archived(&state.sqlx_pool, session.id).await?;
         archived = true;
     }
 
@@ -298,7 +298,7 @@ pub(super) async fn close_session_inner(
         &state.sqlx_pool,
         user_id,
         session.bear_id,
-        &session.acp_session_id,
+        &session.client_session_id,
     )
     .await?;
     let turn_context = resolve_acp_turn_context(&session, active_plan_mode.as_ref(), None);
