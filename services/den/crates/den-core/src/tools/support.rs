@@ -571,7 +571,7 @@ fn memory_confirmation_payload_hash(
         "profile": context.profile.map(|role| role.as_str()),
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,
-        "acp_session_id": context.acp_session_id,
+        "client_session_id": context.client_session_id,
         "request_id": context.request_id,
         "kind": args.kind,
         "title": args.title,

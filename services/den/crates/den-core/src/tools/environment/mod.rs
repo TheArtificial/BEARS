@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::BearProfile;
 
-use crate::tools::{context::DenToolInvocationContext, identity::BearDirectory, memory::source_acp_session_id};
+use crate::tools::{context::DenToolInvocationContext, identity::BearDirectory, memory::source_client_session_id};
 
 async fn memory_status_for_environment(
     env: &impl EnvironmentOps,
@@ -83,7 +83,7 @@ pub async fn bear_environment(
     let adapter_runtime = match env.fetch_acp_adapter_environment(context).await {
         Ok(Some(value)) => value,
         Ok(None) => json!({
-            "status": if source_acp_session_id(context).is_some() {
+            "status": if source_client_session_id(context).is_some() {
                 "unavailable"
             } else {
                 "not_applicable"

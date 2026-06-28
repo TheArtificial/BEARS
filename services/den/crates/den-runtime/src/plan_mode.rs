@@ -80,7 +80,7 @@ pub struct PlanModeSessionRow {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub state: String,
     pub reason: String,
     pub requested_by: String,
@@ -100,7 +100,7 @@ pub struct PlanModeSessionRow {
 impl PlanModeSessionRow {
     pub fn parsed_state(&self) -> Result<PlanModeState, DenError> {
         PlanModeState::parse(&self.state).ok_or_else(|| {
-            DenError::System(format!("unknown ACP plan mode state `{}`", self.state))
+            DenError::System(format!("unknown client plan mode state `{}`", self.state))
         })
     }
 }
@@ -110,7 +110,7 @@ pub struct EnterPlanModeParams {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub reason: String,
     pub requested_by: PlanModeRequestedBy,
     pub previous_permission_mode: Option<String>,
@@ -120,7 +120,7 @@ pub struct EnterPlanModeParams {
 pub struct SubmitPlanModeParams {
     pub user_id: i32,
     pub bear_id: Uuid,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub plan_mode_id: Option<Uuid>,
     pub title: String,
     pub body: String,
@@ -141,7 +141,7 @@ fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
         user_id: row.get("user_id"),
         bear_id: row.get("bear_id"),
         bear_slug: row.get("bear_slug"),
-        acp_session_id: row.get("acp_session_id"),
+        client_session_id: row.get("client_session_id"),
         state: row.get("state"),
         reason: row.get("reason"),
         requested_by: row.get("requested_by"),
@@ -160,7 +160,7 @@ fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
 }
 
 const SELECT_COLUMNS: &str = r"
-    id, user_id, bear_id, bear_slug, acp_session_id, state, reason, requested_by,
+    id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
     previous_permission_mode, plan_artifact_path, plan_title, plan_body,
     approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
     created_at, updated_at
@@ -176,7 +176,7 @@ pub async fn list_for_bear(
     let query = format!(
         r"
         SELECT {SELECT_COLUMNS}
-        FROM acp_plan_mode_sessions
+        FROM client_plan_mode_sessions
         WHERE bear_id = $1
           AND ($2 OR state IN ('active', 'submitted'))
         ORDER BY updated_at DESC
@@ -196,15 +196,15 @@ pub async fn active_for_session(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
     let query = format!(
         r"
         SELECT {SELECT_COLUMNS}
-        FROM acp_plan_mode_sessions
+        FROM client_plan_mode_sessions
         WHERE user_id = $1
           AND bear_id = $2
-          AND acp_session_id = $3
+          AND client_session_id = $3
           AND state IN ('active', 'submitted')
         ORDER BY updated_at DESC
         LIMIT 1
@@ -213,7 +213,7 @@ pub async fn active_for_session(
     let row = sqlx::query(&query)
         .bind(user_id)
         .bind(bear_id)
-        .bind(acp_session_id)
+        .bind(client_session_id)
         .fetch_optional(pool)
         .await?;
     Ok(row.as_ref().map(row_from_sql))
@@ -228,7 +228,7 @@ pub async fn get_by_id_for_bear(
     let query = format!(
         r"
         SELECT {SELECT_COLUMNS}
-        FROM acp_plan_mode_sessions
+        FROM client_plan_mode_sessions
         WHERE id = $1 AND user_id = $2 AND bear_id = $3
         "
     );
@@ -245,23 +245,23 @@ pub async fn get_for_session(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
     let query = if plan_mode_id.is_some() {
         format!(
             r"
             SELECT {SELECT_COLUMNS}
-            FROM acp_plan_mode_sessions
-            WHERE id = $4 AND user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+            FROM client_plan_mode_sessions
+            WHERE id = $4 AND user_id = $1 AND bear_id = $2 AND client_session_id = $3
             "
         )
     } else {
         format!(
             r"
             SELECT {SELECT_COLUMNS}
-            FROM acp_plan_mode_sessions
-            WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+            FROM client_plan_mode_sessions
+            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
             ORDER BY updated_at DESC
             LIMIT 1
             "
@@ -270,7 +270,7 @@ pub async fn get_for_session(
     let mut q = sqlx::query(&query)
         .bind(user_id)
         .bind(bear_id)
-        .bind(acp_session_id);
+        .bind(client_session_id);
     if let Some(id) = plan_mode_id {
         q = q.bind(id);
     }
@@ -282,9 +282,9 @@ pub async fn enter_plan_mode(
     pool: &PgPool,
     params: EnterPlanModeParams,
 ) -> Result<PlanModeSessionRow, DenError> {
-    if params.acp_session_id.trim().is_empty() {
+    if params.client_session_id.trim().is_empty() {
         return Err(DenError::ValidationError(
-            "acp_session_id is required".to_string(),
+            "client_session_id is required".to_string(),
         ));
     }
     if params.bear_slug.trim().is_empty() {
@@ -295,14 +295,14 @@ pub async fn enter_plan_mode(
 
     let mut tx = pool.begin().await?;
     let existing =
-        active_for_session(pool, params.user_id, params.bear_id, &params.acp_session_id).await?;
+        active_for_session(pool, params.user_id, params.bear_id, &params.client_session_id).await?;
     let row = if let Some(existing) = existing {
         existing
     } else {
         let query = format!(
             r"
-            INSERT INTO acp_plan_mode_sessions (
-                user_id, bear_id, bear_slug, acp_session_id, state, reason,
+            INSERT INTO client_plan_mode_sessions (
+                user_id, bear_id, bear_slug, client_session_id, state, reason,
                 requested_by, previous_permission_mode
             )
             VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)
@@ -313,7 +313,7 @@ pub async fn enter_plan_mode(
             .bind(params.user_id)
             .bind(params.bear_id)
             .bind(params.bear_slug.trim())
-            .bind(params.acp_session_id.trim())
+            .bind(params.client_session_id.trim())
             .bind(params.reason.trim())
             .bind(params.requested_by.as_str())
             .bind(clean_optional(params.previous_permission_mode))
@@ -363,27 +363,27 @@ pub async fn submit_plan_artifact(
         pool,
         params.user_id,
         params.bear_id,
-        &params.acp_session_id,
+        &params.client_session_id,
         params.plan_mode_id,
     )
     .await?
-    .ok_or_else(|| DenError::NotFound("active ACP plan mode session not found".to_string()))?;
+    .ok_or_else(|| DenError::NotFound("active client plan mode session not found".to_string()))?;
     if !current.parsed_state()?.is_open() {
         return Err(DenError::ValidationError(
-            "ACP plan mode session is already closed".to_string(),
+            "client plan mode session is already closed".to_string(),
         ));
     }
 
     let query = format!(
         r"
-        UPDATE acp_plan_mode_sessions
+        UPDATE client_plan_mode_sessions
         SET state = 'submitted',
             plan_title = $5,
             plan_body = $6,
             plan_artifact_path = $7,
             approval_request_id = $8,
             updated_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND acp_session_id = $4
+        WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND client_session_id = $4
         RETURNING {SELECT_COLUMNS}
         "
     );
@@ -391,7 +391,7 @@ pub async fn submit_plan_artifact(
         .bind(current.id)
         .bind(params.user_id)
         .bind(params.bear_id)
-        .bind(params.acp_session_id.trim())
+        .bind(params.client_session_id.trim())
         .bind(title)
         .bind(body)
         .bind(artifact_path)
@@ -421,20 +421,20 @@ pub async fn approve_plan_mode(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<PlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
-        .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        if acp_session_id.trim().is_empty() {
-            &current.acp_session_id
+        if client_session_id.trim().is_empty() {
+            &current.client_session_id
         } else {
-            acp_session_id
+            client_session_id
         },
         plan_mode_id,
         PlanModeState::Approved,
@@ -447,20 +447,20 @@ pub async fn reject_plan_mode(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<PlanModeSessionRow, DenError> {
     let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
         .await?
-        .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        if acp_session_id.trim().is_empty() {
-            &current.acp_session_id
+        if client_session_id.trim().is_empty() {
+            &current.client_session_id
         } else {
-            acp_session_id
+            client_session_id
         },
         plan_mode_id,
         PlanModeState::Rejected,
@@ -473,20 +473,20 @@ pub async fn cancel_plan_mode(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<PlanModeSessionRow, DenError> {
     let current = if let Some(plan_mode_id) = plan_mode_id {
         get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
     } else {
-        get_for_session(pool, user_id, bear_id, acp_session_id, None).await?
+        get_for_session(pool, user_id, bear_id, client_session_id, None).await?
     }
-    .ok_or_else(|| DenError::NotFound("ACP plan mode session not found".to_string()))?;
+    .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        &current.acp_session_id,
+        &current.client_session_id,
         current.id,
         PlanModeState::Cancelled,
         "cancelled",
@@ -498,7 +498,7 @@ async fn close_with_state(
     pool: &PgPool,
     user_id: i32,
     bear_id: Uuid,
-    acp_session_id: &str,
+    client_session_id: &str,
     plan_mode_id: Uuid,
     state: PlanModeState,
     event_type: &str,
@@ -514,7 +514,7 @@ async fn close_with_state(
     let mut tx = pool.begin().await?;
     let query = format!(
         r"
-        UPDATE acp_plan_mode_sessions
+        UPDATE client_plan_mode_sessions
         SET state = $5,
             approved_by_user_id = CASE WHEN $5 = 'approved' THEN $2 ELSE approved_by_user_id END,
             approved_at = CASE WHEN $5 = 'approved' THEN NOW() ELSE approved_at END,
@@ -524,7 +524,7 @@ async fn close_with_state(
         WHERE id = $1
           AND user_id = $2
           AND bear_id = $3
-          AND ($4 = '' OR acp_session_id = $4)
+          AND ($4 = '' OR client_session_id = $4)
           AND state IN ('active', 'submitted')
         RETURNING {SELECT_COLUMNS}
         "
@@ -533,11 +533,11 @@ async fn close_with_state(
         .bind(plan_mode_id)
         .bind(user_id)
         .bind(bear_id)
-        .bind(acp_session_id.trim())
+        .bind(client_session_id.trim())
         .bind(state.as_str())
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| DenError::NotFound("open ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("open client plan mode session not found".to_string()))?;
     let updated = row_from_sql(&row);
     append_event(
         &mut tx,
@@ -558,8 +558,8 @@ async fn append_event(
 ) -> Result<(), DenError> {
     sqlx::query(
         r"
-        INSERT INTO acp_plan_mode_events (
-            plan_mode_id, user_id, bear_id, acp_session_id, event_type, event_payload
+        INSERT INTO client_plan_mode_events (
+            plan_mode_id, user_id, bear_id, client_session_id, event_type, event_payload
         )
         VALUES ($1, $2, $3, $4, $5, $6)
         ",
@@ -567,7 +567,7 @@ async fn append_event(
     .bind(row.id)
     .bind(row.user_id)
     .bind(row.bear_id)
-    .bind(&row.acp_session_id)
+    .bind(&row.client_session_id)
     .bind(event_type)
     .bind(event_payload)
     .execute(&mut **tx)

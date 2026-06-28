@@ -73,7 +73,7 @@ pub struct RoleMemoryEntryWrite {
     pub author: Option<String>,
     pub conversation_id: Option<String>,
     pub session_id: Option<String>,
-    pub acp_session_id: Option<String>,
+    pub client_session_id: Option<String>,
     pub conversation_selection: Option<String>,
     pub runtime_target: Option<String>,
     pub binding_id: Option<String>,
@@ -100,7 +100,7 @@ pub fn merge_memory_entry_source_with_human(
             "username": author_username.or_else(|| context.username.clone()),
             "display_name": display_name,
             "membership_role": context.membership_role,
-            "authenticated_by": "acp_token"
+            "authenticated_by": "client_token"
         }),
     );
     source_obj.insert(
@@ -108,7 +108,7 @@ pub fn merge_memory_entry_source_with_human(
         json!({
             "conversation_id": clean_optional(&context.conversation_id),
             "session_id": clean_optional(&context.session_id),
-            "acp_session_id": context.acp_session_id,
+            "client_session_id": context.client_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
             "request_id": context.request_id,
@@ -117,17 +117,17 @@ pub fn merge_memory_entry_source_with_human(
     Some(Value::Object(source_obj))
 }
 
-/// The ACP session id, when the invocation arrived over an ACP channel.
-pub fn source_acp_session_id(context: &DenToolInvocationContext) -> Option<String> {
-    let is_acp = [
+/// The client session id, when the invocation arrived over a stateful client channel.
+pub fn source_client_session_id(context: &DenToolInvocationContext) -> Option<String> {
+    let has_stateful_client = [
         context.channel.family.as_deref(),
         context.channel.client.as_deref(),
         context.channel.protocol.as_deref(),
     ]
     .into_iter()
     .flatten()
-    .any(|value| value.to_ascii_lowercase().contains("acp"));
-    if is_acp {
+    .any(|value| matches!(value.to_ascii_lowercase().as_str(), "acp" | "bearwire"));
+    if has_stateful_client {
         clean_optional(&context.session_id)
     } else {
         None
@@ -172,11 +172,11 @@ pub async fn write_memory_entry(
         source,
         author,
         conversation_id: clean_optional(&context.conversation_id),
-        session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
-        acp_session_id: context
-            .acp_session_id
+        session_id: source_client_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        client_session_id: context
+            .client_session_id
             .clone()
-            .or_else(|| source_acp_session_id(context)),
+            .or_else(|| source_client_session_id(context)),
         conversation_selection: context.conversation_selection.clone(),
         runtime_target: context.runtime_target.clone(),
         binding_id: Some(context.binding_id.clone()),

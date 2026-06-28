@@ -651,7 +651,7 @@ pub(in crate::acp) async fn invoke_acp_runtime_local_tool(
                     .clone()
                     .unwrap_or_else(|| context.upstream_target.clone()),
                 session_id: context.acp_session_id.clone(),
-                acp_session_id: Some(context.acp_session_id.clone()),
+                client_session_id: Some(context.acp_session_id.clone()),
                 conversation_selection: Some(context.conversation_selection.clone()),
                 runtime_target: Some(context.upstream_target.clone()),
                 workspace_roots: context.workspace_roots.clone(),
@@ -760,7 +760,7 @@ pub(in crate::acp) async fn invoke_acp_den_tool(
             .clone()
             .unwrap_or_else(|| context.upstream_target.clone()),
         session_id: context.acp_session_id.clone(),
-        acp_session_id: Some(context.acp_session_id.clone()),
+        client_session_id: Some(context.acp_session_id.clone()),
         conversation_selection: Some(context.conversation_selection.clone()),
         runtime_target: Some(context.upstream_target.clone()),
         workspace_roots: context.workspace_roots.clone(),

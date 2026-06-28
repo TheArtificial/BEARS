@@ -24,8 +24,8 @@ pub struct DenToolInvocationContext {
     pub membership_role: Option<String>,
     pub conversation_id: String,
     pub session_id: String,
-    #[serde(default)]
-    pub acp_session_id: Option<String>,
+    #[serde(default, alias = "acp_session_id")]
+    pub client_session_id: Option<String>,
     #[serde(default)]
     pub conversation_selection: Option<String>,
     #[serde(default)]

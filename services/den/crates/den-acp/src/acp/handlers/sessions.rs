@@ -546,7 +546,7 @@ pub(super) async fn set_session_mode_inner(
                     user_id,
                     bear_id: bear.id,
                     bear_slug: bear.slug.clone(),
-                    acp_session_id: session_id.to_string(),
+                    client_session_id: session_id.to_string(),
                     reason: reason.to_string(),
                     requested_by: plan_mode::PlanModeRequestedBy::User,
                     previous_permission_mode: Some("ask".to_string()),

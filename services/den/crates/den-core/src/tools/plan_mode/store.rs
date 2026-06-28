@@ -1,7 +1,7 @@
-//! Capability seam for ACP plan-mode operations.
+//! Capability seam for client-session plan-mode operations.
 //!
 //! [`PlanModeOps`] abstracts the runtime side of plan mode: persisting plan-mode
-//! session state, switching the ACP session permission mode, and writing the plan
+//! session state, switching the client session permission mode, and writing the plan
 //! artifact. The `den-tools` executors own argument parsing/validation and the
 //! static envelope text; the `den` implementation owns the `plan_mode` DB
 //! rows and `turn_state` rendering. See
@@ -49,23 +49,23 @@ pub trait PlanModeOps: Send + Sync {
     async fn enter(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         reason: String,
         previous_permission_mode: Option<String>,
     ) -> Result<PlanModeView, DenError>;
 
-    /// Report the active plan-mode session (if any) for this ACP session.
+    /// Report the active plan-mode session (if any) for this client session.
     async fn status(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
     ) -> Result<PlanModeStatusView, DenError>;
 
     /// Record human approval of a submitted plan and switch to `write` mode.
     async fn record_approval(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError>;
 
@@ -73,7 +73,7 @@ pub trait PlanModeOps: Send + Sync {
     async fn exit(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
         title: &str,
         body: &str,
@@ -83,7 +83,7 @@ pub trait PlanModeOps: Send + Sync {
     async fn cancel(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError>;
 }

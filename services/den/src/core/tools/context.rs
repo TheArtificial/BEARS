@@ -374,55 +374,55 @@ impl PlanModeOps for DenToolContext<'_> {
     async fn enter(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         reason: String,
         previous_permission_mode: Option<String>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .enter(context, acp_session_id, reason, previous_permission_mode)
+            .enter(context, client_session_id, reason, previous_permission_mode)
             .await
     }
 
     async fn status(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
     ) -> Result<PlanModeStatusView, DenError> {
-        self.plan_mode().status(context, acp_session_id).await
+        self.plan_mode().status(context, client_session_id).await
     }
 
     async fn record_approval(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .record_approval(context, acp_session_id, plan_mode_id)
+            .record_approval(context, client_session_id, plan_mode_id)
             .await
     }
 
     async fn exit(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
         title: &str,
         body: &str,
     ) -> Result<PlanModeExitView, DenError> {
         self.plan_mode()
-            .exit(context, acp_session_id, plan_mode_id, title, body)
+            .exit(context, client_session_id, plan_mode_id, title, body)
             .await
     }
 
     async fn cancel(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .cancel(context, acp_session_id, plan_mode_id)
+            .cancel(context, client_session_id, plan_mode_id)
             .await
     }
 }

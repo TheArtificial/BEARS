@@ -20,7 +20,7 @@ pub fn spawn_persist_native_agent_step(
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Option<String>,
     assistant_text: String,
     tool_calls: &[ChatToolCall],
@@ -28,15 +28,15 @@ pub fn spawn_persist_native_agent_step(
     if assistant_text.trim().is_empty() && tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(acp_session_id.clone());
+    let provenance = ConversationEventProvenance::acp_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
         user_id,
         conversation_id,
-        Some(acp_session_id.clone()),
+        Some(client_session_id.clone()),
         request_id.clone(),
-        acp_session_id,
+        client_session_id,
         false,
     );
     if !assistant_text.trim().is_empty() {
@@ -240,7 +240,7 @@ pub fn spawn_persist_incomplete_acp_tool_results(
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],
     reason: &str,
@@ -248,15 +248,15 @@ pub fn spawn_persist_incomplete_acp_tool_results(
     if tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(acp_session_id.clone());
+    let provenance = ConversationEventProvenance::acp_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
         user_id,
         conversation_id,
-        Some(acp_session_id.clone()),
+        Some(client_session_id.clone()),
         request_id.clone(),
-        acp_session_id,
+        client_session_id,
         false,
     );
     spawn_persist_incomplete_tool_results(

@@ -47,14 +47,14 @@ static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopS
 /// Clears the session flag after reading (for ACP terminal turn_result mapping).
 pub fn take_session_overflow_compaction_recovered(
     conversation_id: &str,
-    acp_session_id: &str,
+    client_session_id: &str,
 ) -> bool {
-    let key = agent_loop_session_key(conversation_id, acp_session_id);
+    let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.take_overflow_compaction_recovered(&key)
 }
 
-pub fn native_acp_session_exists(conversation_id: &str, acp_session_id: &str) -> bool {
-    let key = agent_loop_session_key(conversation_id, acp_session_id);
+pub fn native_acp_session_exists(conversation_id: &str, client_session_id: &str) -> bool {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.get(&key).is_some()
 }
 
@@ -207,7 +207,7 @@ fn wrap_session_stream(
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: &str,
-    acp_session_id: &str,
+    client_session_id: &str,
     request_id: Option<String>,
     stores: MemoryStoreManager,
 ) -> RuntimeEventStream {
@@ -220,7 +220,7 @@ fn wrap_session_stream(
         session.bear_slug.clone(),
         user_id,
         conversation_id.to_string(),
-        acp_session_id.to_string(),
+        client_session_id.to_string(),
         request_id,
         config,
         stores,
@@ -234,7 +234,7 @@ async fn build_session(
     profile: NativeCapabilityProfile,
     bear_id: Uuid,
     conversation_id: &str,
-    acp_session_id: &str,
+    client_session_id: &str,
     human_message: Option<&str>,
     runtime_context: Option<&str>,
     session_id: Option<&str>,
@@ -286,7 +286,7 @@ async fn build_session(
     let messages = assembled.messages;
     let tools =
         merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
-    let session_key = agent_loop_session_key(conversation_id, acp_session_id);
+    let session_key = agent_loop_session_key(conversation_id, client_session_id);
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
         bear.id,
@@ -327,7 +327,7 @@ async fn build_session(
         bear_slug: bear.slug.clone(),
         user_id,
         conversation_id: conversation_id.to_string(),
-        acp_session_id: acp_session_id.to_string(),
+        client_session_id: client_session_id.to_string(),
         request_id: request_id.map(|id| id.to_string()),
         run_id: run_id.map(str::to_string),
         messages,
@@ -498,7 +498,7 @@ pub async fn start_native_profile_turn_event_stream(
     let materialized =
         materialize_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
-    let acp_session_id = request.session_id;
+    let client_session_id = request.session_id;
     let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
     let session = build_session(
         &NativeRuntimeDeps {
@@ -509,10 +509,10 @@ pub async fn start_native_profile_turn_event_stream(
         profile,
         request.bear_id,
         &conversation_id,
-        acp_session_id,
+        client_session_id,
         Some(request.prompt),
         request.runtime_context,
-        Some(acp_session_id),
+        Some(client_session_id),
         workspace_roots.as_deref(),
         Some(request.upstream_target),
         Some(request.conversation_selection),
@@ -527,10 +527,10 @@ pub async fn start_native_profile_turn_event_stream(
     )
     .await?;
     if request.runtime_context.is_none() {
-        let provenance = ConversationEventProvenance::acp_session(acp_session_id.to_string());
+        let provenance = ConversationEventProvenance::acp_session(client_session_id.to_string());
         let mut content_json = provenance.as_content_json("user_prompt");
         content_json["role"] = serde_json::json!("user");
-        content_json["acp_session_id"] = serde_json::json!(acp_session_id);
+        content_json["client_session_id"] = serde_json::json!(client_session_id);
         content_json["client"] = serde_json::json!(request.client);
         content_json["request_id"] = serde_json::json!(request.request_id.to_string());
         let record =
@@ -541,9 +541,9 @@ pub async fn start_native_profile_turn_event_stream(
                 request.bear_id,
                 Some(request.user_id),
                 conversation_id.clone(),
-                Some(acp_session_id.to_string()),
+                Some(client_session_id.to_string()),
                 Some(request.request_id.to_string()),
-                acp_session_id.to_string(),
+                client_session_id.to_string(),
                 false,
             ),
             &record,
@@ -566,7 +566,7 @@ pub async fn start_native_profile_turn_event_stream(
         request.bear_id,
         Some(request.user_id),
         &conversation_id,
-        acp_session_id,
+        client_session_id,
         Some(request.request_id.to_string()),
         request.memory_stores.clone(),
     );
@@ -577,7 +577,7 @@ pub async fn start_native_profile_turn_event_stream(
         binding: request.binding.clone(),
         human_message: request.prompt.to_string(),
         runtime_context: request.runtime_context.map(str::to_string),
-        client_session_id: Some(acp_session_id.to_string()),
+        client_session_id: Some(client_session_id.to_string()),
         client_tools: request.client_tools.clone(),
         stream_tokens: request.stream_tokens,
     };
@@ -683,8 +683,8 @@ async fn execute_approved_den_tool_for_session(
         username: None,
         membership_role: None,
         conversation_id: session.conversation_id.clone(),
-        session_id: session.acp_session_id.clone(),
-        acp_session_id: Some(session.acp_session_id.clone()),
+        session_id: session.client_session_id.clone(),
+        client_session_id: Some(session.client_session_id.clone()),
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),
         workspace_roots: Vec::new(),
@@ -726,9 +726,9 @@ pub async fn continue_native_acp_turn_event_stream(
     request: TurnContinueRequest<'_>,
     profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    let acp_session_id = request.client_session_id;
+    let client_session_id = request.client_session_id;
     let conversation_id = request.conversation.id.clone();
-    let session_key = agent_loop_session_key(&conversation_id, acp_session_id);
+    let session_key = agent_loop_session_key(&conversation_id, client_session_id);
     let existing_session = SESSION_STORE.get(&session_key);
     let mut tool_messages = Vec::new();
     match &request.continuation {
@@ -842,7 +842,7 @@ pub async fn continue_native_acp_turn_event_stream(
         session.bear_id,
         session.user_id,
         &conversation_id,
-        acp_session_id,
+        client_session_id,
         Some(request.request_id.to_string()),
         request.memory_stores.clone(),
     );

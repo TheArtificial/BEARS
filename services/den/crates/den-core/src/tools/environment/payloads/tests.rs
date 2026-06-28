@@ -16,7 +16,7 @@
             membership_role: None,
             conversation_id: "conv-test".to_string(),
             session_id: "sess-test".to_string(),
-            acp_session_id: Some("acp-test".to_string()),
+            client_session_id: Some("acp-test".to_string()),
             conversation_selection: Some("src/main.rs".to_string()),
             runtime_target: Some("repo:builder-bear".to_string()),
             workspace_roots: vec!["/workspace".to_string()],
@@ -93,7 +93,7 @@
                 "pending_den_tools": 0,
                 "pending_permissions": 0
             },
-            "source": "acp_active_turn_registry"
+            "source": "client_active_turn_registry"
         }));
         context.context_budget = Some(json!({
             "status": "estimated",
@@ -112,7 +112,7 @@
         );
         assert_eq!(
             payload["runtime"]["source"],
-            json!("acp_active_turn_registry")
+            json!("client_active_turn_registry")
         );
         assert_eq!(payload["context_budget"]["status"], json!("estimated"));
         assert_eq!(payload["context_budget"]["source"], json!("test"));
@@ -143,7 +143,7 @@
             membership_role: Some("admin".to_string()),
             conversation_id: "conv-123".to_string(),
             session_id: "sess-123".to_string(),
-            acp_session_id: None,
+            client_session_id: None,
             conversation_selection: Some("conv-123".to_string()),
             runtime_target: Some("conv-123".to_string()),
             workspace_roots: Vec::new(),
@@ -186,7 +186,7 @@
             membership_role: Some("admin".to_string()),
             conversation_id: "conv-123".to_string(),
             session_id: "sess-123".to_string(),
-            acp_session_id: Some("acp-123".to_string()),
+            client_session_id: Some("acp-123".to_string()),
             conversation_selection: Some("conv-123".to_string()),
             runtime_target: Some("conv-123".to_string()),
             workspace_roots: vec!["/workspace".to_string()],

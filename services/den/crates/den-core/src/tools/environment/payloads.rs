@@ -12,7 +12,7 @@ use crate::tools::{
     context::DenToolInvocationContext,
     descriptor::{builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile},
     identity::{role_is_bear_admin, CurrentUser},
-    memory::source_acp_session_id,
+    memory::source_client_session_id,
     support::{clean_optional, memory_read_scopes, memory_write_scopes},
     work_surface::infer_work_surface_hint,
 };
@@ -36,7 +36,7 @@ pub fn bear_environment_payload(
     });
     let session = json!({
         "id": context.session_id,
-        "acp_session_id": source_acp_session_id(context),
+        "client_session_id": source_client_session_id(context),
         "conversation_id": clean_optional(&context.conversation_id),
         "conversation_selection": context.conversation_selection,
         "runtime_target": context.runtime_target,
@@ -80,7 +80,7 @@ pub fn bear_environment_payload(
         browser
     } else {
         json!({
-            "status": if source_acp_session_id(context).is_some() { "unavailable" } else { "unknown" },
+            "status": if source_client_session_id(context).is_some() { "unavailable" } else { "unknown" },
             "active_source": Value::Null,
             "note": "Browser environment providers are not yet integrated into harness-level bear_environment for non-adapter baseline snapshots.",
         })
@@ -109,11 +109,11 @@ pub fn bear_environment_payload(
             "details": memory_status,
         },
         "adapter": {
-            "status": if adapter_service.is_object() { "ok" } else if source_acp_session_id(context).is_some() { "degraded" } else { "not_applicable" },
+            "status": if adapter_service.is_object() { "ok" } else if source_client_session_id(context).is_some() { "degraded" } else { "not_applicable" },
             "details": adapter_service,
         },
     });
-    let is_acp = source_acp_session_id(context).is_some();
+    let is_acp = source_client_session_id(context).is_some();
     let adapter_environment_status = adapter_runtime
         .get("status")
         .and_then(Value::as_str)
@@ -137,7 +137,7 @@ pub fn bear_environment_payload(
         json!({
             "status": "ok",
             "session": {
-                "acp_session_id": source_acp_session_id(context),
+                "client_session_id": source_client_session_id(context),
                 "conversation_selection": context.conversation_selection,
                 "runtime_target": context.runtime_target,
             },
@@ -345,7 +345,7 @@ pub fn session_info_payload(
         "session": {
             "conversation_id": context.conversation_id,
             "session_id": context.session_id,
-            "acp_session_id": context.acp_session_id,
+            "client_session_id": context.client_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
             "request_id": context.request_id,

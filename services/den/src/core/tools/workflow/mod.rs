@@ -23,7 +23,7 @@ use den_core::tools::constants::{
 use crate::{
     config::Config,
     core::tools::{
-        memory_write::source_acp_session_id,
+        memory_write::source_client_session_id,
         session::DenToolInvocationContext,
         support::clean_optional,
     },
@@ -344,7 +344,7 @@ pub(crate) async fn list_work_plans(
             "status": "unresolved",
             "note": "Workplace inference is not implemented yet; workspace/session metadata is returned as workplace reference candidates.",
             "reference_candidates": {
-                "acp_session_id": context.acp_session_id,
+                "client_session_id": context.client_session_id,
                 "session_id": context.session_id,
                 "conversation_id": clean_optional(&context.conversation_id),
                 "conversation_selection": context.conversation_selection,
@@ -384,7 +384,7 @@ pub(crate) async fn get_work_plan_status(
             .or_else(|| clean_optional(&context.conversation_id)),
         source_acp_session_id: args
             .source_acp_session_id
-            .or_else(|| source_acp_session_id(context)),
+            .or_else(|| source_client_session_id(context)),
     };
     let plan = PgDocketService::from_pool(pool)
         .get_visible_work_plan(context.bear_id, role, context.user_id, lookup)
@@ -417,7 +417,7 @@ pub(crate) async fn update_work_plan(
             owner_agent_id: clean_optional(&context.binding_id),
             created_by_user_id: Some(context.user_id),
             source_conversation_id: clean_optional(&context.conversation_id),
-            source_acp_session_id: source_acp_session_id(context),
+            source_acp_session_id: source_client_session_id(context),
             source_channel: serde_json::to_value(&context.channel)?,
             plan_id: args.plan_id,
             expected_version: args.expected_version,
@@ -604,7 +604,7 @@ pub(crate) async fn execute_job(
             actor_agent_id: clean_optional(&context.binding_id),
             session_id: Some(context.session_id.clone()),
             source_conversation_id: clean_optional(&context.conversation_id),
-            source_acp_session_id: context.acp_session_id.clone(),
+            source_acp_session_id: context.client_session_id.clone(),
         })
         .await?;
     let status_report = docket_job_status_report(&outcome.job);
@@ -793,7 +793,7 @@ pub(crate) async fn checkout_task_list(
                 .or_else(|| clean_optional(&context.conversation_id)),
             source_acp_session_id: args
                 .source_acp_session_id
-                .or_else(|| source_acp_session_id(context)),
+                .or_else(|| source_client_session_id(context)),
         })
     };
     let task_list = PgDocketService::from_pool(pool)

@@ -23,7 +23,7 @@ pub async fn create_native_approval(
     pool: &PgPool,
     bear_id: Uuid,
     conversation_id: &str,
-    acp_session_id: &str,
+    client_session_id: &str,
     tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
@@ -32,7 +32,7 @@ pub async fn create_native_approval(
     sqlx::query(
         r"
         INSERT INTO native_runtime_approvals (
-            approval_id, bear_id, conversation_id, acp_session_id,
+            approval_id, bear_id, conversation_id, client_session_id,
             tool_call_id, tool_name, arguments_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         ",
@@ -40,7 +40,7 @@ pub async fn create_native_approval(
     .bind(&approval_id)
     .bind(bear_id)
     .bind(conversation_id)
-    .bind(acp_session_id)
+    .bind(client_session_id)
     .bind(tool_call_id)
     .bind(tool_name)
     .bind(arguments.to_string())

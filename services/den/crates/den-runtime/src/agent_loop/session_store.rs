@@ -18,7 +18,7 @@ pub struct AgentLoopSession {
     pub bear_slug: String,
     pub user_id: Option<i32>,
     pub conversation_id: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,
@@ -41,7 +41,7 @@ impl AgentLoopSession {
         LlmRequestTelemetry {
             request_id: self.request_id.clone(),
             run_id: self.run_id.clone(),
-            session_id: Some(self.acp_session_id.clone()),
+            session_id: Some(self.client_session_id.clone()),
             conversation_id: Some(self.conversation_id.clone()),
             bear_id: Some(self.bear_id.to_string()),
             stance: Some(self.profile.as_str().to_string()),
@@ -105,6 +105,6 @@ impl AgentLoopSessionStore {
     }
 }
 
-pub fn agent_loop_session_key(conversation_id: &str, acp_session_id: &str) -> String {
-    format!("{conversation_id}:{acp_session_id}")
+pub fn agent_loop_session_key(conversation_id: &str, client_session_id: &str) -> String {
+    format!("{conversation_id}:{client_session_id}")
 }

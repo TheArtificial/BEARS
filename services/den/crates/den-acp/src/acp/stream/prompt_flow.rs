@@ -279,7 +279,7 @@ pub(in crate::acp) async fn run_prompt_flow(
                         user_id,
                         bear_id: bear.id,
                         bear_slug: bear.slug.clone(),
-                        acp_session_id: session_id.to_string(),
+                        client_session_id: session_id.to_string(),
                         reason: "Client selected ACP Plan mode before first prompt".to_string(),
                         requested_by: plan_mode::PlanModeRequestedBy::User,
                         previous_permission_mode: Some("ask".to_string()),

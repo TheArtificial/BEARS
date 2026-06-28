@@ -110,7 +110,7 @@ pub struct SessionTrackingStream {
     bear_slug: String,
     user_id: Option<i32>,
     conversation_id: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Option<String>,
     finished: bool,
     assistant_synced_to_session: bool,
@@ -135,7 +135,7 @@ impl SessionTrackingStream {
         bear_slug: String,
         user_id: Option<i32>,
         conversation_id: String,
-        acp_session_id: String,
+        client_session_id: String,
         request_id: Option<String>,
         config: Arc<Config>,
         stores: MemoryStoreManager,
@@ -153,7 +153,7 @@ impl SessionTrackingStream {
             bear_slug,
             user_id,
             conversation_id,
-            acp_session_id,
+            client_session_id,
             request_id,
             finished: false,
             assistant_synced_to_session: false,
@@ -246,7 +246,7 @@ impl SessionTrackingStream {
             self.bear_id,
             self.user_id,
             self.conversation_id.clone(),
-            self.acp_session_id.clone(),
+            self.client_session_id.clone(),
             self.request_id.clone(),
             &calls,
             reason,
@@ -263,8 +263,8 @@ impl SessionTrackingStream {
             username: None,
             membership_role: None,
             conversation_id: self.conversation_id.clone(),
-            session_id: self.acp_session_id.clone(),
-            acp_session_id: Some(self.acp_session_id.clone()),
+            session_id: self.client_session_id.clone(),
+            client_session_id: Some(self.client_session_id.clone()),
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
             workspace_roots: Vec::new(),
@@ -364,10 +364,10 @@ impl SessionTrackingStream {
         let bear_id = self.bear_id;
         let user_id = self.user_id;
         let conversation_id = self.conversation_id.clone();
-        let acp_session_id = self.acp_session_id.clone();
+        let client_session_id = self.client_session_id.clone();
         self.pending_server_tool = Some(Box::pin(async move {
             let result = if canonical == DEN_TOOL_OUTPUT_READ {
-                tool_output_read_result(&pool, bear_id, &acp_session_id, args).await
+                tool_output_read_result(&pool, bear_id, &client_session_id, args).await
             } else {
                 invoker
                     .invoke(&pool, config.as_ref(), &stores, &canonical, args, context)
@@ -382,7 +382,7 @@ impl SessionTrackingStream {
                             ToolOutputArtifactInput {
                                 bear_id,
                                 user_id,
-                                session_id: acp_session_id.clone(),
+                                session_id: client_session_id.clone(),
                                 conversation_id: Some(conversation_id.clone()),
                                 run_id: None,
                                 tool_call_id: call.id.clone(),
@@ -443,7 +443,7 @@ impl SessionTrackingStream {
                 self.bear_id,
                 self.user_id,
                 self.conversation_id.clone(),
-                self.acp_session_id.clone(),
+                self.client_session_id.clone(),
                 self.request_id.clone(),
                 self.assistant_text.clone(),
                 &calls,
@@ -612,7 +612,7 @@ impl Stream for SessionTrackingStream {
                     let pool = self.pool.clone();
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();
-                    let acp_session_id = self.acp_session_id.clone();
+                    let client_session_id = self.client_session_id.clone();
                     let permission_target = Self::web_fetch_permission_target(&arguments);
                     let arguments_value = permission_target.clone();
                     let approval_tool_call_id = tool_call_id.clone();
@@ -637,7 +637,7 @@ impl Stream for SessionTrackingStream {
                             &pool,
                             bear_id,
                             &conversation_id,
-                            &acp_session_id,
+                            &client_session_id,
                             &approval_tool_call_id,
                             &approval_tool_name,
                             &arguments_value,
@@ -672,7 +672,7 @@ impl Stream for SessionTrackingStream {
                     let pool = self.pool.clone();
                     let bear_id = self.bear_id;
                     let conversation_id = self.conversation_id.clone();
-                    let acp_session_id = self.acp_session_id.clone();
+                    let client_session_id = self.client_session_id.clone();
                     let arguments_value = arguments;
                     self.pending_tool_event = Some(event);
                     self.pending_approval = Some(Box::pin(async move {
@@ -680,7 +680,7 @@ impl Stream for SessionTrackingStream {
                             &pool,
                             bear_id,
                             &conversation_id,
-                            &acp_session_id,
+                            &client_session_id,
                             &tool_call_id,
                             &tool_name,
                             &arguments_value,
@@ -709,7 +709,7 @@ impl Stream for SessionTrackingStream {
                     self.persist_outstanding_tools_as_incomplete("turn_ended_before_tool_results");
                     self.finished = true;
                     tracing::debug!(
-                        acp_session_id = %self.acp_session_id,
+                        client_session_id = %self.client_session_id,
                         tool_call_count = self.tool_calls.len(),
                         "native runtime suppressing TurnCompleted while tool calls are outstanding"
                     );
@@ -741,7 +741,7 @@ impl Stream for SessionTrackingStream {
             Poll::Ready(Some(Err(error))) => {
                 if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                     tracing::warn!(
-                        acp_session_id = %self.acp_session_id,
+                        client_session_id = %self.client_session_id,
                         tool_call_id = %tool_call_id,
                         error = %error,
                         "native runtime server-tool continuation failed; removing recent tool chain from in-memory session"
@@ -759,7 +759,7 @@ impl Stream for SessionTrackingStream {
                     );
                     self.finished = true;
                     tracing::debug!(
-                        acp_session_id = %self.acp_session_id,
+                        client_session_id = %self.client_session_id,
                         tool_call_count = self.tool_calls.len(),
                         "native runtime ended LLM stream with outstanding tool calls; deferring TurnCompleted"
                     );
@@ -776,7 +776,7 @@ impl Stream for SessionTrackingStream {
                 if failed_or_empty_continuation {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                         tracing::warn!(
-                            acp_session_id = %self.acp_session_id,
+                            client_session_id = %self.client_session_id,
                             tool_call_id = %tool_call_id,
                             "native runtime server-tool continuation ended unsuccessfully; removing recent tool chain from in-memory session"
                         );
@@ -841,7 +841,7 @@ mod tests {
             bear_slug: "test-bear".to_string(),
             user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
-            acp_session_id: "acp-test".to_string(),
+            client_session_id: "acp-test".to_string(),
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),

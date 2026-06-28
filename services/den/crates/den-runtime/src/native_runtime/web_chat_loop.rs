@@ -482,7 +482,7 @@ async fn execute_one_web_chat_den_tool(
             membership_role: runtime.membership_role.clone(),
             conversation_id: runtime.conversation_id.clone(),
             session_id: runtime.session_id.clone(),
-            acp_session_id: None,
+            client_session_id: None,
             conversation_selection: Some(runtime.conversation_id.clone()),
             runtime_target: Some(runtime.conversation_id.clone()),
             workspace_roots: Vec::new(),

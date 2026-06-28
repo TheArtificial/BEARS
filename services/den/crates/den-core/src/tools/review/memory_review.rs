@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::tools::{
     context::DenToolInvocationContext,
-    memory::source_acp_session_id,
+    memory::source_client_session_id,
     support::{clean_optional, validate_bounded_text, validate_optional_object},
 };
 
@@ -90,7 +90,7 @@ fn projection_scope_id(
     bear_id: Uuid,
     role: BearProfile,
 ) -> String {
-    source_acp_session_id(context)
+    source_client_session_id(context)
         .or_else(|| clean_optional(&context.session_id))
         .unwrap_or_else(|| format!("bear:{}:role:{}", bear_id, role.as_str()))
 }
@@ -272,7 +272,7 @@ pub async fn request_memory_review(
         .to_string();
     let source_refs = json!({
         "conversation_id": clean_optional(&context.conversation_id),
-        "session_id": source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        "session_id": source_client_session_id(context).or_else(|| clean_optional(&context.session_id)),
         "request_id": context.request_id,
         "runtime_target": context.runtime_target,
     });

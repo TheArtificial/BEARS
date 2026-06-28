@@ -15,7 +15,7 @@
             membership_role: Some("admin".to_string()),
             conversation_id: "conv-1".to_string(),
             session_id: "session-1".to_string(),
-            acp_session_id: Some("acp-1".to_string()),
+            client_session_id: Some("acp-1".to_string()),
             conversation_selection: Some("conv-1".to_string()),
             runtime_target: Some("conv-1".to_string()),
             workspace_roots: vec![],
@@ -62,5 +62,5 @@
 
         assert_eq!(merged["origin"], "test");
         assert_eq!(merged["human"]["username"], "context-user");
-        assert_eq!(merged["human"]["authenticated_by"], "acp_token");
+        assert_eq!(merged["human"]["authenticated_by"], "client_token");
     }

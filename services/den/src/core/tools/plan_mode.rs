@@ -59,7 +59,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     async fn enter(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         reason: String,
         previous_permission_mode: Option<String>,
     ) -> Result<PlanModeView, DenError> {
@@ -69,7 +69,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                 user_id: context.user_id,
                 bear_id: context.bear_id,
                 bear_slug: context.bear_slug.clone(),
-                acp_session_id: acp_session_id.to_string(),
+                client_session_id: client_session_id.to_string(),
                 reason,
                 requested_by: PlanModeRequestedBy::Pair,
                 previous_permission_mode,
@@ -80,7 +80,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             "plan",
         )
         .await?;
@@ -98,13 +98,13 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     async fn status(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
     ) -> Result<PlanModeStatusView, DenError> {
         let row = plan_mode::active_for_session(
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
         )
         .await?;
         let workplan = row
@@ -121,19 +121,19 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     async fn record_approval(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         let current = plan_mode::get_for_session(
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             plan_mode_id,
         )
         .await?
         .ok_or_else(|| {
-            DenError::NotFound("submitted ACP plan mode session not found".to_string())
+            DenError::NotFound("submitted client plan mode session not found".to_string())
         })?;
         if current.state != "submitted" {
             return Err(DenError::ValidationError(format!(
@@ -145,7 +145,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             current.id,
         )
         .await?;
@@ -153,7 +153,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             "write",
         )
         .await?;
@@ -171,7 +171,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     async fn exit(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
         title: &str,
         body: &str,
@@ -184,11 +184,11 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             plan_mode_id,
         )
         .await?
-        .ok_or_else(|| DenError::NotFound("active ACP plan mode session not found".to_string()))?;
+        .ok_or_else(|| DenError::NotFound("active client plan mode session not found".to_string()))?;
         let artifact_path = {
             let artifact_id = format!("plan-mode-{}", current_plan.id);
             let logical_path = format!("pair/plans/{artifact_id}.md");
@@ -205,7 +205,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
                     "content_class": "workplan_artifact",
                     "source": {
                         "tool": crate::core::tools::constants::DEN_PLAN_MODE_EXIT,
-                        "acp_session_id": acp_session_id,
+                        "client_session_id": client_session_id,
                         "conversation_id": clean_optional(&context.conversation_id),
                     },
                 }),
@@ -222,7 +222,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             SubmitPlanModeParams {
                 user_id: context.user_id,
                 bear_id: context.bear_id,
-                acp_session_id: acp_session_id.to_string(),
+                client_session_id: client_session_id.to_string(),
                 plan_mode_id: Some(current_plan.id),
                 title: title.to_string(),
                 body: body.to_string(),
@@ -235,7 +235,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             "plan",
         )
         .await?;
@@ -261,14 +261,14 @@ impl PlanModeOps for DenPlanModeOps<'_> {
     async fn cancel(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         let row = plan_mode::cancel_plan_mode(
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             plan_mode_id,
         )
         .await?;
@@ -276,7 +276,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             self.pool,
             context.user_id,
             context.bear_id,
-            acp_session_id,
+            client_session_id,
             "ask",
         )
         .await?;

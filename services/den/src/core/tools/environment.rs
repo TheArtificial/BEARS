@@ -7,7 +7,7 @@ use den_core::tools::environment::EnvironmentOps;
 use crate::{
     config::Config,
     core::tools::{
-        memory_read::memory_status_value, memory_write::source_acp_session_id,
+        memory_read::memory_status_value, memory_write::source_client_session_id,
         session::DenToolInvocationContext,
     },
     errors::{CustomError, DenError},
@@ -123,7 +123,7 @@ pub(crate) async fn fetch_acp_adapter_environment(
     config: &Config,
     context: &DenToolInvocationContext,
 ) -> Result<Option<Value>, CustomError> {
-    let Some(acp_session_id) = source_acp_session_id(context) else {
+    let Some(client_session_id) = source_client_session_id(context) else {
         return Ok(None);
     };
     let http = reqwest::Client::builder()
@@ -138,7 +138,7 @@ pub(crate) async fn fetch_acp_adapter_environment(
         "{}/acp/bears/{}/sessions/{}/runtime",
         config.api_server_url.trim_end_matches('/'),
         urlencoding::encode(&context.bear_slug),
-        urlencoding::encode(&acp_session_id),
+        urlencoding::encode(&client_session_id),
     );
     let mut request = http.get(url);
     if let Some(username) = context
@@ -150,7 +150,7 @@ pub(crate) async fn fetch_acp_adapter_environment(
         request = request.header("X-Auth-Request-Preferred-Username", username);
     }
     let response = request
-        .bearer_auth(acp_session_id.as_str())
+        .bearer_auth(client_session_id.as_str())
         .send()
         .await
         .map_err(|err| {
