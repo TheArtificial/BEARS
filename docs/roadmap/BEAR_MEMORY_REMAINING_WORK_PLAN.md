@@ -128,7 +128,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 | Phase | Work | Status |
 |---|---|---|
-| **5 — Anchors** | Generalize projection anchors to `core/people/…`, `core/missions/…`; salience threshold for anchor vs query-only mentions | ◻ |
+| **5 — Anchors** | Generalize projection anchors to `core/people/…`, `core/missions/…`; salience threshold for anchor vs query-only mentions | 🟡 path helper landed; projection policy open |
 | **6 — Tools + governance** | `entity_browse`, `entity_resolve`; descriptive relation writes from roles; `entity_merge`/`split` + access-rule writes **curate-only**; resolved entities in `session_info` | 🟡 read tools landed; writes/governance open |
 | **7 — Portability** | Entity tables in cognition export; import re-links `canonical_ref`; access rules fail-closed until re-resolved | ◻ |
 

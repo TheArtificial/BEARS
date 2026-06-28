@@ -44,7 +44,7 @@ pub use import::{
     import_memfs_bundle, import_memfs_git_dir, MemfsBranchReport, MemfsImportOptions,
     MemfsImportReport, MemfsImportSource,
 };
-pub use logical_path::{LogicalMemoryPath, MemoryScopeType};
+pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
 pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,
