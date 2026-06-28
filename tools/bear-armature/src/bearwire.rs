@@ -1124,7 +1124,7 @@ mod tests {
             "run_id": "run-123",
             "data": {
                 "reason": "stream_error",
-                "message": "Letta stopped before producing assistant output: max_steps_exceeded"
+                "message": "Runtime stopped before producing assistant output: max_steps_exceeded"
             }
         });
 

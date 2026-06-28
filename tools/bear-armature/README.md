@@ -29,7 +29,7 @@ Session setup requires an absolute local `cwd`. The adapter prefers explicit `pa
 
 ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den/Codepool tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
 
-`session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer Letta/Codepool event history are not reconstructed unless Den exposes faithful historical event data in a future version.
+`session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer upstream runtime event history are not reconstructed unless Den exposes faithful historical event data in a future version.
 
 `session/list` lists persisted/resumable Den ACP sessions only. Newly-created adapter-local sessions are transient until the first prompt causes Den to persist them, and they are not listed after adapter restart.
 

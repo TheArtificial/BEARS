@@ -5064,7 +5064,7 @@ async fn handle_prompt_with_retry(
             session_id,
             turn_token,
             &format!(
-                "BEARS could not complete this turn because Den/Letta returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
+                "BEARS could not complete this turn because Den/runtime returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
             ),
         )
         .await?;
@@ -5209,12 +5209,12 @@ async fn handle_prompt_with_retry(
             let rendered = match recovery_hint.as_deref() {
                 Some("compact_and_retry") => terminal_user_message.clone().unwrap_or_else(|| {
                     format!(
-                        "{message}\n\nAutomatic stale-approval recovery by compaction is disabled because compaction does not resolve unresolved Letta approvals. Retry after any active turn finishes; if the conversation remains wedged, use an operator recovery path that denies pending approvals rather than compacting."
+                        "{message}\n\nAutomatic stale-approval recovery by compaction is disabled because compaction does not resolve unresolved runtime approvals. Retry after any active turn finishes; if the conversation remains wedged, use an operator recovery path that denies pending approvals rather than compacting."
                     )
                 }),
                 Some("check_upstream_logs") => terminal_user_message.clone().unwrap_or_else(|| {
                     format!(
-                        "{message}\n\nBEARS recommends checking Codepool/Letta logs before retrying."
+                        "{message}\n\nBEARS recommends checking upstream runtime logs before retrying."
                     )
                 }),
                 _ => terminal_user_message.clone().unwrap_or(message.clone()),
@@ -5283,14 +5283,14 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "compact",
         aliases: &["collapse"],
-        description: "Ask Den to compact the conversation transcript. Compaction does not repair stale Letta approval state.",
+        description: "Ask Den to compact the conversation transcript. Compaction does not repair stale runtime approval state.",
         command: LocalSlashCommand::Compact,
         den_required: true,
     },
     LocalSlashCommandDescriptor {
         name: "conversation",
         aliases: &[],
-        description: "Show the current ACP session and Letta conversation binding.",
+        description: "Show the current ACP session and runtime conversation binding.",
         command: LocalSlashCommand::Conversation,
         den_required: false,
     },
@@ -6555,7 +6555,7 @@ fn prompt_conversations_overlap(previous: Option<&str>, next: Option<&str>) -> b
         (Some(previous), Some(next)) => previous == next,
         (None, None) => true,
         // If either side lacks a conversation id, be conservative: the Den session binding may
-        // resolve both to the same Letta conversation.
+        // resolve both to the same runtime conversation.
         _ => true,
     }
 }
@@ -7933,7 +7933,7 @@ async fn request_tool_permission(
         .get("approval")
         .and_then(|v| v.get("reason"))
         .and_then(Value::as_str)
-        .unwrap_or("Letta requested approval before running this local ACP tool.");
+        .unwrap_or("Runtime requested approval before running this local ACP tool.");
     eprintln!(
         "bear-armature: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
@@ -10546,7 +10546,7 @@ mod tests {
     #[test]
     fn waiting_for_approval_detection_is_case_insensitive() {
         assert!(looks_like_waiting_for_approval_error(
-            "Letta stopped before producing assistant output: error; upstream is Waiting For Approval"
+            "Runtime stopped before producing assistant output: error; upstream is Waiting For Approval"
         ));
         assert!(looks_like_waiting_for_approval_error(
             "Please Approve Or Deny this stale request"
@@ -10556,14 +10556,14 @@ mod tests {
     #[test]
     fn cancellation_detection_matches_cancelled_and_canceled_errors() {
         assert!(looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: cancelled"
+            "Runtime stopped before producing assistant output: cancelled"
         ));
         assert!(looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: canceled"
+            "Runtime stopped before producing assistant output: canceled"
         ));
         assert!(looks_like_cancellation_error("cancelled"));
         assert!(!looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: max_steps"
+            "Runtime stopped before producing assistant output: max_steps"
         ));
     }
 
@@ -10679,7 +10679,7 @@ mod tests {
         let mut adapter_state = test_adapter_state("session-1", &root);
         let shared_state = test_shared_state();
         let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"Letta stopped before producing assistant output: error","detail":"conversation is waiting for approval"}
+        let frame = br#"data: {"type":"error","message":"Runtime stopped before producing assistant output: error","detail":"conversation is waiting for approval"}
 
 "#;
 
@@ -10716,9 +10716,9 @@ mod tests {
         let mut adapter_state = test_adapter_state("session-1", &root);
         let shared_state = test_shared_state();
         let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"No response from the assistant.","detail":"empty stream","terminal":{"outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}}
+        let frame = br#"data: {"type":"error","message":"No response from the assistant.","detail":"empty stream","terminal":{"outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check upstream runtime logs and retry if appropriate."}}
 
-data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}
+data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check upstream runtime logs and retry if appropriate."}
 
 "#;
 
@@ -10743,7 +10743,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         );
         assert_eq!(
             outcome.terminal_user_message.as_deref(),
-            Some("Check Codepool/Letta logs and retry if appropriate.")
+            Some("Check upstream runtime logs and retry if appropriate.")
         );
     }
 

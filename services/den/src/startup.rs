@@ -89,7 +89,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 /// Verify configured upstream HTTP services respond before accepting traffic.
 ///
 /// The Den-native runtime relies only on the LLM inference substrate
-/// ([`Config::llm_api_url`], via Bifrost); there are no Letta/Codepool sidecars to probe.
+/// ([`Config::llm_api_url`], via Bifrost); there are no upstream runtime sidecars to probe.
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
     let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
     if !config.llm_api_url.trim().is_empty() {
