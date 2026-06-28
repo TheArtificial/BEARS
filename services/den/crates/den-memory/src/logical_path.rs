@@ -26,7 +26,7 @@ impl MemoryScopeType {
     }
 }
 
-/// Stable anchor path projection over SQLite rows (replaces MemFS file tree UX).
+/// Stable anchor path projection over SQLite rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogicalMemoryPath {
     pub scope_type: MemoryScopeType,

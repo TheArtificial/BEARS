@@ -97,8 +97,6 @@ fn first_bear_to_new_bear_form(form: &FirstBearForm) -> NewBearForm {
         description: form.description.clone(),
         system_prompt: String::new(),
         default_model: form.default_model.clone(),
-        letta_agent_type: "letta_v1_agent".to_string(),
-        letta_tool_ids: Vec::new(),
     }
 }
 
@@ -258,8 +256,6 @@ async fn first_bear_post(
     let id: Uuid = insert_new_bear_row_with_context_profile(
         state.sqlx_pool(),
         &new_bear_form,
-        Vec::new(),
-        Some("letta_v1_agent".to_string()),
         default_model_opt.as_deref(),
         context_profile,
     )

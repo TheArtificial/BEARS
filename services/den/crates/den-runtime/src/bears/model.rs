@@ -23,17 +23,10 @@ pub struct Bear {
     pub description: String,
     pub default_model: Option<String>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
-    /// Deprecated legacy provider `agent_type`; ignored by Den-native provisioning.
-    pub letta_agent_type: Option<String>,
-    /// Deprecated legacy provider tool ids; ignored by Den-native provisioning.
-    pub letta_tool_ids: Json<Vec<String>>,
-    /// Optional BearRuntimePlan v1 JSON for codepool (memory git remote, seeds; extensible).
+    /// Optional runtime plan JSON.
     pub runtime_plan: Option<Json<serde_json::Value>>,
     /// Optional profile-aware context composition profile.
     pub context_profile: Option<Json<serde_json::Value>>,
-    /// Optional path to the Bear's bare MemFS repository.
-    #[serde(default)]
-    pub memfs_repo_path: Option<String>,
     /// Coarse canonical config version for profile provisioning/reconciliation.
     #[serde(default = "default_provisioning_version")]
     pub provisioning_version: i32,
@@ -57,8 +50,6 @@ pub struct BearProfileBinding {
     pub bear_id: Uuid,
     pub profile: String,
     pub binding_id: String,
-    /// Deprecated: legacy Letta agent id only; canonical identity is `binding_id`.
-    pub letta_agent_id: Option<String>,
     pub provisioning_status: String,
     pub last_provisioned_version: i32,
     pub last_synced_at: Option<OffsetDateTime>,

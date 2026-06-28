@@ -1,5 +1,4 @@
     use super::*;
-    use sqlx::types::Json;
     use time::OffsetDateTime;
 
     fn test_bear() -> Bear {
@@ -10,11 +9,8 @@
             description: String::new(),
             default_model: Some("openai/gpt-4o".to_string()),
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: Json(Vec::new()),
             runtime_plan: None,
             context_profile: None,
-            memfs_repo_path: None,
             provisioning_version: 1,
             system_prompt: String::new(),
             birthday: None,

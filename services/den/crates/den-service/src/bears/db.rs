@@ -17,10 +17,6 @@ pub struct BearParams<'a> {
     pub system_prompt: &'a str,
     pub default_model: Option<&'a str>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
-    /// Deprecated legacy provider field; active Den-native provisioning ignores it.
-    pub letta_agent_type: Option<&'a str>,
-    /// Deprecated legacy provider field; active Den-native provisioning ignores it.
-    pub letta_tool_ids: Json<Vec<String>>,
     pub context_profile: Option<Json<serde_json::Value>>,
 }
 
@@ -44,8 +40,8 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
-               memfs_repo_path, provisioning_version, system_prompt, birthday, created_at, updated_at
+               runtime_plan, context_profile,
+               provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
         ORDER BY slug
         ",
@@ -59,8 +55,8 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
-               memfs_repo_path, provisioning_version, system_prompt, birthday, created_at, updated_at
+               runtime_plan, context_profile,
+               provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
         WHERE id = $1
         ",
@@ -103,10 +99,8 @@ pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Res
             system_prompt = $4,
             default_model = $5,
             tools_enabled = $6,
-            letta_agent_type = $7,
-            letta_tool_ids = $8,
             updated_at = NOW()
-        WHERE id = $9
+        WHERE id = $7
         ",
     )
     .bind(params.slug)
@@ -115,8 +109,6 @@ pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Res
     .bind(params.system_prompt)
     .bind(params.default_model)
     .bind(params.tools_enabled)
-    .bind(params.letta_agent_type)
-    .bind(params.letta_tool_ids)
     .bind(id)
     .execute(pool)
     .await?;
@@ -140,9 +132,9 @@ pub async fn create_bear_with_context_profile(
         r"
         INSERT INTO bears (
             slug, name, description, system_prompt, default_model, tools_enabled,
-            letta_agent_type, letta_tool_ids, context_profile
+            context_profile
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         ",
     )
@@ -152,8 +144,6 @@ pub async fn create_bear_with_context_profile(
     .bind(params.system_prompt)
     .bind(params.default_model)
     .bind(params.tools_enabled)
-    .bind(params.letta_agent_type)
-    .bind(params.letta_tool_ids)
     .bind(params.context_profile)
     .fetch_one(pool)
     .await?;
@@ -332,8 +322,8 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
-               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
+               b.runtime_plan, b.context_profile,
+               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -356,8 +346,8 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
-               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
+               b.runtime_plan, b.context_profile,
+               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
@@ -422,7 +412,7 @@ pub async fn list_bear_profile_bindings(
 ) -> Result<Vec<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
         r"
-        SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+        SELECT bear_id, profile, binding_id, provisioning_status,
                last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
                created_at, updated_at
         FROM bear_profile_bindings
@@ -450,7 +440,7 @@ pub async fn get_bear_profile_binding(
 ) -> Result<Option<BearProfileBinding>, DenError> {
     sqlx::query_as::<_, BearProfileBinding>(
         r"
-        SELECT bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+        SELECT bear_id, profile, binding_id, provisioning_status,
                last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
                created_at, updated_at
         FROM bear_profile_bindings
@@ -518,13 +508,12 @@ pub async fn mark_bear_profile_binding_ready(
     sqlx::query(
         r"
         INSERT INTO bear_profile_bindings (
-            bear_id, profile, binding_id, letta_agent_id, provisioning_status,
+            bear_id, profile, binding_id, provisioning_status,
             last_provisioned_version, last_synced_at, last_provisioning_error, config_hash, updated_at
         )
-        VALUES ($1, $2, $3, NULL, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())
+        VALUES ($1, $2, $3, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())
         ON CONFLICT (bear_id, profile)
         DO UPDATE SET binding_id = EXCLUDED.binding_id,
-                      letta_agent_id = NULL,
                       provisioning_status = 'ready',
                       last_provisioned_version = EXCLUDED.last_provisioned_version,
                       last_synced_at = NOW(),

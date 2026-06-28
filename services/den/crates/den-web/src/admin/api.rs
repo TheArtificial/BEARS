@@ -7,7 +7,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
 use crate::{
@@ -52,11 +51,6 @@ pub struct CreateBearRequest {
     default_model: Option<String>,
     /// Deprecated legacy payload; ignored by Den-native provisioning.
     tools_enabled: Option<serde_json::Value>,
-    /// Deprecated legacy provider field; accepted for compatibility but ignored.
-    letta_agent_type: Option<String>,
-    /// Deprecated legacy provider field; accepted for compatibility but ignored.
-    #[serde(default)]
-    letta_tool_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,8 +92,6 @@ async fn create_bear(
         }
     }
     let _legacy_tools_enabled = body.tools_enabled;
-    let _legacy_agent_type = body.letta_agent_type;
-    let _legacy_tool_ids = body.letta_tool_ids;
     let id = bears_db::create_bear(
         state.sqlx_pool(),
         BearParams {
@@ -109,8 +101,6 @@ async fn create_bear(
             system_prompt: body.system_prompt.trim(),
             default_model,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: SqlxJson(Vec::new()),
             context_profile: None,
         },
     )

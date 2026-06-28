@@ -79,8 +79,6 @@
                 system_prompt: "System prompt",
                 default_model: None,
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: None,
             },
         )

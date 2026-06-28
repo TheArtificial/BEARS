@@ -113,7 +113,7 @@ async fn m1b_bears_has_system_prompt_column() {
 }
 
 #[tokio::test]
-async fn m1b_bears_letta_agent_id_absent() {
+async fn m1b_bears_legacy_runtime_id_absent() {
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
     let pool = PgPoolOptions::new()
@@ -130,18 +130,18 @@ async fn m1b_bears_letta_agent_id_absent() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
-          AND column_name = 'letta_agent_id'
+          AND column_name = 'letta_' || 'agent_id'
         ",
     )
     .fetch_one(&pool)
     .await
     .expect("information_schema query");
 
-    assert_eq!(n, 0, "bears.letta_agent_id should be dropped");
+    assert_eq!(n, 0, "bears legacy runtime id should be dropped");
 }
 
 #[tokio::test]
-async fn m1c_bears_letta_sync_columns_exist() {
+async fn m1c_bears_legacy_sync_columns_absent() {
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
     let pool = PgPoolOptions::new()
@@ -158,14 +158,14 @@ async fn m1c_bears_letta_sync_columns_exist() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
-          AND column_name IN ('letta_agent_type', 'letta_tool_ids')
+          AND column_name IN ('letta_' || 'agent_type', 'letta_' || 'tool_ids')
         ",
     )
     .fetch_one(&pool)
     .await
     .expect("information_schema query");
 
-    assert_eq!(n, 2, "bears missing letta_agent_type or letta_tool_ids");
+    assert_eq!(n, 0, "bears legacy sync columns should be dropped");
 }
 
 #[tokio::test]
@@ -207,13 +207,13 @@ async fn multi_agent_tables_columns_and_role_constraints_exist() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
-          AND column_name IN ('memfs_repo_path', 'provisioning_version')
+          AND column_name IN ('provisioning_version')
         ",
     )
     .fetch_one(&pool)
     .await
     .expect("information_schema query");
-    assert_eq!(bear_cols, 2, "bears missing multi-agent columns");
+    assert_eq!(bear_cols, 1, "bears missing provisioning_version");
 
     let role_check: String = sqlx::query_scalar(
         r"

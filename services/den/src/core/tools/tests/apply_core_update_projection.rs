@@ -22,10 +22,10 @@ async fn seed_curate_agent(
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
         r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
-        VALUES ($1, 'curate', $2, $2)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
+        VALUES ($1, 'curate', $2)
         ON CONFLICT (bear_id, profile)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
+        DO NOTHING
         ",
     )
     .bind(bear_id)
@@ -48,8 +48,6 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )

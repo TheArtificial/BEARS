@@ -6,8 +6,8 @@ pub fn is_legacy_memory_client_tool_name(name: &str) -> bool {
     let normalized = name.trim().to_ascii_lowercase();
     matches!(
         normalized.as_str(),
-        "memfs" | "memory_tree" | "memory_apply_patch" | "core_memory_append" | "core_memory_replace"
-    ) || normalized.starts_with("memfs_") || normalized.starts_with("den_memfs")
+        "memory_tree" | "memory_apply_patch" | "core_memory_append" | "core_memory_replace"
+    )
 }
 
 pub fn filter_client_tools_for_native_runtime(client_tools: Option<&Value>) -> Option<Value> {

@@ -64,10 +64,10 @@
                     <dt>Runtime</dt><dd><code>{{ role_detail.runtime_family | e }}</code></dd>
                     <dt>Runtime id</dt><dd>{% if role_detail.letta_agent_id %}<code>{{ role_detail.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
                     <dt>Last sync</dt><dd>{% if role_detail.last_synced_at %}{{ role_detail.last_synced_at | e }}{% else %}<em>never</em>{% endif %}</dd>
-                    <dt>Memory view</dt><dd>{% if role_detail.memfs_view_state %}{% if role_detail.memfs_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ role_detail.memfs_view_state | e }}</code>{% endif %}{% else %}<em>not registered</em>{% endif %}</dd>
+                    <dt>Memory view</dt><dd>{% if role_detail.memory_view_state %}{% if role_detail.memory_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ role_detail.memory_view_state | e }}</code>{% endif %}{% else %}<em>not registered</em>{% endif %}</dd>
                 </dl>
                 {% if role_detail.last_provisioning_error %}<p class="form-errors">{{ role_detail.last_provisioning_error | e }}</p>{% endif %}
-                {% if role_detail.memfs_view_diagnostic %}<p class="form-errors">{{ role_detail.memfs_view_diagnostic | e }}</p>{% endif %}
+                {% if role_detail.memory_view_diagnostic %}<p class="form-errors">{{ role_detail.memory_view_diagnostic | e }}</p>{% endif %}
             </div>
         </div>
         <div>

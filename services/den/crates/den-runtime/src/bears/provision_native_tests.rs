@@ -23,8 +23,6 @@ async fn provision_bear_native_creates_den_native_bindings(
             system_prompt: "You are a concise test bear.",
             default_model: Some("gpt-4.1"),
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -42,7 +40,6 @@ async fn provision_bear_native_creates_den_native_bindings(
             "expected den-native binding id, got {}",
             row.binding_id
         );
-        assert!(row.letta_agent_id.as_deref().unwrap_or("").trim().is_empty());
         assert!(row.config_hash.is_some());
     }
 

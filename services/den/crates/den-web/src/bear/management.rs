@@ -874,14 +874,6 @@ async fn new_bear_post(
         validation_errors = e;
     }
 
-    let legacy_tool_ids: Vec<String> = form
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let legacy_agent_type: Option<String> = None;
-
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
 
@@ -898,8 +890,6 @@ async fn new_bear_post(
         let id = insert_new_bear_row(
             state.sqlx_pool(),
             &form,
-            legacy_tool_ids.clone(),
-            legacy_agent_type.clone(),
             default_model_opt.as_deref(),
         )
         .await?;
@@ -1065,8 +1055,6 @@ async fn bear_edit_overview_post(
                 system_prompt: bear.system_prompt.as_str(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -1185,8 +1173,6 @@ async fn bear_edit_prompt_post(
                 system_prompt: form.system_prompt.trim(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -1312,8 +1298,6 @@ async fn bear_edit_configuration_post(
                 system_prompt: bear.system_prompt.as_str(),
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )

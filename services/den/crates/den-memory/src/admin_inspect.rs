@@ -481,15 +481,14 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::store::{
-        append_memory_record, append_relation, create_entity, get_entity,
-        list_records_for_logical_path, list_relations_for_source, EntityTrust, LogicalMemoryPath,
-        ResolutionState,
+    use crate::{
+        append_memory_record, append_relation, create_entity, get_entity, list_records_for_logical_path,
+        list_relations_for_source, EntityTrust, LogicalMemoryPath, ResolutionState,
     };
     use serde_json::json;
 
     fn temp_config() -> Config {
-        let mut config = Config::test_stub();
+        let mut config = Config::load();
         let dir = std::env::temp_dir().join(format!("den-admin-inspect-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp data dir");
         config.bear_sqlite_data_dir = dir.to_string_lossy().into_owned();

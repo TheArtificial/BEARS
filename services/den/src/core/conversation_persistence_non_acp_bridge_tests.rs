@@ -50,8 +50,6 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -197,8 +195,6 @@ async fn non_acp_memory_curate_lifecycle_projection_persists_records_when_conver
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -360,8 +356,6 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -425,8 +419,6 @@ async fn non_acp_memory_curate_enqueue_projection_respects_conversation_gating(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )

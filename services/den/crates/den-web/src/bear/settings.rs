@@ -245,8 +245,6 @@ struct BearBundleIdentity {
     default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tools_enabled: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    letta_agent_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -640,7 +638,6 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
             birthdate: exported_birthdate,
             default_model: bear.default_model.clone(),
             tools_enabled: bear.tools_enabled.as_ref().map(|v| v.0.clone()),
-            letta_agent_type: None,
         },
         prompts: BearBundlePrompts {
             system_prompt: bear.system_prompt.clone(),
@@ -887,8 +884,6 @@ async fn import_bear_bundle(
             system_prompt: &manifest.prompts.system_prompt,
             default_model: manifest.bear.default_model.as_deref(),
             tools_enabled: manifest.bear.tools_enabled.clone().map(sqlx::types::Json),
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(Vec::new()),
             context_profile: manifest
                 .prompts
                 .context_profile
@@ -1743,8 +1738,6 @@ async fn models_post(
             system_prompt: bear.system_prompt.as_str(),
             default_model: default_model.as_deref(),
             tools_enabled: bear.tools_enabled.clone(),
-            letta_agent_type: bear.letta_agent_type.as_deref(),
-            letta_tool_ids: bear.letta_tool_ids.clone(),
             context_profile: bear.context_profile.clone(),
         },
     )

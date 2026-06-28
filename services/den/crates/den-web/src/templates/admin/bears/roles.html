@@ -54,7 +54,7 @@
         {% elif agent.health_status == "error" %}<span class="form-errors">{{ agent.health_label | e }}</span>
         {% else %}<em>{{ agent.health_label | e }}</em>{% endif %}
       </td>
-      <td>{% if agent.memfs_view_state %}<code>{{ agent.memfs_view_state | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{% if agent.memory_view_state %}<code>{{ agent.memory_view_state | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td>{% if agent.last_synced_at %}{{ agent.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
     </tr>
   {% endfor %}

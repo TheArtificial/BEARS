@@ -186,8 +186,6 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -238,8 +236,6 @@ async fn native_conversation_backend_persists_den_conv_rows(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )

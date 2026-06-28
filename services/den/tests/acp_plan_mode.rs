@@ -46,8 +46,6 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
             system_prompt: "",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
             context_profile: None,
         },
     )
@@ -58,18 +56,16 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
 async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
         r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, $4, 'ready', NOW())
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, last_synced_at)
+        VALUES ($1, $2, $3, 'ready', NOW())
         ON CONFLICT (bear_id, profile)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
-                      provisioning_status = 'ready',
+        DO UPDATE SET provisioning_status = 'ready',
                       last_synced_at = NOW(),
                       updated_at = NOW()
         ",
     )
     .bind(bear_id)
     .bind(role.as_str())
-    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await

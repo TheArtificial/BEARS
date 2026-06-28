@@ -165,18 +165,12 @@ impl From<&Bear> for BearPromptEditForm {
 pub struct BearConfigurationEditForm {
     #[validate(length(max = 255))]
     pub default_model: String,
-    #[validate(length(max = 64))]
-    pub letta_agent_type: String,
-    #[serde(default)]
-    pub letta_tool_ids: Vec<String>,
 }
 
 impl From<&Bear> for BearConfigurationEditForm {
     fn from(bear: &Bear) -> Self {
         Self {
             default_model: bear.default_model.clone().unwrap_or_default(),
-            letta_agent_type: String::new(),
-            letta_tool_ids: Vec::new(),
         }
     }
 }
@@ -217,12 +211,6 @@ pub struct NewBearForm {
     pub system_prompt: String,
     #[validate(length(max = 255))]
     pub default_model: String,
-    /// Deprecated legacy provider `agent_type`; ignored by Den-native provisioning.
-    #[validate(length(max = 64))]
-    pub letta_agent_type: String,
-    /// Deprecated legacy provider tool ids; ignored by Den-native provisioning.
-    #[serde(default)]
-    pub letta_tool_ids: Vec<String>,
 }
 
 impl From<&Bear> for NewBearForm {
@@ -233,8 +221,6 @@ impl From<&Bear> for NewBearForm {
             description: bear.description.clone(),
             system_prompt: bear.system_prompt.clone(),
             default_model: bear.default_model.clone().unwrap_or_default(),
-            letta_agent_type: String::new(),
-            letta_tool_ids: Vec::new(),
         }
     }
 }
@@ -609,11 +595,8 @@ pub fn composed_system_prompt_for_profile_json(
         description: String::new(),
         default_model: None,
         tools_enabled: None,
-        letta_agent_type: None,
-        letta_tool_ids: Json(Vec::new()),
         runtime_plan: None,
         context_profile: Some(context_profile.clone()),
-        memfs_repo_path: None,
         provisioning_version: 1,
         system_prompt: String::new(),
         birthday: None,
@@ -643,8 +626,6 @@ pub fn build_context_profile_json_for_template(
 pub async fn insert_new_bear_row(
     pool: &sqlx::PgPool,
     form: &NewBearForm,
-    _legacy_tool_ids: Vec<String>,
-    _legacy_agent_type: Option<String>,
     default_model_opt: Option<&str>,
 ) -> Result<Uuid, CustomError> {
     bears_db::create_bear(
@@ -656,8 +637,6 @@ pub async fn insert_new_bear_row(
             system_prompt: form.system_prompt.trim(),
             default_model: default_model_opt,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: None,
-            letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
     )
@@ -745,8 +724,6 @@ pub async fn provision_bifrost_virtual_key_for_bear(
 pub async fn insert_new_bear_row_with_context_profile(
     pool: &sqlx::PgPool,
     form: &NewBearForm,
-    _legacy_tool_ids: Vec<String>,
-    _legacy_agent_type: Option<String>,
     default_model_opt: Option<&str>,
     context_profile: Json<serde_json::Value>,
 ) -> Result<Uuid, CustomError> {
@@ -761,8 +738,6 @@ pub async fn insert_new_bear_row_with_context_profile(
             system_prompt: system_prompt.trim(),
             default_model: default_model_opt,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: None,
-            letta_tool_ids: Json(Vec::new()),
             context_profile: Some(context_profile),
         },
     )

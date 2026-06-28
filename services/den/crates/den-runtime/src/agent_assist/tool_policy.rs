@@ -1,10 +1,4 @@
-//! Tool selection policy for modern BEARS agents: drop legacy block-mutation tools in favor of
-//! memfs / current Letta memory tools.
-//!
-//! **Letta API (Create/PATCH agent):** `include_base_tools: false` avoids attaching core_memory-style
-//! tools automatically; we still filter explicit `tool_ids` by name using `GET /v1/tools/` catalog.
-//! **Git-backed memory:** `git_enabled: true` on create/patch matches Context Repository / memfs
-//! server-side flags (see Letta API agent create docs).
+//! Tool selection policy for modern BEARS agents: drop legacy block-mutation tools.
 
 use super::ToolOption;
 
@@ -27,7 +21,7 @@ pub fn is_legacy_memory_tool_name(name: &str) -> bool {
         .any(|legacy| norm_tool_name(legacy) == n)
 }
 
-/// Build id → tool name map from the Letta catalog (latest id wins if duplicated).
+/// Build id → tool name map from a provider catalog (latest id wins if duplicated).
 fn id_to_name_map(catalog: &[ToolOption]) -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
     for t in catalog {

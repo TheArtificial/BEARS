@@ -17,7 +17,7 @@ pub use den_http::{api_utils, email, user};
 // `crate::core::web_policy`, `crate::core::docket`, and `crate::core::work_plans`.
 // Canonical homes are den-core (tools), den-http (web_policy), and den-docket
 // (docket / work plans). `tools` re-exports den-core's tool modules plus the thin
-// invocation/memfs glue the edge needs (see `tools::mod`).
+// invocation glue the edge needs (see `tools::mod`).
 pub mod tools;
 pub use den_http::web_policy;
 pub use den_docket as docket;

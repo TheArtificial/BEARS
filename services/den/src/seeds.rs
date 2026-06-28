@@ -158,8 +158,6 @@ async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid
             system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
             default_model: None,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: None,
-            letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
     )

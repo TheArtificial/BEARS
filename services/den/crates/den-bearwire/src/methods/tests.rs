@@ -98,8 +98,6 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
             context_profile: None,
         },
     )

@@ -19,8 +19,6 @@ async fn duplicate_source_event_id_returns_existing_sequence(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )

@@ -171,9 +171,9 @@ pub(crate) struct BearProfileBindingHealthRow {
     legacy_provider_type: Option<String>,
     legacy_provider_tool_count: Option<usize>,
     legacy_provider_memory_block_count: Option<usize>,
-    memfs_view_state: Option<String>,
-    memfs_view_quarantined: bool,
-    memfs_view_diagnostic: Option<String>,
+    memory_view_state: Option<String>,
+    memory_view_quarantined: bool,
+    memory_view_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,12 +206,7 @@ fn profile_surface_label(role: BearProfile) -> String {
 
 impl BearProfileBindingHealthRow {
     fn native(agent: &BearProfileBinding, role: BearProfile) -> Self {
-        let binding = agent
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
+        let binding = Some(agent.binding_id.trim().to_string()).filter(|s| !s.is_empty());
         let (health_status, health_label, health_detail) = match agent.provisioning_status.as_str()
         {
             "ready" => ("ok", "Ready", None),
@@ -241,9 +236,9 @@ impl BearProfileBindingHealthRow {
             legacy_provider_type: None,
             legacy_provider_tool_count: None,
             legacy_provider_memory_block_count: None,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
+            memory_view_state: None,
+            memory_view_quarantined: false,
+            memory_view_diagnostic: None,
         }
     }
 }
@@ -641,8 +636,6 @@ pub async fn new_action(
                 system_prompt: form.system_prompt.trim(),
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: None,
             },
         )
@@ -802,8 +795,6 @@ async fn edit_action(
                 system_prompt,
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -931,8 +922,6 @@ async fn edit_prompt_action(
                 system_prompt: system_prompt.trim(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: context_profile.clone(),
             },
         )
@@ -1164,4 +1153,3 @@ async fn provision_missing_profiles_action(
 
 #[cfg(test)]
 mod tests;
-
