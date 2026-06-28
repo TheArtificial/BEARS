@@ -64,12 +64,17 @@ pub async fn session_info(
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, context, role).await;
+    let entities = env
+        .session_entities(context, role)
+        .await
+        .unwrap_or_else(|err| json!({ "status": "degraded", "error": err.to_string() }));
     Ok(session_info_payload(
         context,
         role,
         current_user.as_ref(),
         member_count,
         &memory_status,
+        &entities,
     ))
 }
 
@@ -82,6 +87,10 @@ pub async fn bear_environment(
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
     let current_user = dir.current_user(context.user_id).await.ok();
     let memory_status = memory_status_for_environment(env, context, role).await;
+    let entities = env
+        .session_entities(context, role)
+        .await
+        .unwrap_or_else(|err| json!({ "status": "degraded", "error": err.to_string() }));
     let adapter_runtime = match env.fetch_acp_adapter_environment(context).await {
         Ok(Some(value)) => value,
         Ok(None) => json!({
@@ -104,6 +113,7 @@ pub async fn bear_environment(
         current_user.as_ref(),
         member_count,
         &memory_status,
+        &entities,
         &adapter_runtime,
     ))
 }

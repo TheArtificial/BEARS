@@ -29,6 +29,12 @@ pub trait EnvironmentOps: Send + Sync {
         role: BearProfile,
     ) -> Result<Value, DenError>;
 
+    async fn session_entities(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError>;
+
     /// Optional ACP adapter-runtime enrichment for the current session.
     async fn fetch_acp_adapter_environment(
         &self,

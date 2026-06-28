@@ -475,6 +475,14 @@ impl EnvironmentOps for DenToolContext<'_> {
         self.environment().memory_status_value(context, role).await
     }
 
+    async fn session_entities(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError> {
+        self.environment().session_entities(context, role).await
+    }
+
     async fn fetch_acp_adapter_environment(
         &self,
         context: &DenToolInvocationContext,

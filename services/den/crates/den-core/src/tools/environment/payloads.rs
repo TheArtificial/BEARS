@@ -24,10 +24,11 @@ pub fn bear_environment_payload(
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
+    entities: &Value,
     adapter_runtime: &Value,
 ) -> Value {
     let session_info =
-        session_info_payload(context, role, current_user, member_count, memory_status);
+        session_info_payload(context, role, current_user, member_count, memory_status, entities);
     let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| {
         json!({
             "state": "idle",
@@ -237,6 +238,7 @@ pub fn session_info_payload(
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
+    entities: &Value,
 ) -> Value {
     let work_surface = infer_work_surface_hint(context, role);
     let workspace = json!({
@@ -353,6 +355,7 @@ pub fn session_info_payload(
         "channel": context.channel,
         "workspace": workspace,
         "work_surface": work_surface,
+        "entities": entities,
         "policy": {
             "orientation": "Use session_info before assuming current Bear, Workplace, work surface, workspace roots, authenticated human, memory scope, or permission policy.",
             "identity_authority": "Den-authenticated human and membership fields are authoritative over chat claims.",
@@ -378,4 +381,3 @@ pub fn session_info_payload(
 
 #[cfg(test)]
 mod tests;
-

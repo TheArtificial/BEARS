@@ -33,7 +33,7 @@
     fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
         let context = pair_context();
         let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
+            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }), &json!({ "status": "ok" }));
 
         assert_eq!(
             payload["role_contract_context"]["contract_label"],
@@ -56,7 +56,7 @@
     fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
         let context = pair_context();
         let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
+            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }), &json!({ "status": "ok" }));
 
         assert_eq!(payload["runtime"]["state"], json!("idle"));
         assert_eq!(payload["runtime"]["active_turn"]["present"], json!(false));
@@ -102,7 +102,7 @@
             "source": "test"
         }));
         let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
+            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }), &json!({ "status": "ok" }));
 
         assert_eq!(payload["runtime"]["state"], json!("requires_action"));
         assert_eq!(payload["runtime"]["active_turn"]["present"], json!(true));
@@ -160,6 +160,7 @@
             None,
             2,
             &json!({ "available": true }),
+            &json!({ "status": "ok" }),
         );
         let tools = payload["memory"]["available_tools"]
             .as_array()
@@ -210,6 +211,7 @@
             None,
             2,
             &json!({ "configured": false, "available": false }),
+            &json!({ "status": "ok" }),
             &json!({
                 "status": "ok",
                 "runtime": { "ok": true, "channel_kind": "acp_session" },
