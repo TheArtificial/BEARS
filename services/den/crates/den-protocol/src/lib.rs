@@ -310,7 +310,7 @@ pub trait RoleProfileRegistry {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait AcpConversationRuntime {
+pub trait SessionConversationRuntime {
     async fn ensure_session_conversation(
         &self,
         request: EnsureConversationRequest,
@@ -323,7 +323,10 @@ pub trait AcpConversationRuntime {
     ) -> Result<RuntimeHistoryPage, DenError>;
 }
 
-/// ACP/native conversation materialization backend (create, verify, load_history).
+#[deprecated(note = "use SessionConversationRuntime")]
+pub use SessionConversationRuntime as AcpConversationRuntime;
+
+/// Runtime conversation materialization backend (create, verify, load_history).
 #[allow(async_fn_in_trait)]
 pub trait RuntimeConversationBackend {
     async fn create_conversation(

@@ -6,11 +6,11 @@ edition = "2021"
 # den-acp: the ACP (Agent Client Protocol) HTTP edge — the native ACP protocol
 # surface (`acp`), the residual session/token/runtime protocol modules under
 # `core::acp`, and `/internal/den-tools/invoke`. The shared `DenState` lives in
-# den-runtime (ADR-0043: state is protocol-neutral); `service` re-exports it for
-# path compatibility. It sits below den-api (which mounts the acp + internal
-# routers) and above den-oauth (bearer auth), den-http (errors/identity),
-# den-runtime (tool/runtime execution + DenState), den-docket (work plans), and
-# den-core.
+# den-service (ADR-0043: state is protocol-neutral); `service` re-exports it for
+# path compatibility. It is a peer HTTP edge mounted by the binary composition
+# root and sits above den-oauth (bearer auth), den-http (errors/identity),
+# den-service (shared state/services), den-runtime (tool/runtime execution),
+# den-docket (work plans), and den-core.
 
 [lints]
 workspace = true

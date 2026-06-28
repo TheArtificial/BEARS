@@ -8,9 +8,9 @@ edition = "2021"
 # OAuth2 authorization server, and the OpenAPI docs. Peer HTTP edges (e.g. the ACP
 # edge in den-acp) are injected by the binary composition root as peer routers, so
 # this crate has no dependency on any sibling edge (ADR-0043: edges are peers). It
-# shares the protocol-neutral `den_runtime::DenState` and sits above den-http
-# (identity/error foundation), den-oauth, den-runtime (tool/runtime execution +
-# DenState), den-docket (work plans), and den-core.
+# shares the protocol-neutral `den_service::DenState` and sits above den-http
+# (identity/error foundation), den-oauth, den-service (shared state/services),
+# den-runtime (tool/runtime execution), den-docket (work plans), and den-core.
 
 [lints]
 workspace = true

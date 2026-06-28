@@ -159,7 +159,7 @@ All staged steps landed behind the golden-trace net. Mapping of plan → result:
 | 5a. `acp_events` → `gateway_events` / `AcpGatewayEvent` → `GatewayEvent` | de-Letta-named; canonical model kept in core | `e753ecb2` |
 | 5b-A. `acp_tools` → `client_tools` | neutral in-place rename (kept core: it is core tool vocabulary, not just advertisement) | `38cbfa97` |
 | 5b-B. Descriptor split | ACP wire methods (`adapter_method`/`client_method`) + descriptor advertisement moved to `den-acp::acp::client_tool_advertisement` (`AcpWire` table); core descriptor + `ToolPolicy::to_json` no longer carry wire methods | `79abe689`, `211a6095` |
-| 6. `ApiState` → `DenState` | moved to `den-runtime`; state inversion fixed | `70c5344a` |
+| 6. `ApiState` → `DenState` | moved to `den-service`; state inversion fixed | `70c5344a` |
 | 6-follow-on. Composition root | `create_api_app` takes injected peer routers; `den-api` no longer depends on `den-acp` | `39ad7a73` |
 | 7. Shim sweep + residual doc | this section | — |
 

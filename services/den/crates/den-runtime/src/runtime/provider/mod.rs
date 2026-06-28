@@ -1,6 +1,6 @@
 pub use den_protocol::{
     acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
-    runtime_error_is_no_active_runs_cancel, AcpConversationRuntime, CancelTurnRequest,
+    runtime_error_is_no_active_runs_cancel, CancelTurnRequest,
     CancelTurnResult, ContinueTurnRequest, ContinueTurnResult, EnsureConversationRequest,
     EnsureConversationResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
     RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeByteStream,
@@ -8,7 +8,7 @@ pub use den_protocol::{
     RuntimeHealthCheck, RuntimeHistoryPage, RuntimeHistoryRecord, RuntimeSemanticEvent,
     RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeStreamEvent,
     RuntimeToolResultStatus, RuntimeTurnRef, StartTurnRequest, StartTurnResult,
-    ToolActuatorRegistry,
+    SessionConversationRuntime, ToolActuatorRegistry,
 };
 
 #[cfg(test)]

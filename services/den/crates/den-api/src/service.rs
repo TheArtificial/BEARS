@@ -29,7 +29,7 @@ use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
 
 use std::sync::Arc;
 
-// `DenState` lives in `den-runtime` (below every HTTP edge) per ADR-0043, so the
+// `DenState` lives in `den-service` (below every HTTP edge) per ADR-0043, so the
 // JSON/REST edge no longer depends on the ACP edge for shared state. Re-exported
 // so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
 pub use den_service::DenState;
@@ -95,7 +95,7 @@ pub async fn create_api_app(
     let web_server_url = config.web_server_url.clone();
     let api_server_url = config.api_server_url.clone();
 
-    // Create shared application state (DenState lives in den-runtime, below every edge).
+    // Create shared application state (DenState lives in den-service, below every edge).
     let api_state = DenState::new(
         sqlx_pool.clone(),
         config.clone(),
