@@ -1,6 +1,6 @@
 # Den — Coolify deployment guide
 
-**Stack context:** Den is the BEARS **control plane** (Rust / Axum): provisioning, **users↔bears** membership, routing, and related HTTP surfaces. It sits alongside **Letta**, **Bifrost**, and optional **Outline** (Cabinet) per [DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md) and [PLAN.md](../docs/planning/PLAN.md). For architecture, see [DEN_ARCHITECTURE.md](../docs/architecture/DEN_ARCHITECTURE.md).
+**Stack context:** Den is the BEARS **control plane and native runtime** (Rust / Axum): provisioning, users↔bears membership, web/API surfaces, BearWire/ACP sessions, per-Bear SQLite memory, and Den-native agent turns through Bifrost. It sits alongside **Bifrost**, **Postgres**, optional **Garage** artifacts, and optional **Outline** (Cabinet). For architecture, see [`docs/architecture/den-native-runtime.md`](../../docs/architecture/den-native-runtime.md).
 
 ## Overview
 
@@ -13,7 +13,7 @@
 - Coolify v4+
 - A **PostgreSQL** instance (Coolify managed database, external managed Postgres, or another service on a shared Docker network).
 - **Git** access to this monorepo if you use the **Dockerfile** build pack (recommended for GitOps).
-- **Letta** (and **Bifrost**) when you enable bear provisioning and chat proxying — set `LETTA_BASE_URL` (and `LETTA_API_KEY` when Letta enforces auth). Cross-service hostnames follow your Coolify stack naming (for example the internal hostname shown on the Letta resource).
+- **Bifrost** reachable from Den for model calls (`LLM_API_URL`, defaulting to the compose service URL in the root stack).
 
 ---
 
@@ -77,7 +77,6 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
 | `PORT` | Web listen port inside the container (default **3000**). |
 | `API_PORT` | API listen port when `RUN_API=true` (default **3001**). |
-| `AGENT_RUNTIME` | `native` (in-process loop + per-Bear SQLite) or `letta` (legacy). Root compose defaults to **`native`**. |
 | `BEAR_SQLITE_DATA_DIR` | **Required for native runtime persistence.** Absolute path inside the container where Den stores per-Bear SQLite files (default **`/var/lib/den/bear-sqlite`**). Mount a **persistent volume** at this path so Bear memory survives image upgrades and container recreation. Den does **not** run backups for this store — use volume snapshots or the optional `bears-den-sqlite-data-backup` sidecar in root [`docker-compose.yaml`](../../docker-compose.yaml) (`volume-backup` profile). |
 
 Strongly recommended for production:
@@ -94,12 +93,9 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bears-letta:8283`** when unset (override for local dev; see `services/den/.env.example`). |
-| `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
-| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bears-codepool:3030`** when unset. **Codepool** harness (repository root `services/codepool/`). |
-| `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
-| `ACP_GATEWAY_ENABLED` | Enables the API-only ACP gateway on `/acp/*`; requires `RUN_API=true` and `LETTA_BASE_URL`. ACP routes to the Bear's API-direct `pair` role, not Codepool. Root BEARS Compose defaults this to `true`. |
-| `LETTA_MEMFS_SERVICE_URL` | Optional; same **MemFS Manager** base URL as Letta (no trailing slash), e.g. **`http://bears-memfs-manager:8285`**. When set, **bear details** shows **Private memory (git)** — latest commit on the agent’s context repo. **Production** images do not default this; root [`docker-compose.yaml`](../../docker-compose.yaml) sets it for `bears-den` when you use the full stack. |
+| `LLM_API_URL` | Internal Bifrost/OpenAI-compatible base URL. Root compose uses `http://bears-bifrost:8080/v1`. |
+| `BIFROST_BASE_URL` | Optional Bifrost governance/metadata URL when using Den-managed model selection or virtual keys. |
+| `ACP_GATEWAY_ENABLED` | Enables the API-only ACP compatibility gateway on `/acp/*`; requires `RUN_API=true`. BearWire is the preferred armature wire for new integrations. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 

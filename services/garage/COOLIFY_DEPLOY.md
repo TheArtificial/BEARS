@@ -1,10 +1,10 @@
 # Garage — Coolify deployment guide
 
-**Stack order:** Deploy **before Den** (Den needs S3 credentials). Independent of Bifrost and Letta.
+**Stack order:** Deploy **before Den** when Den will use Garage for artifacts. Independent of Bifrost.
 
 ## Overview
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. **Den** uses it for **artifacts** (agent outputs, user uploads, routine files — **not** stored in Letta) and, in a **separate bucket**, **Cabinet / Outline** attachments. See [artifacts-garage.md](../../docs/architecture/adr/artifacts-garage.md).
+[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. **Den** uses it for artifacts (agent outputs, user uploads, routine files) and, in a separate bucket, Cabinet / Outline attachments. See [artifacts-garage.md](../../docs/architecture/adr/artifacts-garage.md).
 
 Garage is lightweight (≈1 GB RAM), includes built-in deduplication and compression, and is designed for small-to-medium self-hosted deployments.
 

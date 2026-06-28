@@ -2,7 +2,7 @@
 
 ## Devcontainer Startup
 
-The devcontainer runs `/workspace/scripts/devcontainer-start.sh` on startup. It builds local Bifrost, Den, and Codepool images, starts bundled Postgres services, applies the Den `smoke` seed profile, then attempts to start the rest of the BEARS stack with local source images.
+The devcontainer runs `/workspace/scripts/devcontainer-start.sh` on startup. It builds local Bifrost and Den images, starts bundled Postgres services, applies the Den `smoke` seed profile, then attempts to start the BEARS stack with local source images.
 
 Startup is intentionally non-fatal: if compose startup or seeding fails, the devcontainer still opens. Check:
 
@@ -28,5 +28,4 @@ Build local source images, start/recreate the stack, seed, and run smoke tests. 
 ```
 
 Live bind-mount/hot-reload development is intentionally a separate future mode; see `docs/roadmap/LIVE_DEV_STACK_PLAN.md`.
-
 

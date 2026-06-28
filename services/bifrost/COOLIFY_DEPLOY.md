@@ -1,10 +1,10 @@
 # Bifrost — Coolify deployment guide
 
-**Stack order:** This is **step 1** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Deploy **before** Letta.
+**Stack order:** Deploy before Den when Den will use this Bifrost instance for model calls.
 
 ## Overview
 
-[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. **Letta** calls Bifrost using `LLM_API_URL` (see `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`).
+[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. Den calls Bifrost using `LLM_API_URL`.
 
 This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is baked into the configured Bifrost image and placed at `/app/data/config.json` at startup. The file sets `config_store.enabled: false`, so Bifrost treats `config.json` as the source of truth instead of reconciling through its SQLite/UI-backed config database. This prevents stale DB-backed provider/key rows from shadowing the checked-in provider configuration.
 
@@ -75,9 +75,9 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 
 **Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:8080`** (the **service name** in `[docker-compose.yaml](docker-compose.yaml)`).
 
-### 8. Connecting Letta across stacks (if needed)
+### 8. Connecting Den across stacks
 
-If Letta is a **separate** Coolify resource, it must share a **Docker network** with Bifrost (Coolify “**Connect to Predefined Network**” / shared network—see [Coolify compose networking](https://coolify.io/docs/knowledge-base/docker/compose)). If both services live in the **same** compose stack, they already share a network.
+If Den is a **separate** Coolify resource, it must share a **Docker network** with Bifrost (Coolify “Connect to Predefined Network” / shared network; see [Coolify compose networking](https://coolify.io/docs/knowledge-base/docker/compose)). If both services live in the same compose stack, they already share a network.
 
 ---
 
@@ -167,9 +167,9 @@ curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 
-## Letta (next service)
+## Den (next service)
 
-Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you renamed the compose service). Keep `**OPENAI_API_KEY**` on Letta for **embeddings**. Details: `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`.
+Set `LLM_API_URL=http://bears-bifrost:8080/v1` on Den (adjust host if you renamed the compose service).
 
 ## Observability
 
@@ -186,7 +186,7 @@ Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you 
 | Logs: `read /app/data/config.json: is a directory` | Host path for the bind mount was missing, so Docker created a **directory** named `config.json`. Remove that bad path on the server, ensure the real file exists in the checkout, and match **Base Directory** to the compose path (see above). Repo compose sets **`create_host_path: false`** so this fails fast instead of creating a directory. |
 | Container exits on start                                  | **Logs** — invalid JSON, missing `env.`* variables in Coolify                                                                                |
 | **`bears-bifrost` unhealthy** (health check never passes) | **`GET /health`** returns **503** when config/log/vector store pings fail — set **`disable_db_pings_in_health`** in `client` (see repo `config.json`); ensure **`OPENAI_API_KEY`** is set if providers use `env.*`; allow a long **`start_period`** on ARM |
-| Letta cannot resolve `bears-bifrost`                     | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
+| Den cannot resolve `bears-bifrost`                     | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
 
 
 ## Reference
