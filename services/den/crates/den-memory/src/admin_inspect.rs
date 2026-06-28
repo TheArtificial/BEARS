@@ -160,7 +160,7 @@ pub async fn get_memory_record_by_id(
     let row = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at
+               logical_path, work_surface_ref, metadata_json, created_at, salience
         FROM memory_records
         WHERE bear_id = ? AND memory_id = ?
         ",
@@ -197,6 +197,7 @@ pub async fn get_memory_record_by_id(
         work_surface_ref: row.try_get("work_surface_ref").ok(),
         metadata_json,
         created_at: row.try_get("created_at").map_err(|e| DenError::System(e.to_string()))?,
+        salience: row.try_get("salience").unwrap_or_else(|_| "normal".to_string()),
     }))
 }
 
@@ -396,7 +397,7 @@ pub async fn list_recent_memory_records(
     let rows = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at
+               logical_path, work_surface_ref, metadata_json, created_at, salience
         FROM memory_records
         WHERE bear_id = ?
         ORDER BY sequence_no DESC
@@ -430,7 +431,7 @@ pub async fn search_memory_records(
     let rows = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at
+               logical_path, work_surface_ref, metadata_json, created_at, salience
         FROM memory_records
         WHERE bear_id = ? AND content_text LIKE ? ESCAPE '\'
         ORDER BY sequence_no DESC
@@ -473,6 +474,7 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
         work_surface_ref: row.try_get("work_surface_ref").ok(),
         metadata_json,
         created_at: row.try_get("created_at")?,
+        salience: row.try_get("salience").unwrap_or_else(|_| "normal".to_string()),
     })
 }
 

@@ -121,6 +121,13 @@ fn bifrost_auth_not_enabled_error(err: &DenError) -> bool {
     bifrost_auth_not_enabled_response(&err.to_string())
 }
 
+fn bifrost_virtual_key_quota_transient_error(err: &DenError) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("virtual_key_not_found")
+        || text.contains("virtual key not found")
+        || text.contains("authentication is not enabled")
+}
+
 impl BifrostGovernanceClient {
     #[must_use]
     pub fn new(config: &Config) -> Self {
@@ -239,7 +246,7 @@ impl BifrostGovernanceClient {
         }))
     }
 
-    async fn virtual_key_quota_with_mode(
+    async fn virtual_key_quota_with_mode_once(
         &self,
         value: &str,
         mode: BifrostVirtualKeyAuthMode,
@@ -287,6 +294,44 @@ impl BifrostGovernanceClient {
             "Bifrost virtual key validation HTTP {status} using {}: {text}",
             mode.as_str()
         )))
+    }
+
+    async fn virtual_key_quota_with_mode(
+        &self,
+        value: &str,
+        mode: BifrostVirtualKeyAuthMode,
+    ) -> Result<BifrostVirtualKeyQuota, DenError> {
+        let mut last_err = None;
+        for attempt in 1..=4 {
+            match self.virtual_key_quota_with_mode_once(value, mode).await {
+                Ok(quota) => {
+                    if attempt > 1 {
+                        tracing::warn!(
+                            attempt,
+                            auth_mode = mode.as_str(),
+                            management_url = %self.management_url,
+                            "Bifrost virtual key quota validation succeeded after transient failure"
+                        );
+                    }
+                    return Ok(quota);
+                }
+                Err(err) if bifrost_virtual_key_quota_transient_error(&err) && attempt < 4 => {
+                    tracing::warn!(
+                        attempt,
+                        auth_mode = mode.as_str(),
+                        management_url = %self.management_url,
+                        error = %err,
+                        "Bifrost virtual key quota validation reported transient missing key/auth state; retrying"
+                    );
+                    last_err = Some(err);
+                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            DenError::System("Bifrost virtual key quota validation failed after retries".to_string())
+        }))
     }
 
     pub async fn validate_virtual_key_value(

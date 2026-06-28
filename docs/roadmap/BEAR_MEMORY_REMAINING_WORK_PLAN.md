@@ -13,7 +13,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 | Track | Landed (high level) | Next unblocker | Canonical detail plan |
 |---|---|---|---|
 | **Canonical store + tools** | Per-Bear SQLite, logical paths, `pair`/`chat`/`curate` tools, admin + member memory UI | `work`/`watch` tool exposure | [MEMORY_TOOLS_IMPLEMENTATION_PLAN.md](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
-| **MemFS → SQLite migration** | `den import-memfs`, git-dir + bundle, history/supersession import, fixture tests, bear-admin Letta bundle upload UI | Production validation runbook, rollback drill | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
+| **MemFS → SQLite import tooling** | `den import-memfs`, git-dir + bundle, history/supersession import, fixture tests, bear-admin Letta bundle upload UI | Optional archived-bundle use only; no production migration required | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Derived recall index** | Qdrant optional stack, indexer worker, turn-start recall, hybrid `memory_search` (vector + keyword + graph + temporal), `den reindex` | Cabinet leg (blocked); embedding-standard migration | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) |
 | **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg | Entity anchors, tools, session identity → entities | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
 | **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close) | Model-assisted pair reflection; `archive_harvest`; consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
@@ -51,6 +51,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 - Idempotent re-import (commit+path metadata); branch→scope mapping (`talk` → `chat` profile); supersession chain when `--import-history`.
 - Fixture tests in `den-memory/src/import.rs`.
 - **Bear-admin UI:** multipart Letta/MemFS bundle upload (`POST /bear/{slug}/memory/import-letta`); disabled when bear already has memory (guard commit `e0eff97e`).
+- This is retained for archived/ad hoc bundles only. There are no production Letta-runtime Bears to migrate.
 
 ### Derived recall index (ADR-0038)
 
@@ -76,32 +77,20 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 
 ## Remaining work (priority order)
 
-### 1. Migration & operator readiness — **do first for legacy Bears**
+### 1. ADR-0041 canonical schema deltas — **unblocks harvest + consolidation**
 
-Goal: safely move production Bears off MemFS/Letta-era storage onto SQLite + derived recall.
-
-| Item | Status | Owner plan |
-|---|---|---|
-| Exercise `den import-memfs` on real bundles (dry-run → import → validate → `den reindex`) | ◻ | [MEMFS_TO_SQLITE_ETL](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) Phase 4–5 |
-| Document rollback (pre-import SQLite snapshot + archived bundle) | ◻ | same + [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) |
-| Letta bundle upload UI: operator docs, error surfaces, post-import reindex prompt | 🟡 partial | MEMFS ETL Phase 3 |
-| Entity import on package migration (separate from MemFS file import) | ◻ | [BEAR_ENTITY_LAYER](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phase 7 |
-| Update `MEMFS_TO_SQLITE_ETL` plan status (importer landed; validation/rollback open) | ◻ | doc hygiene |
-
-**Exit:** one staging Bear imported end-to-end with signed operator checklist; recall verified when `QDRANT_URL` set.
+Legacy MemFS/Letta migration readiness is retired: there are no production Letta-runtime Bears to migrate. `den import-memfs` remains optional tooling for archived bundles, not a roadmap blocker.
 
 ---
-
-### 2. ADR-0041 canonical schema deltas — **unblocks harvest + consolidation**
 
 Several ADR-0041 fields are still missing or not wired on the **write path**:
 
 | Delta | Status | Notes |
 |---|---|---|
 | `valid_from` / `invalid_at` on `memory_records` | ✅ landed | Recall temporal leg uses them |
-| `salience` on **`memory_records`** | ◻ | Exists on `memory_observations` only today |
-| `memory_harvest_marks` table | ◻ | Idempotent harvest provenance |
-| **`supersedes_memory_id` writes** in curate/consolidation | ◻ | Import writes chain with `--import-history`; normal append path does not |
+| `salience` on **`memory_records`** | ✅ landed | Append path defaults to `normal`; options path accepts `low|normal|high|critical` |
+| `memory_harvest_marks` table | ✅ landed | Idempotent source provenance helpers in `den-memory` |
+| **`supersedes_memory_id` writes** in curate/consolidation | 🟡 partial | Store append options can write supersession; curate/consolidation policy still open |
 | `invalid_at` on supersession | ◻ | Forward-looking; set when consolidating contradictions |
 | Freshness trend (derived `stable|strengthening|weakening|stale`) | ◻ | Derived signal for re-harvest triggers; not stored canonically |
 
@@ -111,7 +100,7 @@ Several ADR-0041 fields are still missing or not wired on the **write path**:
 
 ---
 
-### 3. Memory automation — **make pair learning reach `work` safely**
+### 2. Memory automation — **make pair learning reach `work` safely**
 
 Target pipeline ([MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md)):
 
@@ -135,7 +124,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 ---
 
-### 4. Entity layer — **Phases 5–7**
+### 3. Entity layer — **Phases 5–7**
 
 | Phase | Work | Status |
 |---|---|---|
@@ -153,7 +142,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 ---
 
-### 5. Derived recall — **follow-ups & deferred legs**
+### 4. Derived recall — **follow-ups & deferred legs**
 
 | Item | Status | Blocker |
 |---|---|---|
@@ -169,23 +158,21 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 ---
 
-### 6. Memory tools & profiles
+### 5. Memory tools & profiles
 
 | Item | Status |
 |---|---|
-| Grant **`work`** / **`watch`** memory read (and scoped write?) per policy | ◻ |
+| Grant **`work`** / **`watch`** memory read (and scoped write?) per policy | 🟡 read exposed; write remains policy-gated |
 | Align [MEMORY_TOOLS](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) status table with landed hybrid recall + schema deltas |
 | Resource-scoped semantic paths (`code/resources/…`) per [SEMANTIC_MEMORY_SCHEMA](SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md) | ◻ |
 | Work-surface scaffold creation on resolution ([WORK_SURFACE_MEMORY_SCAFFOLDING](WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md)) | ◻ |
 
 ---
 
-### 7. Platform migration shell
+### 6. Platform cleanup shell
 
-Cross-cutting items from [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) and [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md) Phase 8:
+Cross-cutting cleanup items after retiring Letta/MemFS runtime paths:
 
-- Conversation transcript backfill (separate from memory ETL).
-- Mixed-origin provenance labels during cutover.
 - Retire `memfs_repo_path` / Letta naming in schema and UI after soak.
 - Mark ADR-0031 accepted in docs when migration complete.
 
@@ -195,14 +182,12 @@ Cross-cutting items from [den-migration-backfill-and-rollback-plan.md](den-migra
 
 ```mermaid
 flowchart TD
-  subgraph now [Now — unblocks operators]
-    M[MemFS ETL validation runbook]
-    R[Post-import den reindex]
-  end
-
-  subgraph next [Next — fills the memory flywheel]
+  subgraph now [Now — fills the memory flywheel]
     S[ADR-0041 schema: salience + harvest_marks + supersession writes]
     H[archive_harvest lane]
+  end
+
+  subgraph next [Next — curation quality]
     C[Consolidation in memory_curate]
     P[Model-assisted pair reflection]
   end
@@ -218,8 +203,6 @@ flowchart TD
     V2[Embedding standard v2 migration]
   end
 
-  M --> R
-  R --> S
   S --> H
   H --> C
   C --> P
@@ -227,7 +210,7 @@ flowchart TD
   E --> W
 ```
 
-**Parallel safe:** entity Phase 5–6 can proceed alongside ADR-0041 schema work; MemFS ETL validation is independent of harvest.
+**Parallel safe:** entity Phase 5–6 can proceed alongside ADR-0041 schema work; archived-bundle MemFS import is optional and independent of harvest.
 
 ---
 
@@ -250,7 +233,7 @@ flowchart TD
 | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) | Qdrant index phases |
 | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) | Entity + relations |
 | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) | Legacy git → SQLite |
-| [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) | Platform migration mechanics |
+| [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) | Historical migration mechanics; not active roadmap work |
 | [REFLECTION_SYSTEM_PLAN.md](REFLECTION_SYSTEM_PLAN.md) | Shared reflection infrastructure |
 
 ---

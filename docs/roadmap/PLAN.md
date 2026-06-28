@@ -1,6 +1,6 @@
 # BEARS roadmap
 
-> **Status (2026-06): Den-native runtime is the live stack.** BEARS runs a single **Den-native, in-process agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Canonical architecture: [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md). Canonical migration plan: [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phases 7–8 open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
+> **Status (2026-06): Den-native runtime is the live stack.** BEARS runs a single **Den-native, in-process agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). There are no Letta-runtime Bears in production, so legacy Letta/MemFS backfill is not an active roadmap item. Canonical architecture: [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md). Canonical migration plan: [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phase 7 open; Phase 8 backfill retired**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
 
 High-level planning hub for BEARS. This file answers what works today, what is next, and which detailed plans are canonical — without duplicating every contract.
 
@@ -18,14 +18,14 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | Area | Status (2026-06) | Canonical docs |
 |---|---|---|
 | **Den-native runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md), [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
-| **Letta/Codepool/MemFS removal** | **Done** in code + compose; schema/UI still has transitional `letta_*` naming; Phase 8 backfill not run | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md), [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md) |
+| **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
 | **Crate split / build time** | **v0–v2 complete**: workspace (`den-core`, `den-llm`, `den-memory`, `den-docket`, `den-runtime`, `den-http`, `den-oauth`, `den-web`, `den-acp`, `den-api`); clippy pedantic/nursery gated | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
 | **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
 | **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` exposure open | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
 | **Derived recall** | **Phases 0–3.5 + 5 landed** (indexer, turn recall, hybrid search, temporal + graph legs, `den reindex`); Cabinet + embedding v2 deferred | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
-| **MemFS → SQLite ETL** | **`den import-memfs` + UI upload landed**; validation/rollback runbook open | [`MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md`](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
+| **MemFS → SQLite ETL** | **Optional historical tooling** (`den import-memfs` + UI upload landed); no production migration required | [`MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md`](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Bear entity layer** | **Phases 0–4 partial landed** (gate, entity-filter + graph recall); anchors + tools + portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
@@ -50,16 +50,15 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 ### What is next (priority order)
 
 1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` stance.
-2. **MemFS → SQLite cutover** — validate import runbook on staging Bears; post-import `den reindex` ([`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) §1).
-3. **ADR-0041 harvest + consolidation** — `salience` on records, `memory_harvest_marks`, supersession writes, `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5).
-4. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
-5. **Entity layer Phases 5–6** — entity anchors, `entity_browse`/`entity_resolve`, curate merge/split tools.
-6. **Context compaction** — Den-owned transcript compaction per ADR-0032.
-7. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
-8. **Phase 8 migration** — operator backfill runbook (Letta history / residual MemFS → native stores); schema/UI rename cleanup.
-9. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
-10. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-11. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
+2. **ADR-0041 harvest + consolidation** — `salience` on records, `memory_harvest_marks`, supersession writes, `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5).
+3. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
+4. **Entity layer Phases 5–6** — entity anchors, `entity_browse`/`entity_resolve`, curate merge/split tools.
+5. **Context compaction** — Den-owned transcript compaction per ADR-0032.
+6. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
+7. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as normal cleanup, not a data migration.
+8. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
+9. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
+10. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
 
 ### Important contradictions resolved here
 
@@ -71,20 +70,19 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 ## Near-term priorities
 
-### 1. Close the native runtime plan (Phases 7–8)
+### 1. Close the native runtime plan
 
 See [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md):
 
 - Phase 7: sandbox runner, `work` harness, chat→work delegation.
-- Phase 8: data backfill, doc archival, transitional schema/UI cleanup.
+- Retired Phase 8 backfill: no production Letta-runtime Bears require migration; residual schema/UI naming is regular cleanup.
 
 ### 2. Complete the memory/recall stack
 
-1. Migration/operator readiness for legacy Bears: validate `den import-memfs` on real bundles, snapshot/rollback, then `den reindex`.
-2. ADR-0041 harvest/consolidation schema: `salience`, `memory_harvest_marks`, live supersession writes, `invalid_at` updates.
-3. Entity anchors + tools ([`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phases 5–6).
-4. Expose scoped memory tools to `work`/`watch` after their read/write policies are explicit.
-5. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
+1. ADR-0041 harvest/consolidation schema: `salience`, `memory_harvest_marks`, live supersession writes, `invalid_at` updates.
+2. Entity anchors + tools ([`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phases 5–6).
+3. Expose scoped memory tools to `work`/`watch` after their read/write policies are explicit.
+4. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
 
 ### 3. Land Docket and task handoff
 
@@ -104,7 +102,7 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 ### Canonical spine (read these first)
 
 - [Den-native runtime architecture](../architecture/den-native-runtime.md)
-- [Den native runtime plan](DEN_NATIVE_RUNTIME_PLAN.md) — migration phases; **still Active** until Phase 7–8 close
+- [Den native runtime plan](DEN_NATIVE_RUNTIME_PLAN.md) — Phase 7 work sandbox remains active; Phase 8 is retired
 - [Den crate split plan](DEN_CRATE_SPLIT_PLAN.md) — workspace layout; **v0–v2 complete**
 - [Derived recall index](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + hybrid search
 - [Bear entity layer](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) — entities + relations
@@ -127,12 +125,13 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
-- [Migration backfill](den-migration-backfill-and-rollback-plan.md)
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — **partially superseded**; use for operator/product scope, not runtime path
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md)
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
 
 ### Reference / archived (do not drive implementation without explicit revisit)
+
+- [Migration backfill](den-migration-backfill-and-rollback-plan.md) — historical Letta extraction/backfill planning; no production migration required
 
 - [`archives/`](archives/) — capability management, skills brokering, context composition, ACP relay, etc.
 - [Letta dependency matrix](../architecture/letta-dependency-matrix.md) — historical inventory

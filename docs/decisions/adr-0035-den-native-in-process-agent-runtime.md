@@ -54,7 +54,7 @@ LATS tree search and LLM Compiler DAG engines are **deferred**.
 
 ### Transitional compatibility
 
-During migration, `AGENT_RUNTIME=letta|native` (default `letta` until parity proven) selects the turn backend. Letta, Codepool, and MemFS are removed only after Phase 8 teardown (compose changes require explicit approval).
+This transition is complete for production: the Den-native runtime is the supported runtime path, and Letta, Codepool, and live MemFS are not production runtime dependencies. The former Phase 8 data backfill is retired because there are no production Letta-runtime Bears to migrate.
 
 ## Consequences
 
@@ -70,7 +70,7 @@ During migration, `AGENT_RUNTIME=letta|native` (default `letta` until parity pro
 - Den must reproduce context/compaction and tool-calling fidelity Letta provided implicitly.
 - Per-Bear SQLite introduces schema, migration, and logical-path projection work.
 - Phase 7 (coding harness / sandbox) remains the largest sub-project.
-- One-time backfill from Letta history and MemFS content.
+- Residual Letta/MemFS naming cleanup remains, but no production one-time backfill is required.
 
 ## Non-goals
 

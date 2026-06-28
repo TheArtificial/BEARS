@@ -1,19 +1,19 @@
 # MemFS → SQLite ETL — Implementation Plan
 
-**Status:** Phases 1–3 landed (`den import-memfs`, git-dir + bundle, history/supersession, fixture tests, bear-admin Letta bundle upload); Phases 4–5 (validation/rollback runbook, automated post-import reindex) open  
-**Architecture:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [Memory model](../architecture/memory-model.md), [Den-native runtime migration](DEN_NATIVE_RUNTIME_PLAN.md) Phase 8  
+**Status:** Optional historical/operator tooling. Phases 1–3 landed (`den import-memfs`, git-dir + bundle, history/supersession, fixture tests, bear-admin Letta bundle upload). Phases 4–5 are retired because there are no production Letta-runtime Bears to migrate.  
+**Architecture:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [Memory model](../architecture/memory-model.md)  
 **Related:** [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md), [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) (post-import `recall_index`), [ADR-0013 — MemFS sidecar](../decisions/adr-0013-memfs-sidecar-repo-views.md) (historical source layout)
 
 ## Goal
 
-One-time (or repeatable, idempotent) **ETL import** of a Bear's legacy **MemFS git repository** into that Bear's **per-Bear SQLite** canonical memory (`memory_records`, and where reconstructible `memory_promotions`), preserving:
+Optional, repeatable, idempotent **ETL import** of a Bear's legacy **MemFS git repository** into that Bear's **per-Bear SQLite** canonical memory (`memory_records`, and where reconstructible `memory_promotions`), preserving:
 
 - the **logical-path anchor UX** agents and prompts already depend on (`core/…`, `{role}/…`, work-surface paths),
 - **role visibility boundaries** (shared vs profile-local),
 - **provenance** (MemFS branch, git path, commit oid, author timestamp),
 - and enough **history** to rebuild head selection and (optionally) supersession chains.
 
-After import, Den-native memory tools, key memory projection, and the derived recall index operate on SQLite alone. The MemFS repo becomes an **archival export**, not a live write path.
+After import, Den-native memory tools, key memory projection, and the derived recall index operate on SQLite alone. The MemFS repo becomes an **archival export**, not a live write path. This is not an active production migration path.
 
 ## Non-goals
 
@@ -258,14 +258,14 @@ den import-memfs --bear <uuid> --git-dir /path/to/{id}.git   # dev only
 
 **Exit:** documented operator procedure in this doc's [Runbook](#operator-runbook); smoke script hook optional.
 
-### Phase 4 — Validation, rollback, cutover  ◻
+### Phase 4 — Optional validation / rollback  ◻ retired as production gate
 
 - **Validation queries:** count by `scope_type` / `scope_profile`; list top logical paths; compare bundle tip SHAs to imported metadata.
 - **Spot diff (optional):** render head markdown from SQLite vs `git show branch:path` for sampled anchors.
 - **Rollback:** restore bear SQLite from pre-import snapshot (file copy of `{bear_id}.sqlite`) — import must document snapshot step; **do not** delete bundle.
-- **Cutover:** mark bear `memfs_repo_path` deprecated in admin; native runtime already rejects MemFS client tools.
+- **Cutover:** not required for production; native runtime already rejects MemFS client tools.
 
-**Exit:** rollback drill on staging bear; sign-off checklist attached to [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md).
+**Exit:** no active production gate. Use these checks only when importing an archived bundle.
 
 ### Phase 5 — Post-import derived recall  ◻
 
@@ -276,7 +276,7 @@ Not part of the ETL binary, but required for parity:
 
 **Exit:** gated live Qdrant test or manual operator checklist when recall enabled.
 
-## Operator runbook (v1 target)
+## Operator runbook (optional archived bundle)
 
 1. **Snapshot** the target bear SQLite file (`BEAR_SQLITE_DATA_DIR/{bear_id}.sqlite` → `{bear_id}.pre-import.sqlite`).
 2. **Export** canonical bare repo to `bear-{bear_id}-memfs.bundle` (see [Export](#export--acquisition)).
@@ -308,7 +308,7 @@ Not part of the ETL binary, but required for parity:
 
 ## Related
 
-- [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md) — Phase 8 backfill calls for this importer
-- [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) — mixed-origin + rollback framing
+- [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md) — notes that production Phase 8 backfill is retired
+- [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) — historical mixed-origin + rollback framing
 - [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — post-import reindex
 - [MEMORY_TOOLS_IMPLEMENTATION_PLAN.md](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — logical-path tool UX the import must preserve

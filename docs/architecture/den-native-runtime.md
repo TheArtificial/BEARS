@@ -314,4 +314,4 @@ Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_pro
 - Bear package format (portable export/import): [`../guides/bear-package.md`](../guides/bear-package.md)
 - Memory model (Bear-facing): [`memory-model.md`](memory-model.md)
 - Historical Letta dependency inventory: [`letta-dependency-matrix.md`](letta-dependency-matrix.md)
-- Data backfill/rollback: [`../roadmap/den-migration-backfill-and-rollback-plan.md`](../roadmap/den-migration-backfill-and-rollback-plan.md)
+- Historical backfill/rollback planning: [`../roadmap/den-migration-backfill-and-rollback-plan.md`](../roadmap/den-migration-backfill-and-rollback-plan.md) (production Phase 8 backfill retired)

@@ -31,6 +31,9 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!curate.contains(DEN_RUN_WRITE_RESULT));
 
     let watch = names_for_profile(BearProfile::Watch);
+    assert!(watch.contains(DEN_MEMORY_STATUS));
+    assert!(watch.contains(DEN_MEMORY_SEARCH));
+    assert!(watch.contains(DEN_MEMORY_READ));
     assert!(watch.contains(DEN_OBSERVATION_WRITE));
     assert!(watch.contains(DEN_SKILL_PROPOSE));
     assert!(!watch.contains(DEN_WORK_PLAN_LIST));
@@ -39,6 +42,9 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(!watch.contains(DEN_RUN_WRITE_RESULT));
 
     let work = names_for_profile(BearProfile::Work);
+    assert!(work.contains(DEN_MEMORY_STATUS));
+    assert!(work.contains(DEN_MEMORY_SEARCH));
+    assert!(work.contains(DEN_MEMORY_READ));
     assert!(work.contains(DEN_RUN_WRITE_RESULT));
     assert!(work.contains(DEN_WORK_PLAN_LIST));
     assert!(work.contains(DEN_WORK_PLAN_UPDATE));

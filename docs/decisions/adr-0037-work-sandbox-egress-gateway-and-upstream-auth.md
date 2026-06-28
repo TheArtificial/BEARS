@@ -363,7 +363,7 @@ To preserve arbitrary-repo and cloud-hosted use cases, Bears **does not** adopt:
 - Two isolation peers per active run increases resource use vs a monolithic sandbox.
 - Gateway + multi-identity policy + git bridge is more moving parts than a single PAT in env.
 - GitHub App onboarding is heavier for self-hosters; machine user docs and warnings are required.
-- Path from legacy MemFS checkouts needs a migration story (Phase 8 or parallel backfill).
+- Legacy MemFS checkout migration is retired for production because there are no production Letta-runtime Bears; archived bundles can use optional import tooling if needed.
 - Git command grammar allowlists require ongoing maintenance and remain bypass-prone.
 
 ## Non-goals (Phase 7)

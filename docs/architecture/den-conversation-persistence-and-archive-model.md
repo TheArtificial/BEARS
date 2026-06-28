@@ -1,6 +1,6 @@
 # Den Conversation Persistence and Archive Model
 
-> **Note (2026-06).** Den-owned (Postgres) transcript persistence is the target; any Letta history reads are one-time migration backfill only. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** Den-owned (Postgres) transcript persistence is canonical. Production Letta history backfill is retired because there are no production Letta-runtime Bears. See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
 
 ## Status
 

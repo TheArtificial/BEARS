@@ -25,7 +25,8 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     }
 
     // Additive bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5).
-    add_bitemporal_columns_if_missing(pool, &names).await?;
+    add_adr0041_record_columns_if_missing(pool, &names).await?;
+    ensure_memory_harvest_marks(pool).await?;
 
     // Retire the legacy record→record `memory_links` base table; relations now live in
     // `memory_relations`/`memory_access_rules` with `memory_links` as a read view (ADR-0042 §7).
@@ -86,7 +87,7 @@ async fn normalize_memfs_import_hashed_kinds(pool: &SqlitePool) -> Result<(), De
 /// Add the bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5) to pre-existing
 /// per-Bear SQLite files. Additive and idempotent; `valid_from` defaults to `created_at` on write,
 /// `invalid_at` is forward-looking (set on supersession). Recall reads COALESCE(valid_from,created_at).
-async fn add_bitemporal_columns_if_missing(
+async fn add_adr0041_record_columns_if_missing(
     pool: &SqlitePool,
     record_columns: &[String],
 ) -> Result<(), DenError> {
@@ -102,6 +103,40 @@ async fn add_bitemporal_columns_if_missing(
             .await
             .map_err(|e| DenError::System(format!("add invalid_at column failed: {e}")))?;
     }
+    if !record_columns.iter().any(|c| c == "salience") {
+        sqlx::query("ALTER TABLE memory_records ADD COLUMN salience TEXT NOT NULL DEFAULT 'normal'")
+            .execute(pool)
+            .await
+            .map_err(|e| DenError::System(format!("add salience column failed: {e}")))?;
+    }
+    Ok(())
+}
+
+async fn ensure_memory_harvest_marks(pool: &SqlitePool) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        CREATE TABLE IF NOT EXISTS memory_harvest_marks (
+            mark_id TEXT PRIMARY KEY,
+            bear_id TEXT NOT NULL,
+            sequence_no INTEGER NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_ref TEXT NOT NULL,
+            source_hash TEXT NULL,
+            harvested_at TEXT NOT NULL,
+            run_id TEXT NULL,
+            proposal_ids_json TEXT NOT NULL DEFAULT '[]'
+        )
+        ",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| DenError::System(format!("create memory_harvest_marks failed: {e}")))?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_harvest_marks_source ON memory_harvest_marks (bear_id, source_kind, source_ref)",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| DenError::System(format!("index memory_harvest_marks failed: {e}")))?;
     Ok(())
 }
 
@@ -180,7 +215,8 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 logical_path TEXT NULL,
                 work_surface_ref TEXT NULL,
                 valid_from TEXT NULL,
-                invalid_at TEXT NULL
+                invalid_at TEXT NULL,
+                salience TEXT NOT NULL DEFAULT 'normal'
             )
             ",
         )
@@ -194,7 +230,7 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
                 supersedes_memory_id, visibility, logical_path, work_surface_ref,
-                valid_from, invalid_at
+                valid_from, invalid_at, salience
             )
             SELECT
                 memory_id,
@@ -213,7 +249,8 @@ async fn rebuild_memory_records_scope_vocab(pool: &SqlitePool) -> Result<(), Den
                 logical_path,
                 work_surface_ref,
                 valid_from,
-                invalid_at
+                invalid_at,
+                COALESCE(salience, 'normal')
             FROM memory_records
             ",
         )

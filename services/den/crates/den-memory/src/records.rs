@@ -20,6 +20,7 @@ pub struct MemoryRecordRow {
     pub work_surface_ref: Option<String>,
     pub metadata_json: Value,
     pub created_at: String,
+    pub salience: String,
 }
 
 pub struct BearMemoryStore {
@@ -64,6 +65,34 @@ impl BearMemoryStore {
         metadata_json: &Value,
         visibility: &str,
     ) -> Result<MemoryRecordRow, DenError> {
+        self.append_record_with_options(
+            logical,
+            kind,
+            author_profile,
+            author_agent_id,
+            content_text,
+            metadata_json,
+            visibility,
+            "normal",
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn append_record_with_options(
+        &self,
+        logical: &LogicalMemoryPath,
+        kind: &str,
+        author_profile: &str,
+        author_agent_id: Option<&str>,
+        content_text: &str,
+        metadata_json: &Value,
+        visibility: &str,
+        salience: &str,
+        supersedes_memory_id: Option<&str>,
+    ) -> Result<MemoryRecordRow, DenError> {
+        let salience = normalize_salience(salience)?;
         let memory_id = Uuid::new_v4().to_string();
         let sequence_no = self.next_sequence().await?;
         let created_at = OffsetDateTime::now_utc()
@@ -75,8 +104,8 @@ impl BearMemoryStore {
             INSERT INTO memory_records (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
-                visibility, logical_path, work_surface_ref, valid_from
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                visibility, logical_path, work_surface_ref, valid_from, salience, supersedes_memory_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(&memory_id)
@@ -94,6 +123,8 @@ impl BearMemoryStore {
         .bind(&logical_path)
         .bind(&logical.work_surface_ref)
         .bind(&created_at)
+        .bind(salience)
+        .bind(supersedes_memory_id)
         .execute(&self.pool)
         .await
         .map_err(|e| DenError::System(format!("append memory_record failed: {e}")))?;
@@ -108,7 +139,20 @@ impl BearMemoryStore {
             work_surface_ref: logical.work_surface_ref.clone(),
             metadata_json: metadata_json.clone(),
             created_at,
+            salience: salience.to_string(),
         })
+    }
+}
+
+fn normalize_salience(value: &str) -> Result<&'static str, DenError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" => Ok("low"),
+        "" | "normal" => Ok("normal"),
+        "high" => Ok("high"),
+        "critical" => Ok("critical"),
+        other => Err(DenError::ValidationError(format!(
+            "salience must be low, normal, high, or critical; got {other}"
+        ))),
     }
 }
 
@@ -152,7 +196,7 @@ pub async fn head_record_for_logical_path(
     let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at
+               logical_path, work_surface_ref, metadata_json, created_at, salience
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
           AND NOT EXISTS (
@@ -197,7 +241,7 @@ pub async fn list_profile_local_head_records(
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-                   logical_path, work_surface_ref, metadata_json, created_at
+                   logical_path, work_surface_ref, metadata_json, created_at, salience
             FROM memory_records
             WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref = ?
@@ -220,7 +264,7 @@ pub async fn list_profile_local_head_records(
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-                   logical_path, work_surface_ref, metadata_json, created_at
+                   logical_path, work_surface_ref, metadata_json, created_at, salience
             FROM memory_records
             WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref IS NULL
@@ -251,7 +295,7 @@ pub async fn list_records_for_logical_path(
     let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at
+               logical_path, work_surface_ref, metadata_json, created_at, salience
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ?
         ORDER BY sequence_no DESC
@@ -394,7 +438,7 @@ pub async fn head_record_as_of(
     let rows = sqlx::query_as::<_, AsOfSqlRow>(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at,
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
                supersedes_memory_id, COALESCE(valid_from, created_at) AS effective_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
@@ -444,6 +488,7 @@ struct AsOfSqlRow {
     created_at: String,
     supersedes_memory_id: Option<String>,
     effective_at: String,
+    salience: String,
 }
 
 #[cfg(test)]
@@ -468,9 +513,9 @@ mod as_of_tests {
             INSERT INTO memory_records (
                 memory_id, bear_id, sequence_no, scope_type, scope_profile, kind,
                 author_profile, author_agent_id, created_at, content_text, metadata_json,
-                visibility, logical_path, work_surface_ref, valid_from, supersedes_memory_id
+                visibility, logical_path, work_surface_ref, valid_from, supersedes_memory_id, salience
             ) VALUES (?, ?, ?, 'shared', NULL, 'note', 'curate', NULL, ?, 'policy text', '{}',
-                      'normal', 'core/policy.md', NULL, ?, ?)
+                      'normal', 'core/policy.md', NULL, ?, ?, 'normal')
             ",
         )
         .bind(memory_id)
@@ -510,6 +555,48 @@ mod as_of_tests {
             .expect("v2 head in apr");
         assert_eq!(apr.memory_id, "v2");
     }
+
+    #[tokio::test]
+    async fn append_record_options_store_salience_and_supersession() {
+        let store = new_test_store().await;
+        let path = LogicalMemoryPath::shared_core("policy");
+        let first = store
+            .append_record_with_options(
+                &path,
+                "note",
+                "curate",
+                None,
+                "first",
+                &serde_json::json!({}),
+                "normal",
+                "high",
+                None,
+            )
+            .await
+            .unwrap();
+        let second = store
+            .append_record_with_options(
+                &path,
+                "note",
+                "curate",
+                None,
+                "second",
+                &serde_json::json!({}),
+                "normal",
+                "critical",
+                Some(&first.memory_id),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first.salience, "high");
+        assert_eq!(second.salience, "critical");
+        let head = head_record_for_logical_path(&store, "core/policy.md")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(head.memory_id, second.memory_id);
+    }
 }
 
 impl AsOfSqlRow {
@@ -527,6 +614,7 @@ impl AsOfSqlRow {
             metadata_json: serde_json::from_str(&self.metadata_json)
                 .unwrap_or_else(|_| Value::Object(Default::default())),
             created_at: self.created_at,
+            salience: self.salience,
         }
     }
 }
@@ -543,6 +631,7 @@ struct MemoryRecordSqlRow {
     work_surface_ref: Option<String>,
     metadata_json: String,
     created_at: String,
+    salience: String,
 }
 
 impl MemoryRecordSqlRow {
@@ -560,6 +649,7 @@ impl MemoryRecordSqlRow {
             metadata_json: serde_json::from_str(&self.metadata_json)
                 .unwrap_or_else(|_| Value::Object(Default::default())),
             created_at: self.created_at,
+            salience: self.salience,
         }
     }
 }

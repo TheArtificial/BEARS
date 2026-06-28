@@ -7,6 +7,7 @@ pub mod access;
 pub mod admin_inspect;
 pub mod descriptors;
 pub mod entity;
+pub mod harvest;
 pub mod import;
 mod logical_path;
 mod manager;
@@ -35,6 +36,9 @@ pub use entity::{
     attach_handle, create_entity, detach_handle, find_entity_by_handle, get_entity, list_entities,
     list_handles, merge_entities, resolve_live_entity, set_canonical_ref, set_resolution,
     split_entity, EntityHandleRow, EntityRow,
+};
+pub use harvest::{
+    harvest_mark_for_source, harvest_source_marked, record_harvest_mark, MemoryHarvestMark,
 };
 pub use import::{
     import_memfs_bundle, import_memfs_git_dir, MemfsBranchReport, MemfsImportOptions,

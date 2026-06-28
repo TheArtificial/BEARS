@@ -47,7 +47,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Migrate Den-hosted memory tools off MemFS to the SQLite store (`memory_write`, `memory_read`, `memory_review`, `memfs` retire/replace), routed through the memory manager to SQLite instead of the `/v1/git` MemFS API.
 - Move all Bear cognition into per-Bear SQLite: `bear_memory_proposals`, `bear_observations`, and curate/promotion decisions + audit migrate from Den Postgres; `core/` promotion writes `memory_records`/`memory_promotions`.
 - **Reflection-run boundary (split):** scheduler/queue stays in Den Postgres; the run record + outcomes move to SQLite next to `memory_promotions`; the queue references the SQLite run id.
-- Transition: Codepool/Letta-backed `talk`/`work` keep their existing memory until Phase 7; MemFS is not deleted until Phase 8. Commit the `.sqlx` offline cache so CI compile-time query checks pass.
+- Transition note retired: no production Letta-runtime Bears require MemFS migration. Commit the `.sqlx` offline cache so CI compile-time query checks pass.
 
 ### Phase 3 — Native agent loop (ReAct stepper)
 
@@ -72,7 +72,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - Native continuation, stream diagnostics, and pair turn comments use runtime/native terminology instead of Letta-facing labels.
 - Stance turn entry points (`start_native_profile_turn_event_stream`, `continue_native_profile_turn_event_stream`) are exported for `curate`/`watch` capability stances over one Den loop.
 - Native curate briefing is wired: rule-based `memory_curate_executor` runs first; when briefing items remain, `run_native_profile_turn_collect_assistant_text` runs a Curate stance LLM turn and projects assistant text into the memory_curate conversation (`NATIVE_CURATE_LLM_BRIEFING=0` disables).
-- Remaining Letta/Codepool removal belongs to Phase 7–8 teardown: web chat harness, `LettaClient`, residual fixtures/docs, MemFS/Codepool services, and compose edits.
+- Letta/Codepool/MemFS runtime removal is complete in production. Remaining references are documentation/schema/UI naming cleanup, not runtime migration work.
 
 ### Phase 6 — Den-native stance registry (replace provisioning) — Closed
 
@@ -81,7 +81,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - The Den-native stance registry is wired into pair binding resolution; stance config hashes use native runtime-family labels and omit Letta tool rosters.
 - Active admin create/edit/import/API paths ignore legacy Letta agent/tool fields and write native-compatible empty legacy values.
 - Operator UI/routes and provisioning APIs advertise **stance** vocabulary for the five operating stances; membership **roles** (`user_bear.role`) remain unchanged.
-- Deprecated `bear_profile_bindings.letta_agent_id` and residual Letta import/backfill schema are retained only as Phase 8 migration residue; physical column/service/client deletion remains Phase 8.
+- Deprecated `bear_profile_bindings.letta_agent_id` and residual Letta/MemFS naming are cleanup debt only, not migration blockers.
 
 ### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `work`
 
@@ -104,23 +104,21 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - **Linked projects / linked work surfaces:** read-only cross-repo context is explicitly deferred. V1 writes only to the active workspace and reads only configured task/work-surface context plus Bear memory.
 - Replace Codepool transport with native loop SSE; no warm pool in v1.
 
-### Phase 8 — Teardown and data migration
+### Phase 8 — Retired
 
-- One-time backfill: import Letta-Postgres conversation history not already canonical into Den `conversations`/`conversation_messages`; import residual MemFS memory content into per-Bear SQLite `memory_records`. See [`den-migration-backfill-and-rollback-plan.md`](den-migration-backfill-and-rollback-plan.md).
-- Remove `LettaClient` + `core/letta/`, Letta env vars, startup gates, preflight Letta checks.
-- Remove the MemFS sidecar: delete `/v1/git` routing, the `memfs` tool, `LETTA_MEMFS_SERVICE_URL`, and the `bears-letta-data` volume.
-- docker-compose: remove `bears-letta`, `bears-letta-postgres`, `bears-codepool`, `bears-memfs-manager`, and `bears-redis` (if Letta-only); drop Letta Code SDK deps. **Requires explicit approval before editing compose** per repo rules.
-- Supersede the old migration docs; archive [`../architecture/letta-dependency-matrix.md`](../architecture/letta-dependency-matrix.md); update [`../architecture/memory-model.md`](../architecture/memory-model.md) to the SQLite-canonical model and mark ADR-0031 accepted.
+- No production Bears use the old Letta runtime, so one-time Letta conversation/MemFS backfill is no longer required.
+- Keep `den import-memfs` as optional historical/operator tooling for ad hoc archived bundles, not an active release gate.
+- Transitional Letta/MemFS naming cleanup is no longer tracked as a Phase 8 milestone; handle it as ordinary cleanup when touching affected schema/UI surfaces.
 
 ## Risks and sequencing notes
 
 - **Tool-calling fidelity:** provider/Bifrost tool-call streaming differs from Letta's framing; Phase 1 parser + Phase 4 golden traces de-risk this.
 - **Context/compaction parity:** Den must reproduce in-context management Letta did implicitly (Phase 3 context assembler), including **`bear_compiled_configs`**, **key memory projection**, and **derived recall** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) — see [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly).
 - **Recall index (parallel track):** [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + `bears-embed-v1`; not blocking Phase 4 ACP wiring but required for Letta archival parity at scale.
-- **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; data migration of existing MemFS content is deferred to Phase 8.
+- **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; no production MemFS backfill is required.
 - **Cross-store discipline:** Den Postgres (control plane) and per-Bear SQLite (cognition) must not grow a sync seam; control plane references cognition by id only.
 - **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it. Phase 7 is not only container isolation: durable workspace identity, status/canvas UX, output shaping, recap/archive/recovery, and workflow actions are in-scope from v1.
-- Keep Letta runnable behind `RUNTIME=letta` only until Phase 5 parity is proven, then remove. MemFS coexists with SQLite only transitionally until Phase 7.
+- Letta runtime and live MemFS are no longer supported runtime paths.
 
 ## Non-goals
 
