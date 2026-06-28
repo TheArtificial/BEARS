@@ -14,7 +14,7 @@ use axum::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_http::acp_tokens;
+use den_http::armature_tokens;
 use den_service::client_sessions;
 use den_runtime::{
     bears::{db as bears_db, db::BearParams},
@@ -113,7 +113,7 @@ async fn create_token_for_bear(pool: &sqlx::PgPool, user_id: i32, bear_id: uuid:
     bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant membership");
-    acp_tokens::create_for_bear(pool, user_id, bear_id, "BearWire test token")
+    armature_tokens::create_for_bear(pool, user_id, bear_id, "BearWire test token")
         .await
         .expect("create token")
         .raw_token

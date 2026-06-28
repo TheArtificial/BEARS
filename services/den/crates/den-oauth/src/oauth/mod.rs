@@ -217,8 +217,8 @@ pub enum OAuthScope {
     DataRead,
     /// Write access to API resources you expose (starter placeholder — rename for your product)
     DataWrite,
-    /// Send basic-chat prompts through the ACP gateway.
-    AcpChat,
+    /// Send armature chat prompts through the API gateway.
+    ArmatureChat,
 }
 
 impl OAuthScope {
@@ -231,7 +231,7 @@ impl OAuthScope {
             OAuthScope::ProfileEmail => "profile:email",
             OAuthScope::DataRead => "data:read",
             OAuthScope::DataWrite => "data:write",
-            OAuthScope::AcpChat => "acp:chat",
+            OAuthScope::ArmatureChat => "armature:chat",
         }
     }
 
@@ -244,7 +244,7 @@ impl OAuthScope {
             "profile:email" => Some(OAuthScope::ProfileEmail),
             "data:read" => Some(OAuthScope::DataRead),
             "data:write" => Some(OAuthScope::DataWrite),
-            "acp:chat" => Some(OAuthScope::AcpChat),
+            "armature:chat" => Some(OAuthScope::ArmatureChat),
             // Legacy scope names from older forks (still accepted when reading stored scopes)
             "hexes:read" => Some(OAuthScope::DataRead),
             "visits:write" => Some(OAuthScope::DataWrite),
@@ -259,7 +259,7 @@ impl OAuthScope {
             OAuthScope::ProfileEmail,
             OAuthScope::DataRead,
             OAuthScope::DataWrite,
-            OAuthScope::AcpChat,
+            OAuthScope::ArmatureChat,
         ]
     }
 }
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(OAuthScope::ProfileEmail.as_str(), "profile:email");
         assert_eq!(OAuthScope::DataRead.as_str(), "data:read");
         assert_eq!(OAuthScope::DataWrite.as_str(), "data:write");
-        assert_eq!(OAuthScope::AcpChat.as_str(), "acp:chat");
+        assert_eq!(OAuthScope::ArmatureChat.as_str(), "armature:chat");
 
         assert_eq!(
             OAuthScope::from_str("profile:read"),
@@ -506,8 +506,8 @@ mod tests {
             OAuthScope::from_str("data:write"),
             Some(OAuthScope::DataWrite)
         );
-        assert_eq!(OAuthScope::from_str("acp:chat"), Some(OAuthScope::AcpChat));
-        assert_eq!(OAuthScope::from_str("acp:tools"), None);
+        assert_eq!(OAuthScope::from_str("armature:chat"), Some(OAuthScope::ArmatureChat));
+        assert_eq!(OAuthScope::from_str("armature:tools"), None);
         assert_eq!(
             OAuthScope::from_str("hexes:read"),
             Some(OAuthScope::DataRead)

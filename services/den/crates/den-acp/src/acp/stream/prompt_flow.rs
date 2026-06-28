@@ -19,7 +19,7 @@ use crate::{
             canonical_acp_conversation_id_for_session, require_pair_runtime_binding,
             AcpConversationService,
         },
-        acp_tokens,
+        armature_tokens,
         docket::{DocketExecutionLookup, DocketService, PgDocketService},
         work_plans::{self, WorkPlanLookup},
     },
@@ -126,9 +126,9 @@ pub(in crate::acp) async fn run_prompt_flow(
             ApiError::new(status, code, message)
         })?;
     let user_id = auth.user_id;
-    let tools_enabled = acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope());
+    let tools_enabled = armature_tokens::scopes_contains(&auth.scopes, armature_tokens::armature_tools_scope());
     if !tools_enabled {
-        tracing::info!(bear_slug = %slug, user_id = user_id, "ACP token lacks acp:tools; local client tools disabled for prompt");
+        tracing::info!(bear_slug = %slug, user_id = user_id, "Armature token lacks armature:tools; local client tools disabled for prompt");
     }
     let prompt = body.message.trim();
     if prompt.is_empty() {

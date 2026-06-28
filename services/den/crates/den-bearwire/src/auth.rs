@@ -1,7 +1,7 @@
 use axum::http::{header, HeaderMap};
 use serde_json::Value;
 
-use den_http::{acp_tokens, errors::CustomError};
+use den_http::{armature_tokens, errors::CustomError};
 use den_service::{bears::db as bears_db, DenState};
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, CustomError> {
@@ -26,22 +26,22 @@ pub(crate) async fn authenticate_for_bear_slug(
     bear_slug: &str,
 ) -> Result<i32, CustomError> {
     let token = bearer_token(headers)?;
-    let required_scope = acp_tokens::acp_chat_scope();
-    if !acp_tokens::is_acp_token(token) {
+    let required_scope = armature_tokens::armature_chat_scope();
+    if !armature_tokens::is_armature_token(token) {
         let diagnostics =
-            acp_tokens::diagnose_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
+            armature_tokens::diagnose_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
                 .await?;
         return Err(CustomError::Authentication(format!(
-            "expected a bear-scoped BEARS ACP token; diagnostics: {}",
+            "expected a bear-scoped BEARS Armature token; diagnostics: {}",
             diagnostics.summary()
         )));
     }
-    match acp_tokens::authenticate_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
+    match armature_tokens::authenticate_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
         .await?
     {
         Some(user_id) => Ok(user_id),
         None => {
-            let diagnostics = acp_tokens::diagnose_for_bear_slug(
+            let diagnostics = armature_tokens::diagnose_for_bear_slug(
                 &state.sqlx_pool,
                 token,
                 bear_slug,

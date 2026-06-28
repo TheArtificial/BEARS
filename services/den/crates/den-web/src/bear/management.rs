@@ -22,7 +22,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     config::Config,
-    core::{acp_tokens, user::db as user_db},
+    core::{armature_tokens, user::db as user_db},
     errors::CustomError,
     web::{
         bear::create_support::{
@@ -807,7 +807,7 @@ async fn bear_code_token_post(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let token_name = form.name.trim();
     let created =
-        acp_tokens::create_for_bear(state.sqlx_pool(), user_id, bear.id, token_name).await?;
+        armature_tokens::create_for_bear(state.sqlx_pool(), user_id, bear.id, token_name).await?;
 
     render_template(
         &state,

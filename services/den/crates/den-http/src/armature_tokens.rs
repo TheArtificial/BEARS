@@ -8,20 +8,20 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-const TOKEN_PREFIX: &str = "bears_acp_";
-const ACP_CHAT_SCOPE: &str = "acp:chat";
-const ACP_TOOLS_SCOPE: &str = "acp:tools";
+const TOKEN_PREFIX: &str = "bears_armature_";
+const ARMATURE_CHAT_SCOPE: &str = "armature:chat";
+const ARMATURE_TOOLS_SCOPE: &str = "armature:tools";
 
-pub fn acp_chat_scope() -> &'static str {
-    ACP_CHAT_SCOPE
+pub fn armature_chat_scope() -> &'static str {
+    ARMATURE_CHAT_SCOPE
 }
 
-pub fn acp_tools_scope() -> &'static str {
-    ACP_TOOLS_SCOPE
+pub fn armature_tools_scope() -> &'static str {
+    ARMATURE_TOOLS_SCOPE
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AcpTokenListRow {
+pub struct ArmatureTokenListRow {
     pub id: Uuid,
     pub name: String,
     pub scopes: serde_json::Value,
@@ -37,13 +37,13 @@ pub struct AcpTokenListRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct CreatedAcpToken {
+pub struct CreatedArmatureToken {
     pub raw_token: String,
     pub id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AcpTokenDiagnostics {
+pub struct ArmatureTokenDiagnostics {
     pub bear_slug: String,
     pub required_scope: String,
     pub token_prefix_ok: bool,
@@ -57,7 +57,7 @@ pub struct AcpTokenDiagnostics {
     pub failure_reasons: Vec<String>,
 }
 
-impl AcpTokenDiagnostics {
+impl ArmatureTokenDiagnostics {
     pub fn summary(&self) -> String {
         format!(
             "bear_slug={:?}; token_prefix_ok={}; token_found={}; token_active={}; bear_found={}; token_bound_to_bear={}; token_owner_is_bear_member={}; required_scope_present={}; failure_reasons={}",
@@ -78,7 +78,7 @@ impl AcpTokenDiagnostics {
     }
 }
 
-pub fn is_acp_token(raw: &str) -> bool {
+pub fn is_armature_token(raw: &str) -> bool {
     raw.trim().starts_with(TOKEN_PREFIX)
 }
 
@@ -107,7 +107,7 @@ pub async fn create_for_bear(
     user_id: i32,
     bear_id: Uuid,
     name: &str,
-) -> Result<CreatedAcpToken, CustomError> {
+) -> Result<CreatedArmatureToken, CustomError> {
     let raw_token = generate_raw_token();
     let hash = token_hash(&raw_token);
     let name = name.trim();
@@ -120,7 +120,7 @@ pub async fn create_for_bear(
     let mut tx = pool.begin().await?;
     let row: (Uuid,) = sqlx::query_as(
         r"
-        INSERT INTO acp_tokens (user_id, name, token_hash, scopes)
+        INSERT INTO armature_tokens (user_id, name, token_hash, scopes)
         VALUES ($1, $2, $3, $4)
         RETURNING id
         ",
@@ -128,13 +128,13 @@ pub async fn create_for_bear(
     .bind(user_id)
     .bind(name)
     .bind(hash)
-    .bind(serde_json::json!([ACP_CHAT_SCOPE, ACP_TOOLS_SCOPE]))
+    .bind(serde_json::json!([ARMATURE_CHAT_SCOPE, ARMATURE_TOOLS_SCOPE]))
     .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query(
         r"
-        INSERT INTO acp_token_bears (token_id, bear_id)
+        INSERT INTO armature_token_bears (token_id, bear_id)
         VALUES ($1, $2)
         ",
     )
@@ -144,7 +144,7 @@ pub async fn create_for_bear(
     .await?;
 
     tx.commit().await?;
-    Ok(CreatedAcpToken {
+    Ok(CreatedArmatureToken {
         raw_token,
         id: row.0,
     })
@@ -153,7 +153,7 @@ pub async fn create_for_bear(
 pub async fn list_for_user(
     pool: &PgPool,
     user_id: i32,
-) -> Result<Vec<AcpTokenListRow>, CustomError> {
+) -> Result<Vec<ArmatureTokenListRow>, CustomError> {
     let rows = sqlx::query(
         r"
         SELECT t.id,
@@ -166,8 +166,8 @@ pub async fn list_for_user(
                t.expires_at,
                t.last_used_at,
                t.revoked_at
-        FROM acp_tokens t
-        INNER JOIN acp_token_bears tb ON tb.token_id = t.id
+        FROM armature_tokens t
+        INNER JOIN armature_token_bears tb ON tb.token_id = t.id
         INNER JOIN bears b ON b.id = tb.bear_id
         WHERE t.user_id = $1
         ORDER BY t.created_at DESC, b.slug
@@ -181,7 +181,7 @@ pub async fn list_for_user(
         .into_iter()
         .map(|row| {
             let scopes: serde_json::Value = row.get("scopes");
-            AcpTokenListRow {
+            ArmatureTokenListRow {
                 id: row.get("id"),
                 name: row.get("name"),
                 scopes: scopes.clone(),
@@ -192,10 +192,10 @@ pub async fn list_for_user(
                 expires_at: row.get("expires_at"),
                 last_used_at: row.get("last_used_at"),
                 revoked_at: row.get("revoked_at"),
-                token_type: if scopes_contains(&scopes, ACP_TOOLS_SCOPE) {
-                    "ACP code".to_string()
+                token_type: if scopes_contains(&scopes, ARMATURE_TOOLS_SCOPE) {
+                    "Armature code".to_string()
                 } else {
-                    "ACP chat".to_string()
+                    "Armature chat".to_string()
                 },
                 scope_labels: scope_labels(&scopes),
             }
@@ -210,7 +210,7 @@ pub async fn revoke_for_user(
 ) -> Result<(), CustomError> {
     let result = sqlx::query(
         r"
-        UPDATE acp_tokens
+        UPDATE armature_tokens
         SET revoked_at = NOW()
         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
         ",
@@ -220,7 +220,7 @@ pub async fn revoke_for_user(
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
-        return Err(CustomError::NotFound("ACP token not found".to_string()));
+        return Err(CustomError::NotFound("Armature token not found".to_string()));
     }
     Ok(())
 }
@@ -247,9 +247,9 @@ pub async fn diagnose_for_bear_slug(
     raw_token: &str,
     bear_slug: &str,
     required_scope: &str,
-) -> Result<AcpTokenDiagnostics, CustomError> {
+) -> Result<ArmatureTokenDiagnostics, CustomError> {
     let bear_slug = bear_slug.trim();
-    let token_prefix_ok = is_acp_token(raw_token);
+    let token_prefix_ok = is_armature_token(raw_token);
     let hash = token_hash(raw_token);
 
     let token: Option<(Uuid, i32, serde_json::Value, bool)> = sqlx::query_as(
@@ -258,7 +258,7 @@ pub async fn diagnose_for_bear_slug(
                user_id,
                scopes,
                revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AS active
-        FROM acp_tokens
+        FROM armature_tokens
         WHERE token_hash = $1
         ",
     )
@@ -290,7 +290,7 @@ pub async fn diagnose_for_bear_slug(
         let bound: (bool,) = sqlx::query_as(
             r"
             SELECT EXISTS(
-                SELECT 1 FROM acp_token_bears
+                SELECT 1 FROM armature_token_bears
                 WHERE token_id = $1 AND bear_id = $2
             )
             ",
@@ -318,7 +318,7 @@ pub async fn diagnose_for_bear_slug(
 
     let mut failure_reasons = Vec::new();
     if !token_prefix_ok {
-        failure_reasons.push("token does not start with bears_acp_".to_string());
+        failure_reasons.push("token does not start with bears_armature_".to_string());
     }
     if !token_found {
         failure_reasons.push("token hash was not found in this Den database".to_string());
@@ -347,7 +347,7 @@ pub async fn diagnose_for_bear_slug(
         && token_owner_is_bear_member
         && required_scope_present;
 
-    Ok(AcpTokenDiagnostics {
+    Ok(ArmatureTokenDiagnostics {
         bear_slug: bear_slug.to_string(),
         required_scope: required_scope.to_string(),
         token_prefix_ok,
@@ -363,7 +363,7 @@ pub async fn diagnose_for_bear_slug(
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpTokenAuth {
+pub struct ArmatureTokenAuth {
     pub user_id: i32,
     pub scopes: serde_json::Value,
 }
@@ -372,13 +372,13 @@ pub async fn authenticate_for_bear_slug_with_scopes(
     pool: &PgPool,
     raw_token: &str,
     bear_slug: &str,
-) -> Result<Option<AcpTokenAuth>, CustomError> {
+) -> Result<Option<ArmatureTokenAuth>, CustomError> {
     let hash = token_hash(raw_token);
     let row: Option<(Uuid, i32, serde_json::Value)> = sqlx::query_as(
         r"
         SELECT t.id, t.user_id, t.scopes
-        FROM acp_tokens t
-        INNER JOIN acp_token_bears tb ON tb.token_id = t.id
+        FROM armature_tokens t
+        INNER JOIN armature_token_bears tb ON tb.token_id = t.id
         INNER JOIN bears b ON b.id = tb.bear_id
         INNER JOIN user_bear ub ON ub.user_id = t.user_id AND ub.bear_id = b.id
         WHERE t.token_hash = $1
@@ -396,12 +396,12 @@ pub async fn authenticate_for_bear_slug_with_scopes(
         return Ok(None);
     };
 
-    sqlx::query("UPDATE acp_tokens SET last_used_at = NOW() WHERE id = $1")
+    sqlx::query("UPDATE armature_tokens SET last_used_at = NOW() WHERE id = $1")
         .bind(token_id)
         .execute(pool)
         .await?;
 
-    Ok(Some(AcpTokenAuth { user_id, scopes }))
+    Ok(Some(ArmatureTokenAuth { user_id, scopes }))
 }
 
 pub fn scopes_contains(scopes: &serde_json::Value, required_scope: &str) -> bool {
@@ -417,10 +417,10 @@ pub fn scopes_contains(scopes: &serde_json::Value, required_scope: &str) -> bool
 
 fn scope_labels(scopes: &serde_json::Value) -> Vec<String> {
     let mut labels = Vec::new();
-    if scopes_contains(scopes, ACP_CHAT_SCOPE) {
+    if scopes_contains(scopes, ARMATURE_CHAT_SCOPE) {
         labels.push("chat".to_string());
     }
-    if scopes_contains(scopes, ACP_TOOLS_SCOPE) {
+    if scopes_contains(scopes, ARMATURE_TOOLS_SCOPE) {
         labels.push("tools".to_string());
     }
 

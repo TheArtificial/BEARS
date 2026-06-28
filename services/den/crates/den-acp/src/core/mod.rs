@@ -1,12 +1,12 @@
 //! Residual native ACP protocol modules (sessions / tokens / runtime / turn_runner).
 //!
-//! Kept under `crate::core::acp` (with the historical `acp_runtime` / `acp_tokens` /
+//! Kept under `crate::core::acp` (with the historical `acp_runtime` / `armature_tokens` /
 //! `acp_turn_runner` aliases) so the migrated `acp` HTTP edge resolves its
 //! `crate::core::acp*` paths unchanged after the v1.5 den-api extraction. The
 //! den-acp sub-split (separating this + `acp` into their own crate) is a v2 follow-up.
 pub mod acp;
 pub use acp::runtime as acp_runtime;
-pub use acp::tokens as acp_tokens;
+pub use acp::tokens as armature_tokens;
 pub use acp::turn_runner as acp_turn_runner;
 
 // Foundation re-export shims (v1.5): keep `crate::core::user` / `crate::core::api_utils`

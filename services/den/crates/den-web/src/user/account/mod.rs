@@ -26,7 +26,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
     core::{
-        acp_tokens,
+        armature_tokens,
         user::{self, email_settings},
     },
 };
@@ -42,8 +42,8 @@ pub fn router() -> Router<AppState> {
             get(change_password_view).post(change_password_action),
         )
         .route(
-            "/acp-tokens/{token_id}/revoke",
-            post(revoke_acp_token_action),
+            "/armature-tokens/{token_id}/revoke",
+            post(revoke_armature_token_action),
         )
         .route_layer(login_required!(Backend, login_url = "/login"))
         .route_with_tsr("/register", get(register_view).post(register_action))
@@ -291,7 +291,7 @@ async fn view_account(
     let user = crate::core::user::user_by_id(&state.sqlx_pool, user_id).await?;
 
     let invites = user::invites::db::by_user_id(&state.sqlx_pool, user_id).await?;
-    let acp_tokens = acp_tokens::list_for_user(&state.sqlx_pool, user_id).await?;
+    let armature_tokens = armature_tokens::list_for_user(&state.sqlx_pool, user_id).await?;
     let invite_contexts: Vec<_> = invites
         .iter()
         .map(|invite| {
@@ -311,13 +311,13 @@ async fn view_account(
             user => user,
             // premium_until => user.premium_until,
             invites => invite_contexts,
-            acp_tokens => acp_tokens,
+            armature_tokens => armature_tokens,
         },
     )
     .await
 }
 
-async fn revoke_acp_token_action(
+async fn revoke_armature_token_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path(token_id): Path<Uuid>,
@@ -327,7 +327,7 @@ async fn revoke_acp_token_action(
         .as_ref()
         .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    acp_tokens::revoke_for_user(&state.sqlx_pool, user_id, token_id).await?;
+    armature_tokens::revoke_for_user(&state.sqlx_pool, user_id, token_id).await?;
     Ok(Redirect::to("/account"))
 }
 

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     acp::responses::acp_error_response,
     service::DenState,
-    core::acp_tokens,
+    core::armature_tokens,
 };
 use den_http::errors::CustomError;
 use den_oauth::{auth, oauth::OAuthScope};
@@ -25,7 +25,7 @@ pub(in crate::acp) async fn auth_check(
             "ok": true,
             "user_id": user_id,
             "scopes": {
-                "acp:chat": true
+                "armature:chat": true
             }
         }))
         .into_response(),
@@ -49,10 +49,10 @@ pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
     state: &DenState,
     token: &str,
     slug: &str,
-) -> Result<acp_tokens::AcpTokenAuth, CustomError> {
-    let required_scope = OAuthScope::AcpChat.as_str();
-    if !acp_tokens::is_acp_token(token) {
-        let diagnostics = acp_tokens::diagnose_for_bear_slug(
+) -> Result<armature_tokens::ArmatureTokenAuth, CustomError> {
+    let required_scope = OAuthScope::ArmatureChat.as_str();
+    if !armature_tokens::is_armature_token(token) {
+        let diagnostics = armature_tokens::diagnose_for_bear_slug(
             &state.sqlx_pool,
             token,
             slug,
@@ -60,16 +60,16 @@ pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
         )
         .await?;
         return Err(CustomError::Authentication(format!(
-            "expected a bear-scoped BEARS ACP token; diagnostics: {}",
+            "expected a bear-scoped BEARS Armature token; diagnostics: {}",
             diagnostics.summary()
         )));
     }
-    let auth = match acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, token, slug)
+    let auth = match armature_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, token, slug)
         .await?
     {
         Some(auth) => auth,
         None => {
-            let diagnostics = acp_tokens::diagnose_for_bear_slug(
+            let diagnostics = armature_tokens::diagnose_for_bear_slug(
                 &state.sqlx_pool,
                 token,
                 slug,
@@ -77,13 +77,13 @@ pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
             )
             .await?;
             return Err(CustomError::Authentication(format!(
-                "invalid, expired, revoked, or unauthorized ACP token; diagnostics: {}",
+                "invalid, expired, revoked, or unauthorized Armature token; diagnostics: {}",
                 diagnostics.summary()
             )));
         }
     };
-    if !acp_tokens::scopes_contains(&auth.scopes, required_scope) {
-        let diagnostics = acp_tokens::diagnose_for_bear_slug(
+    if !armature_tokens::scopes_contains(&auth.scopes, required_scope) {
+        let diagnostics = armature_tokens::diagnose_for_bear_slug(
             &state.sqlx_pool,
             token,
             slug,
@@ -91,7 +91,7 @@ pub(in crate::acp) async fn authenticate_acp_code_token_with_auth(
         )
         .await?;
         return Err(CustomError::Authentication(format!(
-            "ACP token is missing required acp:chat scope; diagnostics: {}",
+            "Armature token is missing required armature:chat scope; diagnostics: {}",
             diagnostics.summary()
         )));
     }

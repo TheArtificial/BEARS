@@ -331,7 +331,7 @@ pub fn session_info_payload(
             "email_verified": current_user.map(|user| user.email_verified),
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref()),
-            "relationship": "authenticated ACP token owner; memory entries and logs should attribute work to this human"
+            "relationship": "authenticated Armature token owner; memory entries and logs should attribute work to this human"
         },
         "user": {
             "user_id": context.user_id,

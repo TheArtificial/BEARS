@@ -16,7 +16,7 @@ use crate::{
         tool_results::acp_tool_result_response_from_delivery,
     },
     service::DenState,
-    core::acp_tokens,
+    core::armature_tokens,
 };
 use den_http::errors::CustomError;
 use den_oauth::auth;
@@ -70,9 +70,9 @@ pub(super) async fn tool_result_inner(
     let token = auth::extract_bearer_token(&headers)
         .map_err(|err| CustomError::Authentication(err.message))?;
     let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug).await?;
-    if !acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope()) {
+    if !armature_tokens::scopes_contains(&auth.scopes, armature_tokens::armature_tools_scope()) {
         return Err(CustomError::Authorization(
-            "ACP token is missing required acp:tools scope".to_string(),
+            "Armature token is missing required armature:tools scope".to_string(),
         ));
     }
     let user_id = auth.user_id;

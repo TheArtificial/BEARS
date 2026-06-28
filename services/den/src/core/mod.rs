@@ -6,7 +6,7 @@
 // The ACP edge (`acp` + its runtime/tokens/turn_runner) lives in `den-acp` (v1.5
 // split); re-exported here so `crate::core::acp*` call sites (seeds, web) are
 // unchanged until those callers migrate off the binary-local path.
-pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
+pub use den_acp::core::{acp, acp_runtime, armature_tokens, acp_turn_runner};
 // `api_utils`, `email`, and `user` moved to the shared edge foundation crate
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.

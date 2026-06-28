@@ -56,7 +56,7 @@ pub enum Resolution {
     ConflictNeedsReview { entity_ids: Vec<String> },
 }
 
-/// Whether the identity was asserted by an authoritative source (session/ACP token, etc.).
+/// Whether the identity was asserted by an authoritative source (session/Armature token, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assertion {
     /// Authoritative-by-construction (session human, calendar id): enter at `confirmed`/asserted.

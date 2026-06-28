@@ -99,7 +99,7 @@ pub(crate) async fn run_pair_reflection_summary(
                 "kind": "summary",
                 "tags": ["pair-reflection", "session-summary"],
                 "source": {
-                    "human": { "user_id": session.user_id, "authenticated_by": "acp_token" },
+                    "human": { "user_id": session.user_id, "authenticated_by": "armature_token" },
                     "session": {
                         "acp_session_id": session.client_session_id,
                         "conversation_id": conversation_id,

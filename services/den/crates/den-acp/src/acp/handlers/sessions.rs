@@ -18,7 +18,7 @@ use crate::{
     },
     service::DenState,
     core::{
-        acp_tokens,
+        armature_tokens,
         docket::{DocketService, PgDocketService, WorkPlanLookup},
     },
 };
@@ -417,9 +417,9 @@ pub(super) async fn post_adapter_environment_inner(
     let token = auth::extract_bearer_token(&headers)
         .map_err(|err| CustomError::Authentication(err.message))?;
     let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug).await?;
-    if !acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope()) {
+    if !armature_tokens::scopes_contains(&auth.scopes, armature_tokens::armature_tools_scope()) {
         return Err(CustomError::Authorization(
-            "ACP token is missing required acp:tools scope".to_string(),
+            "Armature token is missing required armature:tools scope".to_string(),
         ));
     }
     let session = client_sessions::find_for_user_bear_session(

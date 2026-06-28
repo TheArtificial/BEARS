@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn tool_policy_includes_authoritative_limits_and_scope() {
         let list_policy = client_tool_policy_json_for_provider("fs_list_directory");
-        assert_eq!(list_policy["scope_basis"], "acp:tools");
+        assert_eq!(list_policy["scope_basis"], "armature:tools");
         assert_eq!(list_policy["role_basis"], "pair_agent");
         assert_eq!(
             list_policy["allowed_roots_basis"],
