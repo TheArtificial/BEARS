@@ -57,8 +57,9 @@ pub use proposals::{
 pub use records::{
     append_memory_record, effective_time_by_ids, fetch_records_min,
     has_work_surface_canonical_anchor, head_record_as_of, head_record_for_logical_path,
-    list_profile_local_head_records, list_records_for_logical_path, memory_sequence_high_water,
-    superseder_times_by_superseded, BearMemoryStore, MemoryRecordRow, RecallRecordMin,
+    list_entity_anchor_head_records, list_profile_local_head_records, list_records_for_logical_path,
+    memory_sequence_high_water, superseder_times_by_superseded, BearMemoryStore, MemoryRecordRow,
+    RecallRecordMin,
 };
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,

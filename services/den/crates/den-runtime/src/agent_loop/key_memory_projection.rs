@@ -9,7 +9,7 @@ use crate::{
         memory::{
             has_work_surface_canonical_anchor, head_record_for_logical_path,
             list_profile_local_head_records, memory_sequence_high_water, record_visible,
-            AccessContext, MemoryRecordRow, MemoryStoreManager,
+            AccessContext, MemoryRecordRow, MemoryStoreManager, list_entity_anchor_head_records,
         },
     },
 };
@@ -306,6 +306,38 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
             if !blocks.is_empty() {
                 sections.push(format!("## Work surface: {slug}\n\n{}", blocks.join("\n\n")));
             }
+        }
+    }
+
+    // Tier 2b — explicit entity anchors (resolved + salient entities only; no relation fallback).
+    {
+        let mut tracker = BudgetTracker::new(&budget, 1);
+        let mut blocks = Vec::new();
+        let records = list_entity_anchor_head_records(&store, 6).await?;
+        for record in records {
+            let path = record.logical_path.clone().unwrap_or_else(|| "<unmapped>".to_string());
+            if tracker.tier_remaining_records == 0 {
+                omitted_budget.push(path);
+                continue;
+            }
+            if !record_visible(&store, &record.memory_id, &input.access).await? {
+                omitted_by_access.push(path);
+                continue;
+            }
+            match tracker.try_take_record(&record.content_text) {
+                Some(body) => {
+                    included.push(json!({
+                        "tier": "2b",
+                        "memory_id": record.memory_id,
+                        "logical_path": record.logical_path,
+                    }));
+                    blocks.push(format_record_block(&record, &body));
+                }
+                None => omitted_budget.push(path),
+            }
+        }
+        if !blocks.is_empty() {
+            sections.push(format!("## Entity anchors\n\n{}", blocks.join("\n\n")));
         }
     }
 

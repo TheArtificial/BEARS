@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::logical_path::{LogicalMemoryPath, MemoryScopeType};
+use super::logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryRecordRow {
@@ -311,6 +311,88 @@ pub async fn list_records_for_logical_path(
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
+/// Explicit entity anchor records eligible for key-memory projection (ADR-0042 Phase 5 v1).
+///
+/// Policy is intentionally conservative: an entity must be resolved/confirmed, descriptor
+/// anchor-eligible, satisfy the subject-linked salience threshold, and have an explicit canonical
+/// anchor record at a generated path. No fallback content is synthesized from arbitrary relations.
+pub async fn list_entity_anchor_head_records(
+    store: &BearMemoryStore,
+    limit: i64,
+) -> Result<Vec<MemoryRecordRow>, DenError> {
+    let candidates = sqlx::query_as::<_, EntityAnchorCandidate>(
+        r"
+        SELECT e.entity_id, e.type, e.display_name, e.resolution, e.canonical_ref,
+               SUM(CASE WHEN m.salience IN ('high', 'critical') THEN 1 ELSE 0 END) AS high_count,
+               SUM(CASE WHEN m.salience = 'normal' THEN 1 ELSE 0 END) AS normal_count,
+               MAX(m.sequence_no) AS latest_sequence
+        FROM entities e
+        INNER JOIN memory_relations r
+            ON r.bear_id = e.bear_id
+           AND r.entity_id = e.entity_id
+           AND r.state = 'active'
+           AND r.relation = 'den.memory.relation.subject'
+        INNER JOIN memory_records m
+            ON m.bear_id = e.bear_id
+           AND m.memory_id = r.src_memory_id
+           AND m.visibility = 'normal'
+        WHERE e.bear_id = ?
+          AND e.resolution IN ('resolved', 'confirmed')
+          AND e.superseded_by_entity_id IS NULL
+        GROUP BY e.entity_id, e.type, e.display_name, e.resolution, e.canonical_ref
+        ORDER BY latest_sequence DESC
+        LIMIT ?
+        ",
+    )
+    .bind(store.bear_id.to_string())
+    .bind(limit.saturating_mul(4).clamp(1, 200))
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("list entity anchor candidates failed: {e}")))?;
+
+    let mut out = Vec::new();
+    for candidate in candidates {
+        if out.len() >= limit.max(0) as usize {
+            break;
+        }
+        let eligible = candidate.high_count.unwrap_or(0) > 0
+            || (candidate.resolution == "confirmed" && candidate.normal_count.unwrap_or(0) >= 2);
+        if !eligible {
+            continue;
+        }
+        let Some(anchor_ref) = candidate
+            .display_name
+            .as_deref()
+            .or(candidate.canonical_ref.as_deref())
+            .or(Some(candidate.entity_id.as_str()))
+        else {
+            continue;
+        };
+        for kind in ["profile", "overview", "index"] {
+            let Some(path) = entity_anchor_path(&candidate.entity_type, anchor_ref, kind) else {
+                continue;
+            };
+            if let Some(record) = head_record_for_logical_path(store, &path).await? {
+                out.push(record);
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[derive(sqlx::FromRow)]
+struct EntityAnchorCandidate {
+    entity_id: String,
+    #[sqlx(rename = "type")]
+    entity_type: String,
+    display_name: Option<String>,
+    resolution: String,
+    canonical_ref: Option<String>,
+    high_count: Option<i64>,
+    normal_count: Option<i64>,
+}
+
 /// Minimal record fields for rendering a recall hit (bounded-graph leg). Cheaper than a full
 /// [`MemoryRecordRow`] and carries no metadata/sequence.
 #[derive(Debug, Clone, Serialize)]
@@ -496,7 +578,10 @@ struct AsOfSqlRow {
 #[cfg(test)]
 mod as_of_tests {
     use super::*;
+    use crate::relations::append_relation;
+    use crate::resolver::{resolve, Assertion, Resolution, Signal};
     use crate::test_support::new_test_store;
+    use serde_json::json;
     use time::format_description::well_known::Rfc3339;
 
     fn at(rfc: &str) -> OffsetDateTime {
@@ -607,6 +692,71 @@ mod as_of_tests {
         .await
         .unwrap();
         assert!(invalidated.is_some());
+    }
+
+    #[tokio::test]
+    async fn entity_anchor_heads_require_resolved_salient_subject_and_explicit_anchor() {
+        let store = new_test_store().await;
+        let entity = match resolve(
+            &store,
+            "person",
+            Some("Ryan Dahl"),
+            &[Signal::new("email", "ryan@example.com")],
+            Assertion::Inferred,
+        )
+        .await
+        .unwrap()
+        {
+            Resolution::Resolved(entity) => entity,
+            other => panic!("expected resolved entity, got {other:?}"),
+        };
+
+        let source_path = LogicalMemoryPath::shared_core("notes/ryan-source");
+        let source = store
+            .append_record_with_options(
+                &source_path,
+                "note",
+                "pair",
+                None,
+                "Ryan prefers concise architecture notes.",
+                &json!({}),
+                "normal",
+                "high",
+                None,
+            )
+            .await
+            .unwrap();
+        append_relation(
+            &store,
+            &source.memory_id,
+            &entity.entity_id,
+            "subject",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(list_entity_anchor_head_records(&store, 10).await.unwrap().is_empty());
+
+        let anchor_path = LogicalMemoryPath::from_logical_path("core/people/ryan-dahl/profile.md");
+        let anchor = append_memory_record(
+            &store,
+            &anchor_path,
+            "profile",
+            "curate",
+            None,
+            "Ryan Dahl: concise architecture notes.",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        let anchors = list_entity_anchor_head_records(&store, 10).await.unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].memory_id, anchor.memory_id);
     }
 }
 
