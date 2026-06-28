@@ -285,7 +285,13 @@
             </tbody>
         </table>
         {% endif %} {% elif bifrost_usage.status == "missing" %}
+        {% elif bifrost_usage.status == "missing" %}
         <p class="form-hint">{{ bifrost_usage.error | e }}</p>
+        {% elif bifrost_usage.status == "unavailable" %}
+        <p class="form-hint">
+            <strong>Usag</strong>e temporarily unavailable.</strong>
+            {{ bifrost_usage.error | e }}
+        </p>
         {% else %}
         <p class="form-errors">{{ bifrost_usage.error | e }}</p>
         {% endif %}

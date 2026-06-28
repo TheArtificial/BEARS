@@ -51,6 +51,14 @@ pub struct BifrostVirtualKeyQuota {
 }
 
 #[derive(Debug, Clone)]
+pub struct BifrostVirtualKeyDetails {
+    pub id: String,
+    pub name: String,
+    pub value: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
 enum BifrostManagementAuth {
     Bearer(String),
     Cookie(String),
@@ -478,23 +486,118 @@ impl BifrostGovernanceClient {
         Ok(archived_name)
     }
 
+    pub async fn get_virtual_key_details_by_id(
+        &self,
+        virtual_key_id: &str,
+    ) -> Result<Option<BifrostVirtualKeyDetails>, DenError> {
+        let auth = self.login().await?;
+        let virtual_key_id = virtual_key_id.trim();
+        if virtual_key_id.is_empty() {
+            return Ok(None);
+        }
+        let url = format!("{}/governance/virtual-keys/{virtual_key_id}", self.management_url);
+        let response = self
+            .apply_management_auth(self.http.get(&url), &auth)
+            .send()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key get failed: {err}")))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost virtual key get body: {err}")))?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost virtual key get HTTP {status}: {text}"
+            )));
+        }
+        let payload = serde_json::from_str::<serde_json::Value>(&text).map_err(|err| {
+            DenError::Parsing(format!(
+                "Bifrost virtual key get JSON: {err}; body: {text}"
+            ))
+        })?;
+        let virtual_key = payload
+            .get("virtual_key")
+            .cloned()
+            .ok_or_else(|| DenError::Parsing(format!("Bifrost virtual key get response missing virtual_key: {text}")))?;
+        let id = virtual_key
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(virtual_key_id)
+            .to_string();
+        let name = virtual_key
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let value = virtual_key
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok(Some(BifrostVirtualKeyDetails {
+            id,
+            name,
+            value,
+            payload: virtual_key,
+        }))
+    }
+
     pub async fn get_virtual_key_by_id(
         &self,
         virtual_key_id: &str,
     ) -> Result<Option<BifrostVirtualKeyProvisioned>, DenError> {
-        let auth = self.login().await?;
-        let Some(virtual_key) = self
-            .get_virtual_key_by_id_with_auth(&auth, virtual_key_id)
+        Ok(self
+            .get_virtual_key_details_by_id(virtual_key_id)
             .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(BifrostVirtualKeyProvisioned {
-            id: virtual_key.id,
-            name: virtual_key.name,
-            value: virtual_key.value,
-            reset_usage_tracking: false,
-        }))
+            .map(|virtual_key| BifrostVirtualKeyProvisioned {
+                id: virtual_key.id,
+                name: virtual_key.name,
+                value: virtual_key.value,
+                reset_usage_tracking: false,
+            }))
+    }
+
+    pub async fn get_model_usage_rankings(
+        &self,
+        virtual_key_id: &str,
+    ) -> Result<serde_json::Value, DenError> {
+        let auth = self.login().await?;
+        let virtual_key_id = virtual_key_id.trim();
+        if virtual_key_id.is_empty() {
+            return Err(DenError::ValidationError(
+                "Bifrost virtual key id is required for usage rankings".to_string(),
+            ));
+        }
+        let url = format!("{}/logs/rankings", self.management_url);
+        let response = self
+            .apply_management_auth(
+                self.http
+                    .get(&url)
+                    .query(&[("virtual_key_ids", virtual_key_id), ("period", "30d")]),
+                &auth,
+            )
+            .send()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost usage rankings request failed: {err}")))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|err| DenError::System(format!("Bifrost usage rankings body failed: {err}")))?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost usage rankings HTTP {status}: {text}"
+            )));
+        }
+        serde_json::from_str::<serde_json::Value>(&text).map_err(|err| {
+            DenError::Parsing(format!(
+                "Bifrost usage rankings JSON failed: {err}; body: {text}"
+            ))
+        })
     }
 
     pub async fn archive_virtual_key_by_id(
