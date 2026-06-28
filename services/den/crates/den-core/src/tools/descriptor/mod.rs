@@ -17,8 +17,9 @@ use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
-        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
-        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
+        DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_RESOLVE,
+        DEN_ENTITY_RESOLVE_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
         DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
         DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
@@ -94,6 +95,8 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_ENTITY_BROWSE => return DEN_ENTITY_BROWSE_PROVIDER.to_string(),
+        DEN_ENTITY_RESOLVE => return DEN_ENTITY_RESOLVE_PROVIDER.to_string(),
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
             return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string();
         }
@@ -301,6 +304,24 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.search"],
             MEMORY_READ_PROFILES,
             json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_ENTITY_BROWSE,
+            "Browse entities",
+            "List Bear-local entities known to memory, optionally filtered by entity type. Use after session_info when you need stable people, missions, domains, work surfaces, connections, or artifacts referenced by Bear memory.",
+            "bear.memory",
+            &["entity.read"],
+            MEMORY_READ_PROFILES,
+            entity_browse_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_RESOLVE,
+            "Resolve entity",
+            "Read a Bear-local entity by id, following merge pointers to the live entity and optionally including handles and memory relations. Use entity ids returned by entity_browse, memory_search, or session/work-surface context.",
+            "bear.memory",
+            &["entity.read"],
+            MEMORY_READ_PROFILES,
+            entity_resolve_schema(),
         ),
         descriptor(
             DEN_MEMORY_ORIENT_WORK_SURFACE,
@@ -1547,6 +1568,33 @@ fn memory_write_entry_schema() -> Value {
             "semantic_confirmation_token": { "type": "string", "minLength": 1, "maxLength": 2000 }
         },
         "required": ["kind", "title", "body"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_browse_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entity_type": {
+                "type": "string",
+                "enum": ["person", "org", "event", "mission", "domain", "work_surface", "connection", "artifact", "place"]
+            },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn entity_resolve_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "include_relations": { "type": "boolean" },
+            "include_handles": { "type": "boolean" }
+        },
+        "required": ["entity_id"],
         "additionalProperties": false
     })
 }

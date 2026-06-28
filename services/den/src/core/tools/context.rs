@@ -15,6 +15,7 @@ use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::{
     conversation::ConversationTitleOps,
     dispatch::ToolContext,
+    entity::EntityOps,
     environment::EnvironmentOps,
     identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser},
     memory::{RoleMemoryEntryWrite, RoleMemoryStore},
@@ -35,6 +36,7 @@ use crate::{
     config::Config,
     core::tools::{
         activity_payloads::{no_active_workplan_payload, plan_mode_workplan_payload},
+        entity::DenEntityOps,
         environment::DenEnvironmentOps,
         identity::DenBearDirectory,
         memory_read::DenRoleMemoryStore,
@@ -115,6 +117,10 @@ impl<'a> DenToolContext<'a> {
             pool: self.pool,
             config: self.config,
         }
+    }
+
+    fn entity(&'a self) -> DenEntityOps<'a> {
+        DenEntityOps::new(self)
     }
 
     fn conversation(&self) -> DenConversationTitleOps<'a> {
@@ -302,6 +308,26 @@ impl WorkSurfaceOps for DenToolContext<'_> {
         role: BearProfile,
     ) -> Result<Value, DenError> {
         self.work_surface().orient(context, role).await
+    }
+}
+
+impl EntityOps for DenToolContext<'_> {
+    async fn browse_entities(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().browse(context, role, arguments).await
+    }
+
+    async fn resolve_entity(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().resolve(context, role, arguments).await
     }
 }
 

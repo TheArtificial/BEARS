@@ -4,6 +4,7 @@ pub mod arguments;
 pub mod constants;
 pub mod context;
 pub mod descriptor;
+pub mod entity;
 pub mod environment;
 pub mod identity;
 pub mod memfs;
