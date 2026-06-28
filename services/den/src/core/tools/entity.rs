@@ -1,12 +1,12 @@
 use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::entity::{
     EntityBrowseArguments, EntityLinkMemoryArguments, EntityMergeArguments, EntityResolveArguments,
-    EntitySplitArguments, EntityWriteAccessRuleArguments,
+    EntitySplitArguments, EntityWriteAccessRuleArguments, EntityWriteAnchorArguments,
 };
 use den_runtime::bears::BearProfile;
 use den_runtime::memory::store::{
-    self as memory_store, descriptors, EntityHandleRow, EntityRow, EntityTrust, RelationClass,
-    RelationRow, ResolutionState,
+    self as memory_store, descriptors, EntityHandleRow, EntityRow, EntityTrust, LogicalMemoryPath,
+    RelationClass, RelationRow, ResolutionState,
 };
 use serde_json::{json, Value};
 
@@ -238,6 +238,79 @@ impl<'a> DenEntityOps<'a> {
             "bear_id": context.bear_id,
             "role": role.as_str(),
             "relation": relation,
+        }))
+    }
+
+    pub(crate) async fn write_anchor(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        if role != BearProfile::Curate {
+            return Err(DenError::Authorization(
+                "entity_write_anchor is available only to curate".to_string(),
+            ));
+        }
+        let args: EntityWriteAnchorArguments = serde_json::from_value(arguments)?;
+        let store = self.ctx.stores.store_for_bear(context.bear_id).await?;
+        let entity = memory_store::resolve_live_entity(&store, &args.entity_id)
+            .await?
+            .ok_or_else(|| DenError::NotFound(format!("entity {}", args.entity_id)))?;
+        if !matches!(
+            entity.resolution,
+            ResolutionState::Resolved | ResolutionState::Confirmed
+        ) {
+            return Err(DenError::ValidationError(
+                "entity anchors require a resolved or confirmed entity".to_string(),
+            ));
+        }
+        let anchor_ref = entity
+            .display_name
+            .as_deref()
+            .or(entity.canonical_ref.as_deref())
+            .unwrap_or(entity.entity_id.as_str());
+        let path = memory_store::entity_anchor_path(&entity.entity_type, anchor_ref, &args.kind)
+            .ok_or_else(|| {
+                DenError::ValidationError("entity type is not anchor-eligible".to_string())
+            })?;
+        let logical = LogicalMemoryPath::from_logical_path(&path);
+        let content = if args.body.trim_start().starts_with('#') {
+            args.body.clone()
+        } else {
+            format!("# {}\n\n{}", args.title.trim(), args.body.trim())
+        };
+        let metadata = json!({
+            "title": args.title,
+            "entity_id": entity.entity_id,
+            "entity_type": entity.entity_type,
+            "anchor_ref": anchor_ref,
+            "source": "entity_write_anchor",
+        });
+        let row = store
+            .append_record_with_options(
+                &logical,
+                &args.kind,
+                role.as_str(),
+                Some(context.binding_id.as_str()),
+                &content,
+                &metadata,
+                "normal",
+                args.salience.as_deref().unwrap_or("high"),
+                args.supersedes_memory_id.as_deref(),
+            )
+            .await?;
+        Ok(json!({
+            "ok": true,
+            "bear_id": context.bear_id,
+            "role": role.as_str(),
+            "entity": entity,
+            "anchor": {
+                "path": path,
+                "memory_id": row.memory_id,
+                "sequence_no": row.sequence_no,
+                "salience": row.salience,
+            }
         }))
     }
 }

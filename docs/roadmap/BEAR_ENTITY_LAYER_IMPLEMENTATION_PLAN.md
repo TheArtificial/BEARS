@@ -109,7 +109,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 2. ✅ Curate-only entity merge/split tools.
 3. ✅ Curate-only access-rule write tool (`audience`, `confined_to`).
 4. ✅ `session_info.entities` for trusted human and current work-surface entities.
-5. ◻ Entity anchor authoring/maintenance flow for explicit anchor records.
+5. ✅ Entity anchor authoring/maintenance flow for explicit anchor records.
 
 ## Phase 7 — Portability (bear package)
 

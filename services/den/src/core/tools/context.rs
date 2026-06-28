@@ -367,6 +367,15 @@ impl EntityOps for DenToolContext<'_> {
             .write_access_rule(context, role, arguments)
             .await
     }
+
+    async fn write_entity_anchor(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().write_anchor(context, role, arguments).await
+    }
 }
 
 impl PlanModeOps for DenToolContext<'_> {

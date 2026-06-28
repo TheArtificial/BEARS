@@ -62,6 +62,18 @@ pub struct EntityWriteAccessRuleArguments {
     pub confidence: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EntityWriteAnchorArguments {
+    pub entity_id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub salience: Option<String>,
+    #[serde(default)]
+    pub supersedes_memory_id: Option<String>,
+}
+
 #[allow(async_fn_in_trait)]
 pub trait EntityOps: Send + Sync {
     async fn browse_entities(
@@ -105,6 +117,14 @@ pub trait EntityOps: Send + Sync {
         role: BearProfile,
         arguments: Value,
     ) -> Result<Value, DenError>;
+
+    async fn write_entity_anchor(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
 }
 
 pub async fn entity_browse(
@@ -151,8 +171,6 @@ pub async fn entity_split(
 ) -> Result<Value, DenError> {
     ops.split_entity_tool(context, role, arguments).await
 }
-
-
 pub async fn entity_write_access_rule(
     ops: &impl EntityOps,
     context: &DenToolInvocationContext,
@@ -160,4 +178,13 @@ pub async fn entity_write_access_rule(
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.write_entity_access_rule(context, role, arguments).await
+}
+
+pub async fn entity_write_anchor(
+    ops: &impl EntityOps,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, DenError> {
+    ops.write_entity_anchor(context, role, arguments).await
 }

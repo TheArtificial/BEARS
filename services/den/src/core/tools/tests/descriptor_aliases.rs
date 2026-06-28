@@ -145,6 +145,16 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     );
     assert_eq!(entity_access_rule.provider_name, "entity_write_access_rule");
 
+    let entity_anchor = descriptors
+        .iter()
+        .find(|descriptor| descriptor.name == DEN_ENTITY_WRITE_ANCHOR)
+        .expect("entity anchor descriptor exists");
+    assert_eq!(
+        entity_anchor.provider_name,
+        DEN_ENTITY_WRITE_ANCHOR_PROVIDER
+    );
+    assert_eq!(entity_anchor.provider_name, "entity_write_anchor");
+
     let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
