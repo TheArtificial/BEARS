@@ -20,8 +20,7 @@ use crate::tools::{
         DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER,
         DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
         DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
-        DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION,
-        DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE,
+        DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_LIST_PROPOSALS,
         DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
         DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL, DEN_MEMORY_SEARCH,
@@ -30,11 +29,9 @@ use crate::tools::{
         DEN_PLAN_MODE_STATUS, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH,
         DEN_PROMPT_MEMORY_UPSERT, DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET, DEN_SITUATION_GET_PROVIDER,
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT,
-        DEN_TASK_LIST_SYNC, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE, DEN_TASK_WRITE_INTENT,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT,
         DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_SEARCH,
-        DEN_WORK_PLAN_GET_STATUS,
-        DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
+        DEN_WORK_PLAN_REQUEST_HANDOFF,
     },
     context::DenToolInvocationContext,
     conversation::ConversationTitleOps,
@@ -43,7 +40,6 @@ use crate::tools::{
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
     web::WebFetcher,
     work_surface::WorkSurfaceOps,
-    workflow::WorkPlanOps,
     {conversation, entity, environment, memory, plan_mode, prompt_memory, review, web, work_surface},
 };
 
@@ -54,7 +50,6 @@ pub trait ToolContext:
     + ConversationTitleOps
     + EnvironmentOps
     + entity::EntityOps
-    + WorkPlanOps
     + WorkSurfaceOps
     + WebFetcher
     + memory::RoleMemoryStore
@@ -164,20 +159,6 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_APPLY_CORE_UPDATE => {
             review::apply_core_update(ctx, &context, role, arguments).await
         }
-        DEN_WORK_PLAN_LIST => ctx.list_work_plans(&context, role, arguments).await,
-        DEN_WORK_PLAN_GET_STATUS => ctx.get_work_plan_status(&context, role, arguments).await,
-        DEN_WORK_PLAN_UPDATE => ctx.update_work_plan(&context, role, arguments).await,
-        DEN_JOB_CREATE => ctx.create_job(&context, role, arguments).await,
-        DEN_JOB_LIST => ctx.list_jobs(&context, role, arguments).await,
-        DEN_JOB_GET => ctx.get_job(&context, role, arguments).await,
-        DEN_JOB_UPDATE => ctx.update_job(&context, role, arguments).await,
-        DEN_JOB_EXECUTE => ctx.execute_job(&context, role, arguments).await,
-        DEN_JOB_EVALUATE_CRITERION => ctx.evaluate_criterion(&context, role, arguments).await,
-        DEN_TASK_CREATE => ctx.create_task(&context, role, arguments).await,
-        DEN_TASK_LIST => ctx.list_tasks(&context, role, arguments).await,
-        DEN_TASK_UPDATE => ctx.update_task(&context, role, arguments).await,
-        DEN_TASK_LIST_SYNC => ctx.sync_task_list(&context, role, arguments).await,
-        DEN_TASK_LIST_CHECKOUT => ctx.checkout_task_list(&context, role, arguments).await,
         DEN_PLAN_MODE_ENTER => plan_mode::enter_plan_mode(ctx, &context, arguments).await,
         DEN_PLAN_MODE_STATUS => plan_mode::plan_mode_status(ctx, &context).await,
         DEN_PLAN_MODE_RECORD_APPROVAL => {

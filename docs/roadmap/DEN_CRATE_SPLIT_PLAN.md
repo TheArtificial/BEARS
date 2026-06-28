@@ -1025,8 +1025,12 @@ exercise `invoke_den_tool` end-to-end) pass.
 **Known follow-ups (cleanup, not blocking):** ~~the per-tool `den` wrapper
 functions are only used by `#[cfg(test)]` tests, so non-test builds emit
 `dead_code` warnings; remove them and migrate those tests~~ **done** (see *wrapper
-cleanup + test migration* below). The coarse `WorkPlanOps` seam should still be
-tightened after the `work_plans`/docket domain types migrate to shared crates.
+cleanup + test migration* below). ~~The coarse `WorkPlanOps` seam should still be
+tightened after the `work_plans`/docket domain types migrate to shared crates~~
+**resolved by removing the coarse seam**: workflow tools now stay in the
+binary-side dispatcher wrapper, because their DTOs depend on `den-docket` while
+`den-docket` depends on `den-core`. Typed workflow DTO migration remains a
+Docket-domain follow-up, not a `den_core::tools::ToolContext` capability.
 
 ### Phase B — wrapper cleanup + test migration (2026-06, `clippy` branch)
 

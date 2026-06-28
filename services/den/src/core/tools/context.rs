@@ -4,7 +4,7 @@
 //!
 //! Each impl delegates to the per-capability concrete type already defined in the
 //! sibling tool modules (web/runtime, memory_read, prompt_memory, memory_review,
-//! work_surface, plan_mode, identity, environment, workflow, session). See
+//! work_surface, plan_mode, identity, environment, session). See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B — dispatcher).
 
 use serde_json::Value;
@@ -29,7 +29,6 @@ use den_core::tools::{
     },
     web::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
-    workflow::WorkPlanOps,
 };
 
 use crate::{
@@ -46,7 +45,6 @@ use crate::{
         session::DenConversationTitleOps,
         web::runtime::DenWebFetcher,
         work_surface::DenWorkSurfaceOps,
-        workflow::DenWorkPlanOps,
     },
     errors::DenError,
 };
@@ -128,13 +126,6 @@ impl<'a> DenToolContext<'a> {
         DenConversationTitleOps { pool: self.pool }
     }
 
-    fn work_plans(&self) -> DenWorkPlanOps<'a> {
-        DenWorkPlanOps {
-            pool: self.pool,
-            config: self.config,
-            stores: self.stores,
-        }
-    }
 }
 
 impl WebFetcher for DenToolContext<'_> {
@@ -508,152 +499,6 @@ impl ConversationTitleOps for DenToolContext<'_> {
     ) -> Result<u64, DenError> {
         self.conversation()
             .set_title(bear_id, conversation_id, title)
-            .await
-    }
-}
-
-impl WorkPlanOps for DenToolContext<'_> {
-    async fn list_work_plans(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .list_work_plans(context, role, arguments)
-            .await
-    }
-
-    async fn get_work_plan_status(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .get_work_plan_status(context, role, arguments)
-            .await
-    }
-
-    async fn update_work_plan(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .update_work_plan(context, role, arguments)
-            .await
-    }
-
-    async fn create_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans().create_job(context, role, arguments).await
-    }
-
-    async fn list_jobs(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans().list_jobs(context, role, arguments).await
-    }
-
-    async fn get_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans().get_job(context, role, arguments).await
-    }
-
-    async fn update_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans().update_job(context, role, arguments).await
-    }
-
-    async fn execute_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .execute_job(context, role, arguments)
-            .await
-    }
-
-    async fn evaluate_criterion(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .evaluate_criterion(context, role, arguments)
-            .await
-    }
-
-    async fn create_task(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .create_task(context, role, arguments)
-            .await
-    }
-
-    async fn list_tasks(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans().list_tasks(context, role, arguments).await
-    }
-
-    async fn update_task(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .update_task(context, role, arguments)
-            .await
-    }
-
-    async fn sync_task_list(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .sync_task_list(context, role, arguments)
-            .await
-    }
-
-    async fn checkout_task_list(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .checkout_task_list(context, role, arguments)
             .await
     }
 }

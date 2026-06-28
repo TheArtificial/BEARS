@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::tools::workflow::WorkPlanOps;
 use den_docket::{
     self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
@@ -15,11 +14,15 @@ use den_docket::{
     WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
     WorkPlanVisibility,
 };
+use den_core::tools::constants::{
+    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
+    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
+    DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
+};
 
 use crate::{
     config::Config,
     core::tools::{
-        activity_payloads::{activity_payload, plan_mode_workplan_payload},
         memory_write::source_acp_session_id,
         session::DenToolInvocationContext,
         support::clean_optional,
@@ -28,180 +31,26 @@ use crate::{
 };
 use den_service::bears::BearProfile;
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
-use den_runtime::{
-    plan_mode,
-};
+use den_runtime::plan_mode;
 
-/// Concrete [`WorkPlanOps`] over the runtime pool/config/stores.
-pub(crate) struct DenWorkPlanOps<'a> {
-    pub(crate) pool: &'a PgPool,
-    pub(crate) config: &'a Config,
-    pub(crate) stores: &'a MemoryStoreManager,
-}
-
-impl WorkPlanOps for DenWorkPlanOps<'_> {
-    async fn list_work_plans(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        list_work_plans(
-            self.pool,
-            self.config,
-            self.stores,
-            context,
-            role,
-            arguments,
-            activity_payload,
-            plan_mode_workplan_payload,
-        )
-        .await
-        .map_err(CustomError::into_den)
-    }
-
-    async fn get_work_plan_status(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        get_work_plan_status(self.pool, context, role, arguments, activity_payload)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn update_work_plan(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        update_work_plan(self.pool, context, role, arguments, activity_payload)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn create_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        create_job(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn list_jobs(
-        &self,
-        context: &DenToolInvocationContext,
-        _role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        list_jobs(self.pool, context, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn get_job(
-        &self,
-        context: &DenToolInvocationContext,
-        _role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        get_job(self.pool, context, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn update_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        update_job(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn execute_job(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        execute_job(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn evaluate_criterion(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        evaluate_criterion(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn create_task(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        create_task(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn list_tasks(
-        &self,
-        context: &DenToolInvocationContext,
-        _role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        list_tasks(self.pool, context, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn update_task(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        update_task(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn sync_task_list(
-        &self,
-        _context: &DenToolInvocationContext,
-        _role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        sync_task_list(self.pool, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
-
-    async fn checkout_task_list(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        checkout_task_list(self.pool, context, role, arguments)
-            .await
-            .map_err(CustomError::into_den)
-    }
+pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        DEN_WORK_PLAN_LIST
+            | DEN_WORK_PLAN_GET_STATUS
+            | DEN_WORK_PLAN_UPDATE
+            | DEN_JOB_CREATE
+            | DEN_JOB_LIST
+            | DEN_JOB_GET
+            | DEN_JOB_UPDATE
+            | DEN_JOB_EXECUTE
+            | DEN_JOB_EVALUATE_CRITERION
+            | DEN_TASK_CREATE
+            | DEN_TASK_LIST
+            | DEN_TASK_UPDATE
+            | DEN_TASK_LIST_SYNC
+            | DEN_TASK_LIST_CHECKOUT
+    )
 }
 
 #[derive(Debug, Deserialize)]
