@@ -1,6 +1,8 @@
 # Implementation Plan: BEARS Multi-Role Runtime Architecture
 
 > **Direction changed (2026-06).** The five-role model stands, but the implementation path here (Letta provisioning + `letta_agent_id`, Codepool `bear_channel`, MemFS task pipeline, harness-backed vs API-direct split) is superseded by the Den-native runtime: one in-process loop, a Den-native role registry, per-Bear SQLite memory, and Docket tasks. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+>
+> **Skills note.** Skill manifest/proposal/reconciliation concepts below are historical source material. The canonical native Skills plan is [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md).
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This plan implements the architecture described in the `multi-role-runtime-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`. MemFS repo/view topology is specified by the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md).

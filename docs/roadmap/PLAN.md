@@ -35,7 +35,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
 | **Channels** | Draft first-party channel layer; web chat exists as Den surface, Slack/WhatsApp/macOS channel adapters planned; channels must not inherit armature/local-tool assumptions | [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md), [`MACOS_BEARS_CLIENT_APP_PLAN.md`](MACOS_BEARS_CLIENT_APP_PLAN.md) |
 | **Prompt registry** | Proposed ADR-0046 extraction of long-lived prompt prose into file-backed fragments while preserving `bear_compiled_configs` as runtime hot-path contract | [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md), [`PROMPT_TEXT_HARDCODE_AUDIT.md`](PROMPT_TEXT_HARDCODE_AUDIT.md) |
-| **Phase 1 product** | Operator console, auth, Garage artifacts, routines, skills/MCP — **partially native-aligned**; several Phase 1 docs still describe Letta paths | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
+| **Phase 1 product** | Operator console, auth, Garage artifacts, routines, skills/MCP — **partially native-aligned**; Skills now have a consolidated native plan, while several Phase 1 docs still describe Letta paths | [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md), [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
 
 ### What is working today
 
@@ -57,7 +57,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 6. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.
 7. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
 8. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-9. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
+9. **Phase 1 product debt** — routines/MCP catalog on native execution model, plus the native Skills catalog/manifest/proposal flow ([`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md)).
 
 ### Important contradictions resolved here
 
@@ -95,7 +95,7 @@ See [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md):
 
 ### 5. Phase 1 operator/product (native-aligned)
 
-Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) through the native lens: operator console, routines, Garage artifacts, skills/MCP — execution model must not assume Letta Code.
+Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) through the native lens: operator console, routines, Garage artifacts, and MCP — execution model must not assume Letta Code. For Skills, use [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) as the canonical native plan.
 
 ## Planning document index
 
@@ -125,6 +125,7 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 - [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
+- [Skills implementation](SKILLS_IMPLEMENTATION_PLAN.md)
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — **partially superseded**; use for operator/product scope, not runtime path
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md)
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)

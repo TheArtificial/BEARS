@@ -1,6 +1,8 @@
 # Phase 1 (Den) — locked decisions
 
 > **Superseded (2026-06).** Several locked decisions here (Letta-native conversations, "no Den memory store", `letta_agent_id`, skills via Letta Code + Letta `reflection` subagents) are reversed by the Den-native runtime migration. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md) (see also [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)/[ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Read this as historical.
+>
+> **Skills note.** Decision 9 is superseded by the native Skills plan: [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md).
 
 **Status:** Active
 **Last updated:** 2026-04-24
