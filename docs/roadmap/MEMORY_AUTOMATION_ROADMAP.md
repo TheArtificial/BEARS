@@ -375,10 +375,10 @@ Humans should see what the system is doing and override when necessary, without 
 
 1. ✅ Pair reflection creates a memory proposal and enqueues a `memory_curate` run.
 2. ✅ Add lane-neutral `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations` storage.
-3. Next: **tool exposure** — decide the per-profile memory roster so user-facing bears actually have memory tools (see [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)); align `session_info.memory.available_tools` with the real roster.
+3. ✅ **Tool exposure (read side)** — `chat`, `pair`, `curate`, `work`, and `watch` have read/status/search descriptors; write/review policy for `work`/`watch` remains open.
 4. Next: add manual/queued conductor runner for the `memory_curate` lane.
 5. Next: surface generated proposals and queued reflection runs in UI.
-6. Next: apply [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, begin writing `supersedes_memory_id`, `memory_harvest_marks`).
+6. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`). Next: use them from curate/consolidation policy.
 7. Then: add model-assisted pair reflection (P2) and the `archive_harvest` lane (P2.5).
-8. Then: stand up the derived Qdrant recall index (P3, [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)) and hybrid scored `memory_search` (P4).
+8. ✅ Derived Qdrant recall index (P3) and hybrid scored `memory_search` (P4) are landed; remaining recall work is live ops exercise and deeper salience/freshness scoring.
 9. Then: work task context bridge (P5).
