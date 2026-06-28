@@ -301,9 +301,6 @@ pub fn edge_gateway_requires_runtime(config: &Config) -> bool {
     RuntimeStartupCapabilities::from_config(config).runtime_required_for_edge_gateway
 }
 
-#[deprecated(note = "use edge_gateway_requires_runtime")]
-pub use edge_gateway_requires_runtime as acp_requires_runtime;
-
 #[allow(async_fn_in_trait)]
 pub trait RoleProfileRegistry {
     async fn resolve_compatibility_binding(
@@ -326,9 +323,6 @@ pub trait SessionConversationRuntime {
         conversation: &RuntimeConversationRef,
     ) -> Result<RuntimeHistoryPage, DenError>;
 }
-
-#[deprecated(note = "use SessionConversationRuntime")]
-pub use SessionConversationRuntime as AcpConversationRuntime;
 
 /// Runtime conversation materialization backend (create, verify, load_history).
 #[allow(async_fn_in_trait)]
@@ -368,7 +362,7 @@ pub trait RetrievalService {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
-/// Classify a runtime-facing error into a stable Den-owned category for ACP/runner policy.
+/// Classify a runtime-facing error into a stable Den-owned category for runner policy.
 pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
     let message = err.to_string().to_ascii_lowercase();
     if message.contains("waiting on an unresolved tool approval")
