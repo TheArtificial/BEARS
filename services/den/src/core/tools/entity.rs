@@ -1,10 +1,12 @@
 use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::entity::{
-    EntityBrowseArguments, EntityLinkMemoryArguments, EntityResolveArguments,
+    EntityBrowseArguments, EntityLinkMemoryArguments, EntityMergeArguments, EntityResolveArguments,
+    EntitySplitArguments,
 };
 use den_runtime::bears::BearProfile;
 use den_runtime::memory::store::{
-    self as memory_store, descriptors, EntityHandleRow, EntityRow, RelationClass, RelationRow,
+    self as memory_store, descriptors, EntityHandleRow, EntityRow, EntityTrust, RelationClass,
+    RelationRow, ResolutionState,
 };
 use serde_json::{json, Value};
 
@@ -114,6 +116,87 @@ impl<'a> DenEntityOps<'a> {
             "bear_id": context.bear_id,
             "role": role.as_str(),
             "relation": relation,
+        }))
+    }
+
+    pub(crate) async fn merge(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        if role != BearProfile::Curate {
+            return Err(DenError::Authorization(
+                "entity_merge is available only to curate".to_string(),
+            ));
+        }
+        let args: EntityMergeArguments = serde_json::from_value(arguments)?;
+        let store = self.ctx.stores.store_for_bear(context.bear_id).await?;
+        let survivor =
+            memory_store::merge_entities(&store, &args.survivor_entity_id, &args.loser_entity_id)
+                .await?;
+        Ok(json!({
+            "ok": true,
+            "bear_id": context.bear_id,
+            "role": role.as_str(),
+            "survivor": survivor,
+            "loser_entity_id": args.loser_entity_id,
+        }))
+    }
+
+    pub(crate) async fn split(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        if role != BearProfile::Curate {
+            return Err(DenError::Authorization(
+                "entity_split is available only to curate".to_string(),
+            ));
+        }
+        let args: EntitySplitArguments = serde_json::from_value(arguments)?;
+        if args.handle_ids_to_move.is_empty() {
+            return Err(DenError::ValidationError(
+                "handle_ids_to_move must not be empty".to_string(),
+            ));
+        }
+        let resolution = match args.resolution.as_deref().unwrap_or("provisional") {
+            "observed" => ResolutionState::Observed,
+            "provisional" => ResolutionState::Provisional,
+            "resolved" => ResolutionState::Resolved,
+            "confirmed" => ResolutionState::Confirmed,
+            other => {
+                return Err(DenError::ValidationError(format!(
+                    "unsupported resolution: {other}"
+                )))
+            }
+        };
+        let trust = match args.trust.as_deref().unwrap_or("inferred") {
+            "inferred" => EntityTrust::Inferred,
+            "asserted" => EntityTrust::Asserted,
+            other => {
+                return Err(DenError::ValidationError(format!(
+                    "unsupported trust: {other}"
+                )))
+            }
+        };
+        let store = self.ctx.stores.store_for_bear(context.bear_id).await?;
+        let entity = memory_store::split_entity(
+            &store,
+            &args.new_entity_type,
+            args.display_name.as_deref(),
+            &args.handle_ids_to_move,
+            resolution,
+            trust,
+        )
+        .await?;
+        Ok(json!({
+            "ok": true,
+            "bear_id": context.bear_id,
+            "role": role.as_str(),
+            "entity": entity,
+            "moved_handle_ids": args.handle_ids_to_move,
         }))
     }
 }

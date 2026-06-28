@@ -20,8 +20,9 @@ use crate::tools::{
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
         DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
         DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY,
-        DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
-        DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER,
+        DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT,
+        DEN_ENTITY_SPLIT_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
         DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
         DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
@@ -100,6 +101,8 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_ENTITY_BROWSE => return DEN_ENTITY_BROWSE_PROVIDER.to_string(),
         DEN_ENTITY_RESOLVE => return DEN_ENTITY_RESOLVE_PROVIDER.to_string(),
         DEN_ENTITY_LINK_MEMORY => return DEN_ENTITY_LINK_MEMORY_PROVIDER.to_string(),
+        DEN_ENTITY_MERGE => return DEN_ENTITY_MERGE_PROVIDER.to_string(),
+        DEN_ENTITY_SPLIT => return DEN_ENTITY_SPLIT_PROVIDER.to_string(),
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
             return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string();
         }
@@ -334,6 +337,24 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["entity.relation.write"],
             ENTITY_RELATION_WRITE_PROFILES,
             entity_link_memory_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_MERGE,
+            "Merge entities",
+            "Curate-only identity repair: merge a duplicate or mistaken entity into a survivor. The loser is not deleted; it forwards to the survivor and active handles are re-homed.",
+            "bear.memory",
+            &["entity.governance.write"],
+            CURATE_PROFILES,
+            entity_merge_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_SPLIT,
+            "Split entity",
+            "Curate-only identity repair: create a new entity and move selected handles to it after an incorrect merge or over-broad identity grouping.",
+            "bear.memory",
+            &["entity.governance.write"],
+            CURATE_PROFILES,
+            entity_split_schema(),
         ),
         descriptor(
             DEN_MEMORY_ORIENT_WORK_SURFACE,
@@ -1622,6 +1643,38 @@ fn entity_link_memory_schema() -> Value {
             "confidence": { "type": "string", "maxLength": 80 }
         },
         "required": ["memory_id", "entity_id", "relation"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_merge_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "survivor_entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "loser_entity_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "required": ["survivor_entity_id", "loser_entity_id"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_split_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "new_entity_type": { "type": "string", "enum": ["person", "org", "event", "mission", "domain", "work_surface", "connection", "artifact"] },
+            "display_name": { "type": "string", "maxLength": 200 },
+            "handle_ids_to_move": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "minItems": 1,
+                "maxItems": 50
+            },
+            "resolution": { "type": "string", "enum": ["observed", "provisional", "resolved", "confirmed"] },
+            "trust": { "type": "string", "enum": ["inferred", "asserted"] }
+        },
+        "required": ["new_entity_type", "handle_ids_to_move"],
         "additionalProperties": false
     })
 }

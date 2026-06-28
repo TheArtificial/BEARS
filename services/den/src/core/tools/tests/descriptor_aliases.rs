@@ -121,6 +121,20 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     assert_eq!(entity_link.provider_name, DEN_ENTITY_LINK_MEMORY_PROVIDER);
     assert_eq!(entity_link.provider_name, "entity_link_memory");
 
+    let entity_merge = descriptors
+        .iter()
+        .find(|descriptor| descriptor.name == DEN_ENTITY_MERGE)
+        .expect("entity merge descriptor exists");
+    assert_eq!(entity_merge.provider_name, DEN_ENTITY_MERGE_PROVIDER);
+    assert_eq!(entity_merge.provider_name, "entity_merge");
+
+    let entity_split = descriptors
+        .iter()
+        .find(|descriptor| descriptor.name == DEN_ENTITY_SPLIT)
+        .expect("entity split descriptor exists");
+    assert_eq!(entity_split.provider_name, DEN_ENTITY_SPLIT_PROVIDER);
+    assert_eq!(entity_split.provider_name, "entity_split");
+
     let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)

@@ -29,6 +29,8 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(curate.contains(DEN_ENTITY_BROWSE));
     assert!(curate.contains(DEN_ENTITY_RESOLVE));
     assert!(!curate.contains(DEN_ENTITY_LINK_MEMORY));
+    assert!(curate.contains(DEN_ENTITY_MERGE));
+    assert!(curate.contains(DEN_ENTITY_SPLIT));
     assert!(!curate.contains(DEN_TASK_WRITE_INTENT));
     assert!(!curate.contains(DEN_OBSERVATION_WRITE));
     assert!(!curate.contains(DEN_RUN_WRITE_RESULT));
@@ -40,6 +42,8 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(watch.contains(DEN_ENTITY_BROWSE));
     assert!(watch.contains(DEN_ENTITY_RESOLVE));
     assert!(watch.contains(DEN_ENTITY_LINK_MEMORY));
+    assert!(!watch.contains(DEN_ENTITY_MERGE));
+    assert!(!watch.contains(DEN_ENTITY_SPLIT));
     assert!(watch.contains(DEN_OBSERVATION_WRITE));
     assert!(watch.contains(DEN_SKILL_PROPOSE));
     assert!(!watch.contains(DEN_WORK_PLAN_LIST));
@@ -54,6 +58,8 @@ fn privileged_descriptors_are_role_scoped() {
     assert!(work.contains(DEN_ENTITY_BROWSE));
     assert!(work.contains(DEN_ENTITY_RESOLVE));
     assert!(work.contains(DEN_ENTITY_LINK_MEMORY));
+    assert!(!work.contains(DEN_ENTITY_MERGE));
+    assert!(!work.contains(DEN_ENTITY_SPLIT));
     assert!(work.contains(DEN_RUN_WRITE_RESULT));
     assert!(work.contains(DEN_WORK_PLAN_LIST));
     assert!(work.contains(DEN_WORK_PLAN_UPDATE));

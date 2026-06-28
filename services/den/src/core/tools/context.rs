@@ -338,6 +338,24 @@ impl EntityOps for DenToolContext<'_> {
     ) -> Result<Value, DenError> {
         self.entity().link_memory(context, role, arguments).await
     }
+
+    async fn merge_entities_tool(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().merge(context, role, arguments).await
+    }
+
+    async fn split_entity_tool(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().split(context, role, arguments).await
+    }
 }
 
 impl PlanModeOps for DenToolContext<'_> {
