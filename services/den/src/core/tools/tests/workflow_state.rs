@@ -38,7 +38,7 @@ use crate::core::{
 use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
 use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
 use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
-use den_runtime::{client_tools::ClientToolName, plan_mode::PlanModeSessionRow};
+use den_runtime::{plan_mode::PlanModeSessionRow};
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {

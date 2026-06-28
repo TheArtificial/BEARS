@@ -8,10 +8,6 @@
 //! Modules are migrated out of the `den` crate incrementally; this skeleton compiles on
 //! its own and grows as each subsystem in the v1.4 extraction order lands here.
 
-/// Client/edge-executed tool vocabulary: tool classes, names, session policy, and
-/// provider display/policy helpers. Protocol-neutral; the ACP edge frames the wire.
-pub mod client_tools;
-
 /// Plan-mode state machine and transitions (turn/plan coordination).
 pub mod plan_mode;
 

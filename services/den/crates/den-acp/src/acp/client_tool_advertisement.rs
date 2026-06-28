@@ -4,7 +4,7 @@
 //! method names (`adapter_method` / `client_method`) and the JSON descriptor
 //! advertisement sent to ACP clients at session start. The protocol-neutral tool
 //! vocabulary (names, classes, policy, display) lives in
-//! `den_runtime::client_tools`; this module frames it onto the ACP wire.
+//! `den_core::client_tools`; this module frames it onto the ACP wire.
 
 use serde_json::json;
 
@@ -12,7 +12,7 @@ use den_core::tools::tool_descriptor_guidance::{
     render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy, ToolScopeKind,
     ToolSideEffectKind,
 };
-use den_runtime::client_tools::{
+use den_core::client_tools::{
     client_tool_display, diag_phase, provider_tool_name_is_safe, ClientToolDescriptor,
     ClientToolName, ResolvedSessionPolicy, READ_TEXT_FILE_TOOL,
 };
@@ -706,7 +706,7 @@ pub fn client_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_runtime::client_tools::*;
+    use den_core::client_tools::*;
 
     // ADR-0043 s5b2: the ACP wire-method table now owns the adapter/client wire
     // names (removed from the protocol-neutral core descriptor) and feeds them into

@@ -1,4 +1,4 @@
-use den_runtime::client_tools::{diag_phase, ToolStatus};
+use den_core::client_tools::{diag_phase, ToolStatus};
 
 pub(super) fn delivered_tool_result_diagnostic(parsed_status: ToolStatus) -> serde_json::Value {
     serde_json::json!({

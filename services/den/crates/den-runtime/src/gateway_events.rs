@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use den_service::tool_turns::ToolResultRequest;
 
-use crate::client_tools::{
+use den_core::client_tools::{
     diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
     supported_provider_tool_names, ClientToolName,
 };

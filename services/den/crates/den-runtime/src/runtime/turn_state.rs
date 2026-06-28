@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
-use crate::{client_tools::ResolvedSessionPolicy, plan_mode};
+use den_core::client_tools::ResolvedSessionPolicy;
+use crate::plan_mode;
 use den_docket::WorkPlanProjection;
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";

@@ -19,11 +19,9 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_oauth::auth;
+use den_core::client_tools::client_tool_policy_json_for_provider;
 use den_service::{acp_sessions, tool_turns::{ToolResultRequest, ToolTurnRegistration}};
-use den_runtime::{
-    plan_mode,
-    client_tools::client_tool_policy_json_for_provider,
-};
+use den_runtime::plan_mode;
 
 use crate::acp::{
     check_adapter_contract, invoke_acp_den_tool, pending_web_fetch_approvals,
@@ -94,7 +92,7 @@ pub(super) async fn permission_result_inner(
                 plan_mode_id,
             )
             .await?;
-            let policy = den_runtime::client_tools::resolve_session_policy_for_mode("plan", Some("submitted"));
+            let policy = den_core::client_tools::resolve_session_policy_for_mode("plan", Some("submitted"));
             return Ok(Json(serde_json::json!({
                 "accepted": true,
                 "reason": "plan_mode_approval_request_timed_out",
@@ -151,7 +149,7 @@ pub(super) async fn permission_result_inner(
             .await?;
             "plan"
         };
-        let policy = den_runtime::client_tools::resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str()));
+        let policy = den_core::client_tools::resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str()));
         return Ok(Json(serde_json::json!({
             "accepted": true,
             "reason": format!("plan_mode_{}", row.state),

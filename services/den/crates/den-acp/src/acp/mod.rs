@@ -66,10 +66,10 @@ use crate::{
     },
 };
 use crate::acp::client_tool_advertisement::provider_tool_names_for_client_context;
+use den_core::client_tools::resolve_session_policy_for_mode;
 use den_service::turn_controller::ActiveTurnCancelHandle;
 use den_runtime::{
     gateway_events::GatewayEvent,
-    client_tools::resolve_session_policy_for_mode,
     runtime_provider::RoleRuntimeBinding,
 };
 use self::{

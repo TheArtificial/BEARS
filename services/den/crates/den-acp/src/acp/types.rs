@@ -57,7 +57,7 @@ pub(crate) fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AcpResolvedTurnContext {
-    pub(crate) policy: den_runtime::client_tools::ResolvedSessionPolicy,
+    pub(crate) policy: den_core::client_tools::ResolvedSessionPolicy,
     pub(crate) workflow_state: serde_json::Value,
     pub(crate) effective_mode: String,
 }

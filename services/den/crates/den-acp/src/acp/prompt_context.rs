@@ -20,8 +20,8 @@ use den_service::{
         PromptMemoryCompilationInput,
     },
 };
+use den_core::client_tools::ResolvedSessionPolicy;
 use den_runtime::{
-    client_tools::ResolvedSessionPolicy,
     plan_mode,
     runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
     runtime_compaction_observability::RuntimeCompactionEventStatus,

@@ -1,6 +1,7 @@
 use crate::acp::workflow_guidance::{ActivityStatusSyncSummary, render_turn_state_summary};
+use den_core::client_tools::ResolvedSessionPolicy;
 use den_docket::WorkPlanProjection;
-use den_runtime::{client_tools::ResolvedSessionPolicy, turn_state};
+use den_runtime::{turn_state};
 
 pub(crate) fn workflow_state_json(policy: &ResolvedSessionPolicy) -> serde_json::Value {
     workflow_state_json_from_sources(policy, None, None)
@@ -81,7 +82,7 @@ pub(super) fn render_turn_state_summary_with_activity(
 mod tests {
     use super::*;
     use den_docket::{WorkPlanItem, WorkPlanItemStatus};
-    use den_runtime::client_tools::ToolEnablementState;
+    use den_core::client_tools::ToolEnablementState;
     use time::OffsetDateTime;
     use uuid::Uuid;
 

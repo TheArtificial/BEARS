@@ -109,7 +109,7 @@ use prompt_memory_blocks::{
     fn prompt_memory_test_policy() -> ResolvedSessionPolicy {
         ResolvedSessionPolicy {
             mode_label: "Write",
-            tool_enablement: den_runtime::client_tools::ToolEnablementState::AllTools,
+            tool_enablement: den_core::client_tools::ToolEnablementState::AllTools,
             plan_mode_state: None,
         }
     }
@@ -2740,7 +2740,7 @@ use prompt_memory_blocks::{
 
     #[tokio::test]
     async fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
-        let policy = den_runtime::client_tools::resolve_session_policy_for_mode("ask", None);
+        let policy = den_core::client_tools::resolve_session_policy_for_mode("ask", None);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1:9/den_test")
             .unwrap();

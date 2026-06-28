@@ -8,9 +8,7 @@ use crate::{
     core::web_policy,
 };
 use den_service::tool_turns::ToolResultRequest;
-use den_runtime::{
-    client_tools::client_tool_policy_json_for_provider,
-};
+use den_core::client_tools::client_tool_policy_json_for_provider;
 
 use super::AcpStreamContext;
 

@@ -32,8 +32,8 @@ use den_service::{
         ConversationEventProvenance, ConversationPersistenceContext,
     },
 };
+use den_core::client_tools::ResolvedSessionPolicy;
 use den_runtime::{
-    client_tools::ResolvedSessionPolicy,
     role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
     runtime_provider::RoleRuntimeBinding,
 };

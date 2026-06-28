@@ -5,16 +5,16 @@ use den_runtime::{plan_mode, turn_state};
 
 pub(crate) fn plan_mode_workplan_payload(row: &plan_mode::PlanModeSessionRow) -> Value {
     turn_state::turn_state_from_sources(
-        &den_runtime::client_tools::ResolvedSessionPolicy {
+        &den_core::client_tools::ResolvedSessionPolicy {
             mode_label: if row.state == "approved" {
                 "Write"
             } else {
                 "Plan"
             },
             tool_enablement: if row.state == "approved" {
-                den_runtime::client_tools::ToolEnablementState::AllTools
+                den_core::client_tools::ToolEnablementState::AllTools
             } else {
-                den_runtime::client_tools::ToolEnablementState::ReadOnly
+                den_core::client_tools::ToolEnablementState::ReadOnly
             },
             plan_mode_state: Some(row.state.clone()),
         },

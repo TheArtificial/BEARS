@@ -38,13 +38,13 @@ fn client_tool_descriptors_from_context(
     requested_mode: Option<&str>,
 ) -> Value {
     let context = client_context.unwrap_or(&Value::Null);
-    let policy = den_runtime::client_tools::resolve_session_policy_for_mode(
+    let policy = den_core::client_tools::resolve_session_policy_for_mode(
         requested_mode.unwrap_or("ask"),
         None,
     );
     let mut descriptors = Vec::new();
-    for tool in den_runtime::client_tools::ClientToolName::all() {
-        if *tool == den_runtime::client_tools::ClientToolName::McpCallTool
+    for tool in den_core::client_tools::ClientToolName::all() {
+        if *tool == den_core::client_tools::ClientToolName::McpCallTool
             || !policy.allows_tool(*tool)
         {
             continue;
@@ -53,7 +53,7 @@ fn client_tool_descriptors_from_context(
         if !adapter_supports_tool(context, descriptor.provider_name) {
             continue;
         }
-        descriptors.push(den_runtime::client_tools::provider_tool_descriptor(*tool));
+        descriptors.push(den_core::client_tools::provider_tool_descriptor(*tool));
     }
     if let Some(mcp_tools) = context
         .pointer("/mcp/client_tools")
@@ -62,8 +62,8 @@ fn client_tool_descriptors_from_context(
         descriptors.extend(mcp_tools.iter().cloned());
     }
     if descriptors.is_empty() {
-        descriptors.push(den_runtime::client_tools::provider_tool_descriptor(
-            den_runtime::client_tools::ClientToolName::ReadTextFile,
+        descriptors.push(den_core::client_tools::provider_tool_descriptor(
+            den_core::client_tools::ClientToolName::ReadTextFile,
         ));
     }
     json!(descriptors)

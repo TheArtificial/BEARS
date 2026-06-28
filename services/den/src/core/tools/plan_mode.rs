@@ -17,9 +17,9 @@ use crate::{
     errors::DenError,
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_core::client_tools::{ResolvedSessionPolicy, ToolEnablementState};
 use den_service::{acp_sessions, bears::BearProfile};
 use den_runtime::{
-    client_tools::{ResolvedSessionPolicy, ToolEnablementState},
     plan_mode::{
         self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
     },

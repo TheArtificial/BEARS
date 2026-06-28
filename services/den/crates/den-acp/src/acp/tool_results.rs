@@ -6,9 +6,7 @@ use crate::acp::{
     AcpToolResultResponse,
 };
 use den_service::tool_turns::{ToolResultDelivery, ToolTurnCoordinator};
-use den_runtime::{
-    client_tools::ToolStatus,
-};
+use den_core::client_tools::ToolStatus;
 
 pub(super) fn default_unavailable_context_budget() -> serde_json::Value {
     serde_json::json!({
