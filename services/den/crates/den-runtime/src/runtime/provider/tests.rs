@@ -27,30 +27,28 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
 }
 
 #[test]
-fn edge_gateway_requires_runtime_when_gateway_enabled() {
+fn edge_gateway_requires_runtime_when_api_enabled() {
     let mut config = Config::test_stub();
-    config.acp_gateway_enabled = true;
+    config.run_api = true;
     assert!(edge_gateway_requires_runtime(&config));
 }
 
 #[test]
-fn edge_gateway_does_not_require_provider_runtime_when_gateway_disabled() {
+fn edge_gateway_does_not_require_provider_runtime_when_api_disabled() {
     let mut config = Config::test_stub();
-    config.acp_gateway_enabled = false;
+    config.run_api = false;
     assert!(!edge_gateway_requires_runtime(&config));
 }
 
 #[test]
 fn startup_capabilities_reflect_current_edge_gateway_requirement() {
     let mut config = Config::test_stub();
-    config.acp_gateway_enabled = true;
+    config.run_api = true;
     let caps = RuntimeStartupCapabilities::from_config(&config);
-    assert!(caps.edge_gateway_enabled);
     assert!(caps.runtime_required_for_edge_gateway);
 
-    config.acp_gateway_enabled = false;
+    config.run_api = false;
     let caps = RuntimeStartupCapabilities::from_config(&config);
-    assert!(!caps.edge_gateway_enabled);
     assert!(!caps.runtime_required_for_edge_gateway);
 }
 

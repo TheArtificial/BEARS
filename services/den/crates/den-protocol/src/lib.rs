@@ -286,15 +286,13 @@ pub trait RuntimeHealthCheck {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeStartupCapabilities {
-    pub edge_gateway_enabled: bool,
     pub runtime_required_for_edge_gateway: bool,
 }
 
 impl RuntimeStartupCapabilities {
     pub fn from_config(config: &Config) -> Self {
         Self {
-            edge_gateway_enabled: config.acp_gateway_enabled,
-            runtime_required_for_edge_gateway: config.acp_gateway_enabled,
+            runtime_required_for_edge_gateway: config.run_api,
         }
     }
 }

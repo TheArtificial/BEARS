@@ -10,12 +10,16 @@
 
 Legacy `SERVER_MODE=web|api|both` may still be parsed for migration; prefer the `RUN_*` flags (see `src/config.rs`).
 
+Terminology note: Den distinguishes generic **clients**, conversation-only
+**channels**, trusted work-surface **armatures**, and protocol **adapters**. See
+[clients-channels-armatures.md](clients-channels-armatures.md).
+
 You can run any combination (e.g. web + workers only). If nothing is enabled, the process will warn and do little useful work.
 
 ## Configuration
 
 - **`DATABASE_URL`** — PostgreSQL (required for normal operation).
-- **Service toggles** — `RUN_WEB`, `RUN_API`, `RUN_WORKERS`, `ACP_GATEWAY_ENABLED`.
+- **Service toggles** — `RUN_WEB`, `RUN_API`, `RUN_WORKERS`.
 - **Templates / assets** — paths and production embedding follow `Config` and feature flags (`production`).
 
 Other variables (mail, OAuth, optional integrations) are defined on `Config` as needed for your deployment.
@@ -43,7 +47,7 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
-When `ACP_GATEWAY_ENABLED=true`, the API also serves `POST /acp/bears/{slug}/sessions/{session_id}/prompt` on the API port. Assign the API port a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `API_SERVER_URL` to that origin.
+When `RUN_API=true`, the API also serves ACP compatibility routes such as `POST /acp/bears/{slug}/sessions/{session_id}/prompt` and BearWire routes under `/bearwire`. Assign the API port a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `API_SERVER_URL` to that origin.
 
 **Build identity:** `GET /version` (web and API) returns JSON with `built_at_utc` (RFC 3339 UTC) from when the build script last ran, plus `git_sha` when the image was built with `GIT_SHA`. Set `SOURCE_DATE_EPOCH` during the image build if you need a deterministic timestamp (reproducible builds).
 

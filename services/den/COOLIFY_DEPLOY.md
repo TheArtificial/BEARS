@@ -95,7 +95,7 @@ Integrations (set when you wire the rest of the stack):
 | -------- | ----- |
 | `LLM_API_URL` | Internal Bifrost/OpenAI-compatible base URL. Root compose uses `http://bears-bifrost:8080/v1`. |
 | `BIFROST_BASE_URL` | Optional Bifrost governance/metadata URL when using Den-managed model selection or virtual keys. |
-| `ACP_GATEWAY_ENABLED` | Enables the API-only ACP compatibility gateway on `/acp/*`; requires `RUN_API=true`. BearWire is the preferred armature wire for new integrations. |
+| `RUN_API` | When enabled, mounts the API, ACP compatibility routes under `/acp/*`, and BearWire under `/bearwire`. BearWire is the preferred armature wire for new integrations. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 

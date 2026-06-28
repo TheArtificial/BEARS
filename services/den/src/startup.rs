@@ -1,7 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use den_protocol::{edge_gateway_requires_runtime, RuntimeStartupCapabilities};
+use den_protocol::edge_gateway_requires_runtime;
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -71,15 +71,9 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
             ));
         }
     }
-    if config.acp_gateway_enabled && !config.run_api {
-        return Err(StartupError::Message(
-            "ACP_GATEWAY_ENABLED=true requires RUN_API=true because ACP is exposed only on the API listener."
-                .into(),
-        ));
-    }
     if edge_gateway_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true (Den-native agent loop)."
+            "LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop)."
                 .into(),
         ));
     }
@@ -91,12 +85,10 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 /// The Den-native runtime relies only on the LLM inference substrate
 /// ([`Config::llm_api_url`], via Bifrost); there are no upstream runtime sidecars to probe.
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
     if !config.llm_api_url.trim().is_empty() {
         tracing::info!(
             url = %config.llm_api_url,
             compatibility_backend = "native",
-            edge_gateway_enabled = runtime_capabilities.edge_gateway_enabled,
             "Native agent runtime configured (LLM inference substrate)"
         );
     }
@@ -164,27 +156,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_api_and_llm_when_acp_enabled() {
+    fn validate_requires_llm_when_api_enabled() {
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
         }
 
         let mut acp_on = Config::test_stub();
-        acp_on.acp_gateway_enabled = true;
-        assert!(
-            validate_runtime_config(&acp_on).is_err(),
-            "ACP_GATEWAY_ENABLED requires RUN_API"
-        );
-
         acp_on.run_api = true;
         assert!(
             validate_runtime_config(&acp_on).is_err(),
-            "ACP runtime requires LLM_API_URL"
+            "API runtime requires LLM_API_URL"
         );
 
         acp_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
-        validate_runtime_config(&acp_on).expect("ACP with API and LLM_API_URL should pass");
+        validate_runtime_config(&acp_on).expect("API with LLM_API_URL should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },

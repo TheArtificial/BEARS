@@ -89,7 +89,6 @@ Optional:
 
 | Variable | Value |
 | -------- | ----- |
-| `ACP_GATEWAY_ENABLED` | Defaults to `true`; set to `false` only if you do not want the Den API ACP gateway mounted |
 | `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
 | `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
 | `BIFROST_BASE_URL` | Internal Bifrost URL for status probes (default `http://bears-bifrost:8080`) |

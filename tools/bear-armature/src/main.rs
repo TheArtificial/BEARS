@@ -6132,7 +6132,7 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
             "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes."
         }
         404 => {
-            "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service."
+            "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with RUN_API=true."
         }
         405 => {
             "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions."

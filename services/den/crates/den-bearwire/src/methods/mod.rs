@@ -23,7 +23,7 @@ pub(crate) fn initialize_result(state: &DenState) -> Value {
             "rpc": "/bearwire/v1/rpc",
             "events": "/bearwire/v1/sessions/{session_id}/events"
         },
-        "legacy_acp_enabled": state.config.acp_gateway_enabled,
+        "legacy_acp_enabled": state.config.run_api,
         "legacy_acp_deprecated": true,
         "legacy_acp_removal_phase": "phase_4",
     })

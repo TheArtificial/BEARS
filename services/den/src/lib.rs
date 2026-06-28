@@ -286,12 +286,11 @@ pub async fn run() -> Result<(), StartupError> {
         // Composition root: wire the peer HTTP edges together. den-api owns the
         // JSON/REST + OAuth app; the ACP edge (den-acp) is injected here as peer
         // routers so neither edge depends on the other (ADR-0043).
-        let mut peer_routers: Vec<(&'static str, axum::Router<den_acp::DenState>)> =
-            vec![("/internal", den_acp::internal::router())];
-        if config.acp_gateway_enabled {
-            peer_routers.push(("/acp", den_acp::acp::router()));
-            peer_routers.push(("/bearwire", den_bearwire::router()));
-        }
+        let peer_routers: Vec<(&'static str, axum::Router<den_acp::DenState>)> = vec![
+            ("/internal", den_acp::internal::router()),
+            ("/acp", den_acp::acp::router()),
+            ("/bearwire", den_bearwire::router()),
+        ];
         let api_app = api::create_api_app(
             sqlx_pool.clone(),
             session_store.clone(),

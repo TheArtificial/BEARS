@@ -121,7 +121,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Wire auth | reuse `den-oauth` bearer + ACP token paths | Same scopes as `/acp/auth-check` |
 | Map handlers to existing den-runtime / session store calls | reuse `den-acp` handler bodies | Thin RPC façade over current logic |
 | Binary composition | `services/den/src/lib.rs` | Mount `/bearwire` peer router (same pattern as post-ADR-0043 composition) |
-| Feature flag | `config.bearwire_enabled` or extend `acp_gateway_enabled` | Den advertises BearWire in `initialize` result when enabled |
+| Feature flag | retired; BearWire mounts with `RUN_API=true` | Den advertises BearWire in `initialize` result when the API listener is enabled |
 
 **Exit gate:** Complete. `den-bearwire` integration coverage now exercises RPC `run.start` with a mock OpenAI-compatible provider, then replays BearWire SSE and asserts `run.accepted`, `run.started`, `message.delta`, and `run.completed`.
 
@@ -179,7 +179,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Default adapter to BearWire | In progress. `bear-armature` now defaults to BearWire auto mode; force legacy with `BEARS_LEGACY_ACP_HTTP=1` for one release |
 | Remove `gateway_event_to_adapter_sse` from hot path | Keep function behind `#[deprecated]` until adapter release ships |
 | Redirect or 410 `/acp/**` routes | Or internal shim: `/acp/prompt` → `run.start` RPC (optional compatibility layer) |
-| Rename `den-acp` → `den-bearwire` | Crate + docs; `ACP_GATEWAY_ENABLED` → `BEARWIRE_ENABLED` (env alias kept) |
+| Rename `den-acp` → `den-bearwire` | Crate + docs; no gateway feature flag remains |
 | Update `ROUTES.md`, deploy docs, `.env.example` | |
 
 **Exit gate:** No production adapter release depends on adapter-SSE; `/acp` documented as removed.
