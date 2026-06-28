@@ -197,17 +197,17 @@ fn acp_client_tool_domain(tool: &ClientToolDescriptor) -> &'static str {
 fn acp_tool_guidance(tool: &ClientToolDescriptor) -> ToolDescriptorGuidance {
     match tool.permission_class {
         "read_files" => ToolDescriptorGuidance {
-            scope: ToolScopeKind::AcpClientWorkspace,
+            scope: ToolScopeKind::ArmatureWorkspace,
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         },
         "edit_files" => ToolDescriptorGuidance {
-            scope: ToolScopeKind::AcpClientWorkspace,
+            scope: ToolScopeKind::ArmatureWorkspace,
             side_effect: ToolSideEffectKind::WritesWorkspace,
             orientation: ToolOrientationPolicy::UseSessionInfoAndReadBeforeMutation,
         },
         "delete_files" => ToolDescriptorGuidance {
-            scope: ToolScopeKind::AcpClientWorkspace,
+            scope: ToolScopeKind::ArmatureWorkspace,
             side_effect: ToolSideEffectKind::DeletesWorkspace,
             orientation: ToolOrientationPolicy::UseSessionInfoAndReadBeforeMutation,
         },
