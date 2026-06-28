@@ -87,7 +87,7 @@ impl ResolvedSessionPolicy {
             "plan_mode_state": self.plan_mode_state,
             "allowed_tool_classes": self.allowed_tool_classes(),
             "denied_tool_classes": self.denied_tool_classes(),
-            "policy_note": "Ask and Plan expose read-only tools. Write enables mutation/execution/browser tools, which still require Den policy and ACP client approval."
+            "policy_note": "Ask and Plan expose read-only tools. Write enables mutation/execution/browser tools, which still require Den policy and armature client approval."
         })
     }
 }
@@ -142,7 +142,7 @@ pub mod diag_phase {
     pub const RECENTLY_SETTLED_RESULT: &str = "recently_settled_result";
 }
 
-// Adapter-executed ACP local tools. Adding to this enum is not enough:
+// Adapter-executed armature local tools. Adding to this enum is not enough:
 // the adapter must implement and advertise the same provider_name in
 // `adapter.direct_tools`, and Den must keep descriptor advertisement gated by
 // `adapter_supports_tool`. Do not bump the Den↔adapter contract for additive
@@ -305,9 +305,15 @@ impl ClientToolName {
     pub fn from_provider_alias(raw: &str) -> Option<Self> {
         for tool in Self::all() {
             let descriptor = tool.descriptor();
-            if descriptor.provider_name == raw || descriptor.provider_aliases.contains(&raw) {
+            if descriptor.provider_name == raw
+                || descriptor.canonical_name == raw
+                || descriptor.provider_aliases.contains(&raw)
+            {
                 return Some(*tool);
             }
+        }
+        if let Some(rest) = raw.strip_prefix("acp.") {
+            return Self::from_provider_alias(&format!("armature.{rest}"));
         }
         match raw {
             "bears/read_text_file"
@@ -518,7 +524,7 @@ impl ToolPolicy {
 pub const MCP_CALL_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "mcp__dynamic_tool",
     provider_aliases: &[],
-    canonical_name: "acp.mcp.call_tool",
+    canonical_name: "armature.mcp.call_tool",
     title: "MCP tool",
     kind: "tool",
     risk: "external_tool",
@@ -528,7 +534,7 @@ pub const MCP_CALL_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const READ_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_read_text_file",
     provider_aliases: &[],
-    canonical_name: "acp.fs.read_text_file",
+    canonical_name: "armature.fs.read_text_file",
     title: "Read file",
     kind: "read",
     risk: "read_only",
@@ -538,7 +544,7 @@ pub const READ_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const LIST_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_list_directory",
     provider_aliases: &[],
-    canonical_name: "acp.fs.list_directory",
+    canonical_name: "armature.fs.list_directory",
     title: "List directory",
     kind: "read",
     risk: "read_only",
@@ -548,7 +554,7 @@ pub const LIST_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const FIND_PATHS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_find_paths",
     provider_aliases: &[],
-    canonical_name: "acp.fs.find_paths",
+    canonical_name: "armature.fs.find_paths",
     title: "Find paths",
     kind: "search",
     risk: "read_only",
@@ -558,7 +564,7 @@ pub const FIND_PATHS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const SEARCH_FILES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_search_files",
     provider_aliases: &[],
-    canonical_name: "acp.fs.search_files",
+    canonical_name: "armature.fs.search_files",
     title: "Search files",
     kind: "search",
     risk: "read_only",
@@ -568,7 +574,7 @@ pub const SEARCH_FILES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const STAT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_stat",
     provider_aliases: &[],
-    canonical_name: "acp.fs.stat",
+    canonical_name: "armature.fs.stat",
     title: "Stat path",
     kind: "read",
     risk: "read_only",
@@ -584,7 +590,7 @@ pub const EDIT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
         "fs.replace_text",
         "bears/replace_text",
     ],
-    canonical_name: "acp.fs.edit_file",
+    canonical_name: "armature.fs.edit_file",
     title: "Edit file",
     kind: "edit",
     risk: "writes_workspace",
@@ -594,7 +600,7 @@ pub const EDIT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const CREATE_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_create_text_file",
     provider_aliases: &[],
-    canonical_name: "acp.fs.create_text_file",
+    canonical_name: "armature.fs.create_text_file",
     title: "Create text file",
     kind: "edit",
     risk: "writes_workspace",
@@ -604,7 +610,7 @@ pub const CREATE_TEXT_FILE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const CREATE_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_create_directory",
     provider_aliases: &[],
-    canonical_name: "acp.fs.create_directory",
+    canonical_name: "armature.fs.create_directory",
     title: "Create directory",
     kind: "edit",
     risk: "writes_workspace",
@@ -614,7 +620,7 @@ pub const CREATE_DIRECTORY_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const MOVE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_move_path",
     provider_aliases: &[],
-    canonical_name: "acp.fs.move_path",
+    canonical_name: "armature.fs.move_path",
     title: "Move path",
     kind: "move",
     risk: "writes_workspace",
@@ -624,7 +630,7 @@ pub const MOVE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const COPY_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_copy_path",
     provider_aliases: &[],
-    canonical_name: "acp.fs.copy_path",
+    canonical_name: "armature.fs.copy_path",
     title: "Copy path",
     kind: "edit",
     risk: "writes_workspace",
@@ -634,7 +640,7 @@ pub const COPY_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const APPLY_PATCH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_apply_patch",
     provider_aliases: &[],
-    canonical_name: "acp.fs.apply_patch",
+    canonical_name: "armature.fs.apply_patch",
     title: "Apply patch",
     kind: "edit",
     risk: "writes_workspace",
@@ -644,7 +650,7 @@ pub const APPLY_PATCH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const DELETE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "fs_delete_path",
     provider_aliases: &[],
-    canonical_name: "acp.fs.delete_path",
+    canonical_name: "armature.fs.delete_path",
     title: "Delete path",
     kind: "delete",
     risk: "deletes_workspace",
@@ -654,7 +660,7 @@ pub const DELETE_PATH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_STATUS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_status",
     provider_aliases: &[],
-    canonical_name: "acp.git.status",
+    canonical_name: "armature.git.status",
     title: "Git status",
     kind: "read",
     risk: "read_only",
@@ -664,7 +670,7 @@ pub const GIT_STATUS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_DIFF_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_diff",
     provider_aliases: &[],
-    canonical_name: "acp.git.diff",
+    canonical_name: "armature.git.diff",
     title: "Git diff",
     kind: "read",
     risk: "read_only",
@@ -674,7 +680,7 @@ pub const GIT_DIFF_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_LOG_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_log",
     provider_aliases: &[],
-    canonical_name: "acp.git.log",
+    canonical_name: "armature.git.log",
     title: "Git log",
     kind: "read",
     risk: "read_only",
@@ -684,7 +690,7 @@ pub const GIT_LOG_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_SHOW_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_show",
     provider_aliases: &[],
-    canonical_name: "acp.git.show",
+    canonical_name: "armature.git.show",
     title: "Git show",
     kind: "read",
     risk: "read_only",
@@ -694,7 +700,7 @@ pub const GIT_SHOW_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_ADD_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_add",
     provider_aliases: &[],
-    canonical_name: "acp.git.add",
+    canonical_name: "armature.git.add",
     title: "Git add",
     kind: "edit",
     risk: "writes_workspace",
@@ -704,7 +710,7 @@ pub const GIT_ADD_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_RESTORE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_restore",
     provider_aliases: &[],
-    canonical_name: "acp.git.restore",
+    canonical_name: "armature.git.restore",
     title: "Git restore",
     kind: "edit",
     risk: "writes_workspace",
@@ -714,7 +720,7 @@ pub const GIT_RESTORE_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_COMMIT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_commit",
     provider_aliases: &[],
-    canonical_name: "acp.git.commit",
+    canonical_name: "armature.git.commit",
     title: "Git commit",
     kind: "edit",
     risk: "writes_workspace",
@@ -724,7 +730,7 @@ pub const GIT_COMMIT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const GIT_STASH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "git_stash",
     provider_aliases: &[],
-    canonical_name: "acp.git.stash",
+    canonical_name: "armature.git.stash",
     title: "Git stash",
     kind: "edit",
     risk: "writes_workspace",
@@ -734,7 +740,7 @@ pub const GIT_STASH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const PROCESS_RUN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "process_run",
     provider_aliases: &[],
-    canonical_name: "acp.process.run",
+    canonical_name: "armature.process.run",
     title: "Run process",
     kind: "execute",
     risk: "executes_process",
@@ -744,7 +750,7 @@ pub const PROCESS_RUN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const TERMINAL_RUN_COMMAND_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "terminal_run_command",
     provider_aliases: &[],
-    canonical_name: "acp.terminal.run_command",
+    canonical_name: "armature.terminal.run_command",
     title: "Run terminal command",
     kind: "execute",
     risk: "executes_process",
@@ -754,7 +760,7 @@ pub const TERMINAL_RUN_COMMAND_TOOL: ClientToolDescriptor = ClientToolDescriptor
 pub const CHROME_OPEN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_open",
     provider_aliases: &[],
-    canonical_name: "acp.chrome.open",
+    canonical_name: "armature.chrome.open",
     title: "Chrome open",
     kind: "fetch",
     risk: "browser_access",
@@ -763,7 +769,7 @@ pub const CHROME_OPEN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const CHROME_SNAPSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_snapshot",
     provider_aliases: &[],
-    canonical_name: "acp.chrome.snapshot",
+    canonical_name: "armature.chrome.snapshot",
     title: "Chrome snapshot",
     kind: "read",
     risk: "browser_access",
@@ -772,7 +778,7 @@ pub const CHROME_SNAPSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
 pub const CHROME_CONSOLE_MESSAGES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_console_messages",
     provider_aliases: &[],
-    canonical_name: "acp.chrome.console_messages",
+    canonical_name: "armature.chrome.console_messages",
     title: "Chrome console messages",
     kind: "read",
     risk: "browser_access",
@@ -781,7 +787,7 @@ pub const CHROME_CONSOLE_MESSAGES_TOOL: ClientToolDescriptor = ClientToolDescrip
 pub const CHROME_NETWORK_REQUESTS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_network_requests",
     provider_aliases: &[],
-    canonical_name: "acp.chrome.network_requests",
+    canonical_name: "armature.chrome.network_requests",
     title: "Chrome network requests",
     kind: "read",
     risk: "browser_access",
@@ -790,7 +796,7 @@ pub const CHROME_NETWORK_REQUESTS_TOOL: ClientToolDescriptor = ClientToolDescrip
 pub const CHROME_SCREENSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_screenshot",
     provider_aliases: &[],
-    canonical_name: "acp.chrome.screenshot",
+    canonical_name: "armature.chrome.screenshot",
     title: "Chrome screenshot",
     kind: "read",
     risk: "browser_access",
@@ -988,7 +994,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
     json!({
         "name": descriptor.provider_name,
         "description": format!(
-            "ACP local workspace tool ({}, kind={}, risk={}). {}. Use only for the user's local editor workspace unless the tool explicitly targets browser state.",
+            "Armature local workspace tool ({}, kind={}, risk={}). {}. Use only for the user's local editor workspace unless the tool explicitly targets browser state.",
             descriptor.canonical_name,
             descriptor.kind,
             descriptor.risk,
@@ -998,10 +1004,10 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
     })
 }
 
-const ACP_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1019,10 +1025,10 @@ const ACP_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_LIST_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_LIST_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1040,10 +1046,10 @@ const ACP_LIST_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_FIND_PATHS_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_FIND_PATHS_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1061,10 +1067,10 @@ const ACP_FIND_PATHS_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_SEARCH_FILES_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_SEARCH_FILES_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1082,10 +1088,10 @@ const ACP_SEARCH_FILES_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_STAT_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_STAT_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1103,10 +1109,10 @@ const ACP_STAT_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_EDIT_FILE_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_EDIT_FILE_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1124,10 +1130,10 @@ const ACP_EDIT_FILE_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CREATE_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_CREATE_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1145,10 +1151,10 @@ const ACP_CREATE_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CREATE_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_CREATE_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1166,10 +1172,10 @@ const ACP_CREATE_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_MOVE_PATH_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_MOVE_PATH_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1187,10 +1193,10 @@ const ACP_MOVE_PATH_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_COPY_PATH_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_COPY_PATH_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1208,10 +1214,10 @@ const ACP_COPY_PATH_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_APPLY_PATCH_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_APPLY_PATCH_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1229,10 +1235,10 @@ const ACP_APPLY_PATCH_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_DELETE_PATH_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_DELETE_PATH_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "deny_sensitive_paths",
@@ -1250,10 +1256,10 @@ const ACP_DELETE_PATH_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1271,10 +1277,10 @@ const ACP_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1292,10 +1298,10 @@ const ACP_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1313,10 +1319,10 @@ const ACP_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1334,10 +1340,10 @@ const ACP_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1355,10 +1361,10 @@ const ACP_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_PROCESS_RUN_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_PROCESS_RUN_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
-    allowed_roots_basis: "acp_session.workspace_roots",
+    allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_cwd_under_allowed_roots",
     approval_required: true,
     sensitive_path_policy: "client_permission_required",
@@ -1376,8 +1382,8 @@ const ACP_PROCESS_RUN_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_CHROME_POLICY: ToolPolicy = ToolPolicy {
-    scope_basis: "acp:tools",
+const ARMATURE_CHROME_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "chrome_cdp_endpoint",
     path_containment: "adapter_enforced_chrome_cdp_endpoint",
@@ -1399,33 +1405,33 @@ const ACP_CHROME_POLICY: ToolPolicy = ToolPolicy {
 
 pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
     match tool {
-        ClientToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
-        ClientToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
-        ClientToolName::FindPaths => ACP_FIND_PATHS_POLICY,
-        ClientToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
-        ClientToolName::Stat => ACP_STAT_POLICY,
-        ClientToolName::EditFile => ACP_EDIT_FILE_POLICY,
-        ClientToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
-        ClientToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
-        ClientToolName::MovePath => ACP_MOVE_PATH_POLICY,
-        ClientToolName::CopyPath => ACP_COPY_PATH_POLICY,
-        ClientToolName::ApplyPatch => ACP_APPLY_PATCH_POLICY,
-        ClientToolName::DeletePath => ACP_DELETE_PATH_POLICY,
-        ClientToolName::GitStatus => ACP_GIT_STATUS_POLICY,
-        ClientToolName::GitDiff => ACP_GIT_DIFF_POLICY,
-        ClientToolName::GitLog => ACP_GIT_LOG_POLICY,
-        ClientToolName::GitShow => ACP_GIT_SHOW_POLICY,
-        ClientToolName::GitAdd => ACP_GIT_WRITE_POLICY,
-        ClientToolName::GitRestore => ACP_GIT_WRITE_POLICY,
-        ClientToolName::GitCommit => ACP_GIT_WRITE_POLICY,
-        ClientToolName::GitStash => ACP_GIT_WRITE_POLICY,
-        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ACP_PROCESS_RUN_POLICY,
+        ClientToolName::ReadTextFile => ARMATURE_READ_TEXT_FILE_POLICY,
+        ClientToolName::ListDirectory => ARMATURE_LIST_DIRECTORY_POLICY,
+        ClientToolName::FindPaths => ARMATURE_FIND_PATHS_POLICY,
+        ClientToolName::SearchFiles => ARMATURE_SEARCH_FILES_POLICY,
+        ClientToolName::Stat => ARMATURE_STAT_POLICY,
+        ClientToolName::EditFile => ARMATURE_EDIT_FILE_POLICY,
+        ClientToolName::CreateTextFile => ARMATURE_CREATE_TEXT_FILE_POLICY,
+        ClientToolName::CreateDirectory => ARMATURE_CREATE_DIRECTORY_POLICY,
+        ClientToolName::MovePath => ARMATURE_MOVE_PATH_POLICY,
+        ClientToolName::CopyPath => ARMATURE_COPY_PATH_POLICY,
+        ClientToolName::ApplyPatch => ARMATURE_APPLY_PATCH_POLICY,
+        ClientToolName::DeletePath => ARMATURE_DELETE_PATH_POLICY,
+        ClientToolName::GitStatus => ARMATURE_GIT_STATUS_POLICY,
+        ClientToolName::GitDiff => ARMATURE_GIT_DIFF_POLICY,
+        ClientToolName::GitLog => ARMATURE_GIT_LOG_POLICY,
+        ClientToolName::GitShow => ARMATURE_GIT_SHOW_POLICY,
+        ClientToolName::GitAdd => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::GitRestore => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::GitCommit => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::GitStash => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ARMATURE_PROCESS_RUN_POLICY,
         ClientToolName::ChromeOpen
         | ClientToolName::ChromeSnapshot
         | ClientToolName::ChromeConsoleMessages
         | ClientToolName::ChromeNetworkRequests
-        | ClientToolName::ChromeScreenshot => ACP_CHROME_POLICY,
-        ClientToolName::McpCallTool => ACP_PROCESS_RUN_POLICY,
+        | ClientToolName::ChromeScreenshot => ARMATURE_CHROME_POLICY,
+        ClientToolName::McpCallTool => ARMATURE_PROCESS_RUN_POLICY,
     }
 }
 
@@ -1470,7 +1476,7 @@ pub fn provider_tool_allowed_in_policy(tool_name: &str, policy: &ResolvedSession
 pub fn client_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
     let Some(tool) = ClientToolName::from_provider_alias(tool_name) else {
         return json!({
-            "scope_basis": "acp:tools",
+            "scope_basis": "armature:tools",
             "risk": "read_only",
             "approval_required": true,
             "sensitive_path_policy": "client_permission_required",
@@ -1860,4 +1866,3 @@ pub fn supported_provider_tool_names() -> Vec<&'static str> {
 }
 #[cfg(test)]
 mod tests;
-
