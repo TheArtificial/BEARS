@@ -1,4 +1,4 @@
-FROM maximhq/bifrost:v1.5.16
+FROM maximhq/bifrost:v1.6.0
 
 USER root
 COPY config.json /app/default-config.json
