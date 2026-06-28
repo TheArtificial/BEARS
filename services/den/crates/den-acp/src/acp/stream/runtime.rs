@@ -82,7 +82,7 @@ pub(in crate::acp) fn canonical_persistence_context_from_acp(
 pub(in crate::acp) fn acp_session_provenance(
     context: &AcpStreamContext,
 ) -> den_service::conversation::events::ConversationEventProvenance {
-    den_service::conversation::events::ConversationEventProvenance::acp_session(
+    den_service::conversation::events::ConversationEventProvenance::client_session(
         context.acp_session_id.clone(),
     )
 }

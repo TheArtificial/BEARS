@@ -13,7 +13,7 @@ pub struct ConversationRecord {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub external_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub current_title: Option<String>,
     pub updated_at: time::OffsetDateTime,
 }
@@ -130,7 +130,7 @@ pub async fn ensure_conversation_for_external_id(
     bear_id: Uuid,
     created_by_user_id: Option<i32>,
     external_conversation_id: &str,
-    source_acp_session_id: Option<&str>,
+    source_client_session_id: Option<&str>,
     current_title: Option<&str>,
 ) -> Result<ConversationRecord, DenError> {
     let inserted_row = sqlx::query(
@@ -139,18 +139,18 @@ pub async fn ensure_conversation_for_external_id(
             bear_id,
             created_by_user_id,
             external_conversation_id,
-            source_acp_session_id,
+            source_client_session_id,
             current_title
         )
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
-        RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
         ",
     )
     .bind(bear_id)
     .bind(created_by_user_id)
     .bind(external_conversation_id)
-    .bind(source_acp_session_id)
+    .bind(source_client_session_id)
     .bind(current_title)
     .fetch_optional(pool)
     .await
@@ -162,16 +162,16 @@ pub async fn ensure_conversation_for_external_id(
         sqlx::query(
             r"
             UPDATE conversations
-            SET source_acp_session_id = COALESCE($3, conversations.source_acp_session_id),
+            SET source_client_session_id = COALESCE($3, conversations.source_client_session_id),
                 current_title = COALESCE($4, conversations.current_title)
             WHERE bear_id = $1
               AND external_conversation_id = $2
-            RETURNING id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+            RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
             ",
         )
         .bind(bear_id)
         .bind(external_conversation_id)
-        .bind(source_acp_session_id)
+        .bind(source_client_session_id)
         .bind(current_title)
         .fetch_one(pool)
         .await
@@ -190,8 +190,8 @@ pub async fn ensure_conversation_for_external_id(
                 "decode conversation external_conversation_id: {err}"
             ))
         })?,
-        source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
-            DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
+        source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
+            DenError::Database(format!("decode conversation source_client_session_id: {err}"))
         })?,
         current_title: row.try_get("current_title").map_err(|err| {
             DenError::Database(format!("decode conversation current_title: {err}"))
@@ -208,7 +208,7 @@ pub async fn get_conversation_by_id(
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
         FROM conversations
         WHERE id = $1
         LIMIT 1
@@ -232,8 +232,8 @@ pub async fn get_conversation_by_id(
                     "decode conversation external_conversation_id: {err}"
                 ))
             })?,
-            source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
-                DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
+            source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
+                DenError::Database(format!("decode conversation source_client_session_id: {err}"))
             })?,
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
@@ -253,7 +253,7 @@ pub async fn get_conversation_for_external_id(
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
         FROM conversations
         WHERE bear_id = $1
           AND external_conversation_id = $2
@@ -279,8 +279,8 @@ pub async fn get_conversation_for_external_id(
                     "decode conversation external_conversation_id: {err}"
                 ))
             })?,
-            source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
-                DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
+            source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
+                DenError::Database(format!("decode conversation source_client_session_id: {err}"))
             })?,
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
@@ -348,7 +348,7 @@ pub async fn list_conversations_for_bear(
 ) -> Result<Vec<ConversationRecord>, DenError> {
     let rows = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_acp_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
         FROM conversations
         WHERE bear_id = $1
         ORDER BY updated_at DESC
@@ -377,8 +377,8 @@ pub async fn list_conversations_for_bear(
                         ))
                     },
                 )?,
-                source_acp_session_id: row.try_get("source_acp_session_id").map_err(|err| {
-                    DenError::Database(format!("decode conversation source_acp_session_id: {err}"))
+                source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
+                    DenError::Database(format!("decode conversation source_client_session_id: {err}"))
                 })?,
                 current_title: row.try_get("current_title").map_err(|err| {
                     DenError::Database(format!("decode conversation current_title: {err}"))

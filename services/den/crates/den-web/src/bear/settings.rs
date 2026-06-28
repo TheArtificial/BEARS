@@ -1956,7 +1956,7 @@ async fn conversations_view(
                     .current_title
                     .filter(|t| !t.is_empty())
                     .unwrap_or_else(|| "Untitled".to_string()),
-                source_session: c.source_acp_session_id.unwrap_or_else(|| "—".to_string()),
+                source_session: c.source_client_session_id.unwrap_or_else(|| "—".to_string()),
                 updated_at: c.updated_at.to_string(),
                 compaction_status: stats
                     .map(|(_, status, _)| status.clone())

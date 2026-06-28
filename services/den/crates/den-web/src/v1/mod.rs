@@ -577,7 +577,7 @@ async fn web_chat_workboard_prompt_context(
             WorkPlanLookup {
                 plan_id: None,
                 source_conversation_id: Some(conversation_id.to_string()),
-                source_acp_session_id: None,
+                source_client_session_id: None,
             },
         )
         .await?;

@@ -9,7 +9,7 @@ fn projection_workflow_content_json_is_derived_from_typed_event() {
         },
         event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
             reflection_run_id: uuid::Uuid::nil(),
-            acp_session_id: "acp-session".to_string(),
+            client_session_id: "acp-session".to_string(),
             trigger: "manual".to_string(),
             status: "completed".to_string(),
             summary_path: Some("pair/summary.md".to_string()),

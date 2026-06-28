@@ -134,7 +134,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_agent_id: None,
             session_id: Some("pair-integration-session".to_string()),
             source_conversation_id: None,
-            source_acp_session_id: Some("pair-integration-session".to_string()),
+            source_client_session_id: Some("pair-integration-session".to_string()),
         })
         .await
         .expect("execute first");
@@ -147,7 +147,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             DocketExecutionLookup {
                 session_id: None,
                 source_conversation_id: None,
-                source_acp_session_id: Some("pair-integration-session".to_string()),
+                source_client_session_id: Some("pair-integration-session".to_string()),
             },
         )
         .await
@@ -203,7 +203,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_agent_id: None,
             session_id: None,
             source_conversation_id: None,
-            source_acp_session_id: None,
+            source_client_session_id: None,
         })
         .await
         .expect("execute second");
@@ -236,7 +236,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_agent_id: None,
             session_id: None,
             source_conversation_id: None,
-            source_acp_session_id: None,
+            source_client_session_id: None,
         })
         .await
         .expect("blocked before criteria");
@@ -268,7 +268,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_agent_id: None,
             session_id: None,
             source_conversation_id: None,
-            source_acp_session_id: None,
+            source_client_session_id: None,
         })
         .await
         .expect("complete job");

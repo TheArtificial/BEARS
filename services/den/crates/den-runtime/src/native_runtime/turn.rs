@@ -527,7 +527,7 @@ pub async fn start_native_profile_turn_event_stream(
     )
     .await?;
     if request.runtime_context.is_none() {
-        let provenance = ConversationEventProvenance::acp_session(client_session_id.to_string());
+        let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
         let mut content_json = provenance.as_content_json("user_prompt");
         content_json["role"] = serde_json::json!("user");
         content_json["client_session_id"] = serde_json::json!(client_session_id);

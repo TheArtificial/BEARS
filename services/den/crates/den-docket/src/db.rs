@@ -685,11 +685,11 @@ pub(super) async fn get_active_execution_session(
     owner_profile: BearProfile,
     lookup: DocketExecutionLookup,
 ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
-    let row = if let Some(source_acp_session_id) = lookup.source_acp_session_id {
+    let row = if let Some(source_client_session_id) = lookup.source_client_session_id {
         sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
-            .bind(source_acp_session_id)
+            .bind(source_client_session_id)
             .fetch_optional(pool)
             .await?
     } else if let Some(session_id) = lookup.session_id {
@@ -713,17 +713,17 @@ pub(super) async fn get_active_execution_session(
 }
 
 const SELECT_EXECUTION_BY_ACP_SESSION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
            job_id, run_id, task_id, state, created_at, updated_at
     FROM docket_execution_sessions
-    WHERE bear_id = $1 AND owner_profile = $2 AND source_acp_session_id = $3
+    WHERE bear_id = $1 AND owner_profile = $2 AND source_client_session_id = $3
       AND state IN ('active', 'blocked', 'completing', 'paused')
     ORDER BY updated_at DESC
     LIMIT 1
 ";
 
 const SELECT_EXECUTION_BY_SESSION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
            job_id, run_id, task_id, state, created_at, updated_at
     FROM docket_execution_sessions
     WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
@@ -733,7 +733,7 @@ const SELECT_EXECUTION_BY_SESSION: &str = r"
 ";
 
 const SELECT_EXECUTION_BY_CONVERSATION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
            job_id, run_id, task_id, state, created_at, updated_at
     FROM docket_execution_sessions
     WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3
@@ -754,7 +754,7 @@ async fn upsert_execution_session(
     sqlx::query_as::<_, DocketExecutionSessionRow>(
         r"
         INSERT INTO docket_execution_sessions (
-            bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
             job_id, run_id, task_id, state
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -762,13 +762,13 @@ async fn upsert_execution_session(
             WHERE state IN ('active', 'blocked', 'completing', 'paused')
         DO UPDATE SET
             source_conversation_id = EXCLUDED.source_conversation_id,
-            source_acp_session_id = EXCLUDED.source_acp_session_id,
+            source_client_session_id = EXCLUDED.source_client_session_id,
             job_id = EXCLUDED.job_id,
             run_id = EXCLUDED.run_id,
             task_id = EXCLUDED.task_id,
             state = EXCLUDED.state,
             updated_at = NOW()
-        RETURNING id, bear_id, owner_profile, session_id, source_conversation_id, source_acp_session_id,
+        RETURNING id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
                   job_id, run_id, task_id, state, created_at, updated_at
         ",
     )
@@ -776,7 +776,7 @@ async fn upsert_execution_session(
     .bind(upsert.owner_profile.as_str())
     .bind(upsert.session_id)
     .bind(upsert.source_conversation_id)
-    .bind(upsert.source_acp_session_id)
+    .bind(upsert.source_client_session_id)
     .bind(upsert.job_id)
     .bind(upsert.run_id)
     .bind(upsert.task_id)
@@ -795,7 +795,7 @@ fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
         .map(str::to_string)
         .or_else(|| {
             request
-                .source_acp_session_id
+                .source_client_session_id
                 .as_ref()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
@@ -828,7 +828,7 @@ async fn record_execution_session(
             owner_profile: request.actor_role,
             session_id,
             source_conversation_id: request.source_conversation_id.clone(),
-            source_acp_session_id: request.source_acp_session_id.clone(),
+            source_client_session_id: request.source_client_session_id.clone(),
             job_id: request.job_id,
             run_id,
             task_id,
@@ -1694,7 +1694,7 @@ pub(super) async fn create_or_update_work_plan(
             params.bear_id,
             params.owner_profile,
             params.source_conversation_id.as_deref(),
-            params.source_acp_session_id.as_deref(),
+            params.source_client_session_id.as_deref(),
         )
         .await?
     };
@@ -1733,7 +1733,7 @@ async fn find_existing_plan_id(
     bear_id: Uuid,
     owner_profile: BearProfile,
     source_conversation_id: Option<&str>,
-    source_acp_session_id: Option<&str>,
+    source_client_session_id: Option<&str>,
 ) -> Result<Option<Uuid>, DenError> {
     let row: Option<(Uuid,)> = sqlx::query_as(
         r"
@@ -1742,7 +1742,7 @@ async fn find_existing_plan_id(
         WHERE bear_id = $1
           AND owner_profile = $2
           AND COALESCE(source_conversation_id, '') = COALESCE($3, '')
-          AND COALESCE(source_acp_session_id, '') = COALESCE($4, '')
+          AND COALESCE(source_client_session_id, '') = COALESCE($4, '')
           AND status <> 'archived'
         ORDER BY updated_at DESC
         LIMIT 1
@@ -1751,7 +1751,7 @@ async fn find_existing_plan_id(
     .bind(bear_id)
     .bind(owner_profile.as_str())
     .bind(source_conversation_id)
-    .bind(source_acp_session_id)
+    .bind(source_client_session_id)
     .fetch_optional(&mut **tx)
     .await?;
     Ok(row.map(|r| r.0))
@@ -1765,12 +1765,12 @@ async fn insert_new_plan(
         r"
         INSERT INTO bear_work_plans (
             bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+            source_conversation_id, source_client_session_id, source_channel, workspace_context,
             visibility, status, items
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13::jsonb)
         RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-                  source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+                  source_conversation_id, source_client_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
         ",
@@ -1782,7 +1782,7 @@ async fn insert_new_plan(
     .bind(params.owner_agent_id.as_deref())
     .bind(params.created_by_user_id)
     .bind(params.source_conversation_id.as_deref())
-    .bind(params.source_acp_session_id.as_deref())
+    .bind(params.source_client_session_id.as_deref())
     .bind(&params.source_channel)
     .bind(&params.update.workspace_context)
     .bind(params.update.visibility.as_str())
@@ -1816,7 +1816,7 @@ async fn update_existing_plan(
           AND owner_profile = $3
           AND ($11::integer IS NULL OR version = $11)
         RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-                  source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+                  source_conversation_id, source_client_session_id, source_channel, workspace_context,
                   visibility, status, items, version, handoff_intent_path, handoff_task_id,
                   archived_at, created_at, updated_at
         ",
@@ -1886,7 +1886,7 @@ pub(super) async fn list_visible_work_plans(
     let rows = sqlx::query_as::<_, BearWorkPlanRow>(
         r"
         SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-               source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+               source_conversation_id, source_client_session_id, source_channel, workspace_context,
                visibility, status, items, version, handoff_intent_path, handoff_task_id,
                archived_at, created_at, updated_at
         FROM bear_work_plans
@@ -1934,10 +1934,10 @@ pub(super) async fn get_visible_work_plan(
             .bind(plan_id)
             .fetch_optional(pool)
             .await?
-    } else if let Some(source_acp_session_id) = lookup.source_acp_session_id {
+    } else if let Some(source_client_session_id) = lookup.source_client_session_id {
         sqlx::query_as::<_, BearWorkPlanRow>(SELECT_WORK_PLAN_BY_ACP_SESSION)
             .bind(bear_id)
-            .bind(source_acp_session_id)
+            .bind(source_client_session_id)
             .fetch_optional(pool)
             .await?
     } else if let Some(source_conversation_id) = lookup.source_conversation_id {
@@ -1958,7 +1958,7 @@ pub(super) async fn get_visible_work_plan(
 
 const SELECT_WORK_PLAN_BY_ID: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-           source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+           source_conversation_id, source_client_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
     FROM bear_work_plans
@@ -1967,18 +1967,18 @@ const SELECT_WORK_PLAN_BY_ID: &str = r"
 
 const SELECT_WORK_PLAN_BY_ACP_SESSION: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-           source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+           source_conversation_id, source_client_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
     FROM bear_work_plans
-    WHERE bear_id = $1 AND source_acp_session_id = $2
+    WHERE bear_id = $1 AND source_client_session_id = $2
     ORDER BY updated_at DESC
     LIMIT 1
 ";
 
 const SELECT_WORK_PLAN_BY_CONVERSATION: &str = r"
     SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
-           source_conversation_id, source_acp_session_id, source_channel, workspace_context,
+           source_conversation_id, source_client_session_id, source_channel, workspace_context,
            visibility, status, items, version, handoff_intent_path, handoff_task_id,
            archived_at, created_at, updated_at
     FROM bear_work_plans

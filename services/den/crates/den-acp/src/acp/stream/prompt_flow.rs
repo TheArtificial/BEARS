@@ -67,7 +67,7 @@ async fn acp_docket_execution_prompt_context(
             DocketExecutionLookup {
                 session_id: Some(session_id.to_string()),
                 source_conversation_id: None,
-                source_acp_session_id: Some(session_id.to_string()),
+                source_client_session_id: Some(session_id.to_string()),
             },
         )
         .await
@@ -90,7 +90,7 @@ async fn acp_docket_execution_prompt_context(
                 "task_id": execution.task_id,
                 "session_id": execution.session_id,
                 "owner_profile": execution.owner_profile,
-                "source_acp_session_id": execution.source_acp_session_id,
+                "source_acp_session_id": execution.source_client_session_id,
                 "source_conversation_id": execution.source_conversation_id,
                 "surface": {
                     "kind": "armature",
@@ -438,7 +438,7 @@ pub(in crate::acp) async fn run_prompt_flow(
             WorkPlanLookup {
                 plan_id: None,
                 source_conversation_id: None,
-                source_acp_session_id: Some(session_id.to_string()),
+                source_client_session_id: Some(session_id.to_string()),
             },
         )
         .await

@@ -76,7 +76,7 @@ pub(crate) struct WorkPlanGetStatusArguments {
     #[serde(default)]
     pub(crate) source_conversation_id: Option<String>,
     #[serde(default)]
-    pub(crate) source_acp_session_id: Option<String>,
+    pub(crate) source_client_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,7 +251,7 @@ pub(crate) struct TaskListCheckoutArguments {
     #[serde(default)]
     pub(crate) source_conversation_id: Option<String>,
     #[serde(default)]
-    pub(crate) source_acp_session_id: Option<String>,
+    pub(crate) source_client_session_id: Option<String>,
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -382,8 +382,8 @@ pub(crate) async fn get_work_plan_status(
         source_conversation_id: args
             .source_conversation_id
             .or_else(|| clean_optional(&context.conversation_id)),
-        source_acp_session_id: args
-            .source_acp_session_id
+        source_client_session_id: args
+            .source_client_session_id
             .or_else(|| source_client_session_id(context)),
     };
     let plan = PgDocketService::from_pool(pool)
@@ -417,7 +417,7 @@ pub(crate) async fn update_work_plan(
             owner_agent_id: clean_optional(&context.binding_id),
             created_by_user_id: Some(context.user_id),
             source_conversation_id: clean_optional(&context.conversation_id),
-            source_acp_session_id: source_client_session_id(context),
+            source_client_session_id: source_client_session_id(context),
             source_channel: serde_json::to_value(&context.channel)?,
             plan_id: args.plan_id,
             expected_version: args.expected_version,
@@ -604,7 +604,7 @@ pub(crate) async fn execute_job(
             actor_agent_id: clean_optional(&context.binding_id),
             session_id: Some(context.session_id.clone()),
             source_conversation_id: clean_optional(&context.conversation_id),
-            source_acp_session_id: context.client_session_id.clone(),
+            source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
     let status_report = docket_job_status_report(&outcome.job);
@@ -791,8 +791,8 @@ pub(crate) async fn checkout_task_list(
             source_conversation_id: args
                 .source_conversation_id
                 .or_else(|| clean_optional(&context.conversation_id)),
-            source_acp_session_id: args
-                .source_acp_session_id
+            source_client_session_id: args
+                .source_client_session_id
                 .or_else(|| source_client_session_id(context)),
         })
     };

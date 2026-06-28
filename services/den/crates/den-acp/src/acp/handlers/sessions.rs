@@ -287,7 +287,7 @@ pub(super) async fn get_acp_session_runtime_inner(
             WorkPlanLookup {
                 plan_id: None,
                 source_conversation_id: den_canonical_conversation_id(&row),
-                source_acp_session_id: Some(session_id.to_string()),
+                source_client_session_id: Some(session_id.to_string()),
             },
         )
         .await?;

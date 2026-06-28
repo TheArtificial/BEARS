@@ -65,7 +65,7 @@ pub(crate) async fn run_pair_reflection_summary(
         CreatePairReflectionRun {
             bear_id: session.bear_id,
             user_id: session.user_id,
-            acp_session_id: &session.client_session_id,
+            client_session_id: &session.client_session_id,
             conversation_id,
             trigger,
             considered_message_count: message_summaries.len() as i32,

@@ -356,7 +356,7 @@ fn backfill_incomplete_tool_results(
         return;
     }
     let provenance =
-        ConversationEventProvenance::acp_session(format!("den-web:{bear_id}:{conversation_id}"));
+        ConversationEventProvenance::client_session(format!("den-web:{bear_id}:{conversation_id}"));
     let context = canonical_persistence_context(
         pool.clone(),
         bear_id,

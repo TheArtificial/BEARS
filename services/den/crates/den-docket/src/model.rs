@@ -260,7 +260,7 @@ pub struct BearWorkPlanRow {
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub source_channel: Json<serde_json::Value>,
     pub workspace_context: Json<serde_json::Value>,
     pub visibility: String,
@@ -281,7 +281,7 @@ pub struct WorkPlanUpsert {
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub source_channel: serde_json::Value,
     pub plan_id: Option<Uuid>,
     pub expected_version: Option<i32>,
@@ -299,7 +299,7 @@ pub struct WorkPlanListFilter {
 pub struct WorkPlanLookup {
     pub plan_id: Option<Uuid>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -315,7 +315,7 @@ pub struct WorkPlanProjection {
     pub items: Vec<WorkPlanItem>,
     pub current_item: Option<WorkPlanItem>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub handoff_intent_path: Option<String>,
     pub handoff_task_id: Option<String>,
     pub created_at: OffsetDateTime,
@@ -432,7 +432,7 @@ pub struct TaskListProjection {
     pub items: Vec<TaskListItem>,
     pub current_item: Option<TaskListItem>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub handoff_intent_path: Option<String>,
     pub handoff_task_id: Option<String>,
     pub created_at: OffsetDateTime,
@@ -537,7 +537,7 @@ pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskLis
         items,
         current_item,
         source_conversation_id: plan.source_conversation_id.clone(),
-        source_acp_session_id: plan.source_acp_session_id.clone(),
+        source_client_session_id: plan.source_client_session_id.clone(),
         handoff_intent_path: plan.handoff_intent_path.clone(),
         handoff_task_id: plan.handoff_task_id.clone(),
         created_at: plan.created_at,
@@ -1100,7 +1100,7 @@ pub struct DocketJobExecuteRequest {
     pub actor_agent_id: Option<String>,
     pub session_id: Option<String>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -1110,7 +1110,7 @@ pub struct DocketExecutionSessionRow {
     pub owner_profile: String,
     pub session_id: String,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub task_id: Option<Uuid>,
@@ -1123,7 +1123,7 @@ pub struct DocketExecutionSessionRow {
 pub struct DocketExecutionLookup {
     pub session_id: Option<String>,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1132,7 +1132,7 @@ pub struct DocketExecutionSessionUpsert {
     pub owner_profile: BearProfile,
     pub session_id: String,
     pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
+    pub source_client_session_id: Option<String>,
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub task_id: Option<Uuid>,
@@ -1243,7 +1243,7 @@ impl fmt::Display for DocketValidationError {
             Self::EmptyTaskTitle => f.write_str("Docket task title must not be empty"),
             Self::EmptyTaskBody => f.write_str("Docket task body must not be empty"),
             Self::TaskMissingAnchor => {
-                f.write_str("Docket task must be anchored to either a job or an ACP session")
+                f.write_str("Docket task must be anchored to either a job or an client session")
             }
             Self::DuplicateTaskClientKey { client_key } => {
                 write!(f, "Docket task client_key `{client_key}` is duplicated")
@@ -1394,7 +1394,7 @@ pub fn task_list_projection_from_docket_job(
         items,
         current_item,
         source_conversation_id: None,
-        source_acp_session_id: None,
+        source_client_session_id: None,
         handoff_intent_path: None,
         handoff_task_id: None,
         created_at: projection.job.created_at,
@@ -1601,7 +1601,7 @@ impl BearWorkPlanRow {
             items,
             current_item,
             source_conversation_id: self.source_conversation_id.clone(),
-            source_acp_session_id: self.source_acp_session_id.clone(),
+            source_client_session_id: self.source_client_session_id.clone(),
             handoff_intent_path: self.handoff_intent_path.clone(),
             handoff_task_id: self.handoff_task_id.clone(),
             created_at: self.created_at,
@@ -1873,7 +1873,7 @@ mod tests {
             current_item: current_item(&items).cloned(),
             items,
             source_conversation_id: Some("den-conv-test".to_string()),
-            source_acp_session_id: Some("acp-test".to_string()),
+            source_client_session_id: Some("acp-test".to_string()),
             handoff_intent_path: None,
             handoff_task_id: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
@@ -2206,7 +2206,7 @@ mod tests {
             items: vec![item("one", WorkPlanItemStatus::InProgress)],
             current_item: Some(item("one", WorkPlanItemStatus::InProgress)),
             source_conversation_id: None,
-            source_acp_session_id: None,
+            source_client_session_id: None,
             handoff_intent_path: None,
             handoff_task_id: None,
             created_at: OffsetDateTime::UNIX_EPOCH,

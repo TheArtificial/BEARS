@@ -28,7 +28,7 @@ pub fn spawn_persist_native_agent_step(
     if assistant_text.trim().is_empty() && tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(client_session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
@@ -86,7 +86,7 @@ pub fn spawn_persist_web_chat_turn(
     if from_index >= messages.len() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
@@ -203,7 +203,7 @@ pub fn spawn_persist_web_chat_interrupted_turn(
     if from_index >= messages.len() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(session_id.clone());
     let context = canonical_persistence_context(
         pool.clone(),
         bear_id,
@@ -248,7 +248,7 @@ pub fn spawn_persist_incomplete_acp_tool_results(
     if tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(client_session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,

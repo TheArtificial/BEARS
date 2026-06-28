@@ -17,7 +17,7 @@ pub struct PairReflectionRunRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub user_id: i32,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub conversation_id: Option<String>,
     pub trigger: String,
     pub status: String,
@@ -34,7 +34,7 @@ pub struct PairReflectionRunRow {
 pub struct CreatePairReflectionRun<'a> {
     pub bear_id: Uuid,
     pub user_id: i32,
-    pub acp_session_id: &'a str,
+    pub client_session_id: &'a str,
     pub conversation_id: Option<&'a str>,
     pub trigger: &'a str,
     pub considered_message_count: i32,
@@ -58,18 +58,18 @@ pub async fn create_run(
     let row = sqlx::query(
         r"
         INSERT INTO pair_reflection_runs (
-            bear_id, user_id, acp_session_id, conversation_id, trigger,
+            bear_id, user_id, client_session_id, conversation_id, trigger,
             status, considered_message_count, considered_memory_paths, diagnostic
         )
         VALUES ($1, $2, $3, $4, $5, 'started', $6, $7, $8)
-        RETURNING id, bear_id, user_id, acp_session_id, conversation_id, trigger,
+        RETURNING id, bear_id, user_id, client_session_id, conversation_id, trigger,
                   status, summary_path, summary_commit, considered_message_count,
                   considered_memory_paths, diagnostic, created_at, completed_at
         ",
     )
     .bind(params.bear_id)
     .bind(params.user_id)
-    .bind(params.acp_session_id)
+    .bind(params.client_session_id)
     .bind(params.conversation_id)
     .bind(params.trigger)
     .bind(params.considered_message_count)
@@ -80,10 +80,10 @@ pub async fn create_run(
     Ok(row_from_sql(row))
 }
 
-fn reflection_provenance(bear_id: Uuid, acp_session_id: &str) -> ProjectionProvenance {
+fn reflection_provenance(bear_id: Uuid, client_session_id: &str) -> ProjectionProvenance {
     ProjectionProvenance {
         source: ProjectionSource::PairReflection,
-        scope_id: format!("bear:{bear_id}:acp:{acp_session_id}"),
+        scope_id: format!("bear:{bear_id}:acp:{client_session_id}"),
     }
 }
 
@@ -94,10 +94,10 @@ fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionR
         Some(row.user_id),
         row.conversation_id.as_deref(),
         Projection {
-            provenance: reflection_provenance(row.bear_id, &row.acp_session_id),
+            provenance: reflection_provenance(row.bear_id, &row.client_session_id),
             event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
                 reflection_run_id: row.id,
-                acp_session_id: row.acp_session_id.clone(),
+                client_session_id: row.client_session_id.clone(),
                 trigger: row.trigger.clone(),
                 status: row.status.clone(),
                 summary_path: row.summary_path.clone(),
@@ -105,10 +105,10 @@ fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionR
                 considered_message_count: row.considered_message_count,
                 completed_at: row.completed_at,
             }),
-            workflow_text: format!("Pair reflection completed for session {}", row.acp_session_id),
+            workflow_text: format!("Pair reflection completed for session {}", row.client_session_id),
             visible_summary: (row.status == "completed").then(|| format!(
                 "Pair reflection summary completed for session {}{}.",
-                row.acp_session_id,
+                row.client_session_id,
                 row.summary_path
                     .as_deref()
                     .map(|path| format!(" and saved to {path}"))
@@ -131,7 +131,7 @@ pub async fn complete_run(
             diagnostic = $5,
             completed_at = NOW()
         WHERE id = $1
-        RETURNING id, bear_id, user_id, acp_session_id, conversation_id, trigger,
+        RETURNING id, bear_id, user_id, client_session_id, conversation_id, trigger,
                   status, summary_path, summary_commit, considered_message_count,
                   considered_memory_paths, diagnostic, created_at, completed_at
         ",
@@ -155,7 +155,7 @@ pub async fn list_recent_for_bear(
 ) -> Result<Vec<PairReflectionRunRow>, DenError> {
     let rows = sqlx::query(
         r"
-        SELECT id, bear_id, user_id, acp_session_id, conversation_id, trigger,
+        SELECT id, bear_id, user_id, client_session_id, conversation_id, trigger,
                status, summary_path, summary_commit, considered_message_count,
                considered_memory_paths, diagnostic, created_at, completed_at
         FROM pair_reflection_runs
@@ -176,7 +176,7 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> PairReflectionRunRow {
         id: row.get("id"),
         bear_id: row.get("bear_id"),
         user_id: row.get("user_id"),
-        acp_session_id: row.get("acp_session_id"),
+        client_session_id: row.get("client_session_id"),
         conversation_id: row.get("conversation_id"),
         trigger: row.get("trigger"),
         status: row.get("status"),
@@ -190,19 +190,19 @@ fn row_from_sql(row: sqlx::postgres::PgRow) -> PairReflectionRunRow {
     }
 }
 
-pub fn summary_title_for_session(acp_session_id: &str) -> String {
-    format!("Pair session summary: {acp_session_id}")
+pub fn summary_title_for_session(client_session_id: &str) -> String {
+    format!("Pair session summary: {client_session_id}")
 }
 
 pub fn render_pair_summary_markdown(
-    acp_session_id: &str,
+    client_session_id: &str,
     conversation_id: Option<&str>,
     trigger: &str,
     message_summaries: &[String],
 ) -> String {
     let mut out = String::new();
     out.push_str("## Pair reflection summary\n\n");
-    out.push_str(&format!("- ACP session: `{acp_session_id}`\n"));
+    out.push_str(&format!("- client session: `{client_session_id}`\n"));
     if let Some(conversation_id) = conversation_id {
         out.push_str(&format!("- Conversation: `{conversation_id}`\n"));
     }
