@@ -52,13 +52,12 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` stance.
 2. **ADR-0041 harvest + consolidation** — `salience` on records, `memory_harvest_marks`, supersession writes, `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5).
 3. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
-4. **Entity layer Phases 5–6** — entity anchors, `entity_browse`/`entity_resolve`, curate merge/split tools.
-5. **Context compaction** — Den-owned transcript compaction per ADR-0032.
-6. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
-7. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as normal cleanup, not a data migration.
-8. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
-9. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-10. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
+4. **Context compaction** — Den-owned transcript compaction per ADR-0032.
+5. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
+6. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as normal cleanup, not a data migration.
+7. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
+8. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
+9. **Phase 1 product debt** — routines/skills/MCP catalog on native execution model (not Letta Code harness).
 
 ### Important contradictions resolved here
 

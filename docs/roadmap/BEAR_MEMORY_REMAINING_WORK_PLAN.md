@@ -15,7 +15,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 | **Canonical store + tools** | Per-Bear SQLite, logical paths, `pair`/`chat`/`curate` tools, admin + member memory UI | `work`/`watch` tool exposure | [MEMORY_TOOLS_IMPLEMENTATION_PLAN.md](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
 | **MemFS → SQLite import tooling** | `den import-memfs`, git-dir + bundle, history/supersession import, fixture tests, bear-admin Letta bundle upload UI | Optional archived-bundle use only; no production migration required | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Derived recall index** | Qdrant optional stack, indexer worker, turn-start recall, hybrid `memory_search` (vector + keyword + graph + temporal), `den reindex` | Cabinet leg (blocked); embedding-standard migration | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) |
-| **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg | Entity anchors, tools, session identity → entities | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
+| **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg, explicit anchors, read/write/governance tools, `session_info.entities` | Portability/export-import | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
 | **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close) | Model-assisted pair reflection; `archive_harvest`; consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
 | **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at` on `memory_records`; temporal + as-of recall | `salience` on records, `memory_harvest_marks`, live supersession writes | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
 | **Work-surface memory** | Resolver on entity layer; scaffolds in logical-path model | End-to-end scaffolding + resolution UX | [WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md](WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md), [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) |
@@ -64,7 +64,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-na
 
 - **Phases 0–3 landed:** descriptors, entities/handles, resolver (work-surface first), two-table relations + `memory_links` view.
 - **Phase 4 partial:** `AccessContext` fail-closed gate on projection; descriptive `entity_ids` in Qdrant payload; `search_bear_memory_for_entities`; bounded-graph leg + entity-overlap boost in `memory_search`.
-- **Phases 5–7 open:** entity anchors in projection, model/curate tools, bear-package portability.
+- **Phases 5–6 landed/partial:** explicit entity anchors in projection, model/curate tools, `session_info.entities`; **Phase 7 open:** bear-package portability.
 
 ### Reflection / pair learning (partial)
 
@@ -128,8 +128,8 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 | Phase | Work | Status |
 |---|---|---|
-| **5 — Anchors** | Generalize projection anchors to `core/people/…`, `core/missions/…`; explicit-anchor-only v1 projection | 🟡 path helper, policy, query, and projection wiring landed; authoring/maintenance flows open |
-| **6 — Tools + governance** | `entity_browse`, `entity_resolve`; descriptive relation writes from roles; `entity_merge`/`split` + access-rule writes **curate-only**; resolved entities in `session_info` | 🟡 read tools landed; writes/governance open |
+| **5 — Anchors** | Generalize projection anchors to `core/people/…`, `core/missions/…`; explicit-anchor-only v1 projection | ✅ v1 landed; richer maintenance/derived fallback deferred |
+| **6 — Tools + governance** | `entity_browse`, `entity_resolve`; descriptive relation writes from roles; `entity_merge`/`split` + access-rule writes **curate-only**; resolved entities in `session_info` | ✅ v1 landed |
 | **7 — Portability** | Entity tables in cognition export; import re-links `canonical_ref`; access rules fail-closed until re-resolved | ◻ |
 
 **Phase 4 follow-ups still open:**

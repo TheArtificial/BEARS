@@ -1,6 +1,6 @@
 # Bear Entity Layer — Implementation Plan
 
-**Status:** In progress — Phases 0–4 landed/partial; Phase 6 read tools and Bear web entity browser landed; anchors, relation writes/governance, and portability pending  
+**Status:** In progress — Phases 0–6 landed/partial; entity anchors, entity tools/governance, session entities, and Bear web entity browser landed; portability pending  
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
@@ -83,23 +83,25 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (entity-filter recall slice, met):** payload denormalization + entity-scoped retrieval proven end-to-end against live Qdrant. **Exit (vector boost + applies_when surfacing):** pending query-time entity resolution / Phase 6. **Exit (bounded-graph):** met (Phase 3.5).
 
-## Phase 5 — Anchors generalize
+## Phase 5 — Anchors generalize  🟡 explicit-anchor v1 landed
 
 - Extend logical-path projection (`logical_path.rs`) so **resolved + salient** entities get anchors: `core/people/<id>/…`, `core/missions/<id>/…` beside `core/work_surfaces/<slug>/…`.
 - Transient/low-salience mentions stay **query-derived** ("entity page" = `memory_links` view filtered by `entity_id`).
 - V1 salience promotion threshold is settled: at least one `subject`-linked `high|critical` record, or a `confirmed` entity with at least two `normal` `subject`-linked records.
 - V1 projection is explicit-anchor-only: project generated anchor paths when records exist; do not synthesize projection content from `memory_links` fallback yet.
 
+**Landed:** descriptor-owned anchor path helper, explicit-anchor eligibility query, key-memory projection wiring, and curate-only `entity_write_anchor` authoring flow. **Still open:** richer maintenance/refresh policy and optional derived fallback from relations.
+
 **Exit:** projection tests for explicit entity anchors; entity-page derivation over the view.
 
-## Phase 6 — Tools + curation/governance  🟡 read tools landed
+## Phase 6 — Tools + curation/governance  ✅ v1 landed
 
 - ✅ Model-facing read tools (descriptor-named): `entity_browse`, `entity_resolve`.
 - ✅ Member-facing Bear web UI entity browser/detail pages: `/bear/{slug}/entities` and `/bear/{slug}/entities/{entity_id}`.
-- Pending: relation writes for **descriptive** relations from `chat`/`pair`/`work`/`watch`.
-- Restricted to `curate`/Den: `entity_merge`, `entity_split`, weak-candidate promotion, and **all** `memory_access_rules` writes (differential write authz per table).
+- ✅ Descriptive relation writes from `chat`/`pair`/`work`/`watch`: `entity_link_memory`.
+- ✅ Restricted to `curate`/Den: `entity_merge`, `entity_split`, `entity_write_access_rule`, and `entity_write_anchor`.
 - `curate` Reflection lane(s) for candidate promotion, merge/split review, and access-rule authoring (consistent with ADR-0041 curation).
-- Expose resolved entities in `session_info`.
+- ✅ Expose resolved entities in `session_info.entities`.
 
 **Exit:** tool + authz tests — `chat` cannot write access rules; `curate` can; merge/split curate-only; audit trail present in `memory_access_rules`.
 
