@@ -92,7 +92,7 @@ fn spawn_quota_validation_mock(
     let addr = listener.local_addr().expect("mock quota server addr");
     let records = Arc::new(Mutex::new(Vec::new()));
     let records_for_thread = Arc::clone(&records);
-    let expected_requests = if accepted_mode.is_some() { 1 } else { 3 };
+    let expected_requests = if accepted_mode.is_some() { 1 } else { 4 };
 
     thread::spawn(move || {
         for _ in 0..expected_requests {
@@ -312,7 +312,7 @@ async fn validate_virtual_key_value_accepts_x_api_key() {
 }
 
 #[tokio::test]
-async fn validate_virtual_key_value_reports_all_failed_header_modes() {
+async fn validate_virtual_key_value_reports_x_api_key_failure_only() {
     let (management_url, records) = spawn_quota_validation_mock(None);
     let client = BifrostGovernanceClient::new(&test_config(management_url));
 
@@ -323,8 +323,11 @@ async fn validate_virtual_key_value_reports_all_failed_header_modes() {
     let message = err.to_string();
 
     assert!(message.contains("x-api-key"));
-    assert!(message.contains("x-bf-vk"));
-    assert!(message.contains("bearer"));
+    assert!(!message.contains("x-bf-vk"));
+    assert!(!message.contains("bearer"));
     let records = records.lock().expect("records mutex");
-    assert_eq!(records.len(), 3);
+    assert_eq!(records.len(), 4);
+    assert!(records
+        .iter()
+        .all(|record| record.x_api_key.as_deref() == Some("sk-bf-test")));
 }

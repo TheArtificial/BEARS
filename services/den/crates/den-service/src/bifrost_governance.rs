@@ -338,25 +338,17 @@ impl BifrostGovernanceClient {
         &self,
         value: &str,
     ) -> Result<BifrostVirtualKeyValidation, DenError> {
-        let mut errors = Vec::new();
-        for mode in [
-            BifrostVirtualKeyAuthMode::XApiKey,
-            BifrostVirtualKeyAuthMode::XBfVk,
-            BifrostVirtualKeyAuthMode::Bearer,
-        ] {
-            match self.virtual_key_quota_with_mode(value, mode).await {
-                Ok(quota) => {
-                    return Ok(BifrostVirtualKeyValidation {
-                        auth_mode: quota.auth_mode,
-                    })
-                }
-                Err(err) => errors.push(format!("{}: {err}", mode.as_str())),
-            }
-        }
-        Err(DenError::System(format!(
-            "Bifrost did not recognize the provisioned virtual key via any supported auth header; {}",
-            errors.join("; ")
-        )))
+        let quota = self
+            .virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XApiKey)
+            .await
+            .map_err(|err| {
+                DenError::System(format!(
+                    "Bifrost did not recognize the provisioned virtual key via x-api-key: {err}"
+                ))
+            })?;
+        Ok(BifrostVirtualKeyValidation {
+            auth_mode: quota.auth_mode,
+        })
     }
 
     fn apply_management_auth(
@@ -526,21 +518,13 @@ impl BifrostGovernanceClient {
         &self,
         value: &str,
     ) -> Result<BifrostVirtualKeyQuota, DenError> {
-        let mut errors = Vec::new();
-        for mode in [
-            BifrostVirtualKeyAuthMode::XApiKey,
-            BifrostVirtualKeyAuthMode::XBfVk,
-            BifrostVirtualKeyAuthMode::Bearer,
-        ] {
-            match self.virtual_key_quota_with_mode(value, mode).await {
-                Ok(quota) => return Ok(quota),
-                Err(err) => errors.push(format!("{}: {err}", mode.as_str())),
-            }
-        }
-        Err(DenError::System(format!(
-            "Bifrost did not recognize the virtual key via any supported auth header; {}",
-            errors.join("; ")
-        )))
+        self.virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XApiKey)
+            .await
+            .map_err(|err| {
+                DenError::System(format!(
+                    "Bifrost did not recognize the virtual key via x-api-key: {err}"
+                ))
+            })
     }
 
     async fn create_virtual_key_with_name(
