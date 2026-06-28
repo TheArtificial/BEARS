@@ -400,19 +400,19 @@ body.bear_chat .den-conv-button-container:hover {
     }
 }
 
-/* ---- Letta memory blocks (bear details / edit snapshots) ---- */
-.den-letta-memory-blocks {
+/* ---- Runtime memory blocks (bear details / edit snapshots) ---- */
+.den-runtime-memory-blocks {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-unit);
 }
 
-.den-letta-memory-block {
+.den-runtime-memory-block {
     border: solid var(--thin-line-unit) var(--border-color);
     background: var(--page-color);
 }
 
-.den-letta-memory-block-summary {
+.den-runtime-memory-block-summary {
     cursor: pointer;
     padding: calc(var(--spacing-unit) * 0.75) var(--spacing-unit);
     display: flex;
@@ -422,12 +422,12 @@ body.bear_chat .den-conv-button-container:hover {
     font: inherit;
 }
 
-.den-letta-memory-block-body {
+.den-runtime-memory-block-body {
     padding: 0 var(--spacing-unit) var(--spacing-unit);
     border-top: solid var(--thin-line-unit) var(--border-color);
 }
 
-.den-letta-memory-block-pre {
+.den-runtime-memory-block-pre {
     margin: var(--spacing-unit) 0 0;
     white-space: pre-wrap;
     word-break: break-word;
@@ -439,7 +439,7 @@ body.bear_chat .den-conv-button-container:hover {
     font-size: smaller;
 }
 
-.den-letta-memory-block-meta {
+.den-runtime-memory-block-meta {
     color: var(--meta-color);
     font-size: smaller;
 }

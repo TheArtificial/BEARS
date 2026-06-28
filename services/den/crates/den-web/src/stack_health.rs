@@ -2,7 +2,7 @@
 //!
 //! Combines **runtime probes** (PostgreSQL, upstream HTTP) with **low-cost config sanity**
 //! aligned with the repo’s **`services/preflight`** script: JWT when
-//! required, `LETTA_PG_URI` / `LLM_API_URL` shape, and `OPENAI_API_KEY` presence warnings.
+//! required, `LLM_API_URL` shape, and provider key presence warnings.
 
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use url::Url;
 use crate::config::Config;
 use crate::web::AppState;
 
-/// Wall-clock timeout for each upstream HTTP health call (Letta, Codepool, Bifrost).
+/// Wall-clock timeout for each upstream HTTP health call.
 const HTTP_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Serialize)]
@@ -174,7 +174,7 @@ fn llm_api_url_shape() -> Option<HealthCheck> {
                     id: "llm_api_url_shape",
                     label: "LLM_API_URL (shape)",
                     state: CheckState::Ok,
-                    detail: "valid http(s) URL (Letta → Bifrost; mirrors preflight)".into(),
+                    detail: "valid http(s) URL for Bifrost".into(),
                 }
             } else {
                 HealthCheck {

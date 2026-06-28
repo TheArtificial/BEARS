@@ -69,7 +69,7 @@
             </tbody>
         </table>
         <p class="form-hint">
-            Runtime memory blocks are Letta-native state, separate from Bear memory files.
+            Runtime memory blocks are prompt/runtime state, separate from Bear memory records.
             <a href="/bear/{{ bear.slug | e }}/memory/browse/runtime-blocks">Runtime memory blocks{% if runtime_block_count is not none %}: {{ runtime_block_count }}{% endif %}</a>.
             Long term, this count should be 0 for most Bears.
         </p>
@@ -154,7 +154,7 @@
                 {% if selected_file %}
                 <p><code>{{ selected_file.path | e }}</code></p>
                 {% if selected_file.canonical_tip %}<p class="caption">Commit: <code>{{ selected_file.canonical_tip | e }}</code></p>{% endif %}
-                <pre class="den-letta-memory-block-pre">{{ selected_file.content | e }}</pre>
+                <pre class="den-runtime-memory-block-pre">{{ selected_file.content | e }}</pre>
                 {% elif selected_path %}
                 <p class="form-errors">Could not load <code>{{ selected_path | e }}</code>.</p>
                 {% else %}

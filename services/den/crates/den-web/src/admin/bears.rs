@@ -461,7 +461,7 @@ pub(crate) async fn bear_plan_mode_rows(
 pub(crate) async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
-    _letta_configured: bool,
+    _runtime_configured: bool,
 ) -> Result<Vec<BearProfileBindingHealthRow>, CustomError> {
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
     let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await?;
@@ -486,8 +486,8 @@ async fn bear_detail_response(
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
     let native_runtime = true;
-    let letta_configured = false;
-    let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
+    let runtime_configured = true;
+    let agent_health_rows = bear_agent_health_rows(state, id, runtime_configured).await?;
     let roles_ready = agent_health_rows
         .iter()
         .filter(|row| row.health_status == "ok")
@@ -525,7 +525,7 @@ async fn bear_detail_response(
             member_count,
             native_runtime,
             context_profile_enabled => bear.context_profile.is_some(),
-            letta_configured,
+            runtime_configured,
             agent_health_rows,
             roles_ready,
             roles_error,

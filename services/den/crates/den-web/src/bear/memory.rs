@@ -283,7 +283,7 @@ fn path_group_label(logical_path: &str) -> String {
 // Dashboard — "how much memory"
 // ---------------------------------------------------------------------------
 
-const LETTA_IMPORT_MAX_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
+const LEGACY_IMPORT_MAX_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 
 fn dashboard_redirect_with_query(slug: &str, key: &str, message: &str) -> Response {
     let encoded = urlencoding::encode(message);
@@ -686,7 +686,7 @@ async fn import_legacy_memory_post(
                 ));
             }
         } {
-            if data.len() + chunk.len() > LETTA_IMPORT_MAX_UPLOAD_BYTES {
+            if data.len() + chunk.len() > LEGACY_IMPORT_MAX_UPLOAD_BYTES {
                 return Ok(dashboard_redirect_with_query(
                     &bear.slug,
                     "import_error",

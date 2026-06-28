@@ -106,7 +106,7 @@ async fn render_first_bear_form(
     form: FirstBearForm,
     errors: Option<ValidationErrors>,
     provision_error: Option<String>,
-    letta_sync_error: Option<String>,
+    runtime_sync_error: Option<String>,
 ) -> Result<Response, CustomError> {
     let new_bear_form = first_bear_to_new_bear_form(&form);
     let page = bear_new_form_context(state, &new_bear_form).await;
@@ -119,7 +119,7 @@ async fn render_first_bear_form(
             templates => template_views(),
             errors,
             provision_error,
-            letta_sync_error,
+            runtime_sync_error,
             ..page
         },
     )
@@ -195,7 +195,7 @@ async fn first_bear_post(
     }
 
     let model_context = crate::web::bear::create_support::model_catalog_select_context(&state).await;
-    let letta_fetch = model_context
+    let model_fetch = model_context
         .0
         .then_some(Ok::<_, CustomError>(model_context.1));
 
@@ -222,7 +222,7 @@ async fn first_bear_post(
         );
     }
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
+    validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
     let default_model_opt =
         crate::web::bear::create_support::canonical_default_model_handle(default_model_trim);
 

@@ -20,7 +20,7 @@
     <tr>
       <td><strong>{{ agent.profile | e }}</strong></td>
       <td><code>{{ agent.branch | e }}</code></td>
-      <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{% if agent.legacy_agent_id %}<code>{{ agent.legacy_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td>
         {% if agent.health_status == "ok" %}<strong>{{ agent.health_label | e }}</strong>
         {% elif agent.health_status == "error" %}<span class="form-errors">{{ agent.health_label | e }}</span>
@@ -34,12 +34,12 @@
 </table>
 {% else %}
 <p class="form-hint">Role rows from <code>bear_profile_bindings</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
-{% if letta_configured %}
+{% if runtime_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="margin: 0 0 1rem 0;">
   <button type="submit">Provision missing profiles</button>
 </form>
-{% elif not letta_configured %}
-<p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>
+{% elif not runtime_configured %}
+<p><em>Runtime is not configured.</em></p>
 {% endif %}
 <table>
   <thead><tr><th>Role</th><th>Runtime id</th><th>Provisioning</th><th>Health</th><th>Memory</th><th>Last sync</th></tr></thead>
@@ -47,7 +47,7 @@
   {% for agent in agent_health_rows %}
     <tr>
       <td><strong>{{ agent.profile | e }}</strong></td>
-      <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>{% if agent.legacy_agent_id %}<code>{{ agent.legacy_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
       <td><code>{{ agent.provisioning_status | e }}</code></td>
       <td>
         {% if agent.health_status == "ok" %}<strong>{{ agent.health_label | e }}</strong>

@@ -6,7 +6,7 @@
 {% block admin_content %}
 <div class="box">
 <h3>New bear</h3>
-<p>Create a bear for {% if native_runtime %}native{% else %}Letta{% endif %} runtime. Required: slug, prompt, model. Optional: initial user access.</p>
+<p>Create a bear for the native runtime. Required: slug, prompt, model. Optional: initial user access.</p>
 {% if provision_error %}<p class="form-errors"><strong>Provisioning failed</strong> (bear saved): {{ provision_error | e }}</p>{% endif %}
 
 <form method="post">

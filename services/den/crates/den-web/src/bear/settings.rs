@@ -961,8 +961,8 @@ async fn overview_view(
     };
     let id = bear.id;
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
-    let letta_configured = false;
-    let agent_health_rows = bear_agent_health_rows(&state, id, letta_configured).await?;
+    let runtime_configured = true;
+    let agent_health_rows = bear_agent_health_rows(&state, id, runtime_configured).await?;
     let roles_ready = agent_health_rows
         .iter()
         .filter(|row| row.health_status == "ok")
@@ -997,7 +997,7 @@ async fn overview_view(
             member_count,
             native_runtime => true,
             context_profile_enabled => bear.context_profile.is_some(),
-            letta_configured,
+            runtime_configured,
             agent_health_rows,
             roles_ready,
             roles_error,
@@ -1109,9 +1109,9 @@ async fn stances_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let letta_configured = false;
+    let runtime_configured = true;
     let agent_health_rows: Vec<BearProfileBindingHealthRow> =
-        bear_agent_health_rows(&state, bear.id, letta_configured).await?;
+        bear_agent_health_rows(&state, bear.id, runtime_configured).await?;
     web::render_template(
         &state,
         "bear/settings/stances.html",
@@ -2126,7 +2126,7 @@ async fn advanced_view(
         auth_session,
         context! {
             stats,
-            letta_configured => false,
+            runtime_configured => true,
             message => query.message,
             can_manage_bear,
             native_runtime => true,

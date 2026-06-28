@@ -867,7 +867,7 @@ async fn new_bear_post(
 
     let (catalog_configured, catalog_models, _catalog_error) =
         model_catalog_select_context(&state).await;
-    let letta_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
+    let model_fetch = catalog_configured.then(|| Ok::<_, CustomError>(catalog_models));
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
@@ -875,7 +875,7 @@ async fn new_bear_post(
     }
 
     let default_model_trim = form.default_model.trim();
-    validate_default_model_for_catalog(&letta_fetch, default_model_trim, &mut validation_errors);
+    validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
 
     let default_model_opt = canonical_default_model_handle(default_model_trim);
 

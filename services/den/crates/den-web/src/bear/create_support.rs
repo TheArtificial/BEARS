@@ -7,7 +7,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{errors::CustomError, web::AppState};
-use den_llm::{ModelOption, ToolOption};
+use den_llm::ModelOption;
 use den_service::bears::{
     context_composition::{
         BearContextProfile, RoleContracts, CONTEXT_PROFILE_VERSION, DEFAULT_ROLE_CONTRACT_VERSION,
@@ -17,48 +17,6 @@ use den_service::bears::{
     templates::first_bear_template,
     Bear, BearProfile,
 };
-
-/// Deprecated legacy provider agent-type rows kept only for old template compatibility.
-#[derive(Serialize)]
-pub struct AgentTypeSelectRow {
-    pub value: &'static str,
-    pub label: &'static str,
-}
-
-pub const LEGACY_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
-    AgentTypeSelectRow {
-        value: "",
-        label: "Legacy provider default",
-    },
-    AgentTypeSelectRow {
-        value: "memgpt_agent",
-        label: "memgpt_agent",
-    },
-    AgentTypeSelectRow {
-        value: "memgpt_v2_agent",
-        label: "memgpt_v2_agent",
-    },
-    AgentTypeSelectRow {
-        value: "letta_v1_agent",
-        label: "letta_v1_agent",
-    },
-    AgentTypeSelectRow {
-        value: "react_agent",
-        label: "react_agent",
-    },
-    AgentTypeSelectRow {
-        value: "workflow_agent",
-        label: "workflow_agent",
-    },
-    AgentTypeSelectRow {
-        value: "split_thread_agent",
-        label: "split_thread_agent",
-    },
-    AgentTypeSelectRow {
-        value: "voice_convo_agent",
-        label: "voice_convo_agent",
-    },
-];
 
 /// If the bear already has a `default_model` not returned by the catalog, keep it selectable (legacy / BYOK).
 pub fn ensure_stored_model_in_options_for_handle(
@@ -79,52 +37,6 @@ pub fn ensure_stored_model_in_options_for_handle(
         }
     }
     options
-}
-
-pub fn validate_default_model_for_letta(
-    letta_fetch: &Option<Result<Vec<ModelOption>, CustomError>>,
-    default_model_trim: &str,
-    validation_errors: &mut ValidationErrors,
-) {
-    let Some(res) = letta_fetch else {
-        return;
-    };
-
-    match res {
-        Err(_) => {
-            if default_model_trim.is_empty() {
-                validation_errors.add(
-                    "default_model",
-                    ValidationError::new(
-                        "Model is required when Letta is configured. Enter a valid model handle.",
-                    ),
-                );
-            }
-        }
-        Ok(models) if models.is_empty() => {
-            validation_errors.add(
-                "default_model",
-                ValidationError::new(
-                    "Letta has no LLM models available; configure models in Letta before creating bears.",
-                ),
-            );
-        }
-        Ok(models) => {
-            if default_model_trim.is_empty() {
-                validation_errors.add(
-                    "default_model",
-                    ValidationError::new("Choose a model from the list."),
-                );
-                return;
-            }
-            if !models.iter().any(|m| m.handle == default_model_trim) {
-                validation_errors.add(
-                    "default_model",
-                    ValidationError::new("Pick a model from the list."),
-                );
-            }
-        }
-    }
 }
 
 #[derive(Validate, Serialize, Deserialize, Debug, Clone)]
@@ -415,10 +327,6 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
         model_catalog_configured,
         model_options,
         models_fetch_error,
-        legacy_tools_configured => false,
-        legacy_tool_options => Vec::<ToolOption>::new(),
-        legacy_tools_fetch_error => Option::<String>::None,
-        legacy_agent_type_rows => LEGACY_AGENT_TYPE_ROWS,
     }
 }
 

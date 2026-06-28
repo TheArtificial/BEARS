@@ -8,51 +8,51 @@
         >
     </p>
     <p class="form-hint">
-        Runtime memory blocks are Letta-native state attached to profile runtimes.
+        Runtime memory blocks are prompt/runtime state attached to profile runtimes.
         They are separate from Bear semantic memory records. Long term, this count
         should be 0 for most Bears.
     </p>
 
-    {% if not letta_configured %}
-    <p class="form-hint">Letta is not configured.</p>
+    {% if not runtime_configured %}
+    <p class="form-hint">Runtime is not configured.</p>
     {% endif %} {% for row in runtime_block_rows %}
     <section class="box full-width">
         <h3>{{ row.profile | e }} — {{ row.label | e }}</h3>
         <p>
-            {% if row.letta_agent_id %}<code>{{ row.letta_agent_id | e }}</code
-            >{% else %}<em>No Letta agent linked.</em>{% endif %} · Runtime
+            {% if row.legacy_agent_id %}<code>{{ row.legacy_agent_id | e }}</code
+            >{% else %}<em>No runtime binding linked.</em>{% endif %} · Runtime
             blocks: {{ row.block_count }}
         </p>
         {% if row.error %}
         <p class="form-errors">
-            Could not load profile runtime from Letta: {{ row.error | e }}
+            Could not load profile runtime: {{ row.error | e }}
         </p>
         {% elif row.diagnostics and row.diagnostics.blocks and
         row.diagnostics.blocks | length > 0 %}
-        <div class="den-letta-memory-blocks">
+        <div class="den-runtime-memory-blocks">
             {% for b in row.diagnostics.blocks %}
-            <details class="den-letta-memory-block">
-                <summary class="den-letta-memory-block-summary">
-                    {% if b.label %}<span class="den-letta-memory-block-label"
+            <details class="den-runtime-memory-block">
+                <summary class="den-runtime-memory-block-summary">
+                    {% if b.label %}<span class="den-runtime-memory-block-label"
                         ><strong>{{ b.label | e }}</strong></span
-                    >{% else %}<span class="den-letta-memory-block-label"
+                    >{% else %}<span class="den-runtime-memory-block-label"
                         ><em>(no label)</em></span
                     >{% endif %} {% if b.id %}<span
-                        class="den-letta-memory-block-id"
+                        class="den-runtime-memory-block-id"
                         ><code>{{ b.id | e }}</code></span
                     >{% endif %} {% if b.char_count %}<span
-                        class="den-letta-memory-block-meta"
+                        class="den-runtime-memory-block-meta"
                         >~{{ b.char_count }} chars</span
                     >{% endif %}
                 </summary>
-                <div class="den-letta-memory-block-body">
+                <div class="den-runtime-memory-block-body">
                     {% if b.content %}
-                    <pre class="den-letta-memory-block-pre">
+                    <pre class="den-runtime-memory-block-pre">
 {{ b.content | e }}</pre
                     >
                     {% else %}
                     <p class="form-hint">
-                        <em>No value in the Letta payload for this block.</em>
+                        <em>No value in the runtime payload for this block.</em>
                     </p>
                     {% endif %}
                 </div>

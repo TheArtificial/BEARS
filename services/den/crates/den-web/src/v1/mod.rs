@@ -56,7 +56,7 @@ pub fn router() -> Router<AppState> {
         .route_layer(login_required!(Backend, login_url = "/login"))
 }
 
-/// Membership-filtered bears for the chat UI (no Letta agent id exposed).
+/// Membership-filtered bears for the chat UI (no provider ids exposed).
 #[derive(Serialize)]
 pub struct BearPublic {
     pub bear_id: Uuid,
@@ -183,7 +183,7 @@ pub struct ChatModelResponse {
 }
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
-/// The web UI may also send a temporary `new-...` placeholder before Letta allocates the real
+/// The web UI may also send a temporary `new-...` placeholder before Den resolves the durable
 /// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
@@ -923,7 +923,7 @@ async fn resolve_chat_profile_binding_id(
             CustomError::System(if native_runtime {
                 "This bear has no chat profile runtime binding. Ask an operator to provision missing profiles in Admin → Bears.".to_string()
             } else {
-                "This bear is not provisioned in Letta yet (missing chat profile runtime)."
+                "This bear is not provisioned yet (missing chat profile runtime)."
                     .to_string()
             })
         })

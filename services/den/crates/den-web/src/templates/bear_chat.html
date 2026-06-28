@@ -54,7 +54,7 @@ block head %} {{ super() }}
 <script>
     var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
-    /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). */
+    /** Conversation id from URL (`default` = agent main thread, or `conv-…`). */
     var PREFERRED_CONVERSATION_ID = (function () {
         var p = new URLSearchParams(window.location.search).get(
             "conversation_id",
@@ -76,7 +76,7 @@ block head %} {{ super() }}
         return v === "true" || v === "verbose";
     })();
     var errEl = document.getElementById("err");
-    /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
+    /** Page size for Den history `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
     var historyNextBefore = null;
 
@@ -313,7 +313,7 @@ block head %} {{ super() }}
 
     /**
      * Subagent / fork instructions sometimes appear as plain text (not only in system-reminder XML).
-     * Must match [strip_letta_harness_for_user] in `core/letta/assistant_display.rs` (used for /v1/chat/history).
+     * Must match the server-side history display cleanup used for /v1/chat/history.
      */
     function stripSubagentForkBoilerplate(text) {
         if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== "string") return text;
@@ -344,7 +344,7 @@ block head %} {{ super() }}
      * Live stream only: remove **closed** reminder blocks. Do not strip at a partial
      * `system[-_]reminder` at the end of the buffer — that would drop the whole tail of the
      * reply until more chunks arrive (or forever if the model never closed the tag), i.e. fake
-     * "truncation" in the chat UI with full text still in Letta. Fork blob is only removed when
+     * "truncation" in the chat UI with full text still in history. Fork blob is only removed when
      * the full phrase is present in the buffer.
      */
     function stripSystemReminderBlocksLive(text) {
@@ -467,8 +467,8 @@ block head %} {{ super() }}
         );
     }
 
-    /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
-    function lettaInnerForStream(obj) {
+    /** The runtime may wraps the real payload in `contents` (same pattern as `error_message`). */
+    function runtimeInnerForStream(obj) {
         if (!obj || typeof obj !== "object") return obj;
         if (
             obj.contents &&
@@ -516,7 +516,7 @@ block head %} {{ super() }}
         });
     }
 
-    /** Letta may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
+    /** The runtime may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
     function assistantChunkText(inner) {
         var c = inner.content;
         if (typeof c === "string") return c;
@@ -856,7 +856,7 @@ block head %} {{ super() }}
 
         chat.remarkable = { html: false, breaks: true };
 
-        chat.connect = { handler: lettaSseHandler, stream: true };
+        chat.connect = { handler: nativeSseHandler, stream: true };
 
         chat.loadHistory = loadDenHistory;
 
@@ -905,9 +905,9 @@ block head %} {{ super() }}
         }
     }
 
-    /** Map one Letta SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
-    function lettaStreamEventErrorSignal(obj, requestRef) {
-        var inner = lettaInnerForStream(obj);
+    /** Map one native SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
+    function runtimeStreamEventErrorSignal(obj, requestRef) {
+        var inner = runtimeInnerForStream(obj);
         if (!inner || inner.message_type !== "error_message") return null;
         var lines = [];
         if (inner.error_type) lines.push("[" + String(inner.error_type) + "]");
@@ -923,7 +923,7 @@ block head %} {{ super() }}
         return { text: msg, role: "error" };
     }
 
-    function lettaSseHandler(body, signals) {
+    function nativeSseHandler(body, signals) {
         var userText =
             (body.messages || [])
                 .filter(function (m) {
@@ -1021,14 +1021,14 @@ block head %} {{ super() }}
                         }
                         return;
                     }
-                    var errSig = lettaStreamEventErrorSignal(obj, requestRef);
+                    var errSig = runtimeStreamEventErrorSignal(obj, requestRef);
                     if (errSig) {
                         sawStreamError = true;
                         hideReasoningLog();
                         signals.onResponse(errSig);
                         return;
                     }
-                    var inner = lettaInnerForStream(obj);
+                    var inner = runtimeInnerForStream(obj);
                     if (!inner || typeof inner !== "object") return;
 
                     if (inner.message_type === "conversation_resolved") {
@@ -1090,9 +1090,9 @@ block head %} {{ super() }}
                         hideReasoningLog();
                         var chunk = assistantChunkText(inner);
                         /**
-                         * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
+                         * Accumulate all assistant tokens for this HTTP response. Codepool / The runtime may
                          * change `id` between stream_event chunks; resetting the buffer on id change dropped
-                         * the start of the reply in the UI while Letta and history still had the full text.
+                         * the start of the reply in the UI while history still had the full text.
                          */
                         var isFirstAssistantChunk = assistantBuf.length === 0;
                         assistantBuf += chunk;

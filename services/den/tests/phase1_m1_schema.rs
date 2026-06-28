@@ -130,7 +130,7 @@ async fn m1b_bears_legacy_runtime_id_absent() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
-          AND column_name = 'letta_' || 'agent_id'
+          AND column_name = 'provider_' || 'agent_id'
         ",
     )
     .fetch_one(&pool)
@@ -158,7 +158,7 @@ async fn m1c_bears_legacy_sync_columns_absent() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
-          AND column_name IN ('letta_' || 'agent_type', 'letta_' || 'tool_ids')
+          AND column_name IN ('provider_' || 'agent_type', 'provider_' || 'tool_ids')
         ",
     )
     .fetch_one(&pool)

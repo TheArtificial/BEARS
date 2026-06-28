@@ -179,7 +179,7 @@ async fn ensure_smoke_bear_model(
           AND (
             default_model IS NULL
             OR btrim(default_model) = ''
-            OR default_model LIKE 'letta/%'
+            OR default_model LIKE 'provider/%'
             OR strpos(default_model, '/') = 0
           )
         ",

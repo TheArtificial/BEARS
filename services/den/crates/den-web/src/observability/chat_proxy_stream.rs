@@ -582,7 +582,7 @@ pub(crate) fn deep_chat_sse_body_for_assistant_text(text: &str) -> String {
 }
 
 /// Streams `bear_channel` SSE from the native runtime upstream to the browser after translating channel events
-/// into the existing Deep Chat / Letta-shaped SSE payloads consumed by `bear_chat.html`.
+/// into the existing Deep Chat / runtime-shaped SSE payloads consumed by `bear_chat.html`.
 pub struct BearChannelSseProxyStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     request_id: Uuid,
