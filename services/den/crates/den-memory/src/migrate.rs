@@ -47,7 +47,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     if needs_scope_vocab_rebuild {
         // The rebuild path already produces a table without `entity_ref`.
         rebuild_memory_records_scope_vocab(pool).await?;
-        normalize_memfs_import_hashed_kinds(pool).await?;
+        normalize_legacy_import_hashed_kinds(pool).await?;
         return Ok(());
     }
 
@@ -61,26 +61,26 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     // Retire the vestigial `entity_ref` column (never populated); relations carry aboutness now.
     drop_entity_ref_column_if_present(pool, &names).await?;
 
-    // Early MemFS imports used the hashed filename stem (`mem_...`) as `kind` for
+    // Early legacy imports used the hashed filename stem (`mem_...`) as `kind` for
     // generic role-local entries. Normalize those to `note`; directory-specific
     // imports such as `summaries/`, `logs/`, and `decisions/` keep their richer kind.
-    normalize_memfs_import_hashed_kinds(pool).await?;
+    normalize_legacy_import_hashed_kinds(pool).await?;
 
     Ok(())
 }
 
-async fn normalize_memfs_import_hashed_kinds(pool: &SqlitePool) -> Result<(), DenError> {
+async fn normalize_legacy_import_hashed_kinds(pool: &SqlitePool) -> Result<(), DenError> {
     sqlx::query(
         r"
         UPDATE memory_records
         SET kind = 'note'
-        WHERE memory_id LIKE 'memfs-import:%'
+        WHERE memory_id LIKE 'legacy-memory-import:%'
           AND kind GLOB 'mem_[0-9a-fA-F]*'
         ",
     )
     .execute(pool)
     .await
-    .map_err(|e| DenError::System(format!("normalize memfs import hashed kinds failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("normalize legacy import hashed kinds failed: {e}")))?;
     Ok(())
 }
 

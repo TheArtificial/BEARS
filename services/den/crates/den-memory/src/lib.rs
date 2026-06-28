@@ -41,8 +41,8 @@ pub use harvest::{
     harvest_mark_for_source, harvest_source_marked, record_harvest_mark, MemoryHarvestMark,
 };
 pub use import::{
-    import_memfs_bundle, import_memfs_git_dir, MemfsBranchReport, MemfsImportOptions,
-    MemfsImportReport, MemfsImportSource,
+    import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport, LegacyMemoryImportOptions,
+    LegacyMemoryImportReport, LegacyMemoryImportSource,
 };
 pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;

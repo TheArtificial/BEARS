@@ -28,9 +28,9 @@ use crate::{
 use super::settings::{bear_nav_context, load_session_bear, session_user};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
-    get_memory_record_detail, head_entry_count, import_memfs_bundle, list_path_summaries,
+    get_memory_record_detail, head_entry_count, import_legacy_memory_bundle, list_path_summaries,
     list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
-    search_memory_records, MemfsImportOptions, MemoryRecordRow, MemoryStoreManager, PathSummary,
+    search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager, PathSummary,
 };
 use den_service::bears::{db as bears_db, BearProfile};
 use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
@@ -310,7 +310,7 @@ async fn import_staged_bundle(
     state: &AppState,
     bear_id: Uuid,
     bundle_path: &FsPath,
-) -> Result<den_memory::MemfsImportReport, CustomError> {
+) -> Result<den_memory::LegacyMemoryImportReport, CustomError> {
     let stores = MemoryStoreManager::new(state.config.as_ref());
     let store = stores.store_for_bear(bear_id).await?;
     let record_count: i64 =
@@ -325,10 +325,10 @@ async fn import_staged_bundle(
         ));
     }
 
-    let report = import_memfs_bundle(
+    let report = import_legacy_memory_bundle(
         &store,
         bundle_path,
-        &MemfsImportOptions {
+        &LegacyMemoryImportOptions {
             dry_run: false,
             include_workflow_artifacts: false,
             import_history: false,

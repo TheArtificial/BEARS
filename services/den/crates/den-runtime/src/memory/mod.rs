@@ -28,9 +28,9 @@ pub use curation::{
     record_reflection_outcome_complete, record_reflection_outcome_start, resolve_proposal,
 };
 pub use store::{
-    has_work_surface_canonical_anchor, head_record_for_logical_path, import_memfs_bundle,
-    import_memfs_git_dir, list_entity_anchor_head_records, list_profile_local_head_records,
+    has_work_surface_canonical_anchor, head_record_for_logical_path, import_legacy_memory_bundle,
+    import_legacy_memory_git_dir, list_entity_anchor_head_records, list_profile_local_head_records,
     memory_sequence_high_water, record_visible, AccessContext, BearMemoryStore, LogicalMemoryPath,
-    MemfsBranchReport, MemfsImportOptions, MemfsImportReport, MemfsImportSource, MemoryRecordRow,
+    LegacyMemoryBranchReport, LegacyMemoryImportOptions, LegacyMemoryImportReport, LegacyMemoryImportSource, MemoryRecordRow,
     MemoryScopeType, MemoryStoreManager,
 };
