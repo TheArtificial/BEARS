@@ -184,7 +184,7 @@ pub struct ChatModelResponse {
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
 /// The web UI may also send a temporary `new-...` placeholder before Den resolves the durable
-/// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
+/// conversation id; Den resolves that into a durable native conversation.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)

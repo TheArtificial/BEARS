@@ -1,4 +1,4 @@
-//! Wraps the Codepool `reqwest` byte stream with TTFB logging and terminal outcome metrics.
+//! Wraps a chat SSE byte stream with TTFB logging and terminal outcome metrics.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -53,7 +53,7 @@ enum Terminal {
     ProxyError,
 }
 
-/// Streams bytes from Codepool to the browser while recording observability.
+/// Streams bytes to the browser while recording observability.
 pub struct ChatSseProxyStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     request_id: Uuid,
@@ -945,7 +945,7 @@ impl Stream for ChatSseProxyStream {
                         bear_id = %this.bear_id,
                         conversation_id = %this.conversation_id,
                         ttfb_ms = ttfb.as_millis().min(u128::from(u64::MAX)) as u64,
-                        "chat_send first byte from Codepool"
+                        "chat_send first byte from upstream"
                     );
                 }
                 this.total_bytes += chunk.len();
@@ -960,7 +960,7 @@ impl Stream for ChatSseProxyStream {
                     conversation_id = %this.conversation_id,
                     error = %e,
                     total_bytes = this.total_bytes,
-                    "chat_send sse proxy chunk error from Codepool"
+                    "chat_send sse proxy chunk error from upstream"
                 );
                 Poll::Ready(Some(Err(std::io::Error::other(e.to_string()))))
             }
@@ -983,4 +983,3 @@ impl Stream for ChatSseProxyStream {
 
 #[cfg(test)]
 mod tests;
-

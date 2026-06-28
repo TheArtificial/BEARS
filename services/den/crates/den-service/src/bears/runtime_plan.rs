@@ -16,7 +16,7 @@ pub fn default_runtime_plan() -> Value {
     })
 }
 
-/// Merge DB column with defaults so codepool always receives a full v1 object.
+/// Merge DB column with defaults so callers receive a full v1 object.
 pub fn effective_runtime_plan(stored: Option<&Value>) -> Value {
     let mut out = default_runtime_plan();
     let Some(st) = stored else {

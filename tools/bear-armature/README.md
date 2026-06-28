@@ -27,7 +27,7 @@ Implemented:
 
 Session setup requires an absolute local `cwd`. The adapter prefers explicit `params.cwd`, then known client workspace URI/folder fallbacks if they normalize to an absolute local path. Relative or missing `cwd` values are rejected with a JSON-RPC validation error so Den only persists resumable sessions with a truthful filesystem context.
 
-ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den/Codepool tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
+ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
 
 `session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer upstream runtime event history are not reconstructed unless Den exposes faithful historical event data in a future version.
 

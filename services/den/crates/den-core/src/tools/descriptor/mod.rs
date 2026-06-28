@@ -201,7 +201,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_CHANNEL_GET_CONTEXT,
             "Channel context",
-            "Return trusted Den/Codepool channel and session context for this interaction.",
+            "Return trusted Den channel and session context for this interaction.",
             "session",
             &["channel.context.read"],
             ALL_PROFILES,

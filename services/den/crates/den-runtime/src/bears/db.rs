@@ -638,7 +638,7 @@ pub async fn list_pending_skill_proposals(
     .map_err(Into::into)
 }
 
-/// Seed `runtime_plan` once so codepool always has a BearRuntimePlan v1 snapshot.
+/// Seed `runtime_plan` once so callers have a BearRuntimePlan v1 snapshot.
 pub async fn ensure_default_runtime_plan(
     pool: &PgPool,
     bear_id: Uuid,

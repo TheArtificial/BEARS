@@ -662,7 +662,7 @@ block head %} {{ super() }}
 
         /**
          * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
-         * does not show the real string from Codepool/Den (SSE error_message or HTTP JSON), which looks
+         * does not show the real string from Den (SSE error_message or HTTP JSON), which looks
          * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
          */
         chat.errorMessages = {
@@ -1090,7 +1090,7 @@ block head %} {{ super() }}
                         hideReasoningLog();
                         var chunk = assistantChunkText(inner);
                         /**
-                         * Accumulate all assistant tokens for this HTTP response. Codepool / The runtime may
+                         * Accumulate all assistant tokens for this HTTP response. The runtime may
                          * change `id` between stream_event chunks; resetting the buffer on id change dropped
                          * the start of the reply in the UI while history still had the full text.
                          */

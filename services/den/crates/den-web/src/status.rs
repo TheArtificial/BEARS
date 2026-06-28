@@ -1,4 +1,4 @@
-//! Public **`/status`** — aggregate stack health ([`super::stack_health::gather`]) plus Den/Codepool versions vs optional GHCR (GitHub Packages API).
+//! Public **`/status`** — aggregate stack health plus Den version vs optional GHCR.
 
 use std::time::Duration;
 
@@ -23,10 +23,7 @@ const GITHUB_FETCH_TIMEOUT: Duration = Duration::from_secs(12);
 pub struct StatusPayload {
     pub health: StackHealthReport,
     pub den_version: build_info::VersionBody,
-    pub codepool_version: Option<serde_json::Value>,
-    pub codepool_error: Option<String>,
     pub ghcr_den: Option<GhcrPackageRow>,
-    pub ghcr_codepool: Option<GhcrPackageRow>,
     pub ghcr_config_note: Option<String>,
     pub model_registry: ModelRegistryStatus,
 }
@@ -125,7 +122,7 @@ pub struct DeployRow {
 
 fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
     let den = &payload.den_version;
-    let mut out = vec![DeployRow {
+    let out = vec![DeployRow {
         component: "Den".to_string(),
         git_sha: den.git_sha.to_string(),
         semver: den.version.to_string(),
@@ -143,58 +140,6 @@ fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
         in_sync: sync_label(&den.git_sha, payload.ghcr_den.as_ref()),
     }];
 
-    match &payload.codepool_version {
-        Some(v) => {
-            let sha = v
-                .get("git_sha")
-                .and_then(|x| x.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let ver = v
-                .get("version")
-                .and_then(|x| x.as_str())
-                .unwrap_or("—")
-                .to_string();
-            out.push(DeployRow {
-                component: "Codepool".to_string(),
-                git_sha: sha.clone(),
-                semver: ver,
-                built_at: "—".to_string(),
-                ghcr_tags: payload
-                    .ghcr_codepool
-                    .as_ref()
-                    .map(|g| g.tags.join(", "))
-                    .unwrap_or_else(|| "—".to_string()),
-                ghcr_updated: payload
-                    .ghcr_codepool
-                    .as_ref()
-                    .map(|g| g.updated_at.clone())
-                    .unwrap_or_else(|| "—".to_string()),
-                in_sync: sync_label(&sha, payload.ghcr_codepool.as_ref()),
-            });
-        }
-        None => {
-            if let Some(err) = &payload.codepool_error {
-                out.push(DeployRow {
-                    component: "Codepool".to_string(),
-                    git_sha: err.clone(),
-                    semver: "—".to_string(),
-                    built_at: "—".to_string(),
-                    ghcr_tags: payload
-                        .ghcr_codepool
-                        .as_ref()
-                        .map(|g| g.tags.join(", "))
-                        .unwrap_or_else(|| "—".to_string()),
-                    ghcr_updated: payload
-                        .ghcr_codepool
-                        .as_ref()
-                        .map(|g| g.updated_at.clone())
-                        .unwrap_or_else(|| "—".to_string()),
-                    in_sync: "—".to_string(),
-                });
-            }
-        }
-    }
     out
 }
 
@@ -237,20 +182,17 @@ async fn gather_status(state: &AppState) -> StatusPayload {
     let health = stack_health::gather(state).await;
     let den_version = build_info::snapshot();
 
-    let (codepool_version, codepool_error): (Option<serde_json::Value>, Option<String>) =
-        (None, None);
-
     let cfg = state.config.as_ref();
     let model_registry = gather_model_registry_status(state).await;
     let mut ghcr_config_note: Option<String> = None;
-    let (ghcr_den, ghcr_codepool) = if cfg.github_packages_token.trim().is_empty()
+    let ghcr_den = if cfg.github_packages_token.trim().is_empty()
         || cfg.ghcr_packages_owner.trim().is_empty()
     {
         ghcr_config_note = Some(
                 "Set GITHUB_PACKAGES_TOKEN and GHCR_PACKAGES_OWNER to compare running images with GHCR."
                     .to_string(),
             );
-        (None, None)
+        None
     } else {
         match reqwest::Client::builder()
             .timeout(GITHUB_FETCH_TIMEOUT)
@@ -262,22 +204,18 @@ async fn gather_status(state: &AppState) -> StatusPayload {
                 let owner = cfg.ghcr_packages_owner.trim();
                 let kind = cfg.ghcr_packages_owner_kind.as_str();
                 let (d, err_d) = fetch_ghcr_package(&client, token, kind, owner, "den").await;
-                let (c, err_c): (Option<GhcrPackageRow>, Option<String>) = (None, None);
                 let mut notes = Vec::new();
                 if let Some(e) = err_d {
                     notes.push(format!("den GHCR: {e}"));
                 }
-                if let Some(e) = err_c {
-                    notes.push(format!("codepool GHCR: {e}"));
-                }
                 if !notes.is_empty() {
                     ghcr_config_note = Some(notes.join(" "));
                 }
-                (d, c)
+                d
             }
             Err(e) => {
                 ghcr_config_note = Some(format!("Could not build HTTP client: {e}"));
-                (None, None)
+                None
             }
         }
     };
@@ -285,10 +223,7 @@ async fn gather_status(state: &AppState) -> StatusPayload {
     StatusPayload {
         health,
         den_version,
-        codepool_version,
-        codepool_error,
         ghcr_den,
-        ghcr_codepool,
         ghcr_config_note,
         model_registry,
     }

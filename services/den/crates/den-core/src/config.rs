@@ -161,7 +161,7 @@ pub struct Config {
 
     /// PAT with `read:packages` for `web::status` GHCR comparison (optional; when empty, registry columns show "not configured").
     pub github_packages_token: String,
-    /// GitHub org or username that owns `den` / `codepool` images on GHCR (e.g. `theartificial`).
+    /// GitHub org or username that owns BEARS images on GHCR (e.g. `theartificial`).
     pub ghcr_packages_owner: String,
     /// `org` or `user` — used with GitHub Packages REST paths.
     pub ghcr_packages_owner_kind: String,
