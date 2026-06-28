@@ -3,6 +3,7 @@
     "source_of_truth": "config.json",
     "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
     "client": {
+        "enforce_auth_on_inference": true,
         "drop_excess_requests": false,
         "disable_db_pings_in_health": true
     },
