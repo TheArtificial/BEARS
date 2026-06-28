@@ -1,7 +1,7 @@
 use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::entity::{
     EntityBrowseArguments, EntityLinkMemoryArguments, EntityMergeArguments, EntityResolveArguments,
-    EntitySplitArguments,
+    EntitySplitArguments, EntityWriteAccessRuleArguments,
 };
 use den_runtime::bears::BearProfile;
 use den_runtime::memory::store::{
@@ -197,6 +197,47 @@ impl<'a> DenEntityOps<'a> {
             "role": role.as_str(),
             "entity": entity,
             "moved_handle_ids": args.handle_ids_to_move,
+        }))
+    }
+
+    pub(crate) async fn write_access_rule(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        if role != BearProfile::Curate {
+            return Err(DenError::Authorization(
+                "entity_write_access_rule is available only to curate".to_string(),
+            ));
+        }
+        let args: EntityWriteAccessRuleArguments = serde_json::from_value(arguments)?;
+        let descriptor = descriptors::relation(&args.relation).ok_or_else(|| {
+            DenError::ValidationError(format!("unknown entity relation: {}", args.relation))
+        })?;
+        if descriptor.class != RelationClass::AccessBearing {
+            return Err(DenError::ValidationError(
+                "entity_write_access_rule can only write access-bearing relations".to_string(),
+            ));
+        }
+        let store = self.ctx.stores.store_for_bear(context.bear_id).await?;
+        let qualifiers = args.qualifiers.unwrap_or_else(|| json!({}));
+        let relation = memory_store::append_relation(
+            &store,
+            &args.memory_id,
+            &args.entity_id,
+            &args.relation,
+            &qualifiers,
+            role.as_str(),
+            Some(context.binding_id.as_str()),
+            args.confidence.as_deref(),
+        )
+        .await?;
+        Ok(json!({
+            "ok": true,
+            "bear_id": context.bear_id,
+            "role": role.as_str(),
+            "relation": relation,
         }))
     }
 }

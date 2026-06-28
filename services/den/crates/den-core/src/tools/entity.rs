@@ -51,6 +51,17 @@ pub struct EntitySplitArguments {
     pub trust: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EntityWriteAccessRuleArguments {
+    pub memory_id: String,
+    pub entity_id: String,
+    pub relation: String,
+    #[serde(default)]
+    pub qualifiers: Option<Value>,
+    #[serde(default)]
+    pub confidence: Option<String>,
+}
+
 #[allow(async_fn_in_trait)]
 pub trait EntityOps: Send + Sync {
     async fn browse_entities(
@@ -82,6 +93,13 @@ pub trait EntityOps: Send + Sync {
     ) -> Result<Value, DenError>;
 
     async fn split_entity_tool(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
+    async fn write_entity_access_rule(
         &self,
         context: &DenToolInvocationContext,
         role: BearProfile,
@@ -132,4 +150,14 @@ pub async fn entity_split(
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.split_entity_tool(context, role, arguments).await
+}
+
+
+pub async fn entity_write_access_rule(
+    ops: &impl EntityOps,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, DenError> {
+    ops.write_entity_access_rule(context, role, arguments).await
 }

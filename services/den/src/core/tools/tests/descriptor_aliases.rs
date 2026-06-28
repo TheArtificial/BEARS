@@ -135,6 +135,16 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     assert_eq!(entity_split.provider_name, DEN_ENTITY_SPLIT_PROVIDER);
     assert_eq!(entity_split.provider_name, "entity_split");
 
+    let entity_access_rule = descriptors
+        .iter()
+        .find(|descriptor| descriptor.name == DEN_ENTITY_WRITE_ACCESS_RULE)
+        .expect("entity access-rule descriptor exists");
+    assert_eq!(
+        entity_access_rule.provider_name,
+        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER
+    );
+    assert_eq!(entity_access_rule.provider_name, "entity_write_access_rule");
+
     let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)

@@ -22,7 +22,8 @@ use crate::tools::{
         DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY,
         DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER,
         DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT,
-        DEN_ENTITY_SPLIT_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
+        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
         DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
         DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
@@ -103,6 +104,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_ENTITY_LINK_MEMORY => return DEN_ENTITY_LINK_MEMORY_PROVIDER.to_string(),
         DEN_ENTITY_MERGE => return DEN_ENTITY_MERGE_PROVIDER.to_string(),
         DEN_ENTITY_SPLIT => return DEN_ENTITY_SPLIT_PROVIDER.to_string(),
+        DEN_ENTITY_WRITE_ACCESS_RULE => return DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER.to_string(),
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
             return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string();
         }
@@ -355,6 +357,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["entity.governance.write"],
             CURATE_PROFILES,
             entity_split_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_WRITE_ACCESS_RULE,
+            "Write entity access rule",
+            "Curate-only visibility governance: add an access-bearing relation from a memory record to a resolved entity. Supports `audience` and `confined_to`; these relations are enforced by the memory access gate.",
+            "bear.memory",
+            &["entity.access_rule.write"],
+            CURATE_PROFILES,
+            entity_write_access_rule_schema(),
         ),
         descriptor(
             DEN_MEMORY_ORIENT_WORK_SURFACE,
@@ -1675,6 +1686,21 @@ fn entity_split_schema() -> Value {
             "trust": { "type": "string", "enum": ["inferred", "asserted"] }
         },
         "required": ["new_entity_type", "handle_ids_to_move"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_write_access_rule_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "memory_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "relation": { "type": "string", "enum": ["audience", "confined_to"] },
+            "qualifiers": { "type": "object" },
+            "confidence": { "type": "string", "maxLength": 80 }
+        },
+        "required": ["memory_id", "entity_id", "relation"],
         "additionalProperties": false
     })
 }

@@ -356,6 +356,17 @@ impl EntityOps for DenToolContext<'_> {
     ) -> Result<Value, DenError> {
         self.entity().split(context, role, arguments).await
     }
+
+    async fn write_entity_access_rule(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity()
+            .write_access_rule(context, role, arguments)
+            .await
+    }
 }
 
 impl PlanModeOps for DenToolContext<'_> {
