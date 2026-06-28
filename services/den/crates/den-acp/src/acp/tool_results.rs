@@ -5,8 +5,8 @@ use crate::acp::{
     },
     AcpToolResultResponse,
 };
+use den_service::tool_turns::{ToolResultDelivery, ToolTurnCoordinator};
 use den_runtime::{
-    tool_turns::{ToolResultDelivery, ToolTurnCoordinator},
     client_tools::ToolStatus,
 };
 

@@ -16,11 +16,10 @@ use crate::{
     core::tools::{session::DenToolInvocationContext, support::clean_optional},
     errors::DenError,
 };
+use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_service::{acp_sessions, bears::BearProfile};
 use den_runtime::{
-    acp_sessions,
-    bears::BearProfile,
     client_tools::{ResolvedSessionPolicy, ToolEnablementState},
-    memory::{tools as sqlite_memory, MemoryStoreManager},
     plan_mode::{
         self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
     },

@@ -20,8 +20,8 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_oauth::auth;
+use den_service::tool_turns::{ToolResultDelivery, ToolResultRequest};
 use den_runtime::{
-    tool_turns::{ToolResultDelivery, ToolResultRequest},
     client_tools::{diag_phase, ToolStatus},
 };
 

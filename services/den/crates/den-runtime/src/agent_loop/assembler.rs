@@ -1,18 +1,14 @@
 use den_core::config::Config;
 use den_core::DenError;
+use den_memory::MemoryStoreManager;
+use den_service::bears::{
+    db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
+};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    {
-        bears::{
-            db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
-        },
-        memory::MemoryStoreManager,
-        llm::ChatMessage,
-    },
-};
+use crate::llm::ChatMessage;
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
@@ -178,7 +174,7 @@ pub async fn assemble_native_turn_for_bear(
         model_for_budget: model_for_profile.as_deref(),
         // Fail-closed default: until session identity is resolved to entities (Phase 6),
         // any access-gated record is hidden. No-op today (no access rules exist yet).
-        access: crate::memory::AccessContext::empty(),
+        access: den_memory::AccessContext::empty(),
     })
     .await
     {

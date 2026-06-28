@@ -2,7 +2,7 @@ use sqlx::{PgPool, Row};
 use time::Date;
 use uuid::Uuid;
 
-use crate::conversation_persistence;
+use den_service::conversation::persistence as conversation_persistence;
 use den_core::DenError;
 
 pub const MEMORY_CURATE_LANE: &str = "memory_curate";

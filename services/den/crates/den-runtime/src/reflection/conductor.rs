@@ -4,18 +4,19 @@ use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
 use std::sync::Arc;
-
-use crate::{
+use den_memory::MemoryStoreManager;
+use den_service::{
     bears::BearProfile,
-    conversation_events::{
+    conversation::events::{
         canonical_persistence_context, memory_curate_completed_projection,
         memory_curate_enqueued_projection, memory_curate_failed_projection,
         memory_curate_started_projection, project_to_conversation,
         spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
     },
-    memory::{
-        record_reflection_outcome_complete, record_reflection_outcome_start, MemoryStoreManager,
-    },
+};
+
+use crate::{
+    memory::{record_reflection_outcome_complete, record_reflection_outcome_start},
     memory_curate_executor::{self, MemoryCurateRunOutput},
     native_runtime::{
         compose_curate_briefing_prompt, run_native_profile_turn_collect_assistant_text,

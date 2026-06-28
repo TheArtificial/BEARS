@@ -9,10 +9,10 @@ use serde::Deserialize;
 use serde_json::json;
 
 use den_http::errors::CustomError;
+use den_service::{acp_sessions, DenState};
 use den_runtime::{
-    acp_sessions, bearwire_events,
+    bearwire_events,
     runtime::bearwire_projection::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent},
-    DenState,
 };
 
 use crate::auth::authenticate_for_bear_slug;
@@ -105,7 +105,7 @@ mod tests {
             pool,
             config.clone(),
             std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
-            den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+            den_memory::MemoryStoreManager::new(config.as_ref()),
         )
     }
 

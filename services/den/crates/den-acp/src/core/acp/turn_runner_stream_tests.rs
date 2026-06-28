@@ -4,7 +4,7 @@ use futures::StreamExt;
 use den_runtime::{
     runtime_stream_parser::runtime_byte_stream_to_event_stream,
     runtime_stream_parser::runtime_stream_event_from_provider_json,
-    runtime_contracts::{RuntimeEventParser, RuntimeStreamEvent},
+    den_protocol::{RuntimeEventParser, RuntimeStreamEvent},
 };
 
 #[tokio::test]

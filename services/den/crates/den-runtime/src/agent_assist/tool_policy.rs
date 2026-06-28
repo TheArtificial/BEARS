@@ -1,6 +1,6 @@
 //! Tool selection policy for modern BEARS agents: drop legacy block-mutation tools.
 
-use super::ToolOption;
+use den_llm::ToolOption;
 
 /// Tool `name` values (as returned by provider `GET /v1/tools/`) to never attach to bears.
 pub const LEGACY_MEMORY_TOOL_NAMES: &[&str] = &[

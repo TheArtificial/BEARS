@@ -12,9 +12,9 @@ use crate::{
     },
     errors::{CustomError, DenError},
 };
-use den_runtime::bears::BearProfile;
-use den_runtime::memory::store as memory_store;
-use den_runtime::memory::MemoryStoreManager;
+use den_service::bears::BearProfile;
+use den_memory as memory_store;
+use den_memory::MemoryStoreManager;
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.
 pub(crate) struct DenEnvironmentOps<'a> {

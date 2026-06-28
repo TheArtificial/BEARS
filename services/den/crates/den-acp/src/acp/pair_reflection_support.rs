@@ -1,14 +1,13 @@
 use crate::service::DenState;
 use den_http::errors::CustomError;
-use den_runtime::{
+use den_memory::tools as sqlite_memory;
+use den_service::{
     acp_sessions,
-    bears::{BearProfile, db as bears_db},
-    conversation_persistence,
-    memory::{create_proposal, tools as sqlite_memory},
+    bears::{db as bears_db, BearProfile},
     memory_proposals::CreateMemoryProposal,
-    pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-    reflection_conductor,
+    pair_reflection::{CompletePairReflectionRun, CreatePairReflectionRun},
 };
+use den_runtime::{memory::create_proposal, reflection_conductor};
 
 pub(crate) async fn run_pair_reflection_summary(
     state: &DenState,
@@ -36,14 +35,14 @@ pub(crate) async fn run_pair_reflection_summary(
             }
         });
     let canonical_summaries = if let Some(conversation_id) = conversation_id {
-        if let Some(conversation) = conversation_persistence::get_conversation_for_external_id(
+        if let Some(conversation) = den_service::conversation::persistence::get_conversation_for_external_id(
             &state.sqlx_pool,
             session.bear_id,
             conversation_id,
         )
         .await?
         {
-            let rows = conversation_persistence::list_messages_page(
+            let rows = den_service::conversation::persistence::list_messages_page(
                 &state.sqlx_pool,
                 conversation.id,
                 None,
@@ -61,7 +60,7 @@ pub(crate) async fn run_pair_reflection_summary(
         Vec::new()
     };
     let message_summaries = canonical_summaries;
-    let run = pair_reflection::create_run(
+    let run = den_service::pair_reflection::create_run(
         &state.sqlx_pool,
         CreatePairReflectionRun {
             bear_id: session.bear_id,
@@ -72,20 +71,20 @@ pub(crate) async fn run_pair_reflection_summary(
             considered_message_count: message_summaries.len() as i32,
             considered_memory_paths: Vec::new(),
             diagnostic: serde_json::json!({
-                "phase": "pair_reflection_started",
+                "phase": "den_service::pair_reflection_started",
                 "conversation_id": conversation_id,
                 "message_count": message_summaries.len(),
             }),
         },
     )
     .await?;
-    let body = pair_reflection::render_pair_summary_markdown(
+    let body = den_service::pair_reflection::render_pair_summary_markdown(
         &session.acp_session_id,
         conversation_id,
         trigger,
         &message_summaries,
     );
-    let title = pair_reflection::summary_title_for_session(&session.acp_session_id);
+    let title = den_service::pair_reflection::summary_title_for_session(&session.acp_session_id);
     let (summary_path, summary_commit) = {
         let artifact_id = format!("pair-reflection-{}", run.id);
         let logical_path = format!("pair/summaries/{artifact_id}.md");
@@ -127,10 +126,10 @@ pub(crate) async fn run_pair_reflection_summary(
         &state.sqlx_pool,
         state.config.as_ref(),
         session.bear_id,
-        "pair_reflection_summary",
+        "den_service::pair_reflection_summary",
     )
     .await;
-    let completed_run = pair_reflection::complete_run(
+    let completed_run = den_service::pair_reflection::complete_run(
         &state.sqlx_pool,
         CompletePairReflectionRun {
             id: run.id,
@@ -138,7 +137,7 @@ pub(crate) async fn run_pair_reflection_summary(
             summary_path: Some(summary_path.as_str()),
             summary_commit: summary_commit.as_deref(),
             diagnostic: serde_json::json!({
-                "phase": "pair_reflection_completed",
+                "phase": "den_service::pair_reflection_completed",
                 "path": summary_path,
                 "commit": summary_commit,
                 "storage": "sqlite",
@@ -195,7 +194,7 @@ pub(crate) async fn run_pair_reflection_summary(
             conversation_id,
             conversation_key: Some(&conversation_key),
             conversation_date: Some(reflection_date),
-            trigger: "pair_reflection",
+            trigger: "den_service::pair_reflection",
             proposal_ids: vec![proposal.id],
         },
     )

@@ -9,7 +9,7 @@ use crate::core::{
         descriptor::builtin_den_tool_descriptors_for_profile,
     },
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 #[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {

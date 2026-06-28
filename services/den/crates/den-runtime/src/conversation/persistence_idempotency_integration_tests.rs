@@ -1,9 +1,12 @@
 use sqlx::PgPool;
 
-use crate::{
-    bears::{db::create_bear, db::BearParams},
-    conversation_message_types::{ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility, ConversationMessageWrite},
-    conversation_persistence::{append_message, ensure_conversation_for_external_id},
+use den_service::{
+    bears::db::{create_bear, BearParams},
+    conversation::message_types::{
+        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+        ConversationMessageWrite,
+    },
+    conversation::persistence::{append_message, ensure_conversation_for_external_id},
 };
 
 #[sqlx::test]

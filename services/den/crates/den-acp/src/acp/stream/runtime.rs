@@ -19,14 +19,14 @@ use crate::{
     },
 };
 use den_http::errors::CustomError;
-use den_runtime::{
+use den_service::{
     acp_sessions,
-    tool_turns::{ToolResultRequest, ToolTurnRegistration},
     bears::{db as bears_db, BearProfile},
-    conversation_events::{
-            canonical_persistence_context, spawn_persist_canonical_conversation_record,
-            CanonicalConversationRecord,
-        },
+    conversation::events::{
+        canonical_persistence_context, spawn_persist_canonical_conversation_record,
+        CanonicalConversationRecord,
+    },
+    tool_turns::{ToolResultRequest, ToolTurnRegistration},
 };
 
 /// Execute a builtin Den tool via the process-wide injected invoker.
@@ -66,7 +66,7 @@ fn should_skip_canonical_persistence(context: &AcpStreamContext) -> bool {
 
 pub(in crate::acp) fn canonical_persistence_context_from_acp(
     context: &AcpStreamContext,
-) -> den_runtime::conversation_events::ConversationPersistenceContext {
+) -> den_service::conversation::events::ConversationPersistenceContext {
     canonical_persistence_context(
         context.pool.clone(),
         context.bear_id,
@@ -81,19 +81,19 @@ pub(in crate::acp) fn canonical_persistence_context_from_acp(
 
 pub(in crate::acp) fn acp_session_provenance(
     context: &AcpStreamContext,
-) -> den_runtime::conversation_events::ConversationEventProvenance {
-    den_runtime::conversation_events::ConversationEventProvenance::acp_session(
+) -> den_service::conversation::events::ConversationEventProvenance {
+    den_service::conversation::events::ConversationEventProvenance::acp_session(
         context.acp_session_id.clone(),
     )
 }
 
 fn prompt_memory_diagnostic_record(
     context: &AcpStreamContext,
-) -> den_runtime::conversation_events::CanonicalConversationRecord {
-    den_runtime::conversation_events::CanonicalConversationRecord::structured_event(
-        den_runtime::conversation_message_types::ConversationMessageType::WorkflowEvent,
-        Some(den_runtime::conversation_message_types::ConversationMessageRole::System),
-        den_runtime::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly,
+) -> den_service::conversation::events::CanonicalConversationRecord {
+    den_service::conversation::events::CanonicalConversationRecord::structured_event(
+        den_service::conversation::message_types::ConversationMessageType::WorkflowEvent,
+        Some(den_service::conversation::message_types::ConversationMessageRole::System),
+        den_service::conversation::message_types::ConversationMessageVisibility::DiagnosticOnly,
         "Prompt memory runtime selection diagnostic",
         context.prompt_memory_diagnostic.clone(),
         None,
@@ -107,7 +107,7 @@ pub(in crate::acp) fn spawn_persist_acp_assistant_output(
     request_id: Option<String>,
 ) {
     let provenance = acp_session_provenance(context);
-    den_runtime::conversation_events::spawn_persist_assistant_output(
+    den_service::conversation::events::spawn_persist_assistant_output(
         canonical_persistence_context_from_acp(context),
         content_text,
         &provenance,
@@ -148,7 +148,7 @@ pub(in crate::acp) fn spawn_persist_acp_tool_result(
     request_id: Option<String>,
 ) {
     let provenance = acp_session_provenance(context);
-    den_runtime::conversation_events::spawn_persist_tool_result(
+    den_service::conversation::events::spawn_persist_tool_result(
         canonical_persistence_context_from_acp(context),
         tool_name,
         tool_call_id,
@@ -185,7 +185,7 @@ pub(in crate::acp) fn spawn_persist_acp_tool_request(
     route: String,
 ) {
     let provenance = acp_session_provenance(context);
-    den_runtime::conversation_events::spawn_persist_tool_request(
+    den_service::conversation::events::spawn_persist_tool_request(
         canonical_persistence_context_from_acp(context),
         tool_name,
         tool_call_id,
@@ -213,7 +213,7 @@ pub(in crate::acp) fn spawn_canonical_gateway_record_persistence(
     provider_message_id: Option<String>,
 ) {
     let persistence = canonical_persistence_context_from_acp(context);
-    let record = den_runtime::conversation_events::normalize_persisted_gateway_record(
+    let record = den_service::conversation::events::normalize_persisted_gateway_record(
         message_type,
         role,
         visibility,

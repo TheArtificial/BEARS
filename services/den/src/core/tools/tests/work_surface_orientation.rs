@@ -9,7 +9,7 @@ use crate::core::{
         },
     },
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 fn context_for(role: BearProfile) -> DenToolInvocationContext {
     DenToolInvocationContext {

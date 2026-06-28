@@ -22,6 +22,7 @@ production = ["den-core/production", "den-protocol/production", "den-service/pro
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-service = { path = "../den-service" }
+den-memory = { path = "../den-memory" }
 den-docket = { path = "../den-docket" }
 den-http = { path = "../den-http" }
 den-oauth = { path = "../den-oauth" }

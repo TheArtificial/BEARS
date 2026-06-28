@@ -12,7 +12,7 @@ use den_docket::{
     DocketService, PgDocketService, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter,
     WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
 };
-use den_runtime::bears::{db as bears_db, db::BearParams, BearProfile};
+use den_service::bears::{db as bears_db, db::BearParams, BearProfile};
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -245,7 +245,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
     let config = Config::load();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_den_memory::MemoryStoreManager::new(&config);
     let update_result = invoke_den_tool(
         &pool,
         &config,

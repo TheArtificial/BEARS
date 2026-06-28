@@ -63,11 +63,11 @@ pub async fn run_reindex(target: ReindexTarget) -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await
         .context("connect to Postgres (DATABASE_URL)")?;
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
 
     let bear_ids: Vec<Uuid> = match target {
         ReindexTarget::Bear(id) => vec![id],
-        ReindexTarget::All => den_runtime::bears::db::list_bears(&pool)
+        ReindexTarget::All => den_service::bears::db::list_bears(&pool)
             .await
             .context("list bears")?
             .into_iter()

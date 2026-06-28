@@ -1,4 +1,4 @@
-use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use crate::agent_assist::runtime_stream_parser::runtime_stream_event_from_provider_json;
 
 #[test]

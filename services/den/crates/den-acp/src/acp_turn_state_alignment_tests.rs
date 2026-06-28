@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::acp::acp_session_row_to_http_with_modes;
-use den_runtime::acp_sessions::AcpSessionRow;
+use den_service::acp_sessions::AcpSessionRow;
 
 #[tokio::test]
 async fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {

@@ -1,8 +1,9 @@
 //! Shared helpers for tool execution outcomes across web chat, ACP, and transcript repair.
 
+use den_protocol::{RuntimeSemanticEvent, ToolCallFinishStatus};
 use crate::{
     llm::ChatToolCall,
-    runtime_contracts::{RuntimeSemanticEvent, ToolCallFinishStatus},
+    
 };
 
 pub const LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE: &str =

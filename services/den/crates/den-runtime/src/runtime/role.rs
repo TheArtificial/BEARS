@@ -1,11 +1,11 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{
+use den_core::DenError;
+use den_service::{
     tool_turns::ToolTurnCoordinator,
     turn_controller::{ActiveTurnCancelHandle, ActiveTurnCancelRegistry},
 };
-use den_core::DenError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleRuntimeRole {
@@ -329,7 +329,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    pub guard: crate::tool_turns::ActiveTurnGuard,
+    pub guard: den_service::tool_turns::ActiveTurnGuard,
 }
 
 impl RoleTurnGuard {

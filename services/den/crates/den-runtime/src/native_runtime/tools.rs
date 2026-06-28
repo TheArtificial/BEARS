@@ -1,7 +1,8 @@
 use den_core::{DenError, config::Config};
 use serde_json::Value;
 
-use crate::{bears::BearProfile, llm::LlmToolDefinition};
+use den_service::bears::BearProfile;
+use crate::llm::LlmToolDefinition;
 use den_core::tools::descriptor::{
     DenToolDescriptor, builtin_den_tool_descriptors_for_pair_acp_surface,
     builtin_den_tool_descriptors_for_profile,

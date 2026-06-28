@@ -2,10 +2,10 @@ use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
+use den_service::DenState;
 use den_runtime::{
     bearwire_events,
     runtime::bearwire_projection::wire::BearWireEvent,
-    DenState,
 };
 
 use crate::auth::authenticated_bear;

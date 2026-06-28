@@ -3,7 +3,7 @@ use serde::Serialize;
 use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
 
-use crate::conversation_message_types::{
+use den_service::conversation::message_types::{
     ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
     ConversationMessageWrite,
 };

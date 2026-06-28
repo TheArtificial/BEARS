@@ -15,7 +15,7 @@ use crate::{
     },
     startup::run_sqlx_migrations,
 };
-use den_runtime::bears::{
+use den_service::bears::{
     db as bears_db,
     db::BearParams,
     db::BEAR_ROLE_ADMIN,

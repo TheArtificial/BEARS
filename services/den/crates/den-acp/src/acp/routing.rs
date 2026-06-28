@@ -1,5 +1,5 @@
 use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
-use den_runtime::acp_sessions;
+use den_service::acp_sessions;
 
 use super::ToolExecutionRoute;
 

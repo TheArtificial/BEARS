@@ -8,13 +8,14 @@ use uuid::Uuid;
 
 use crate::service::DenState;
 use den_http::errors::CustomError;
-use den_runtime::{
-    archived_conversations,
+use den_service::{
     bears::db as bears_db,
-    conversation_persistence::{
-            count_visible_messages, ensure_conversation_for_external_id, list_conversations_for_bear,
-            list_messages_page,
-        },
+    conversation::persistence::{
+        count_visible_messages, ensure_conversation_for_external_id, list_conversations_for_bear,
+        list_messages_page,
+    },
+};
+use den_runtime::{
     runtime_compaction_store::{
         latest_compaction_artifact_for_conversation, list_runtime_compaction_events,
     },
@@ -56,7 +57,7 @@ pub(super) async fn conversations_inner(
             CustomError::NotFound("bear not found or you do not have access".to_string())
         })?;
 
-    let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
+    let archived_ids = den_service::archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
     let canonical = list_conversations_for_bear(&state.sqlx_pool, bear.id, 200).await?;
     let mut conversations: Vec<AcpConversationRow> = canonical
         .into_iter()

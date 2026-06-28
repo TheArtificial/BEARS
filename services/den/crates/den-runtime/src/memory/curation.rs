@@ -5,20 +5,19 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_memory::{
+    self as store, complete_reflection_run_outcome, create_memory_observation,
+    create_memory_proposal, create_reflection_run_outcome, list_memory_proposals,
+    mark_observation_review_queued, promote_to_shared_core, resolve_memory_proposal,
+    MemoryStoreManager, SqliteMemoryProposal,
+};
+use den_service::memory_proposals::{
+    CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams,
+};
+use den_service::bears::BearProfile;
+
 use crate::{
-    {
-        bear_observations::{self, BearObservationRow, CreateBearObservation},
-        bears::BearProfile,
-        memory::{
-            store::{
-                self, create_memory_observation, create_memory_proposal, create_reflection_run_outcome,
-                complete_reflection_run_outcome, list_memory_proposals, promote_to_shared_core,
-                resolve_memory_proposal, mark_observation_review_queued, SqliteMemoryProposal,
-                MemoryStoreManager,
-            },
-        },
-        memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
-    },
+    bear_observations::{self, BearObservationRow, CreateBearObservation},
 };
 
 pub async fn create_proposal(

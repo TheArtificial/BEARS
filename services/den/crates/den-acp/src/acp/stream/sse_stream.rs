@@ -24,15 +24,17 @@ use crate::{
     service::DenState,
 };
 use den_http::errors::{CustomError, DenError};
-use den_runtime::{
-    agent_assist::normalize_display_status_text,
+use den_protocol::RuntimeConversationRef;
+use den_service::{
     bifrost::BifrostClient,
-    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
-    role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
-    runtime_contracts::RuntimeConversationRef,
-    runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
     tool_turns::ToolResultRequest,
     turn_controller::{ActiveTurnCancelRegistry, TurnController, TurnPhase},
+};
+use den_runtime::{
+    agent_assist::normalize_display_status_text,
+    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
+    role_runtime::{RoleTurnGuard, RoleTurnResult, TurnResultReason, TurnResultStatus},
+    runtime_provider::{RuntimeSemanticEvent, RuntimeStreamEvent},
 };
 
 use super::{support::AcpStreamDiagnostics, text::AcpTextChunker};

@@ -19,14 +19,8 @@ pub mod plan_mode;
 /// Protocol-neutral: edge adapters frame these events onto their own wire.
 pub mod gateway_events;
 
-/// Active-turn coordination + tool-result requests (turn lifecycle).
-pub mod tool_turns;
-
 /// Durable full-output artifacts for compacted tool results.
 pub mod tool_output_artifacts;
-
-/// Active-turn cancellation registry + turn controller (turn lifecycle).
-pub mod turn_controller;
 
 /// The native agent runtime: provider/contracts, role runtime + registry, compaction,
 /// conversations, turn state, pair-turn, and the BearWire projection.
@@ -44,9 +38,6 @@ pub mod agent_assist;
 /// conversation layer and the ACP edge).
 pub mod conversation_ids;
 
-/// Bear provisioning, registry, managed blocks, runtime-plan, templates, and the `bears` DB.
-pub mod bears;
-
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
 /// Persisted BearWire client obligations for tool/permission waits and continuations.
@@ -58,18 +49,8 @@ pub mod bearwire_runs;
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
 pub mod memory;
 
-/// Conversation event projection + persistence (events, message types, persistence, archive).
-pub mod conversation;
-
-/// ACP session store (conversation↔session mapping over Postgres).
-pub mod acp_sessions;
-
 /// Runtime-side turn contracts (start/continue request inputs + materialization).
 pub mod turn_runner;
-
-/// Shared application state for the Den HTTP edges (protocol-agnostic; ADR-0043).
-pub mod state;
-pub use state::DenState;
 
 /// The native agent loop: assembly, step streaming, approvals, transcript projection.
 pub mod agent_loop;
@@ -79,9 +60,6 @@ pub mod native_runtime;
 
 /// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
 pub mod reflection;
-
-/// Pair reflection: projects pair-turn reflection completions into conversations.
-pub mod pair_reflection;
 
 /// Derived recall index client (ADR-0038): minimal Qdrant REST client for readiness +
 /// collection bootstrap. Recall is optional; absence/unreachability degrades to keyword search.
@@ -93,23 +71,14 @@ pub use runtime::bearwire_projection as runtime_bearwire_projection;
 pub use runtime::compaction as runtime_compaction;
 pub use runtime::compaction_observability as runtime_compaction_observability;
 pub use runtime::compaction_store as runtime_compaction_store;
-pub use runtime::contracts as runtime_contracts;
 pub use runtime::conversations as runtime_conversations;
 pub use runtime::pair_turn;
 pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;
 pub use runtime::role_registry as role_runtime_registry;
 pub use runtime::turn_state;
-pub use llm::bifrost;
 pub use agent_assist::runtime_stream_parser;
 pub use memory::bear_observations;
 pub use memory::curate_executor as memory_curate_executor;
-pub use memory::proposals as memory_proposals;
-pub use memory::prompt_block_store as prompt_memory_block_store;
-pub use memory::prompt_blocks as prompt_memory_blocks;
-pub use conversation::archived as archived_conversations;
-pub use conversation::events as conversation_events;
-pub use conversation::message_types as conversation_message_types;
-pub use conversation::persistence as conversation_persistence;
 pub use reflection::conductor as reflection_conductor;
 pub use reflection::conversations as reflection_conversations;

@@ -50,7 +50,8 @@ use crate::{
     },
     errors::DenError,
 };
-use den_runtime::{bears::BearProfile, memory::MemoryStoreManager};
+use den_memory::MemoryStoreManager;
+use den_service::bears::BearProfile;
 
 /// The composition root binding every Den tool capability to the runtime.
 pub(crate) struct DenToolContext<'a> {

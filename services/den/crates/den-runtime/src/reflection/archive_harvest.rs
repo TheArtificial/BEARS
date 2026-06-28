@@ -1,11 +1,13 @@
 use den_core::{config::Config, DenError};
+use den_memory::MemoryStoreManager;
+use den_service::memory_proposals::CreateMemoryProposal;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use den_service::bears::BearProfile;
 use crate::{
-    bears::BearProfile,
-    memory::{create_proposal, MemoryStoreManager},
-    memory_proposals::CreateMemoryProposal,
+    
+    memory::create_proposal,
     runtime_conversations::RuntimeIterativeSummary,
 };
 

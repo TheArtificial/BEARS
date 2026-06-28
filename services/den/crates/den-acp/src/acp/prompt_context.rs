@@ -10,9 +10,7 @@ use crate::{
 };
 use den_docket::WorkPlanProjection;
 use den_http::errors::CustomError;
-use den_runtime::{
-    client_tools::ResolvedSessionPolicy,
-    plan_mode,
+use den_service::{
     prompt_memory_block_store::{
         select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
         PromptMemoryRuntimeSelection,
@@ -21,6 +19,10 @@ use den_runtime::{
         compile_prompt_memory_blocks, render_prompt_memory_block_context,
         PromptMemoryCompilationInput,
     },
+};
+use den_runtime::{
+    client_tools::ResolvedSessionPolicy,
+    plan_mode,
     runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
     runtime_compaction_observability::RuntimeCompactionEventStatus,
     runtime_conversations::RuntimeCompactionTriggerKind,
@@ -275,7 +277,7 @@ pub(super) async fn acp_plan_mode_prompt_context(
 }
 
 #[cfg(test)]
-use den_runtime::prompt_memory_blocks::{
+use prompt_memory_blocks::{
     PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
 };
 

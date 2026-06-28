@@ -2,10 +2,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry;
+use den_service::tool_turns::ToolResultRequest;
 use den_runtime::{
     gateway_events::GatewayEvent,
     plan_mode,
-    tool_turns::ToolResultRequest,
     turn_state,
 };
 

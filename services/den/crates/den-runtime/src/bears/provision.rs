@@ -1,12 +1,9 @@
 //! Create/update Den-native profile runtime bindings after bear rows exist.
 
 use den_core::config::Config;
+use den_memory::MemoryStoreManager;
 use sqlx::PgPool;
 use uuid::Uuid;
-
-use crate::{
-    memory::MemoryStoreManager,
-};
 
 use super::context_composition::render_role_prompt;
 use super::db as bears_db;
@@ -43,7 +40,7 @@ pub async fn reconcile_bear_native(
     pool: &PgPool,
     config: &Config,
     bear_id: Uuid,
-) -> Result<crate::bears::sync::BearSyncSummary, DenError> {
+) -> Result<den_service::bears::sync::BearSyncSummary, DenError> {
     let bear = bears_db::get_bear(pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
@@ -63,7 +60,7 @@ pub async fn reconcile_bear_native(
         outcomes.push(reconcile_one_native_profile(pool, config, &bear, profile).await?);
     }
 
-    Ok(crate::bears::sync::BearSyncSummary {
+    Ok(den_service::bears::sync::BearSyncSummary {
         bear_id,
         outcomes,
     })
@@ -74,8 +71,8 @@ async fn reconcile_one_native_profile(
     _config: &Config,
     bear: &Bear,
     profile: BearProfile,
-) -> Result<crate::bears::sync::BearProfileSyncOutcome, DenError> {
-    use crate::bears::sync::BearProfileSyncOutcome;
+) -> Result<den_service::bears::sync::BearProfileSyncOutcome, DenError> {
+    use den_service::bears::sync::BearProfileSyncOutcome;
 
     let binding_id = format!("den-native:{}:{}", bear.id, profile.as_str());
     let config_hash = profile_config_hash(pool, bear, profile).await?;

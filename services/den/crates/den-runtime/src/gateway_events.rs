@@ -4,12 +4,11 @@ use bytes::Bytes;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::{
-    tool_turns::ToolResultRequest,
-    client_tools::{
-        diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
-        supported_provider_tool_names, ClientToolName,
-    },
+use den_service::tool_turns::ToolResultRequest;
+
+use crate::client_tools::{
+    diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
+    supported_provider_tool_names, ClientToolName,
 };
 use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
 use den_core::tools::descriptor::{

@@ -44,7 +44,7 @@ fn test_context() -> AcpStreamContext {
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
-        memory_stores: den_runtime::memory::MemoryStoreManager::new(
+        memory_stores: den_memory::MemoryStoreManager::new(
             &den_core::config::Config::test_stub(),
         ),
     }

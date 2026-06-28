@@ -3,19 +3,15 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    {
-        prompt_memory_block_store::{
-            select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
-            PromptMemoryRuntimeSelection,
-        },
-        prompt_memory_blocks::{
-            compile_prompt_memory_blocks, render_prompt_memory_block_context,
-            PromptMemoryCompilationInput,
-        },
-        runtime::compaction::TurnCompactionState,
-    },
+use den_service::prompt_memory_block_store::{
+    select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
+    PromptMemoryRuntimeSelection,
 };
+use den_service::prompt_memory_blocks::{
+    compile_prompt_memory_blocks, render_prompt_memory_block_context, PromptMemoryCompilationInput,
+};
+
+use crate::runtime::compaction::TurnCompactionState;
 
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
     let trimmed = runtime_context.trim();

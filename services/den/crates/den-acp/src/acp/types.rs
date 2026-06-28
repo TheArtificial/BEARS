@@ -9,11 +9,13 @@ use uuid::Uuid;
 use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
-use den_runtime::{
-    gateway_events::GatewayEvent,
+use den_memory::MemoryStoreManager;
+use den_service::{
     tool_turns::{ToolResultRequest, ToolTurnCoordinator},
     turn_controller::ToolExecutionRoute as ControllerToolExecutionRoute,
-    memory::MemoryStoreManager,
+};
+use den_runtime::{
+    gateway_events::GatewayEvent,
     role_runtime::{RoleRuntime, RoleTurnScope},
 };
 

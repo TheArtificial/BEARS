@@ -1,11 +1,12 @@
-use crate::{
-    client_tools::{client_tool_policy, client_tool_policy_json_for_provider, ClientToolName},
-    agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
-    runtime_contracts::RuntimeSemanticEvent,
-};
 use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_protocol::RuntimeSemanticEvent;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+use crate::{
+    agent_loop::approvals::{create_native_approval, decide_native_approval, NativeApprovalDecision},
+    client_tools::{client_tool_policy, client_tool_policy_json_for_provider, ClientToolName},
+};
 
 /// Whether web chat (and other surfaces without interactive approval UI) may run this tool
 /// without an explicit human approval step.

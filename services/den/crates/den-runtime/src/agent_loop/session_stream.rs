@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
+use den_memory::MemoryStoreManager;
+use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 
 use crate::{
     agent_loop::{
@@ -19,9 +21,7 @@ use crate::{
         AgentStepOverflowContext,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
-    memory::MemoryStoreManager,
     runtime_compaction::enqueue_compaction_after_turn,
-    runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
 };
 use den_core::tools::{
@@ -807,7 +807,7 @@ mod tests {
     use crate::{
         agent_loop::StrategyProfile,
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
-        runtime_contracts::RuntimeStreamEvent,
+        den_protocol::RuntimeStreamEvent,
     };
 
     fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {

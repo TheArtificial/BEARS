@@ -22,10 +22,8 @@ use tracing::info_span;
 
 use den_core::config::Config;
 use den_http::auth_backend::Backend;
-use den_runtime::{
-    bifrost::BifrostClient,
-    memory::MemoryStoreManager,
-};
+use den_memory::MemoryStoreManager;
+use den_service::bifrost::BifrostClient;
 
 use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
 

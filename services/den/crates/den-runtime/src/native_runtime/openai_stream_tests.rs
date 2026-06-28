@@ -7,10 +7,11 @@ use bytes::Bytes;
 use futures::Stream;
 use futures::StreamExt;
 
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use crate::{
     {
         native_runtime::openai_byte_stream_to_event_stream,
-        runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent},
+        
     },
 };
 

@@ -5,7 +5,7 @@ fn pair_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -239,7 +239,7 @@ fn memory_write_entry_semantics_allows_plain_semantic_memory() {
 async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memory() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
@@ -289,7 +289,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -309,7 +309,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
@@ -351,7 +351,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -371,7 +371,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,

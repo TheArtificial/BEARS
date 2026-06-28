@@ -2,16 +2,17 @@ use sqlx::PgPool;
 
 use den_core::config::Config;
 use den_http::errors::CustomError;
-use den_runtime::{
+use den_protocol::{
+    EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
+    RuntimeConversationBackend, RuntimeConversationRef,
+};
+use den_service::{
     acp_sessions,
     bears::{model::BearProfile, Bear},
-    conversation_persistence,
+};
+use den_runtime::{
     native_runtime::NativeRuntimeConversationBackend,
     role_runtime_registry::DenNativeProfileRegistry,
-    runtime_contracts::{
-            EnsureConversationRequest, EnsureConversationResult, RoleRuntimeBinding,
-            RuntimeConversationBackend, RuntimeConversationRef,
-        },
 };
 
 // Pure conversation-id predicates now live in `den-runtime`; re-export them so this module's
@@ -325,7 +326,7 @@ impl<'a> AcpConversationService<'a> {
         if is_native_runtime_conversation_id(conversation_id) {
             return Ok(());
         }
-        if conversation_persistence::get_conversation_for_external_id(
+        if den_service::conversation::persistence::get_conversation_for_external_id(
             self.pool,
             bear_id,
             conversation_id,

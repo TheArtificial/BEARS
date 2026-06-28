@@ -6,6 +6,22 @@ use den_core::tools::{
 use std::sync::{Arc, LazyLock};
 
 use futures::StreamExt;
+use den_memory::MemoryStoreManager;
+use den_protocol::{
+    ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
+    RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
+    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
+};
+use den_service::{
+    bears::BearProfile,
+    conversation::{
+        events::{
+            canonical_persistence_context, persist_canonical_conversation_record,
+            CanonicalConversationRecord, ConversationEventProvenance,
+        },
+        persistence as conversation_persistence,
+    },
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -17,20 +33,8 @@ use crate::{
         run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
         AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
     },
-    bears::BearProfile,
-    conversation_events::{
-        canonical_persistence_context, persist_canonical_conversation_record,
-        CanonicalConversationRecord, ConversationEventProvenance,
-    },
-    conversation_persistence,
     llm::{ChatMessage, ChatToolCall, LlmClient},
-    memory::MemoryStoreManager,
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
-    runtime_contracts::{
-        ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
-        RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
-        RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
-    },
     turn_runner::{
         materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
     },
@@ -247,7 +251,7 @@ async fn build_session(
     tool_messages: Vec<ChatMessage>,
 ) -> Result<AgentLoopSession, DenError> {
     let llm = LlmClient::new(deps.config);
-    let bear = crate::bears::db::get_bear(deps.pool, bear_id)
+    let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
         .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
     let include_prompt_memory = profile.include_prompt_memory && runtime_context.is_none();
@@ -302,7 +306,7 @@ async fn build_session(
     let model = if let Some(model) = conversation_model {
         model
     } else {
-        crate::bears::db::resolve_model_for_profile(
+        den_service::bears::db::resolve_model_for_profile(
             deps.pool,
             &bear,
             profile.profile,
@@ -311,7 +315,7 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
-    let bifrost_virtual_key = crate::bears::db::bifrost_virtual_key_for_inference(
+    let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(
         deps.pool,
         bear.id,
         &deps.config.den_secret_encryption_key,
@@ -737,7 +741,7 @@ pub async fn continue_native_acp_turn_event_stream(
             if let Some(approval_request_id) = approval_request_id.as_deref() {
                 let approve = matches!(
                     status,
-                    crate::runtime_contracts::RuntimeToolResultStatus::Ok
+                    den_protocol::RuntimeToolResultStatus::Ok
                 );
                 record_approval_decision(
                     request.sqlx_pool,
@@ -767,7 +771,7 @@ pub async fn continue_native_acp_turn_event_stream(
         } => {
             let approve = matches!(
                 decision,
-                crate::runtime_contracts::RuntimeApprovalDecision::Approve
+                den_protocol::RuntimeApprovalDecision::Approve
             );
             record_approval_decision(
                 request.sqlx_pool,

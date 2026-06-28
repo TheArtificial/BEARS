@@ -12,7 +12,6 @@ mod agent_prefill;
 mod agent_summary;
 mod assistant_display;
 mod conversation_title;
-mod model_options;
 pub mod runtime_stream_parser;
 pub mod tool_policy;
 
@@ -39,5 +38,4 @@ pub use conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
     is_meaningful_conversation_title, UNTITLED_THREAD,
 };
-pub use model_options::{ModelOption, ToolOption};
 pub use tool_policy::{filter_legacy_memory_tool_ids, is_legacy_memory_tool_name};

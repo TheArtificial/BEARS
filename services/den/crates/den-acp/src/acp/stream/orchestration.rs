@@ -24,14 +24,16 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_oauth::auth::ApiError;
-use den_runtime::{
+use den_service::{
     acp_sessions,
-    client_tools::ResolvedSessionPolicy,
     bears::Bear,
-    conversation_events::{
-            persist_canonical_conversation_record, CanonicalConversationRecord,
-            ConversationEventProvenance, ConversationPersistenceContext,
-        },
+    conversation::events::{
+        persist_canonical_conversation_record, CanonicalConversationRecord,
+        ConversationEventProvenance, ConversationPersistenceContext,
+    },
+};
+use den_runtime::{
+    client_tools::ResolvedSessionPolicy,
     role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
     runtime_provider::RoleRuntimeBinding,
 };
@@ -137,7 +139,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
     prompt: &str,
     pair_runtime_binding: &RoleRuntimeBinding,
     conversation_resolution: &AcpConversationResolution,
-    synthetic_session: &den_runtime::acp_sessions::AcpSessionRow,
+    synthetic_session: &den_service::acp_sessions::AcpSessionRow,
     resolved_policy: &ResolvedSessionPolicy,
     current_activity_plan: &Option<den_docket::WorkPlanProjection>,
     merged_client_tool_descriptors: Option<serde_json::Value>,

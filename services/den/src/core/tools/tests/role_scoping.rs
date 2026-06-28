@@ -1,5 +1,5 @@
 use crate::core::tools::constants::*;
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 use super::core_helpers::names_for_profile;
 

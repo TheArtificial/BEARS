@@ -176,6 +176,8 @@ codegen-units = 16
 [dependencies]
 den-core = { path = "crates/den-core" }
 den-protocol = { path = "crates/den-protocol" }
+den-service = { path = "crates/den-service" }
+den-memory = { path = "crates/den-memory" }
 den-docket = { path = "crates/den-docket" }
 den-runtime = { path = "crates/den-runtime" }
 den-http = { path = "crates/den-http" }

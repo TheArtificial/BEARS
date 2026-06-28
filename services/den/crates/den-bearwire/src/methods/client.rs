@@ -12,20 +12,18 @@ use den_core::tools::{
         compact_client_tool_result_params, compact_client_tool_result_params_with_artifact,
     },
 };
+use den_protocol::{
+    RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
+    RuntimeToolResultStatus,
+};
 use den_http::{errors::CustomError, web_policy};
+use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
-    acp_sessions,
-    bears::{db as bears_db, BearProfile},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::continue_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
-    runtime_contracts::{
-        RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
-        RuntimeToolResultStatus,
-    },
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
-    DenState,
 };
 
 use crate::auth::authenticated_bear;

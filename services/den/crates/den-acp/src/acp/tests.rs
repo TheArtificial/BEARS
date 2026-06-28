@@ -10,7 +10,7 @@ use den_core::tools::constants::{
     DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
     DEN_WORK_PLAN_UPDATE_PROVIDER,
 };
-use den_runtime::prompt_memory_blocks::{
+use prompt_memory_blocks::{
     compile_prompt_memory_blocks, PromptMemoryBlock, PromptMemoryBlockScope,
     PromptMemoryBlockState, PromptMemoryBlockType, PromptMemoryCompilationInput,
 };
@@ -70,23 +70,23 @@ use den_runtime::prompt_memory_blocks::{
                 runtime_byte_stream_to_event_stream,
                 runtime_stream_event_from_provider_json,
             },
-        runtime_contracts::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
+        den_protocol::{RuntimeEventParser, RuntimeSemanticEvent, RuntimeStreamEvent},
         acp_sessions,
-        tool_turns::{
+        den_service::tool_turns::{
                 ToolResultDelivery, ToolResultRequest, ToolTurnCoordinator,
                 ToolTurnRegistration,
             },
         client_tools::{ResolvedSessionPolicy, ToolStatus},
         bears::BearProfile,
-        prompt_memory_block_store::{
+        den_service::prompt_memory_block_store::{
                 archive_conflicting_prompt_memory_blocks,
-                archive_prompt_memory_blocks_superseded_by,
+                archive_den_service::prompt_memory_blocks_superseded_by,
                 list_prompt_memory_blocks_for_bear_profile,
                 patch_prompt_memory_block, select_prompt_memory_blocks_for_runtime,
                 upsert_prompt_memory_block, PromptMemoryBlockPatch,
                 PromptMemoryBlockQuery, PromptMemoryBlockWrite,
             },
-        turn_controller::{
+        den_service::turn_controller::{
                 TerminalReason, TerminalStatus, TurnController, TurnPhase,
             },
         agent_assist::PendingApprovalDenialMode,
@@ -102,7 +102,7 @@ use den_runtime::prompt_memory_blocks::{
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             tool_turns: ToolTurnCoordinator::new(),
             acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+            memory_stores: den_memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
 
@@ -162,7 +162,7 @@ use den_runtime::prompt_memory_blocks::{
         profile_slug: &str,
         session_id: &str,
         root: &String,
-    ) -> (den_runtime::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
+    ) -> (den_service::prompt_memory_block_store::PromptMemoryRuntimeSelection, String) {
         let selection = select_prompt_memory_blocks_for_runtime(
             pool,
             prompt_memory_runtime_query(bear_id, profile_slug, session_id, root),
@@ -445,7 +445,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), None),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let mut event = GatewayEvent::ConversationResolved {
@@ -475,7 +475,7 @@ use den_runtime::prompt_memory_blocks::{
             Some(resolved_conversation_id.as_str())
         );
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -485,7 +485,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(
+        let page = den_service::conversation::persistence::list_messages_page(
             &pool,
             canonical.id,
             None,
@@ -574,7 +574,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -599,7 +599,7 @@ use den_runtime::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -609,7 +609,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let tool_result = page
@@ -690,7 +690,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         super::stream::runtime::spawn_persist_acp_tool_result(
@@ -715,7 +715,7 @@ use den_runtime::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -725,7 +725,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let tool_result = page
@@ -889,7 +889,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(tool_turns.clone()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let inner = futures::stream::empty::<Result<Bytes, CustomError>>();
@@ -996,7 +996,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1015,7 +1015,7 @@ use den_runtime::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1025,7 +1025,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1103,7 +1103,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1122,7 +1122,7 @@ use den_runtime::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1132,7 +1132,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1211,7 +1211,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: RoleRuntime::new(ToolTurnCoordinator::new()),
             turn_scope: RoleTurnScope::acp_pair(bear_id, acp_session_id.clone(), Some(conversation_id.clone())),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let role_result = context.role_runtime.turn_result(
@@ -1230,7 +1230,7 @@ use den_runtime::prompt_memory_blocks::{
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1240,7 +1240,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let turn_outcome = page
@@ -1279,7 +1279,7 @@ use den_runtime::prompt_memory_blocks::{
         let session_id = format!("acp-session-{}", Uuid::new_v4());
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
-        let provenance = den_runtime::conversation_events::ConversationEventProvenance {
+        let provenance = den_service::conversation::events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: session_id.clone(),
         };
@@ -1288,12 +1288,12 @@ use den_runtime::prompt_memory_blocks::{
         content_json["acp_session_id"] = serde_json::json!(session_id.clone());
         content_json["client"] = serde_json::json!("zed");
         content_json["request_id"] = serde_json::json!(request_id.clone());
-        let record = den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
+        let record = den_service::conversation::events::CanonicalConversationRecord::visible_user_message(
             "dedup me",
             content_json,
             None,
         );
-        let context = den_runtime::conversation_events::ConversationPersistenceContext {
+        let context = den_service::conversation::events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1304,14 +1304,14 @@ use den_runtime::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(&context, &record)
+        den_service::conversation::events::persist_canonical_conversation_record(&context, &record)
             .await
             .expect("persist initial user prompt");
-        den_runtime::conversation_events::persist_canonical_conversation_record(&context, &record)
+        den_service::conversation::events::persist_canonical_conversation_record(&context, &record)
             .await
             .expect("persist duplicate user prompt");
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1321,7 +1321,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
@@ -1360,7 +1360,7 @@ use den_runtime::prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
 
         let build_record = |request_id: String| {
-            let provenance = den_runtime::conversation_events::ConversationEventProvenance {
+            let provenance = den_service::conversation::events::ConversationEventProvenance {
                 source: "acp_prompt".to_string(),
                 scope_id: session_id.clone(),
             };
@@ -1369,14 +1369,14 @@ use den_runtime::prompt_memory_blocks::{
             content_json["acp_session_id"] = serde_json::json!(session_id.clone());
             content_json["client"] = serde_json::json!("zed");
             content_json["request_id"] = serde_json::json!(request_id);
-            den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
+            den_service::conversation::events::CanonicalConversationRecord::visible_user_message(
                 "same text, new turn",
                 content_json,
                 None,
             )
         };
 
-        let context = den_runtime::conversation_events::ConversationPersistenceContext {
+        let context = den_service::conversation::events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1387,20 +1387,20 @@ use den_runtime::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
             &build_record(format!("req-{}", Uuid::new_v4())),
         )
         .await
         .expect("persist first user prompt");
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
             &build_record(format!("req-{}", Uuid::new_v4())),
         )
         .await
         .expect("persist second user prompt");
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1410,7 +1410,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let page = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let page = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical messages");
         let user_messages: Vec<_> = page
@@ -1431,7 +1431,7 @@ use den_runtime::prompt_memory_blocks::{
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
         let tool_call_id = format!("call-{}", Uuid::new_v4());
-        let context = den_runtime::conversation_events::ConversationPersistenceContext {
+        let context = den_service::conversation::events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1442,7 +1442,7 @@ use den_runtime::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        let provenance = den_runtime::conversation_events::ConversationEventProvenance {
+        let provenance = den_service::conversation::events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: session_id.clone(),
         };
@@ -1451,9 +1451,9 @@ use den_runtime::prompt_memory_blocks::{
         prompt_json["acp_session_id"] = serde_json::json!(session_id.clone());
         prompt_json["client"] = serde_json::json!("zed");
         prompt_json["request_id"] = serde_json::json!(request_id.clone());
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
+            &den_service::conversation::events::CanonicalConversationRecord::visible_user_message(
                 "read a file",
                 prompt_json,
                 None,
@@ -1462,9 +1462,9 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist user prompt");
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::tool_request(
+            &den_service::conversation::events::CanonicalConversationRecord::tool_request(
                 "functions.fs.read_text_file",
                 tool_call_id.clone(),
                 request_id.clone(),
@@ -1473,7 +1473,7 @@ use den_runtime::prompt_memory_blocks::{
                 false,
                 None,
                 "den_server",
-                &den_runtime::conversation_events::ConversationEventProvenance {
+                &den_service::conversation::events::ConversationEventProvenance {
                     source: "acp_runtime".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1482,9 +1482,9 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist tool request");
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::tool_result(
+            &den_service::conversation::events::CanonicalConversationRecord::tool_result(
                 Some("functions.fs.read_text_file".to_string()),
                 tool_call_id.clone(),
                 None,
@@ -1493,7 +1493,7 @@ use den_runtime::prompt_memory_blocks::{
                 serde_json::json!({"path": "/tmp/acp-workspace/README.md"}),
                 serde_json::json!({"source": "test"}),
                 Some(request_id.clone()),
-                &den_runtime::conversation_events::ConversationEventProvenance {
+                &den_service::conversation::events::ConversationEventProvenance {
                     source: "acp_tool_result".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1509,9 +1509,9 @@ use den_runtime::prompt_memory_blocks::{
             "request_id": context.request_id,
             "role": "assistant"
         });
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            &den_service::conversation::events::CanonicalConversationRecord::visible_assistant_message(
                 "read complete",
                 assistant_json,
                 None,
@@ -1520,7 +1520,7 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist assistant output");
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1530,7 +1530,7 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let rows = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let rows = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical rows");
         let (messages, has_more, next_before) = map_canonical_history_page(&rows, 20);
@@ -1554,7 +1554,7 @@ use den_runtime::prompt_memory_blocks::{
         let session_id = format!("acp-session-{}", Uuid::new_v4());
         let conversation_id = format!("conv-{}", Uuid::new_v4());
         let request_id = format!("req-{}", Uuid::new_v4());
-        let context = den_runtime::conversation_events::ConversationPersistenceContext {
+        let context = den_service::conversation::events::ConversationPersistenceContext {
             pool: pool.clone(),
             bear_id,
             user_id: Some(user_id),
@@ -1565,11 +1565,11 @@ use den_runtime::prompt_memory_blocks::{
             skip_persistence: false,
         };
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::conversation_resolved(
+            &den_service::conversation::events::CanonicalConversationRecord::conversation_resolved(
                 &conversation_id,
-                &den_runtime::conversation_events::ConversationEventProvenance {
+                &den_service::conversation::events::ConversationEventProvenance {
                     source: "acp_runtime".to_string(),
                     scope_id: context.persistence_scope_id.clone(),
                 },
@@ -1578,7 +1578,7 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist conversation_resolved record");
 
-        let prompt_provenance = den_runtime::conversation_events::ConversationEventProvenance {
+        let prompt_provenance = den_service::conversation::events::ConversationEventProvenance {
             source: "acp_prompt".to_string(),
             scope_id: context.persistence_scope_id.clone(),
         };
@@ -1587,9 +1587,9 @@ use den_runtime::prompt_memory_blocks::{
         prompt_json["acp_session_id"] = serde_json::json!(session_id.clone());
         prompt_json["client"] = serde_json::json!("zed");
         prompt_json["request_id"] = serde_json::json!(request_id.clone());
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::visible_user_message(
+            &den_service::conversation::events::CanonicalConversationRecord::visible_user_message(
                 "hello after resolution",
                 prompt_json,
                 None,
@@ -1598,9 +1598,9 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist user prompt");
 
-        den_runtime::conversation_events::persist_canonical_conversation_record(
+        den_service::conversation::events::persist_canonical_conversation_record(
             &context,
-            &den_runtime::conversation_events::CanonicalConversationRecord::visible_assistant_message(
+            &den_service::conversation::events::CanonicalConversationRecord::visible_assistant_message(
                 "resolved response",
                 serde_json::json!({
                     "source": "acp_runtime",
@@ -1615,7 +1615,7 @@ use den_runtime::prompt_memory_blocks::{
         .await
         .expect("persist assistant output");
 
-        let canonical = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+        let canonical = den_service::conversation::persistence::ensure_conversation_for_external_id(
             &pool,
             bear_id,
             Some(user_id),
@@ -1625,12 +1625,12 @@ use den_runtime::prompt_memory_blocks::{
         )
         .await
         .expect("ensure canonical conversation");
-        let visible_count = den_runtime::conversation_persistence::count_visible_messages(&pool, canonical.id)
+        let visible_count = den_service::conversation::persistence::count_visible_messages(&pool, canonical.id)
             .await
             .expect("count visible messages");
         assert_eq!(visible_count, 3, "conversation_resolved plus prompt/assistant should count as visible canonical records");
 
-        let rows = den_runtime::conversation_persistence::list_messages_page(&pool, canonical.id, None, 20)
+        let rows = den_service::conversation::persistence::list_messages_page(&pool, canonical.id, None, 20)
             .await
             .expect("list canonical rows");
         assert!(rows.iter().any(|row| row.message_type == "workflow_event" && row.content_text.contains("Conversation resolved")));
@@ -2136,7 +2136,7 @@ use den_runtime::prompt_memory_blocks::{
     }
 
     #[tokio::test]
-    async fn prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows() {
+    async fn den_service::prompt_memory_block_store_mutations_archive_conflicts_and_superseded_runtime_rows() {
         let Some(pool) = prompt_memory_test_pool().await else {
             return;
         };
@@ -2210,7 +2210,7 @@ use den_runtime::prompt_memory_blocks::{
             .expect("archive conflicts");
         assert_eq!(archived_conflicts, 1);
 
-        let archived_superseded = archive_prompt_memory_blocks_superseded_by(
+        let archived_superseded = archive_den_service::prompt_memory_blocks_superseded_by(
             &pool,
             bear_id,
             profile_slug.as_str(),
@@ -2428,7 +2428,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_includes_message_role_variants_and_skips_diagnostic_only() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2485,7 +2485,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_prefers_den_rows_when_prompt_and_assistant_exist() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2522,7 +2522,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_diagnostic_only_rows_do_not_create_visible_history() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2555,7 +2555,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_with_only_user_rows_still_returns_den_visible_history() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2579,7 +2579,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_history_page_with_only_assistant_rows_still_returns_den_visible_history() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2603,7 +2603,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_read_eligibility_requires_visible_canonical_messages() {
-        use den_runtime::conversation_persistence::PersistedConversationMessage;
+        use den_service::conversation::persistence::PersistedConversationMessage;
         use time::OffsetDateTime;
 
         let now = OffsetDateTime::now_utc();
@@ -2752,7 +2752,7 @@ use den_runtime::prompt_memory_blocks::{
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             tool_turns: den_service::tool_turns::ToolTurnCoordinator::new(),
             acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+            memory_stores: den_memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(
             &state,
@@ -2881,7 +2881,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(
+            memory_stores: den_memory::MemoryStoreManager::new(
                 &den_core::config::Config::test_stub(),
             ),
         };
@@ -2952,7 +2952,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(
+            memory_stores: den_memory::MemoryStoreManager::new(
                 &den_core::config::Config::test_stub(),
             ),
         };
@@ -3075,7 +3075,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(
+            memory_stores: den_memory::MemoryStoreManager::new(
                 &den_core::config::Config::test_stub(),
             ),
         };
@@ -3247,7 +3247,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3268,7 +3268,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_visible_message_record_uses_transport_neutral_storage_shape() {
-        use den_runtime::conversation_events::CanonicalConversationRecord;
+        use den_service::conversation::events::CanonicalConversationRecord;
 
         let record = CanonicalConversationRecord::visible_assistant_message(
             "hello from assistant",
@@ -3293,7 +3293,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_workflow_event_constructor_uses_transport_neutral_defaults() {
-        use den_runtime::conversation_events::CanonicalConversationRecord;
+        use den_service::conversation::events::CanonicalConversationRecord;
 
         let record = CanonicalConversationRecord::workflow_event(
             "Turn outcome: ok / stream_complete",
@@ -3311,15 +3311,15 @@ use den_runtime::prompt_memory_blocks::{
             } => {
                 assert_eq!(
                     message_type,
-                    den_runtime::conversation_message_types::ConversationMessageType::WorkflowEvent
+                    den_service::conversation::message_types::ConversationMessageType::WorkflowEvent
                 );
                 assert_eq!(
                     role,
-                    Some(den_runtime::conversation_message_types::ConversationMessageRole::System)
+                    Some(den_service::conversation::message_types::ConversationMessageRole::System)
                 );
                 assert_eq!(
                     visibility,
-                    den_runtime::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                    den_service::conversation::message_types::ConversationMessageVisibility::DiagnosticOnly
                 );
                 assert_eq!(content_text, "Turn outcome: ok / stream_complete");
             }
@@ -3329,7 +3329,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_request_helper_builds_provenance_payload() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3365,7 +3365,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_helper_builds_provenance_payload() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3401,7 +3401,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_assistant_output_helper_builds_request_scoped_provenance_payload() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3432,7 +3432,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_event_dedup_key_serializes_to_stable_source_event_id() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3485,7 +3485,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_turn_outcome_helper_builds_provenance_payload() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -3556,7 +3556,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3612,7 +3612,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope: turn_scope.clone(),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         spawn_canonical_gateway_record_persistence(
@@ -3742,7 +3742,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -3927,7 +3927,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4084,7 +4084,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4231,7 +4231,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
@@ -4319,7 +4319,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
@@ -4451,7 +4451,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4593,7 +4593,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
@@ -4677,7 +4677,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpRuntimeSseStream::new(
@@ -4831,7 +4831,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -4967,7 +4967,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let runtime_event = RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::ToolCallRequested {
@@ -5242,7 +5242,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
             "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
@@ -5372,7 +5372,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5502,7 +5502,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -5624,7 +5624,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime: role_runtime.clone(),
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, CustomError>(Bytes::from(concat!(
@@ -5692,7 +5692,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_user_prompt_record_carries_prompt_scope_and_request_metadata() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5731,7 +5731,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_user_prompt_record_matches_prompt_flow_persistence_shape() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5778,7 +5778,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_conversation_resolved_record_carries_resolution_metadata() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5797,15 +5797,15 @@ use den_runtime::prompt_memory_blocks::{
             } => {
                 assert_eq!(
                     message_type,
-                    den_runtime::conversation_message_types::ConversationMessageType::WorkflowEvent
+                    den_service::conversation::message_types::ConversationMessageType::WorkflowEvent
                 );
                 assert_eq!(
                     role,
-                    Some(den_runtime::conversation_message_types::ConversationMessageRole::System)
+                    Some(den_service::conversation::message_types::ConversationMessageRole::System)
                 );
                 assert_eq!(
                     visibility,
-                    den_runtime::conversation_message_types::ConversationMessageVisibility::DiagnosticOnly
+                    den_service::conversation::message_types::ConversationMessageVisibility::DiagnosticOnly
                 );
                 assert_eq!(content_text, "Conversation resolved");
                 assert!(provider_message_id.is_none());
@@ -5854,7 +5854,7 @@ use den_runtime::prompt_memory_blocks::{
             role_runtime,
             turn_scope,
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         };
 
         let provenance = super::stream::runtime::acp_session_provenance(&context);
@@ -5893,15 +5893,15 @@ use den_runtime::prompt_memory_blocks::{
                 Some("conv-helper".to_string()),
             ),
             prompt_memory_diagnostic: serde_json::json!({}),
-            memory_stores: den_runtime::memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            memory_stores: den_memory::MemoryStoreManager::new(&den_core::config::Config::test_stub()),
         });
-        let record = den_runtime::conversation_events::CanonicalConversationRecord::conversation_resolved(
+        let record = den_service::conversation::events::CanonicalConversationRecord::conversation_resolved(
             "conv-validated",
             &provenance,
         );
 
         match record {
-            den_runtime::conversation_events::CanonicalConversationRecord::StructuredEvent {
+            den_service::conversation::events::CanonicalConversationRecord::StructuredEvent {
                 content_json, ..
             } => {
                 assert_eq!(content_json["source"], "acp_stream");
@@ -5914,7 +5914,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_assistant_output_records_same_request_scope_for_duplicate_like_replays() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5953,7 +5953,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_timeout_record_preserves_timeout_status_and_diagnostic_phase() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -5996,7 +5996,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_tool_result_error_record_preserves_error_status_and_diagnostic_phase() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 
@@ -6032,7 +6032,7 @@ use den_runtime::prompt_memory_blocks::{
 
     #[test]
     fn canonical_turn_outcome_records_cancellation_request_scope() {
-        use den_runtime::conversation_events::{
+        use den_service::conversation::events::{
             CanonicalConversationRecord, ConversationEventProvenance,
         };
 

@@ -2,7 +2,7 @@ use axum::http::{header, HeaderMap};
 use serde_json::Value;
 
 use den_http::{acp_tokens, errors::CustomError};
-use den_runtime::{bears::db as bears_db, DenState};
+use den_service::{bears::db as bears_db, DenState};
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, CustomError> {
     let value = headers
@@ -60,7 +60,7 @@ pub(crate) async fn authenticated_bear(
     state: &DenState,
     headers: &HeaderMap,
     params: &Value,
-) -> Result<(i32, den_runtime::bears::Bear), CustomError> {
+) -> Result<(i32, den_service::bears::Bear), CustomError> {
     let bear_slug = params
         .get("bear_slug")
         .and_then(|v| v.as_str())

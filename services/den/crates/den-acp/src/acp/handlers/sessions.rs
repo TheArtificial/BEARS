@@ -24,12 +24,15 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_oauth::auth;
-use den_runtime::{
-    plan_mode,
+use den_service::{
     acp_sessions,
     bears::{db as bears_db, BearProfile},
-    conversation_persistence::{ensure_conversation_for_external_id, set_conversation_title},
+    conversation::persistence::{ensure_conversation_for_external_id, set_conversation_title},
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
+    prompt_memory_blocks::PromptMemoryBlockState,
+};
+use den_runtime::{
+    plan_mode,
     role_runtime::{RoleRuntime, RoleTurnScope},
 };
 
@@ -99,7 +102,7 @@ pub(super) async fn get_acp_session_prompt_memory_inner(
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let mut blocks = list_prompt_memory_blocks_for_bear_profile(&state.sqlx_pool, bear.id, BearProfile::Pair.as_str()).await?;
     if !query.include_archived {
-        blocks.retain(|block| block.state != den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Archived);
+        blocks.retain(|block| block.state != PromptMemoryBlockState::Archived);
     }
     if let Some(scope) = query.scope.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         blocks.retain(|block| serde_json::to_value(block.scope).ok().and_then(|v| v.as_str().map(str::to_string)).as_deref() == Some(scope));

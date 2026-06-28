@@ -27,13 +27,15 @@ use crate::{
 };
 use den_http::errors::CustomError;
 use den_oauth::auth::{self, ApiError};
-use den_runtime::{
+use den_service::{
     acp_sessions::{self, UpsertAcpSession},
     bears::{db as bears_db, BearProfile},
-    conversation_events::{
+    conversation::events::{
         persist_canonical_conversation_record, CanonicalConversationRecord,
         ConversationEventProvenance, ConversationPersistenceContext,
     },
+};
+use den_runtime::{
     plan_mode,
 };
 use den_service::bears::prompt_fragments::{

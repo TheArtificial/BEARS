@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput},
-    bears::{model::BearProfile, Bear},
+    den_service::bears::{model::BearProfile, Bear},
     memory::{
         store::{append_memory_record, LogicalMemoryPath},
         AccessContext, MemoryStoreManager,
@@ -234,7 +234,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
 
 #[tokio::test]
 async fn access_bearing_relation_gates_record_out_of_projection() {
-    use crate::memory::store::{append_relation, resolve, Assertion, Resolution, Signal};
+    use den_memory::{append_relation, resolve, Assertion, Resolution, Signal};
 
     let bear_id = Uuid::new_v4();
     let bear = legacy_test_bear(bear_id);

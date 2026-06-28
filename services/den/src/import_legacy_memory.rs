@@ -108,13 +108,13 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportLegacyMemoryArgs> {
 pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::load();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let store = stores
         .store_for_bear(args.bear_id)
         .await
         .context("open per-bear sqlite store")?;
 
-    let options = den_runtime::memory::LegacyMemoryImportOptions {
+    let options = den_memory::LegacyMemoryImportOptions {
         dry_run: args.dry_run,
         include_workflow_artifacts: args.include_workflow_artifacts,
         import_history: args.import_history,
@@ -122,12 +122,12 @@ pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::R
 
     let report = match &args.source {
         ImportLegacyMemoryCliSource::Bundle(path) => {
-            den_runtime::memory::import_legacy_memory_bundle(&store, path, &options)
+            den_memory::import_legacy_memory_bundle(&store, path, &options)
                 .await
                 .context("import legacy bundle")?
         }
         ImportLegacyMemoryCliSource::GitDir(path) => {
-            den_runtime::memory::import_legacy_memory_git_dir(&store, path, &options)
+            den_memory::import_legacy_memory_git_dir(&store, path, &options)
                 .await
                 .context("import legacy git dir")?
         }

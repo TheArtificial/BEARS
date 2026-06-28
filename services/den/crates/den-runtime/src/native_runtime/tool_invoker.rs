@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 use den_core::{config::Config, DenError};
 use den_core::tools::context::DenToolInvocationContext;
 
-use crate::memory::MemoryStoreManager;
+use den_memory::MemoryStoreManager;
 
 /// Dispatches a single builtin Den tool call to its concrete executor.
 #[async_trait]

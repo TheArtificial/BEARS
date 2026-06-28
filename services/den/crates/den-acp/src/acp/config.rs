@@ -7,8 +7,8 @@ use crate::{
     service::DenState,
     core::web_policy,
 };
+use den_service::tool_turns::ToolResultRequest;
 use den_runtime::{
-    tool_turns::ToolResultRequest,
     client_tools::client_tool_policy_json_for_provider,
 };
 

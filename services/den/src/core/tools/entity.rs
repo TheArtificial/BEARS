@@ -3,8 +3,8 @@ use den_core::tools::entity::{
     EntityBrowseArguments, EntityLinkMemoryArguments, EntityMergeArguments, EntityResolveArguments,
     EntitySplitArguments, EntityWriteAccessRuleArguments, EntityWriteAnchorArguments,
 };
-use den_runtime::bears::BearProfile;
-use den_runtime::memory::store::{
+use den_service::bears::BearProfile;
+use den_memory::{
     self as memory_store, descriptors, EntityHandleRow, EntityRow, EntityTrust, LogicalMemoryPath,
     RelationClass, RelationRow, ResolutionState,
 };

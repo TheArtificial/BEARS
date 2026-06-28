@@ -67,7 +67,7 @@ async fn memory_request_review_projects_typed_conversation_records(
     let agent_id = format!("agent-{}", Uuid::new_v4());
     seed_pair_agent(&pool, bear_id, &agent_id).await?;
 
-    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
         &pool,
         bear_id,
         Some(user_id),
@@ -100,7 +100,7 @@ async fn memory_request_review_projects_typed_conversation_records(
     };
 
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
         &config,
@@ -119,7 +119,7 @@ async fn memory_request_review_projects_typed_conversation_records(
         .as_str()
         .expect("proposal id")
         .parse::<Uuid>()?;
-    let context = den_runtime::conversation_events::canonical_persistence_context(
+    let context = den_service::conversation::events::canonical_persistence_context(
         pool.clone(),
         bear_id,
         Some(user_id),
@@ -129,15 +129,15 @@ async fn memory_request_review_projects_typed_conversation_records(
         "acp-memory-review-tool-session".to_string(),
         false,
     );
-    den_runtime::conversation_events::persist_projection(
+    den_service::conversation::events::persist_projection(
         &context,
-        &den_runtime::conversation_events::Projection {
-            provenance: den_runtime::conversation_events::ProjectionProvenance {
-                source: den_runtime::conversation_events::ProjectionSource::DenTools,
+        &den_service::conversation::events::Projection {
+            provenance: den_service::conversation::events::ProjectionProvenance {
+                source: den_service::conversation::events::ProjectionSource::DenTools,
                 scope_id: "acp-memory-review-tool-session".to_string(),
             },
-            event: den_runtime::conversation_events::ProjectionEvent::MemoryReviewRequested(
-                den_runtime::conversation_events::MemoryReviewRequestedPayload {
+            event: den_service::conversation::events::ProjectionEvent::MemoryReviewRequested(
+                den_service::conversation::events::MemoryReviewRequestedPayload {
                     proposal_id,
                     source_profile: "pair".to_string(),
                     title: "Promote memory".to_string(),
@@ -156,7 +156,7 @@ async fn memory_request_review_projects_typed_conversation_records(
 
     assert_eq!(payload["proposal"]["title"], "Promote memory");
 
-    let messages = den_runtime::conversation_persistence::list_messages_page(
+    let messages = den_service::conversation::persistence::list_messages_page(
         &pool,
         conversation.id,
         None,

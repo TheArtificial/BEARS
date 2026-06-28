@@ -3,22 +3,21 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    {
-        bears::{managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash, Bear},
-        memory::{
-            has_work_surface_canonical_anchor, head_record_for_logical_path,
-            list_profile_local_head_records, memory_sequence_high_water, record_visible,
-            AccessContext, MemoryRecordRow, MemoryStoreManager, list_entity_anchor_head_records,
-        },
-    },
+use den_memory::{
+    has_work_surface_canonical_anchor, head_record_for_logical_path,
+    list_entity_anchor_head_records, list_profile_local_head_records, memory_sequence_high_water,
+    record_visible, AccessContext, MemoryRecordRow, MemoryStoreManager,
+};
+use den_service::bears::{
+    managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash,
+    Bear,
 };
 use den_core::tools::support::truncate_chars;
 use den_core::tools::work_surface::{
     work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
     work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
 };
-use crate::llm::model_registry;
+use den_llm::model_registry;
 
 const TIER1_SHARED_PATHS: &[&str] = &[
     "core/bear-overview.md",

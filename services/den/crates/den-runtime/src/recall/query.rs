@@ -332,28 +332,28 @@ pub async fn graph_expand_hits(
     if seed_memory_ids.is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let stores = crate::memory::MemoryStoreManager::new(config);
+    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let reached =
-        crate::memory::store::bounded_graph_expand(&store, seed_memory_ids, max_depth, limit)
+        den_memory::bounded_graph_expand(&store, seed_memory_ids, max_depth, limit)
             .await?;
     if reached.is_empty() {
         return Ok(Vec::new());
     }
     let ids: Vec<String> = reached.iter().map(|r| r.memory_id.clone()).collect();
-    let records = crate::memory::store::fetch_records_min(&store, &ids, role).await?;
-    let by_id: std::collections::HashMap<&str, &crate::memory::store::RecallRecordMin> =
+    let records = den_memory::fetch_records_min(&store, &ids, role).await?;
+    let by_id: std::collections::HashMap<&str, &den_memory::RecallRecordMin> =
         records.iter().map(|r| (r.memory_id.as_str(), r)).collect();
 
     // Entity-overlap boost: rank reached records that share more entities with the seed set higher
     // within each hop tier (a stronger association than a single shared entity).
     let seed_entities: std::collections::HashSet<String> =
-        crate::memory::store::relations::descriptive_entity_ids_for_records(&store, seed_memory_ids)
+        den_memory::relations::descriptive_entity_ids_for_records(&store, seed_memory_ids)
             .await?
             .into_iter()
             .collect();
     let entities_by_record =
-        crate::memory::store::relations::descriptive_entity_ids_by_source(&store).await?;
+        den_memory::relations::descriptive_entity_ids_by_source(&store).await?;
     let overlap = |memory_id: &str| -> usize {
         entities_by_record
             .get(memory_id)
@@ -362,7 +362,7 @@ pub async fn graph_expand_hits(
     };
 
     // Role-visible reached records, ordered by hop asc, then overlap desc, then id (determinism).
-    let mut ordered: Vec<(&crate::memory::store::GraphReach, usize)> = reached
+    let mut ordered: Vec<(&den_memory::GraphReach, usize)> = reached
         .iter()
         .filter(|reach| by_id.contains_key(reach.memory_id.as_str()))
         .map(|reach| {
@@ -438,11 +438,11 @@ pub async fn hybrid_memory_search(
             }
         };
 
-    let stores = crate::memory::MemoryStoreManager::new(config);
+    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let limit_i64 = i64::try_from(fetch_limit).unwrap_or(10);
     let keyword =
-        crate::memory::tools::sqlite_memory_search(&store, role, effective_query, limit_i64).await?;
+        den_memory::tools::sqlite_memory_search(&store, role, effective_query, limit_i64).await?;
 
     // Seed the graph leg with the records the direct legs already matched.
     let mut seeds: Vec<String> = vector.passages.iter().map(|p| p.memory_id.clone()).collect();
@@ -494,7 +494,7 @@ pub async fn hybrid_memory_search(
 /// parsed window. For point-in-time (`as of`) queries, also drop records already superseded as of
 /// the upper bound, walking the supersession chain (Phase 3.5).
 async fn filter_hits_by_temporal(
-    store: &crate::memory::store::BearMemoryStore,
+    store: &den_memory::BearMemoryStore,
     hits: Vec<Value>,
     temporal: &TemporalQuery,
 ) -> Result<Vec<Value>, DenError> {
@@ -505,9 +505,9 @@ async fn filter_hits_by_temporal(
         .iter()
         .filter_map(|h| h.get("memory_id").and_then(Value::as_str).map(String::from))
         .collect();
-    let times = crate::memory::store::effective_time_by_ids(store, &ids).await?;
+    let times = den_memory::effective_time_by_ids(store, &ids).await?;
     let superseders = if temporal.as_of {
-        crate::memory::store::superseder_times_by_superseded(store, &ids).await?
+        den_memory::superseder_times_by_superseded(store, &ids).await?
     } else {
         std::collections::HashMap::new()
     };

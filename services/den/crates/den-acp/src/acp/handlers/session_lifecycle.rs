@@ -17,11 +17,9 @@ use crate::{
     service::DenState,
 };
 use den_http::errors::CustomError;
+use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}};
 use den_runtime::{
     plan_mode,
-    acp_sessions,
-    bears::{db as bears_db, BearProfile},
-    archived_conversations,
     runtime::compaction::{prepare_turn_compaction, CompactionMode, TurnCompactionTrigger},
 };
 
@@ -283,7 +281,7 @@ pub(super) async fn close_session_inner(
     let archive_target = acp_archive_target_for_session(&session);
     let mut archived = false;
     if let Some(archive_target) = archive_target {
-        archived_conversations::set_archived(
+        den_service::archived_conversations::set_archived(
             &state.sqlx_pool,
             session.bear_id,
             archive_target,

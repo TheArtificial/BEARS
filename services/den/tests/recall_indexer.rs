@@ -12,7 +12,7 @@ use den_memory::{
     append_memory_record, append_relation, resolve, Assertion, LogicalMemoryPath,
     MemoryStoreManager, Resolution, Signal,
 };
-use den_runtime::memory::tools::sqlite_memory_search;
+use den_memory::tools::sqlite_memory_search;
 use den_runtime::recall::{
     hybrid_memory_search, recall_for_turn, reconcile::list_indexable_heads, render_recall_block,
     DeterministicEmbedder, IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,

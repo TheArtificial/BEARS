@@ -1,4 +1,4 @@
-use crate::conversation::events::*;
+use den_service::conversation::events::*;
 
 #[test]
 fn projection_workflow_content_json_is_derived_from_typed_event() {

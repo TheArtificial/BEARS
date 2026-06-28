@@ -9,15 +9,11 @@ use uuid::Uuid;
 
 use den_core::{config::Config, DenError};
 
-use crate::{
-    acp_sessions,
-    conversation_ids::is_native_runtime_conversation_id,
-    llm::LlmApiStyle,
-    memory::MemoryStoreManager,
-    runtime_contracts::{
-        RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef,
-    },
-};
+use den_memory::MemoryStoreManager;
+use den_protocol::{RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef};
+use den_service::acp_sessions;
+
+use crate::{conversation_ids::is_native_runtime_conversation_id, llm::LlmApiStyle};
 
 /// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
 pub const STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
@@ -34,7 +30,7 @@ pub struct TurnStartRequest<'a> {
     pub bear_slug: &'a str,
     pub client: &'a str,
     pub cwd: Option<&'a str>,
-    pub binding: &'a crate::runtime_contracts::RoleRuntimeBinding,
+    pub binding: &'a den_protocol::RoleRuntimeBinding,
     pub conversation_selection: &'a str,
     pub upstream_target: &'a str,
     pub prompt: &'a str,
@@ -53,7 +49,7 @@ pub struct TurnContinueRequest<'a> {
     pub run_id: Option<&'a str>,
     pub acp_session_id: &'a str,
     pub conversation: RuntimeConversationRef,
-    pub binding: &'a crate::runtime_contracts::RoleRuntimeBinding,
+    pub binding: &'a den_protocol::RoleRuntimeBinding,
     pub continuation: RuntimeContinuation,
     pub stream_context: TurnStreamContext,
 }
@@ -74,7 +70,7 @@ pub struct TurnStreamContext {
 }
 
 pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
-    crate::runtime_contracts::runtime_error_is_conflict_pending_approval(err)
+    den_protocol::runtime_error_is_conflict_pending_approval(err)
 }
 
 pub struct RuntimeMaterializationResult {

@@ -8,11 +8,11 @@ use crate::{
         is_legacy_synthetic_interrupted_tool_result, tool_message_counts_toward_llm_resolution,
         INCOMPLETE_TOOL_RESULT_MARK,
     },
-    conversation_events::{
-        canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
-    },
     llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     runtime::compaction::TranscriptGroupingRow,
+};
+use den_service::conversation::events::{
+    canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
 };
 
 #[derive(Debug, Clone)]

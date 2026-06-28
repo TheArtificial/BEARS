@@ -1,9 +1,7 @@
 //! OpenAI-compatible streaming inference client (Bifrost / `LLM_API_URL`).
 //!
-//! Emits [`crate::runtime_contracts::RuntimeStreamEvent`] directly.
+//! Emits [`den_protocol::RuntimeStreamEvent`] directly.
 
-pub mod bifrost;
-pub mod model_registry;
 mod stream;
 
 pub use den_llm::byte_stream_with_idle_timeout;

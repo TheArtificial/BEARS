@@ -3,11 +3,9 @@ use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::{
-    conversation_message_types::{
-        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
-        ConversationMessageWrite,
-    },
+use den_service::conversation::message_types::{
+    ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+    ConversationMessageWrite,
 };
 
 use crate::conversation_ids::is_acp_history_target;

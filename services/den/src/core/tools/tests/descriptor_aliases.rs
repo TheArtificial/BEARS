@@ -6,7 +6,7 @@ use crate::core::tools::{
         builtin_den_tool_descriptors_for_profile,
     },
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 use std::collections::HashSet;
 
 #[test]

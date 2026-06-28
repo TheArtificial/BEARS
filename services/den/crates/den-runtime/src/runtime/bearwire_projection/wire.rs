@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::runtime_contracts::{
+use den_protocol::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 

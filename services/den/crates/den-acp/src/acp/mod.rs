@@ -66,10 +66,10 @@ use crate::{
     },
 };
 use crate::acp::client_tool_advertisement::provider_tool_names_for_client_context;
+use den_service::turn_controller::ActiveTurnCancelHandle;
 use den_runtime::{
     gateway_events::GatewayEvent,
     client_tools::resolve_session_policy_for_mode,
-    turn_controller::ActiveTurnCancelHandle,
     runtime_provider::RoleRuntimeBinding,
 };
 use self::{
@@ -222,5 +222,3 @@ async fn prompt_inner(
 ) -> types::AcpPromptInnerResult {
     run_prompt_flow(state, slug, session_id, headers, body, request_id).await
 }
-
-

@@ -2,9 +2,10 @@ use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
+use den_service::{acp_sessions, bears::BearProfile, DenState};
 use den_runtime::{
-    acp_sessions, bears::BearProfile, bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent, DenState,
+    bearwire_events,
+    runtime::bearwire_projection::wire::BearWireEvent,
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
@@ -206,7 +207,7 @@ pub(crate) async fn session_state_result(
 async fn session_model_payload(
     state: &DenState,
     user_id: i32,
-    bear: &den_runtime::bears::Bear,
+    bear: &den_service::bears::Bear,
     session_id: &str,
 ) -> Result<Value, CustomError> {
     let session =
@@ -217,7 +218,7 @@ async fn session_model_payload(
         .resolved_conversation_id
         .as_deref()
         .unwrap_or(&session.conversation_id);
-    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
         &state.sqlx_pool,
         bear.id,
         Some(user_id),
@@ -226,20 +227,20 @@ async fn session_model_payload(
         None,
     )
     .await?;
-    let base_model = den_runtime::bears::db::resolve_model_for_profile(
+    let base_model = den_service::bears::db::resolve_model_for_profile(
         &state.sqlx_pool,
         bear,
         BearProfile::Pair,
         state.config.default_llm_model.as_str(),
     )
     .await?;
-    let model_state = den_runtime::conversation_persistence::get_conversation_model_state(
+    let model_state = den_service::conversation::persistence::get_conversation_model_state(
         &state.sqlx_pool,
         conversation.id,
     )
     .await?;
     let effective_model =
-        den_runtime::conversation_persistence::resolve_conversation_selected_model(
+        den_service::conversation::persistence::resolve_conversation_selected_model(
             &state.sqlx_pool,
             conversation.id,
         )
@@ -325,7 +326,7 @@ pub(crate) async fn session_model_set_result(
         .resolved_conversation_id
         .as_deref()
         .unwrap_or(&session.conversation_id);
-    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
         &state.sqlx_pool,
         bear.id,
         Some(user_id),
@@ -334,7 +335,7 @@ pub(crate) async fn session_model_set_result(
         None,
     )
     .await?;
-    den_runtime::conversation_persistence::set_conversation_model_state(
+    den_service::conversation::persistence::set_conversation_model_state(
         &state.sqlx_pool,
         conversation.id,
         if selected.is_some() {

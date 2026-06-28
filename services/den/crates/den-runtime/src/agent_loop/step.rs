@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use den_core::{config::Config, profile::BearProfile, DenError};
+use den_protocol::{RuntimeEventStream, RuntimeStreamEvent};
 use futures::{Stream, TryStreamExt};
 use sqlx::PgPool;
 use tokio::time::timeout;
@@ -24,7 +25,6 @@ use crate::{
         openai_byte_stream_to_event_stream_with_telemetry, responses_byte_stream_to_event_stream,
     },
     runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
-    runtime_contracts::{RuntimeEventStream, RuntimeStreamEvent},
 };
 
 /// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.

@@ -8,7 +8,7 @@ use crate::core::{
 };
 use den_runtime::{
     acp_sessions::AcpSessionRow,
-    runtime_contracts::{
+    den_protocol::{
         classify_runtime_error, runtime_error_is_conflict_pending_approval,
         runtime_error_is_no_active_runs_cancel, EnsureConversationRequest, RoleRuntimeBinding,
         RuntimeConversationBackend, RuntimeConversationRef, RuntimeErrorCategory,
@@ -174,7 +174,7 @@ async fn conversation_service_skips_backend_verify_for_canonical_rows(
 ) -> Result<(), Box<dyn std::error::Error>> {
         use den_runtime::{
         bears::{db::create_bear, db::BearParams},
-        conversation_persistence::ensure_conversation_for_external_id,
+        den_service::conversation::persistence::ensure_conversation_for_external_id,
     };
 
     let bear_id = create_bear(
@@ -223,7 +223,7 @@ async fn native_conversation_backend_persists_den_conv_rows(
 ) -> Result<(), Box<dyn std::error::Error>> {
         use den_runtime::{
         bears::{db::create_bear, db::BearParams},
-        conversation_persistence::get_conversation_for_external_id,
+        den_service::conversation::persistence::get_conversation_for_external_id,
         native_runtime::NativeRuntimeConversationBackend,
     };
 

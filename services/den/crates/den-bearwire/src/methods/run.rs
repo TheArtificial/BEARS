@@ -6,15 +6,13 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
+use den_protocol::RoleRuntimeBinding;
+use den_service::{acp_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
-    acp_sessions,
-    bears::{db as bears_db, BearProfile},
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_acp_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
-    runtime_contracts::RoleRuntimeBinding,
     turn_runner::TurnStartRequest,
-    DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -124,11 +122,11 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
 
 async fn resolve_pair_run_model(
     state: &DenState,
-    bear: &den_runtime::bears::Bear,
+    bear: &den_service::bears::Bear,
     conversation_id: &str,
 ) -> Result<ResolvedRunModel, CustomError> {
     if let Some(conversation) =
-        den_runtime::conversation_persistence::get_conversation_for_external_id(
+        den_service::conversation::persistence::get_conversation_for_external_id(
             &state.sqlx_pool,
             bear.id,
             conversation_id,
@@ -136,7 +134,7 @@ async fn resolve_pair_run_model(
         .await?
     {
         if let Some(model_state) =
-            den_runtime::conversation_persistence::get_conversation_model_state(
+            den_service::conversation::persistence::get_conversation_model_state(
                 &state.sqlx_pool,
                 conversation.id,
             )
@@ -216,7 +214,7 @@ async fn resolve_pair_run_model(
 
 async fn preflight_pair_run_model(
     state: &DenState,
-    bear: &den_runtime::bears::Bear,
+    bear: &den_service::bears::Bear,
     session_id: &str,
     conversation_id: &str,
 ) -> Result<ResolvedRunModel, CustomError> {

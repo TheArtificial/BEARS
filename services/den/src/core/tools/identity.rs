@@ -13,7 +13,7 @@ use crate::{
     core::user,
     errors::{CustomError, DenError},
 };
-use den_runtime::bears::{db as bears_db, BearProfile};
+use den_service::bears::{db as bears_db, BearProfile};
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {
     value

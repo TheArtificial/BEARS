@@ -15,18 +15,18 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use den_http::acp_tokens;
+use den_service::acp_sessions;
 use den_runtime::{
-    acp_sessions,
     bears::{db as bears_db, db::BearParams},
     bearwire_obligations, bearwire_runs,
     conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
         ConversationMessageWrite,
     },
-    conversation_persistence::{append_message, ensure_conversation_for_external_id},
+    den_service::conversation::persistence::{append_message, ensure_conversation_for_external_id},
     native_runtime::NativeRuntimeConversationBackend,
-    runtime_contracts::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
-    DenState,
+    den_protocol::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
+
 };
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
@@ -45,7 +45,7 @@ fn test_state_with_config(pool: sqlx::PgPool, config: den_core::config::Config) 
         pool,
         config.clone(),
         std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
-        den_runtime::memory::MemoryStoreManager::new(config.as_ref()),
+        den_memory::MemoryStoreManager::new(config.as_ref()),
     );
     let snapshot = den_service::bifrost::BifrostCatalogSnapshot::from_available_models(vec![
         den_service::bifrost::BifrostModelMetadata {

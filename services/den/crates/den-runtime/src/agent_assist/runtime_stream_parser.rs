@@ -1,4 +1,4 @@
-use crate::runtime_contracts::{
+use den_protocol::{
     RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
@@ -139,7 +139,7 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
             } else {
                 Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
                     turn: None,
-                    category: crate::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
+                    category: den_protocol::RuntimeErrorCategory::BackendProtocol,
                     message: format!(
                         "Runtime stopped before producing assistant output: {stop_reason}"
                     ),
@@ -224,7 +224,7 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
                 crate::gateway_events::GatewayEvent::ConversationResolved {
                     conversation_id,
                 } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
-                    conversation: crate::runtime_contracts::RuntimeConversationRef {
+                    conversation: den_protocol::RuntimeConversationRef {
                         id: conversation_id,
                     },
                 }),

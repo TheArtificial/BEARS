@@ -2,12 +2,11 @@ use bytes::Bytes;
 
 pub mod wire;
 
-use crate::{
-    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
-    runtime_contracts::{
-        RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
-    },
+use den_protocol::{
+    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
+
+use crate::gateway_events::{gateway_event_to_adapter_sse, GatewayEvent};
 
 #[derive(Debug)]
 pub enum RuntimeEventProjectionOutcome {

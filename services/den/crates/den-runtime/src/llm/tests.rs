@@ -2,7 +2,7 @@ use super::stream::{
     openai_sse_chunk_to_runtime_events, responses_sse_frame_to_runtime_events,
     OpenAiStreamAccumulator, ResponsesStreamAccumulator,
 };
-use crate::runtime_contracts::{RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[test]
 fn parses_text_delta_from_delta_text_field() {

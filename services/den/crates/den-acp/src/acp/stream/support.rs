@@ -2,12 +2,12 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 use crate::acp::AcpStreamContext;
+use den_service::turn_controller::TurnController;
 use den_runtime::{
     gateway_events::{
             gateway_event_adapter_type, gateway_event_has_visible_output, GatewayEvent,
             ToolCallAccumulator,
         },
-    turn_controller::TurnController,
 };
 
 
@@ -415,4 +415,3 @@ impl AcpStreamDiagnostics {
         );
     }
 }
-

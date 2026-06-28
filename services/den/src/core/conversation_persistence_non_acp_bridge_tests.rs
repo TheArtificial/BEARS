@@ -25,7 +25,7 @@ async fn persist_for_test(
 
 use den_runtime::{
     bears::{db::create_bear, db::BearParams, BearProfile},
-    conversation_events::{
+use den_service::conversation::events::{
         canonical_persistence_context, persist_projection, MemoryCurateCompletedPayload,
         MemoryCurateEnqueuedPayload, MemoryCurateFailedPayload, MemoryCurateStartedPayload,
         MemoryProposalCreatedPayload, MemoryProposalResolvedPayload,
@@ -33,7 +33,7 @@ use den_runtime::{
         ProjectionSource,
     },
     conversation_persistence::{ensure_conversation_for_external_id, list_messages_page},
-    memory_proposals::{self, CreateMemoryProposal, ProposalResolutionParams},
+use den_service::memory_proposals::{self, CreateMemoryProposal, ProposalResolutionParams},
     reflection_conductor::{self, ProposalEnqueueParams},
 };
 
@@ -63,7 +63,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
         None,
     )
     .await?;
-    let proposal = memory_proposals::create(
+    let proposal = den_service::memory_proposals::create(
         &pool,
         CreateMemoryProposal {
             bear_id,
@@ -88,7 +88,7 @@ async fn non_acp_memory_proposal_projection_persists_workflow_and_visible_messag
     )
     .await?;
 
-    let resolved = memory_proposals::resolve_for_bear(
+    let resolved = den_service::memory_proposals::resolve_for_bear(
         &pool,
         ProposalResolutionParams {
             bear_id,

@@ -6,8 +6,8 @@ use crate::{
     },
     errors::CustomError,
 };
+use den_service::bears::BearProfile;
 use den_runtime::{
-    bears::BearProfile,
     prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
     prompt_memory_blocks::{PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType},
 };
@@ -262,9 +262,9 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
             .expect("seed prompt memory block");
     }
     let selection =
-        den_runtime::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
+        den_service::prompt_memory_block_store::select_prompt_memory_blocks_for_runtime(
             &pool,
-            den_runtime::prompt_memory_block_store::PromptMemoryBlockQuery {
+            den_service::prompt_memory_block_store::PromptMemoryBlockQuery {
                 bear_id: Some(bear_id),
                 profile_slug,
                 session_id: &session_id,
@@ -273,9 +273,9 @@ async fn prompt_memory_runtime_selection_prefers_session_then_surface_then_role_
         )
         .await
         .expect("runtime selection");
-    let compiled = den_runtime::prompt_memory_blocks::compile_prompt_memory_blocks(
+    let compiled = den_service::prompt_memory_blocks::compile_prompt_memory_blocks(
         &selection.blocks,
-        den_runtime::prompt_memory_blocks::PromptMemoryCompilationInput {
+        den_service::prompt_memory_blocks::PromptMemoryCompilationInput {
             role: profile_slug,
             work_surfaces: std::slice::from_ref(&work_surface),
             session_id: &session_id,

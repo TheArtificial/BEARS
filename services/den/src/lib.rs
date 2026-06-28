@@ -49,7 +49,7 @@ impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
         let pool = state.sqlx_pool().clone();
         let config = state.config.clone();
         Box::pin(async move {
-            let stores = den_runtime::memory::MemoryStoreManager::new(config.as_ref());
+            let stores = den_memory::MemoryStoreManager::new(config.as_ref());
             let deps = den_runtime::native_runtime::NativeRuntimeDeps {
                 pool: &pool,
                 config: config.as_ref(),

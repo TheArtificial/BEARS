@@ -9,10 +9,10 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::config::Config;
+use den_memory::MemoryStoreManager;
 use den_runtime::reflection_conductor::*;
-use den_runtime::{
-    bears::BearProfile, memory::MemoryStoreManager, memory_curate_executor, memory_proposals,
-};
+use den_runtime::memory_curate_executor;
+use den_service::{bears::BearProfile, memory_proposals};
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -85,9 +85,9 @@ async fn memory_curate_worker_loop_processes_queued_runs_until_cancelled() {
         return;
     };
     let bear_id = Uuid::new_v4();
-    let proposal = memory_proposals::create(
+    let proposal = den_service::memory_proposals::create(
         &pool,
-        memory_proposals::CreateMemoryProposal {
+        den_service::memory_proposals::CreateMemoryProposal {
             bear_id,
             source_profile: BearProfile::Pair,
             source_agent_id: Some("pair-agent".to_string()),
@@ -164,7 +164,7 @@ async fn memory_curate_worker_loop_processes_queued_runs_until_cancelled() {
     token.cancel();
     handle.await.expect("worker join").expect("worker result");
 
-    let updated_proposal = memory_proposals::get_for_bear(&pool, bear_id, proposal.id)
+    let updated_proposal = den_service::memory_proposals::get_for_bear(&pool, bear_id, proposal.id)
         .await
         .expect("reload proposal")
         .expect("proposal exists");
@@ -177,9 +177,9 @@ async fn memory_curate_runner_completes_run_and_retains_pair_reflection_proposal
         return;
     };
     let bear_id = Uuid::new_v4();
-    let proposal = memory_proposals::create(
+    let proposal = den_service::memory_proposals::create(
         &pool,
-        memory_proposals::CreateMemoryProposal {
+        den_service::memory_proposals::CreateMemoryProposal {
             bear_id,
             source_profile: BearProfile::Pair,
             source_agent_id: Some("pair-agent".to_string()),
@@ -235,7 +235,7 @@ async fn memory_curate_runner_completes_run_and_retains_pair_reflection_proposal
         serde_json::json!([proposal.id.to_string()])
     );
 
-    let updated_proposal = memory_proposals::get_for_bear(&pool, bear_id, proposal.id)
+    let updated_proposal = den_service::memory_proposals::get_for_bear(&pool, bear_id, proposal.id)
         .await
         .expect("reload proposal")
         .expect("proposal exists");

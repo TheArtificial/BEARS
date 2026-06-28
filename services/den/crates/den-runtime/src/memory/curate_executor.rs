@@ -3,14 +3,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_memory::MemoryStoreManager;
+use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
+
+use den_service::bears::BearProfile;
 use crate::{
-    {
-        bears::BearProfile,
-        memory::{
-            get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
-        },
-        memory_proposals::{MemoryProposalRow, ProposalResolutionParams},
-    },
+    
+    memory::{get_proposal, promote_core_content, resolve_proposal},
 };
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";

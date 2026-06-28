@@ -2,13 +2,12 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    conversation_events::{
-        canonical_persistence_context, spawn_persist_assistant_output,
-        spawn_persist_tool_request, spawn_persist_tool_result, ConversationEventProvenance,
-    },
-    llm::{ChatMessage, ChatToolCall},
+use den_service::conversation::events::{
+    canonical_persistence_context, spawn_persist_assistant_output, spawn_persist_tool_request,
+    spawn_persist_tool_result, ConversationEventProvenance,
 };
+
+use crate::llm::{ChatMessage, ChatToolCall};
 
 use super::{
     pending_tools::pending_tool_calls,
@@ -161,7 +160,7 @@ pub fn spawn_persist_web_chat_turn(
 }
 
 fn spawn_persist_incomplete_tool_results(
-    context: crate::conversation_events::ConversationPersistenceContext,
+    context: den_service::conversation::events::ConversationPersistenceContext,
     provenance: &ConversationEventProvenance,
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],

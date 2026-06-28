@@ -26,9 +26,9 @@ use crate::{
     },
     errors::{CustomError, DenError},
 };
+use den_service::bears::BearProfile;
+use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::{
-    bears::BearProfile,
-    memory::{tools as sqlite_memory, MemoryStoreManager},
     plan_mode,
 };
 

@@ -143,7 +143,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             bear_id: uuid::Uuid::nil(),
             bear_slug: "test".to_string(),
             binding_id: "agent".to_string(),
-            profile: Some(den_runtime::bears::BearProfile::Pair),
+            profile: Some(den_service::bears::BearProfile::Pair),
             user_id: 1,
             username: Some("tester".to_string()),
             membership_role: None,
@@ -350,7 +350,7 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
 
 #[test]
 fn resolve_turn_context_returns_matching_policy_and_turn_state() {
-    let session = den_runtime::acp_sessions::AcpSessionRow {
+    let session = den_service::acp_sessions::AcpSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
         bear_id: uuid::Uuid::nil(),

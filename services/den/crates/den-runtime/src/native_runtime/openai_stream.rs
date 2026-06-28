@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::task::Poll;
 
 use den_llm::LlmRequestTelemetry;
+use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use futures::Stream;
 
 use crate::{
@@ -10,7 +11,6 @@ use crate::{
         OpenAiStreamAccumulator, OpenAiStreamDiagnostics, ResponsesStreamAccumulator,
         openai_sse_frame_to_runtime_events_with_diagnostics, responses_sse_frame_to_runtime_events,
     },
-    runtime_contracts::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent},
     runtime_stream_parser::{find_sse_frame_end, strip_trailing_sse_delimiter_owned},
 };
 use den_core::DenError;

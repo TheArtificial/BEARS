@@ -5,7 +5,7 @@ use std::str::FromStr;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::runtime_contracts::{RoleProfileRegistry, RoleRuntimeBinding};
+use den_protocol::{RoleProfileRegistry, RoleRuntimeBinding};
 use den_core::config::Config;
 use den_core::{BearProfile, DenError};
 
@@ -24,7 +24,7 @@ impl<'a> DenNativeProfileRegistry<'a> {
         profile: BearProfile,
     ) -> Result<Option<RoleRuntimeBinding>, DenError> {
         // Inline lookup of the bear↔profile binding id. This intentionally duplicates
-        // the small `bears::db::profile_binding_id` query so den-runtime does not depend
+        // the small `den_service::bears::db::profile_binding_id` query so den-runtime does not depend
         // on the `den`-crate `bears` subsystem (a `den-runtime → den` cycle); the bears
         // subsystem keeps its own copy for the edge call sites until it, too, lands here.
         let row: Option<(String,)> = sqlx::query_as(

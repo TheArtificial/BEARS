@@ -8,10 +8,8 @@ use uuid::Uuid;
 
 use crate::service::DenState;
 use den_http::errors::DenError;
-use den_runtime::{
-    tool_turns::ToolTurnCoordinator,
-    runtime_contracts::{RuntimeEventStream, RuntimeStreamContinuation},
-};
+use den_protocol::{RuntimeEventStream, RuntimeStreamContinuation};
+use den_service::tool_turns::ToolTurnCoordinator;
 
 pub use den_runtime::turn_runner::{
     default_tool_continue_stream_context, looks_like_runtime_waiting_for_approval_error,

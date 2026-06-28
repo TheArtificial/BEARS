@@ -3,7 +3,7 @@ use crate::acp::stream::support::AcpStreamDiagnostics;
 use crate::acp::AcpStreamContext;
 use den_service::tool_turns::ToolTurnCoordinator;
 use den_runtime::gateway_events::GatewayEvent;
-use den_runtime::runtime_contracts::{RuntimeConversationRef, RuntimeErrorCategory, ToolCallFinishStatus};
+use den_protocol::{RuntimeConversationRef, RuntimeErrorCategory, ToolCallFinishStatus};
 use den_runtime::role_runtime::{RoleRuntime, RoleTurnScope};
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use sqlx::postgres::PgPoolOptions;
@@ -44,7 +44,7 @@ fn test_mapping_context() -> AcpStreamContext {
         role_runtime,
         turn_scope,
         prompt_memory_diagnostic: serde_json::json!({}),
-        memory_stores: den_runtime::memory::MemoryStoreManager::new(
+        memory_stores: den_memory::MemoryStoreManager::new(
             &den_core::config::Config::test_stub(),
         ),
     }

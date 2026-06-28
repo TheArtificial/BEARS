@@ -15,7 +15,7 @@ use crate::{
 };
 use den_runtime::{
     bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    memory::MemoryStoreManager,
+    den_memory::MemoryStoreManager,
 };
 
 async fn seed_watch_agent(

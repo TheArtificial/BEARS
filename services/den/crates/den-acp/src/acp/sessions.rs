@@ -3,9 +3,10 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_docket::WorkPlanProjection;
-use den_runtime::{
+use den_service::{
     acp_sessions,
     prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile,
+    prompt_memory_blocks::PromptMemoryBlockState,
 };
 
 use super::{
@@ -97,15 +98,15 @@ pub(crate) async fn acp_session_row_to_http_with_modes(
         list_prompt_memory_blocks_for_bear_profile(pool, row.bear_id, "pair").await?;
     let prompt_memory_diagnostic = Some(
         serde_json::json!({
-            "status": if prompt_memory_blocks.iter().any(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active) { "ok" } else { "empty" },
+            "status": if prompt_memory_blocks.iter().any(|block| block.state == PromptMemoryBlockState::Active) { "ok" } else { "empty" },
             "source": "prompt_memory_blocks",
             "active_count": prompt_memory_blocks
                 .iter()
-                .filter(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .filter(|block| block.state == PromptMemoryBlockState::Active)
                 .count(),
             "active_blocks": prompt_memory_blocks
                 .iter()
-                .filter(|block| block.state == den_runtime::prompt_memory_blocks::PromptMemoryBlockState::Active)
+                .filter(|block| block.state == PromptMemoryBlockState::Active)
                 .map(|block| serde_json::json!({
                     "id": block.id,
                     "scope": block.scope,

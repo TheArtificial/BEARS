@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Instant};
 use den_llm::LlmRequestTelemetry;
 use serde_json::Value;
 
-use crate::runtime_contracts::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
 
 fn delta_assistant_text(delta: &Value) -> Option<String> {
     for key in ["content", "text"] {

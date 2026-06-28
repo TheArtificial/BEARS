@@ -2,10 +2,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
+use den_service::{acp_sessions, conversation::persistence::PersistedConversationMessage};
 use den_runtime::{
-    acp_sessions,
     agent_assist::sanitize_visible_transcript_text,
-    conversation_persistence::PersistedConversationMessage,
     gateway_events::GatewayEvent,
     runtime_compaction::{
         RuntimeCompactionDecision, RuntimeCompactionPolicy, choose_compaction_decision,

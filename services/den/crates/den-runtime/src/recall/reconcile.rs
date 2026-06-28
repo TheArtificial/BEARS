@@ -10,8 +10,8 @@ use uuid::Uuid;
 use den_core::{config::Config, DenError};
 use den_llm::EmbeddingClient;
 
-use crate::memory::store::{relations, BearMemoryStore};
-use crate::memory::MemoryStoreManager;
+use den_memory::{relations, BearMemoryStore};
+use den_memory::MemoryStoreManager;
 
 use super::indexer::{PassageEmbedder, RecallIndexer};
 use super::policy::{is_indexable, IndexRequest};
