@@ -13,7 +13,7 @@ real-page smoke testing in development.
 - `GET /health/ready` — readiness (DB ping)
 - `GET /metrics` — Prometheus text exposition (in-memory counters for chat send outcomes; scrape on the internal network; no auth — protect with firewall / reverse proxy as for other metrics endpoints)
 - `GET /status` — **BEARS stack** status page: aggregate health probes plus **deployed vs GHCR** when `GITHUB_PACKAGES_TOKEN` + `GHCR_PACKAGES_OWNER` are set
-- `GET /status.json` — combined JSON (`health`, `den_version`, `codepool_version`, optional `ghcr_*`) — **503** if any health check is `fail`
+- `GET /status.json` — combined JSON (`health`, `den_version`, optional `ghcr_*`) — **503** if any health check is `fail`
 - `GET /design` — CSS fixture page for text, forms, and two-column layout
 - `GET /design/chat` — static chat UI fixture for iterating on chat styling
 - `GET /manifest.json` — Web App Manifest (`APP_DISPLAY_NAME`, `APP_SLUG`, icons)
@@ -53,7 +53,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 ## Bear memory & entities (`src/bear_memory.rs`)
 
 - `GET /bear/{slug}/memory` — memory dashboard ("how much memory": counts by kind/role, recall coverage, entity summary, recent additions, governance)
-- `POST /bear/{slug}/memory/import-letta` — bear-admin multipart upload (`bundle`) that stages a Letta git bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports current MemFS heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
+- `POST /bear/{slug}/memory/import-letta` — legacy archived-bundle import route; stages a bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports legacy memory heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
 - `GET /bear/{slug}/memory/recent` — recent additions feed (newest records across all roles)
 - `GET /bear/{slug}/memory/search?q=&mode=` — search (keyword always; `mode=semantic` uses the recall index when configured)
 - `GET|POST /bear/{slug}/memory/browse` — library of logical paths grouped by scope; POST deletes/requests review for selected paths (bear admins)
@@ -80,17 +80,17 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 ## End-user chat (Phase 1 — same origin as web)
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`). Registered with trailing-slash redirect (`/bear/{slug}/` → `/bear/{slug}`) so links like `/bear/{slug}/?conversation_id=…` from the details UI resolve.
-- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
-- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` for the bear’s **talk** role Letta agent (`default` = main thread + `conv-…` rows), sorted by most recent activity, excluding conversations that look archived in Letta JSON.
-- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title` and/or `archived`; membership-checked wrapper for renaming or archiving non-default Letta conversations.
-- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id` (`default` or `conv-…`; default when omitted), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/conversations/{id}/messages?order=desc` for the **talk** role (with `agent_id` when `conversation_id=default`) for Deep Chat `loadHistory`.
-- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id` (`default` or `conv-…`). Membership-checked; proxies the **talk** role through **Codepool** `bear_channel` (Letta Code SDK; **`CODEPOOL_BASE_URL`** required at startup when `RUN_WEB=true`). The trusted Codepool payload includes the talk role id plus role metadata. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
+- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`) (`src/web/v1/mod.rs`).
+- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` from Den-owned conversation persistence.
+- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title` and/or `archived`; membership-checked wrapper for Den-owned conversation metadata.
+- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id`, optional `before`, optional `limit` (default 50, max 100). Membership-checked; loads Den-owned conversation history for Deep Chat `loadHistory`.
+- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id`. Membership-checked; runs the Den-native chat loop through Bifrost. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message`, `assistant_message`, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
 ## Admin (`src/web/admin/mod.rs`)
 
-- `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
+- `GET /admin/` — admin menu
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and native stance provisioning defaults)
 - `GET /admin/bears/{id}` — redirects to member-facing `/bear/{slug}/…` profile/settings pages

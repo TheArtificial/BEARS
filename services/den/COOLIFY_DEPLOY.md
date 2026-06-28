@@ -138,13 +138,13 @@ Set restart policy to **unless stopped** (or your platform equivalent) so Den re
 
 ### 10. Deploy
 
-Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures and **Application logs** for runtime config errors (missing `DATABASE_URL`, unreachable Letta, etc.).
+Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures and **Application logs** for runtime config errors (missing `DATABASE_URL`, unreachable Bifrost, etc.).
 
-### 11. Networking with Letta and Bifrost
+### 11. Networking with Bifrost
 
-- If Den and Letta are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
-- Set `LETTA_BASE_URL` to Letta’s **internal** URL (scheme + host + port, no path suffix).
-- Operator-facing Bifrost integration (when present in your build) is configured via env keys documented in [`.env.example`](.env.example); align hostnames with your Bifrost service name inside Coolify.
+- If Den and Bifrost are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
+- Set `LLM_API_URL` to Bifrost's OpenAI-compatible internal URL, for example `http://bears-bifrost:8080/v1`.
+- Operator-facing Bifrost governance/metadata integration is configured via env keys documented in [`.env.example`](.env.example); align hostnames with your Bifrost service name inside Coolify.
 
 ---
 
@@ -213,7 +213,6 @@ After deploy:
 | **Whole workspace recompiles on every deploy** | Check the `build` log for `FRESHNESS=-Z checksum-freshness` and that the pinned nightly installed. If `RUST_NIGHTLY` is empty (reverted to stable) this is expected. See [Build caching](#build-caching-what-is-and-isnt-cached). |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
-| **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
 | **Sessions, redirects, or ACP adapter URL wrong** | `WEB_SERVER_URL` / `API_SERVER_URL` and (if used) `SESSION_COOKIE_DOMAIN` must match the URLs users and adapters actually use. For ACP, `API_SERVER_URL` should be the public API origin, whether that is `https://api.bears.[domain]`, another hostname, or a host+port URL. |
 
 ---
@@ -224,4 +223,4 @@ After deploy:
 - Deploy and SQLx notes: [`docs/deploy.md`](docs/deploy.md)
 - Ports, health endpoints, toggles: [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md)
 - Stack placement: [`docs/deployment/DEPLOYMENT.md`](../docs/deployment/DEPLOYMENT.md)
-- Den + Letta architecture: [`docs/architecture/DEN_ARCHITECTURE.md`](../docs/architecture/DEN_ARCHITECTURE.md)
+- Den-native architecture: [`docs/architecture/den-native-runtime.md`](../../docs/architecture/den-native-runtime.md)

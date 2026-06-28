@@ -42,7 +42,7 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 
 **Mail:** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` default to empty; set them (or swap the mail implementation) before relying on outbound email.
 
-**Letta + Deep Chat (BEARS Phase 1):** set `LETTA_BASE_URL` (and `LETTA_API_KEY` if your Letta instance requires it) so creating bears in the operator console can provision Letta agents and so signed-in users can chat via **`GET /bear/{slug}`** using `POST /v1/chat/send` with session cookies. Deep Chat is vendored under `src/web/assets/deep-chat/` (see [`docs/frontend-development.md`](docs/frontend-development.md#bear-chat-deep-chat)). See [`.env.example`](.env.example).
+**Den-native chat:** signed-in users chat with a Bear via **`GET /bear/{slug}`** and `POST /v1/chat/send` using session cookies. Den runs the native agent loop against Bifrost (`LLM_API_URL`) and per-Bear SQLite memory. Deep Chat is vendored under `src/web/assets/deep-chat/` (see [`docs/frontend-development.md`](docs/frontend-development.md#bear-chat-deep-chat)). See [`.env.example`](.env.example).
 
 **ACP prompt memory status (June 2026):** persisted prompt-memory blocks are now Den-owned for ACP runtime prompt assembly, mutation/admin surfaces, and status inspection. Normal ACP runtime assembly uses persisted prompt-memory selection rather than synthetic fallback blocks; ACP inspection is available through session/status surfaces and `GET /bears/{slug}/sessions/{session_id}/prompt-memory`.
 
