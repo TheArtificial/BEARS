@@ -87,9 +87,10 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 - Extend logical-path projection (`logical_path.rs`) so **resolved + salient** entities get anchors: `core/people/<id>/…`, `core/missions/<id>/…` beside `core/work_surfaces/<slug>/…`.
 - Transient/low-salience mentions stay **query-derived** ("entity page" = `memory_links` view filtered by `entity_id`).
-- Pick a default **salience promotion threshold** (open item).
+- V1 salience promotion threshold is settled: at least one `subject`-linked `high|critical` record, or a `confirmed` entity with at least two `normal` `subject`-linked records.
+- V1 projection is explicit-anchor-only: project generated anchor paths when records exist; do not synthesize projection content from `memory_links` fallback yet.
 
-**Exit:** projection tests for entity anchors; entity-page derivation over the view.
+**Exit:** projection tests for explicit entity anchors; entity-page derivation over the view.
 
 ## Phase 6 — Tools + curation/governance  🟡 read tools landed
 

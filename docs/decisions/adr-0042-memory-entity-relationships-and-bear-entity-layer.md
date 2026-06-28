@@ -106,6 +106,15 @@ Properties:
 
 Path anchors were never work-surface-specific; work surface was just the first entity type to earn them. **Resolved + salient** entities get projected anchors (`core/people/<id>/…`, `core/missions/<id>/…` alongside `core/work_surfaces/<slug>/…`); **transient / low-salience mentions stay query-derived views** over the relation layer. The promotion threshold is the same kind of "enough trusted signal + salience" decision used for work surfaces.
 
+**V1 anchor projection policy.** Entity anchors are explicit canonical memory records, not synthesized from arbitrary relation hits:
+
+- Entity must be `resolved` or `confirmed`.
+- Entity type must be descriptor `anchor_eligible`.
+- Salience threshold: at least one `subject`-linked memory record with `salience = high|critical`, or a `confirmed` entity with at least two `normal` `subject`-linked records.
+- Only relations whose descriptor has `anchor_projecting = true` count toward anchor promotion; in the v1 descriptor set this means `subject`.
+- Projection reads generated anchor paths only, such as `core/people/<anchor>/profile.md` or `core/missions/<anchor>/overview.md`. If no anchor file exists, the entity remains query-derived via `memory_links` and recall/search.
+- Derived fallback from `memory_links` into prompt projection is deferred until curation/consolidation policy is mature.
+
 ### 9. Portability
 
 The **bear entity layer travels in the bear package** so relations never dangle on export ([bear package](../guides/bear-package.md)): the package carries `entities` + `entity_handles` (bear-local ids, types, display names, handles, resolution state, trust, provenance, `canonical_ref`). On **import**, `canonical_ref`s are re-linked against the destination registries; unresolved ones stay provisional. We export the Bear's **references and resolution**, not the registries' knowledge — **extracting Cabinet's own knowledge about an entity is explicitly deferred**. When a Bear is exported/imported, Den must communicate the set of entities the Bear is aware of.
