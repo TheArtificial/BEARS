@@ -494,7 +494,7 @@ impl AcpRuntimeSseStream {
             bifrost: Arc::new(BifrostClient::new(config.as_ref())),
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             tool_turns: self.context.tool_turns.clone(),
-            acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+            turn_cancellations: ActiveTurnCancelRegistry::new(),
             memory_stores: self.context.memory_stores.clone(),
         };
         let binding = RoleRuntimeBinding {
@@ -1036,7 +1036,7 @@ impl Stream for AcpRuntimeSseStream {
                                     )),
                                     bifrost_catalog: den_service::bifrost::new_catalog_store(),
                                     tool_turns: this.context.tool_turns.clone(),
-                                    acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+                                    turn_cancellations: ActiveTurnCancelRegistry::new(),
                                     memory_stores: this.context.memory_stores.clone(),
                                 };
                                 this.persist_future =
@@ -1248,7 +1248,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
                         bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+                        turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     let binding = RoleRuntimeBinding {
@@ -1309,7 +1309,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+                        turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
@@ -1345,7 +1345,7 @@ impl Stream for AcpRuntimeSseStream {
                         bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
                         bifrost_catalog: den_service::bifrost::new_catalog_store(),
                         tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+                        turn_cancellations: ActiveTurnCancelRegistry::new(),
                         memory_stores: this.context.memory_stores.clone(),
                     };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {

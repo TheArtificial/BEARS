@@ -105,7 +105,7 @@ pub struct TurnStatusUpdate {
 
 #[derive(Debug, Clone)]
 pub struct ActiveTurnCancelRegistration {
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
     pub run_ids: Vec<String>,
@@ -115,21 +115,21 @@ pub struct ActiveTurnCancelRegistration {
 #[derive(Debug, Clone)]
 pub struct ActiveTurnCancelHandle {
     registry: ActiveTurnCancelRegistry,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Uuid,
 }
 
 impl ActiveTurnCancelHandle {
     pub fn record_run_id(&self, run_id: &str) -> bool {
         self.registry
-            .record_run_id(&self.acp_session_id, self.request_id, run_id)
+            .record_run_id(&self.client_session_id, self.request_id, run_id)
     }
 }
 
 impl Drop for ActiveTurnCancelHandle {
     fn drop(&mut self) {
         self.registry
-            .unregister_if_matches(&self.acp_session_id, self.request_id);
+            .unregister_if_matches(&self.client_session_id, self.request_id);
     }
 }
 
@@ -145,17 +145,17 @@ impl ActiveTurnCancelRegistry {
 
     pub fn register(
         &self,
-        acp_session_id: impl Into<String>,
+        client_session_id: impl Into<String>,
         request_id: Uuid,
         conversation_id: Option<String>,
     ) -> (ActiveTurnCancelHandle, watch::Receiver<bool>) {
-        let acp_session_id = acp_session_id.into();
+        let client_session_id = client_session_id.into();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         if let Ok(mut inner) = self.inner.lock() {
             inner.insert(
-                acp_session_id.clone(),
+                client_session_id.clone(),
                 ActiveTurnCancelRegistration {
-                    acp_session_id: acp_session_id.clone(),
+                    client_session_id: client_session_id.clone(),
                     request_id,
                     conversation_id,
                     run_ids: Vec::new(),
@@ -166,20 +166,20 @@ impl ActiveTurnCancelRegistry {
         (
             ActiveTurnCancelHandle {
                 registry: self.clone(),
-                acp_session_id,
+                client_session_id,
                 request_id,
             },
             cancel_rx,
         )
     }
 
-    pub fn cancel_session(&self, acp_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
-        let registration = self.inner.lock().ok()?.get(acp_session_id).cloned()?;
+    pub fn cancel_session(&self, client_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
+        let registration = self.inner.lock().ok()?.get(client_session_id).cloned()?;
         let _ = registration.cancel_tx.send(true);
         Some(registration)
     }
 
-    pub fn record_run_id(&self, acp_session_id: &str, request_id: Uuid, run_id: &str) -> bool {
+    pub fn record_run_id(&self, client_session_id: &str, request_id: Uuid, run_id: &str) -> bool {
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return false;
@@ -187,7 +187,7 @@ impl ActiveTurnCancelRegistry {
         let Ok(mut inner) = self.inner.lock() else {
             return false;
         };
-        let Some(registration) = inner.get_mut(acp_session_id) else {
+        let Some(registration) = inner.get_mut(client_session_id) else {
             return false;
         };
         if registration.request_id != request_id {
@@ -200,16 +200,16 @@ impl ActiveTurnCancelRegistry {
         true
     }
 
-    pub fn active_for_session(&self, acp_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
-        self.inner.lock().ok()?.get(acp_session_id).cloned()
+    pub fn active_for_session(&self, client_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
+        self.inner.lock().ok()?.get(client_session_id).cloned()
     }
 
     pub fn runtime_snapshot_for_session(
         &self,
-        acp_session_id: &str,
+        client_session_id: &str,
         tool_turns: &ToolTurnCoordinator,
     ) -> Value {
-        let Some(active) = self.active_for_session(acp_session_id) else {
+        let Some(active) = self.active_for_session(client_session_id) else {
             return json!({
                 "state": "idle",
                 "active_turn": {
@@ -227,7 +227,7 @@ impl ActiveTurnCancelRegistry {
             });
         };
         let pending = tool_turns
-            .pending_for_session(acp_session_id)
+            .pending_for_session(client_session_id)
             .into_iter()
             .filter(|pending| pending.request_id == active.request_id)
             .collect::<Vec<_>>();
@@ -261,15 +261,15 @@ impl ActiveTurnCancelRegistry {
         })
     }
 
-    fn unregister_if_matches(&self, acp_session_id: &str, request_id: Uuid) {
+    fn unregister_if_matches(&self, client_session_id: &str, request_id: Uuid) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
         let should_remove = inner
-            .get(acp_session_id)
+            .get(client_session_id)
             .is_some_and(|registration| registration.request_id == request_id);
         if should_remove {
-            inner.remove(acp_session_id);
+            inner.remove(client_session_id);
         }
     }
 }

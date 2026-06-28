@@ -119,7 +119,7 @@
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
-                acp_session_id: "acp-session".to_string(),
+                client_session_id: "acp-session".to_string(),
                 request_id,
                 tool_call_id: "call-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),

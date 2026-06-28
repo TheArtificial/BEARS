@@ -577,7 +577,7 @@ pub async fn start_native_profile_turn_event_stream(
         binding: request.binding.clone(),
         human_message: request.prompt.to_string(),
         runtime_context: request.runtime_context.map(str::to_string),
-        acp_session_id: Some(acp_session_id.to_string()),
+        client_session_id: Some(acp_session_id.to_string()),
         client_tools: request.client_tools.clone(),
         stream_tokens: request.stream_tokens,
     };

@@ -180,7 +180,7 @@ pub(super) async fn cancel_session_inner(
         .into_response());
     };
     let stream_cancel = state
-        .acp_turn_cancellations
+        .turn_cancellations
         .cancel_session(&session.acp_session_id);
     let active = state
         .tool_turns
@@ -231,7 +231,7 @@ pub(super) async fn cancel_session_inner(
         "cancelled": active.is_some() || stream_cancel.is_some(),
         "active_turn": active.map(|turn| turn.diagnostic()),
         "stream_turn": stream_cancel.map(|turn| serde_json::json!({
-            "acp_session_id": turn.acp_session_id,
+            "acp_session_id": turn.client_session_id,
             "request_id": turn.request_id,
             "conversation_id": turn.conversation_id,
             "run_ids": turn.run_ids,

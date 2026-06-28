@@ -89,7 +89,7 @@ async fn ensure_prompt_conversation_materializes_pending_new_selection() {
         EnsureConversationRequest {
             bear_id: Uuid::nil(),
             role: "pair".to_string(),
-            acp_session_id: "session-1".to_string(),
+            client_session_id: "session-1".to_string(),
             requested_selection: Some(pending_id.clone()),
             binding: binding.clone(),
         },
@@ -149,7 +149,7 @@ async fn ensure_prompt_conversation_reuses_resolved_session_conversation() {
         EnsureConversationRequest {
             bear_id: Uuid::nil(),
             role: "pair".to_string(),
-            acp_session_id: "session-1".to_string(),
+            client_session_id: "session-1".to_string(),
             requested_selection: None,
             binding: binding.clone(),
         },

@@ -214,7 +214,7 @@ pub(super) async fn permission_result_inner(
                 user_id: pending.user_id,
                 bear_id: pending.bear_id,
                 bear_slug: pending.context.bear_slug.clone(),
-                acp_session_id: pending.context.acp_session_id.clone(),
+                client_session_id: pending.context.acp_session_id.clone(),
                 request_id: pending.context.request_id,
                 tool_call_id: pending.tool_call_id.clone(),
                 tool_name: local_tool_name,

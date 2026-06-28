@@ -101,7 +101,7 @@ use prompt_memory_blocks::{
             bifrost: Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             tool_turns: ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
+            turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_memory::MemoryStoreManager::new(config.as_ref()),
         }
     }
@@ -2751,7 +2751,7 @@ use prompt_memory_blocks::{
             bifrost: std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref())),
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             tool_turns: den_service::tool_turns::ToolTurnCoordinator::new(),
-            acp_turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
+            turn_cancellations: den_service::turn_controller::ActiveTurnCancelRegistry::new(),
             memory_stores: den_memory::MemoryStoreManager::new(config.as_ref()),
         };
         let (context, diagnostic) = acp_direct_tool_prompt_context_with_activity(

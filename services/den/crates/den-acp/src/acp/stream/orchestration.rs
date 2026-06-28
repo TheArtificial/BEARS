@@ -148,7 +148,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
     let turn_lifecycle = AcpTurnLifecycleRuntime::new(
         state.tool_turns.clone(),
-        state.acp_turn_cancellations.clone(),
+        state.turn_cancellations.clone(),
     );
     let lifecycle_lease = match turn_lifecycle.acquire_pair_turn(
         AcpTurnLifecycleContext {

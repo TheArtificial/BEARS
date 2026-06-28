@@ -1,7 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use den_protocol::{acp_requires_runtime, RuntimeStartupCapabilities};
+use den_protocol::{edge_gateway_requires_runtime, RuntimeStartupCapabilities};
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -77,7 +77,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if acp_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
+    if edge_gateway_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::Message(
             "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true (Den-native agent loop)."
                 .into(),
@@ -96,7 +96,7 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
         tracing::info!(
             url = %config.llm_api_url,
             compatibility_backend = "native",
-            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
+            edge_gateway_enabled = runtime_capabilities.edge_gateway_enabled,
             "Native agent runtime configured (LLM inference substrate)"
         );
     }

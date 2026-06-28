@@ -40,7 +40,7 @@ pub struct PendingToolTurn {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Uuid,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -55,7 +55,7 @@ impl PendingToolTurn {
         serde_json::json!({
             "request_id": self.request_id,
             "bear_id": self.bear_id,
-            "session_id": self.acp_session_id,
+            "session_id": self.client_session_id,
             "tool_call_id": self.tool_call_id,
             "tool_name": self.tool_name,
             "approval_request_id": self.approval_request_id,
@@ -111,7 +111,7 @@ pub struct SettledToolResult {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Uuid,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -123,12 +123,12 @@ pub struct SettledToolResult {
 }
 
 impl SettledToolResult {
-    fn from_turn(turn: &AcpToolTurn, body: &ToolResultRequest) -> Self {
+    fn from_turn(turn: &ToolTurn, body: &ToolResultRequest) -> Self {
         Self {
             user_id: turn.user_id,
             bear_id: turn.bear_id,
             bear_slug: turn.bear_slug.clone(),
-            acp_session_id: turn.acp_session_id.clone(),
+            client_session_id: turn.client_session_id.clone(),
             request_id: turn.request_id,
             tool_call_id: turn.tool_call_id.clone(),
             tool_name: turn.tool_name.clone(),
@@ -144,7 +144,7 @@ impl SettledToolResult {
         serde_json::json!({
             "request_id": self.request_id,
             "bear_id": self.bear_id,
-            "session_id": self.acp_session_id,
+            "session_id": self.client_session_id,
             "tool_call_id": self.tool_call_id,
             "tool_name": self.tool_name,
             "approval_request_id": self.approval_request_id,
@@ -159,11 +159,11 @@ impl SettledToolResult {
 }
 
 #[derive(Debug)]
-struct AcpToolTurn {
+struct ToolTurn {
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Uuid,
     tool_call_id: String,
     tool_name: String,
@@ -179,7 +179,7 @@ pub struct ToolTurnRegistration {
     pub user_id: i32,
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Uuid,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -213,7 +213,7 @@ pub enum ToolResultDelivery {
 
 #[derive(Debug, Clone)]
 pub struct ActiveTurn {
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
     pub started_at: Instant,
@@ -223,7 +223,7 @@ pub struct ActiveTurn {
 impl ActiveTurn {
     pub fn diagnostic(&self) -> serde_json::Value {
         serde_json::json!({
-            "session_id": self.acp_session_id,
+            "session_id": self.client_session_id,
             "request_id": self.request_id,
             "conversation_id": self.conversation_id,
             "age_ms": self.started_at.elapsed().as_millis(),
@@ -236,7 +236,7 @@ impl ActiveTurn {
 
 #[derive(Debug, Clone)]
 pub struct ToolTurnCoordinator {
-    turns: Arc<Mutex<HashMap<String, AcpToolTurn>>>,
+    turns: Arc<Mutex<HashMap<String, ToolTurn>>>,
     settled_results: Arc<Mutex<HashMap<String, SettledToolResult>>>,
     active_turns: Arc<Mutex<HashMap<String, ActiveTurn>>>,
     orphaned_result_txs: Arc<Mutex<HashMap<String, oneshot::Sender<ToolResultRequest>>>>,
@@ -305,7 +305,7 @@ impl ToolTurnCoordinator {
             )));
         }
         let turn = ActiveTurn {
-            acp_session_id: session_id.to_string(),
+            client_session_id: session_id.to_string(),
             request_id,
             conversation_id,
             started_at: now,
@@ -347,22 +347,22 @@ impl ToolTurnCoordinator {
     }
 
     pub fn register(&self, registration: ToolTurnRegistration) -> Result<(), DenError> {
-        let key = Self::key(&registration.acp_session_id, &registration.tool_call_id);
+        let key = Self::key(&registration.client_session_id, &registration.tool_call_id);
         let mut turns = self
             .turns
             .lock()
             .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let now = Instant::now();
-        let acp_session_id = registration.acp_session_id.clone();
+        let client_session_id = registration.client_session_id.clone();
         let tool_call_id = registration.tool_call_id.clone();
         let tool_name = registration.tool_name.clone();
         turns.insert(
             key,
-            AcpToolTurn {
+            ToolTurn {
                 user_id: registration.user_id,
                 bear_id: registration.bear_id,
                 bear_slug: registration.bear_slug,
-                acp_session_id: registration.acp_session_id,
+                client_session_id: registration.client_session_id,
                 request_id: registration.request_id,
                 tool_call_id: registration.tool_call_id,
                 tool_name: registration.tool_name,
@@ -374,7 +374,7 @@ impl ToolTurnCoordinator {
             },
         );
         tracing::info!(
-            acp_session_id = %acp_session_id,
+            client_session_id = %client_session_id,
             tool_call_id = %tool_call_id,
             tool_name = %tool_name,
             active_turn_count = turns.len(),
@@ -398,7 +398,7 @@ impl ToolTurnCoordinator {
             .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
         let Some(turn) = turns.get_mut(&key) else {
             tracing::warn!(
-                acp_session_id = %session_id,
+                client_session_id = %session_id,
                 tool_call_id = %tool_call_id,
                 active_turn_count = turns.len(),
                 active_tool_keys = ?turns.keys().cloned().collect::<Vec<_>>(),
@@ -408,7 +408,7 @@ impl ToolTurnCoordinator {
             if let Some(cached) = self.recently_settled(session_id, tool_call_id) {
                 if cached.user_id != user_id
                     || cached.bear_slug != bear_slug
-                    || cached.acp_session_id != session_id
+                    || cached.client_session_id != session_id
                     || cached.tool_call_id != tool_call_id
                 {
                     return Err(DenError::Authorization(
@@ -428,7 +428,7 @@ impl ToolTurnCoordinator {
         };
         if turn.user_id != user_id
             || turn.bear_slug != bear_slug
-            || turn.acp_session_id != session_id
+            || turn.client_session_id != session_id
             || turn.tool_call_id != tool_call_id
         {
             return Err(DenError::Authorization(
@@ -516,7 +516,7 @@ impl ToolTurnCoordinator {
                 user_id: turn.user_id,
                 bear_id: turn.bear_id,
                 bear_slug: turn.bear_slug.clone(),
-                acp_session_id: turn.acp_session_id.clone(),
+                client_session_id: turn.client_session_id.clone(),
                 request_id: turn.request_id,
                 tool_call_id: turn.tool_call_id.clone(),
                 tool_name: turn.tool_name.clone(),
@@ -748,7 +748,7 @@ impl ToolTurnCoordinator {
         })?;
         prune_settled_results(&mut settled);
         settled.insert(
-            Self::key(&result.acp_session_id, &result.tool_call_id),
+            Self::key(&result.client_session_id, &result.tool_call_id),
             result,
         );
         prune_settled_results(&mut settled);

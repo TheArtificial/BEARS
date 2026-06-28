@@ -200,7 +200,7 @@ pub(in crate::acp) async fn run_prompt_flow(
             den_protocol::EnsureConversationRequest {
                 bear_id: bear.id,
                 role: "pair".to_string(),
-                acp_session_id: session_id.to_string(),
+                client_session_id: session_id.to_string(),
                 requested_selection: body.conversation_id.clone(),
                 binding: pair_runtime_binding.clone(),
             },

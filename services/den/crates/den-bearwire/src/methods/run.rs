@@ -1080,7 +1080,7 @@ pub(crate) async fn run_cancel_result(
     };
 
     let stream_cancel = state
-        .acp_turn_cancellations
+        .turn_cancellations
         .cancel_session(&session.acp_session_id);
     let active_turn = state.tool_turns.cancel_active_turn(&session.acp_session_id);
     let active_run = bearwire_runs::active_run_for_session(&state.sqlx_pool, &session_id).await?;

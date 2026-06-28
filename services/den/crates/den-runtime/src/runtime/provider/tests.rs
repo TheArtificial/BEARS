@@ -1,5 +1,5 @@
 use crate::runtime::provider::{
-    acp_requires_runtime, classify_runtime_error, runtime_error_is_conflict_pending_approval,
+    classify_runtime_error, edge_gateway_requires_runtime, runtime_error_is_conflict_pending_approval,
     ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
     RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory, RuntimeStartupCapabilities,
     RuntimeStreamContinuation, RuntimeToolResultStatus,
@@ -27,31 +27,31 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
 }
 
 #[test]
-fn acp_requires_runtime_when_gateway_enabled() {
+fn edge_gateway_requires_runtime_when_gateway_enabled() {
     let mut config = Config::test_stub();
     config.acp_gateway_enabled = true;
-    assert!(acp_requires_runtime(&config));
+    assert!(edge_gateway_requires_runtime(&config));
 }
 
 #[test]
-fn acp_does_not_require_provider_runtime_when_gateway_disabled() {
+fn edge_gateway_does_not_require_provider_runtime_when_gateway_disabled() {
     let mut config = Config::test_stub();
     config.acp_gateway_enabled = false;
-    assert!(!acp_requires_runtime(&config));
+    assert!(!edge_gateway_requires_runtime(&config));
 }
 
 #[test]
-fn startup_capabilities_reflect_current_acp_to_provider_requirement() {
+fn startup_capabilities_reflect_current_edge_gateway_requirement() {
     let mut config = Config::test_stub();
     config.acp_gateway_enabled = true;
     let caps = RuntimeStartupCapabilities::from_config(&config);
-    assert!(caps.acp_gateway_enabled);
-    assert!(caps.runtime_required_for_acp);
+    assert!(caps.edge_gateway_enabled);
+    assert!(caps.runtime_required_for_edge_gateway);
 
     config.acp_gateway_enabled = false;
     let caps = RuntimeStartupCapabilities::from_config(&config);
-    assert!(!caps.acp_gateway_enabled);
-    assert!(!caps.runtime_required_for_acp);
+    assert!(!caps.edge_gateway_enabled);
+    assert!(!caps.runtime_required_for_edge_gateway);
 }
 
 fn sample_tool_result_continuation() -> RuntimeContinuation {

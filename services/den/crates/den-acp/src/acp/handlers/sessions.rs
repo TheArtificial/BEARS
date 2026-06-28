@@ -299,7 +299,7 @@ pub(super) async fn get_acp_session_runtime_inner(
     );
     let role_runtime = RoleRuntime::with_turn_cancellations(
         state.tool_turns.clone(),
-        state.acp_turn_cancellations.clone(),
+        state.turn_cancellations.clone(),
     );
     let runtime = role_runtime.tool_turn_runtime_snapshot(session_id, &state.tool_turns);
     let active_turn = state
@@ -307,11 +307,11 @@ pub(super) async fn get_acp_session_runtime_inner(
         .active_turn_for_session(session_id)
         .map(|turn| turn.diagnostic());
     let stream_turn = state
-        .acp_turn_cancellations
+        .turn_cancellations
         .active_for_session(session_id)
         .map(|turn| {
             serde_json::json!({
-                "acp_session_id": turn.acp_session_id,
+                "acp_session_id": turn.client_session_id,
                 "request_id": turn.request_id,
                 "conversation_id": turn.conversation_id,
                 "run_ids": turn.run_ids,

@@ -17,7 +17,7 @@ pub struct RoleRuntimeBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConversationRef {
     /// Den-owned opaque runtime conversation handle. Backends may currently back this with a
-    /// provider `conv-*` id, but ACP should treat it as opaque.
+    /// provider `conv-*` id, but protocol adapters should treat it as opaque.
     pub id: String,
 }
 
@@ -31,7 +31,8 @@ pub struct RuntimeTurnRef {
 pub struct EnsureConversationRequest {
     pub bear_id: uuid::Uuid,
     pub role: String,
-    pub acp_session_id: String,
+    #[serde(alias = "acp_session_id")]
+    pub client_session_id: String,
     pub requested_selection: Option<String>,
     pub binding: RoleRuntimeBinding,
 }
@@ -62,7 +63,8 @@ pub struct StartTurnRequest {
     pub binding: RoleRuntimeBinding,
     pub human_message: String,
     pub runtime_context: Option<String>,
-    pub acp_session_id: Option<String>,
+    #[serde(alias = "acp_session_id")]
+    pub client_session_id: Option<String>,
     pub client_tools: Option<serde_json::Value>,
     pub stream_tokens: bool,
 }
@@ -160,7 +162,8 @@ pub struct CancelTurnResult {
 pub struct RuntimeCleanupRequest {
     pub conversation: RuntimeConversationRef,
     pub binding: RoleRuntimeBinding,
-    pub acp_session_id: String,
+    #[serde(alias = "acp_session_id")]
+    pub client_session_id: String,
     pub bear_id: uuid::Uuid,
     pub run_ids: Vec<String>,
     pub reason: String,
@@ -283,22 +286,25 @@ pub trait RuntimeHealthCheck {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeStartupCapabilities {
-    pub acp_gateway_enabled: bool,
-    pub runtime_required_for_acp: bool,
+    pub edge_gateway_enabled: bool,
+    pub runtime_required_for_edge_gateway: bool,
 }
 
 impl RuntimeStartupCapabilities {
     pub fn from_config(config: &Config) -> Self {
         Self {
-            acp_gateway_enabled: config.acp_gateway_enabled,
-            runtime_required_for_acp: config.acp_gateway_enabled,
+            edge_gateway_enabled: config.acp_gateway_enabled,
+            runtime_required_for_edge_gateway: config.acp_gateway_enabled,
         }
     }
 }
 
-pub fn acp_requires_runtime(config: &Config) -> bool {
-    RuntimeStartupCapabilities::from_config(config).runtime_required_for_acp
+pub fn edge_gateway_requires_runtime(config: &Config) -> bool {
+    RuntimeStartupCapabilities::from_config(config).runtime_required_for_edge_gateway
 }
+
+#[deprecated(note = "use edge_gateway_requires_runtime")]
+pub use edge_gateway_requires_runtime as acp_requires_runtime;
 
 #[allow(async_fn_in_trait)]
 pub trait RoleProfileRegistry {

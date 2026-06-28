@@ -37,7 +37,7 @@ pub struct DenState {
     /// Process-local active direct tool turns.
     pub tool_turns: ToolTurnCoordinator,
     /// Process-local active stream cancellation signals.
-    pub acp_turn_cancellations: ActiveTurnCancelRegistry,
+    pub turn_cancellations: ActiveTurnCancelRegistry,
     /// Per-Bear SQLite memory stores (native runtime cognition).
     pub memory_stores: MemoryStoreManager,
 }
@@ -58,7 +58,7 @@ impl DenState {
             bifrost,
             bifrost_catalog: new_catalog_store(),
             tool_turns: ToolTurnCoordinator::new(),
-            acp_turn_cancellations: ActiveTurnCancelRegistry::new(),
+            turn_cancellations: ActiveTurnCancelRegistry::new(),
             memory_stores,
         }
     }
