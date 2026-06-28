@@ -1,6 +1,6 @@
 # Bear Entity Layer — Implementation Plan
 
-**Status:** In progress — Phases 0–3 landed in `den-memory` (schema/model core); Phases 4–7 pending  
+**Status:** In progress — Phases 0–4 landed/partial; Phase 6 read tools and Bear web entity browser landed; anchors, relation writes/governance, and portability pending  
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
@@ -91,9 +91,11 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** projection tests for entity anchors; entity-page derivation over the view.
 
-## Phase 6 — Tools + curation/governance
+## Phase 6 — Tools + curation/governance  🟡 read tools landed
 
-- Model-facing tools (descriptor-named): `entity_browse`, `entity_resolve`, plus relation writes for **descriptive** relations from `chat`/`pair`/`work`/`watch`.
+- ✅ Model-facing read tools (descriptor-named): `entity_browse`, `entity_resolve`.
+- ✅ Member-facing Bear web UI entity browser/detail pages: `/bear/{slug}/entities` and `/bear/{slug}/entities/{entity_id}`.
+- Pending: relation writes for **descriptive** relations from `chat`/`pair`/`work`/`watch`.
 - Restricted to `curate`/Den: `entity_merge`, `entity_split`, weak-candidate promotion, and **all** `memory_access_rules` writes (differential write authz per table).
 - `curate` Reflection lane(s) for candidate promotion, merge/split review, and access-rule authoring (consistent with ADR-0041 curation).
 - Expose resolved entities in `session_info`.
