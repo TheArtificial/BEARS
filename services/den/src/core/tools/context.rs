@@ -329,6 +329,15 @@ impl EntityOps for DenToolContext<'_> {
     ) -> Result<Value, DenError> {
         self.entity().resolve(context, role, arguments).await
     }
+
+    async fn link_memory_entity(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().link_memory(context, role, arguments).await
+    }
 }
 
 impl PlanModeOps for DenToolContext<'_> {

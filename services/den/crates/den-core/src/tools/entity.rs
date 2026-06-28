@@ -21,6 +21,17 @@ pub struct EntityResolveArguments {
     pub include_handles: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EntityLinkMemoryArguments {
+    pub memory_id: String,
+    pub entity_id: String,
+    pub relation: String,
+    #[serde(default)]
+    pub qualifiers: Option<Value>,
+    #[serde(default)]
+    pub confidence: Option<String>,
+}
+
 #[allow(async_fn_in_trait)]
 pub trait EntityOps: Send + Sync {
     async fn browse_entities(
@@ -31,6 +42,13 @@ pub trait EntityOps: Send + Sync {
     ) -> Result<Value, DenError>;
 
     async fn resolve_entity(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError>;
+
+    async fn link_memory_entity(
         &self,
         context: &DenToolInvocationContext,
         role: BearProfile,
@@ -54,4 +72,13 @@ pub async fn entity_resolve(
     arguments: Value,
 ) -> Result<Value, DenError> {
     ops.resolve_entity(context, role, arguments).await
+}
+
+pub async fn entity_link_memory(
+    ops: &impl EntityOps,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, DenError> {
+    ops.link_memory_entity(context, role, arguments).await
 }

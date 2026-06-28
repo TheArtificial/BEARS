@@ -103,6 +103,14 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit:** tool + authz tests — `chat` cannot write access rules; `curate` can; merge/split curate-only; audit trail present in `memory_access_rules`.
 
+**Durable implementation checklist:**
+
+1. ✅ Descriptive relation write tool (`subject`, `source`, `participant`, `applies_when`) for producer stances; reject access-bearing relations.
+2. ◻ Curate-only entity merge/split tools.
+3. ◻ Curate-only access-rule write tool (`audience`, `confined_to`).
+4. ◻ `session_info.entities` for trusted human and current work-surface entities.
+5. ◻ Entity anchor authoring/maintenance flow for explicit anchor records.
+
 ## Phase 7 — Portability (bear package)
 
 - Entity tables ship automatically in the **cognition export**; bump `memory_schema_version`.

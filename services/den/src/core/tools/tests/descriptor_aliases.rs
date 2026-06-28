@@ -114,6 +114,13 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     assert_eq!(entity_resolve.provider_name, DEN_ENTITY_RESOLVE_PROVIDER);
     assert_eq!(entity_resolve.provider_name, "entity_resolve");
 
+    let entity_link = descriptors
+        .iter()
+        .find(|descriptor| descriptor.name == DEN_ENTITY_LINK_MEMORY)
+        .expect("entity link descriptor exists");
+    assert_eq!(entity_link.provider_name, DEN_ENTITY_LINK_MEMORY_PROVIDER);
+    assert_eq!(entity_link.provider_name, "entity_link_memory");
+
     let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
@@ -152,6 +159,7 @@ fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
     assert!(provider_names.contains("memory_read"));
     assert!(provider_names.contains("entity_browse"));
     assert!(provider_names.contains("entity_resolve"));
+    assert!(provider_names.contains("entity_link_memory"));
     assert!(provider_names.contains("update_task_list"));
     assert!(provider_names.contains("enter_plan_mode"));
     assert!(provider_names.contains("record_plan_approval"));

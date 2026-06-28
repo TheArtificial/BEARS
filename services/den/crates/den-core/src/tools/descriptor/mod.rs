@@ -7,6 +7,7 @@ const WORK_PLAN_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
 const CHAT_AND_PAIR_PROFILES: &[&str] = &["chat", "pair"];
 const PAIR_PROFILES: &[&str] = &["pair"];
 const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
+const ENTITY_RELATION_WRITE_PROFILES: &[&str] = &["chat", "pair", "work", "watch"];
 const CURATE_PROFILES: &[&str] = &["curate"];
 const WATCH_PROFILES: &[&str] = &["watch"];
 const WORK_PROFILES: &[&str] = &["work"];
@@ -18,8 +19,9 @@ use crate::tools::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
         DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
-        DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_RESOLVE,
-        DEN_ENTITY_RESOLVE_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY,
+        DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
+        DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
         DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
         DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
@@ -97,6 +99,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
         DEN_ENTITY_BROWSE => return DEN_ENTITY_BROWSE_PROVIDER.to_string(),
         DEN_ENTITY_RESOLVE => return DEN_ENTITY_RESOLVE_PROVIDER.to_string(),
+        DEN_ENTITY_LINK_MEMORY => return DEN_ENTITY_LINK_MEMORY_PROVIDER.to_string(),
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
             return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string();
         }
@@ -322,6 +325,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["entity.read"],
             MEMORY_READ_PROFILES,
             entity_resolve_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_LINK_MEMORY,
+            "Link memory to entity",
+            "Add a descriptive relation from a memory record to a Bear-local entity. Use this to mark a record as about a person, mission, domain, work surface, connection, or artifact. This tool only writes descriptive relations (`subject`, `source`, `participant`, `applies_when`) and cannot write access rules such as `audience` or `confined_to`.",
+            "bear.memory",
+            &["entity.relation.write"],
+            ENTITY_RELATION_WRITE_PROFILES,
+            entity_link_memory_schema(),
         ),
         descriptor(
             DEN_MEMORY_ORIENT_WORK_SURFACE,
@@ -1595,6 +1607,21 @@ fn entity_resolve_schema() -> Value {
             "include_handles": { "type": "boolean" }
         },
         "required": ["entity_id"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_link_memory_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "memory_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "relation": { "type": "string", "enum": ["subject", "source", "participant", "applies_when"] },
+            "qualifiers": { "type": "object" },
+            "confidence": { "type": "string", "maxLength": 80 }
+        },
+        "required": ["memory_id", "entity_id", "relation"],
         "additionalProperties": false
     })
 }
