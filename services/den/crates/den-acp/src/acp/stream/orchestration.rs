@@ -34,7 +34,7 @@ use den_service::{
 };
 use den_core::client_tools::ResolvedSessionPolicy;
 use den_runtime::{
-    role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
+    role_runtime::{ClientTurnLifecycleContext, ClientTurnLifecycleRuntime},
     runtime_provider::RoleRuntimeBinding,
 };
 
@@ -94,7 +94,7 @@ pub(in crate::acp) async fn build_acp_stream_setup(
         format!("{plan_mode_context}{activity_context}{tool_prompt_context}");
     tracing::info!(
         %request_id,
-        acp_session_id = %session_id,
+        client_session_id = %session_id,
         upstream_user_prompt_len = prompt.len(),
         turn_runtime_context_len = turn_runtime_context.len(),
         turn_runtime_context_has_trusted_mode_suffix =
@@ -146,14 +146,14 @@ pub(in crate::acp) async fn build_acp_sse_response(
     setup: AcpStreamSetup,
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
-    let turn_lifecycle = AcpTurnLifecycleRuntime::new(
+    let turn_lifecycle = ClientTurnLifecycleRuntime::new(
         state.tool_turns.clone(),
         state.turn_cancellations.clone(),
     );
     let lifecycle_lease = match turn_lifecycle.acquire_pair_turn(
-        AcpTurnLifecycleContext {
+        ClientTurnLifecycleContext {
             bear_id: bear.id,
-            acp_session_id: session_id.to_string(),
+            client_session_id: session_id.to_string(),
             resolved_conversation_id: synthetic_session
                 .resolved_conversation_id
                 .clone()
@@ -252,7 +252,7 @@ pub(in crate::acp) async fn build_acp_sse_response(
         };
         let mut content_json = provenance.as_content_json("user_prompt");
         content_json["role"] = serde_json::json!("user");
-        content_json["acp_session_id"] = serde_json::json!(session_id);
+        content_json["client_session_id"] = serde_json::json!(session_id);
         content_json["client"] = serde_json::json!(client);
         content_json["request_id"] = serde_json::json!(request_id.to_string());
         persist_canonical_conversation_record(

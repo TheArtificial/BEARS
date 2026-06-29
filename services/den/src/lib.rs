@@ -2,7 +2,7 @@
 //!
 //! Clippy: broad suppressions live on the largest legacy modules (for example `den_oauth::oauth`);
 //! prefer fixing warnings locally and shrinking those module allows over time.
-// The API + ACP edge moved to the `den-api` crate (v1.5 split). Re-exported as
+// The JSON/REST API edge moved to the `den-api` crate (v1.5 split). Re-exported as
 // `crate::api` so the remaining binary call sites (run/web/seeds) resolve unchanged.
 pub use den_api as api;
 pub use den_core::config;
@@ -128,7 +128,7 @@ pub async fn run() -> Result<(), StartupError> {
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))?;
 
-    // Inject the concrete builtin-Den-tool invoker into the api/ACP edge. The edge
+    // Inject the concrete builtin-Den-tool invoker into the API/armature edges. The edge
     // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
     // composition lives here in the binary (`core::tools`), so we install it at the
     // composition root before any request can execute a tool.
@@ -283,12 +283,11 @@ pub async fn run() -> Result<(), StartupError> {
         })?;
 
         let config_api = config.clone();
-        // Composition root: wire the peer HTTP edges together. den-api owns the
-        // JSON/REST + OAuth app; the ACP edge (den-acp) is injected here as peer
-        // routers so neither edge depends on the other (ADR-0043).
+        // Composition root: wire peer HTTP edges together. den-api owns the
+        // JSON/REST + OAuth app; BearWire is injected here as a peer router so
+        // neither edge depends on the other (ADR-0043).
         let peer_routers: Vec<(&'static str, axum::Router<den_acp::DenState>)> = vec![
             ("/internal", den_acp::internal::router()),
-            ("/acp", den_acp::acp::router()),
             ("/bearwire", den_bearwire::router()),
         ];
         let api_app = api::create_api_app(

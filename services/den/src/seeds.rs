@@ -9,12 +9,10 @@ use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 use crate::{
     config::Config,
-    core::{
-        armature_tokens,
-        user::{self, db as user_db, email_settings},
-    },
+    core::user::{self, db as user_db, email_settings},
     startup::run_sqlx_migrations,
 };
+use den_http::armature_tokens;
 use den_service::bears::{
     db as bears_db,
     db::BearParams,

@@ -17,7 +17,7 @@ fn test_context() -> AcpStreamContext {
     let registry = den_service::tool_turns::ToolTurnCoordinator::new();
     let request_id = Uuid::new_v4();
     let role_runtime = RoleRuntime::new(registry.clone());
-    let turn_scope = RoleTurnScope::acp_pair(
+    let turn_scope = RoleTurnScope::client_pair(
         Uuid::new_v4(),
         "acp-empty-turn-session",
         Some("conv-empty-turn".to_string()),
@@ -29,7 +29,7 @@ fn test_context() -> AcpStreamContext {
         user_profile: None,
         bear_id: Uuid::new_v4(),
         bear_slug: "test-bear".to_string(),
-        acp_session_id: "acp-empty-turn-session".to_string(),
+        client_session_id: "acp-empty-turn-session".to_string(),
         client: "zed".to_string(),
         conversation_id: "conv-empty-turn".to_string(),
         conversation_selection: "conv-empty-turn".to_string(),

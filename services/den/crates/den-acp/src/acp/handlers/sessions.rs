@@ -292,7 +292,7 @@ pub(super) async fn get_acp_session_runtime_inner(
         )
         .await?;
     let turn_context = resolve_acp_turn_context(&row, plan_mode.as_ref(), activity_plan.as_ref());
-    let role_scope = RoleTurnScope::acp_pair(
+    let role_scope = RoleTurnScope::client_pair(
         bear.id,
         session_id.to_string(),
         runtime_conversation_id(&row),

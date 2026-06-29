@@ -30,7 +30,7 @@ impl RoleRuntimeRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleRuntimeChannelKind {
-    AcpSession,
+    ClientSession,
     BearChannel,
     Workplace,
     Task,
@@ -39,7 +39,7 @@ pub enum RoleRuntimeChannelKind {
 impl RoleRuntimeChannelKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::AcpSession => "acp_session",
+            Self::ClientSession => "client_session",
             Self::BearChannel => "bear_channel",
             Self::Workplace => "workplace",
             Self::Task => "task",
@@ -57,16 +57,16 @@ pub struct RoleTurnScope {
 }
 
 impl RoleTurnScope {
-    pub fn acp_pair(
+    pub fn client_pair(
         bear_id: Uuid,
-        acp_session_id: impl Into<String>,
+        client_session_id: impl Into<String>,
         conversation_id: Option<String>,
     ) -> Self {
         Self {
             bear_id,
             role: RoleRuntimeRole::Pair,
-            channel_kind: RoleRuntimeChannelKind::AcpSession,
-            channel_id: acp_session_id.into(),
+            channel_kind: RoleRuntimeChannelKind::ClientSession,
+            channel_id: client_session_id.into(),
             conversation_id,
         }
     }
@@ -171,19 +171,19 @@ pub struct RoleRuntime {
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpTurnLifecycleRuntime {
+pub struct ClientTurnLifecycleRuntime {
     role_runtime: RoleRuntime,
 }
 
 #[derive(Debug, Clone)]
-pub struct AcpTurnLifecycleContext {
+pub struct ClientTurnLifecycleContext {
     pub bear_id: Uuid,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub resolved_conversation_id: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct AcpTurnLifecycleLease {
+pub struct ClientTurnLifecycleLease {
     pub role_runtime: RoleRuntime,
     pub turn_scope: RoleTurnScope,
     pub active_turn_guard: RoleTurnGuard,
@@ -191,7 +191,7 @@ pub struct AcpTurnLifecycleLease {
     pub cancel_rx: tokio::sync::watch::Receiver<bool>,
 }
 
-impl AcpTurnLifecycleRuntime {
+impl ClientTurnLifecycleRuntime {
     pub fn new(
         tool_turns: ToolTurnCoordinator,
         turn_cancellations: ActiveTurnCancelRegistry,
@@ -207,12 +207,12 @@ impl AcpTurnLifecycleRuntime {
 
     pub fn acquire_pair_turn(
         &self,
-        context: AcpTurnLifecycleContext,
+        context: ClientTurnLifecycleContext,
         request_id: Uuid,
-    ) -> Result<AcpTurnLifecycleLease, DenError> {
-        let turn_scope = RoleTurnScope::acp_pair(
+    ) -> Result<ClientTurnLifecycleLease, DenError> {
+        let turn_scope = RoleTurnScope::client_pair(
             context.bear_id,
-            context.acp_session_id,
+            context.client_session_id,
             context.resolved_conversation_id,
         );
         let active_turn_guard = self
@@ -221,13 +221,13 @@ impl AcpTurnLifecycleRuntime {
         let (cancel_handle, cancel_rx) = self
             .role_runtime
             .turn_cancellations()
-            .expect("ACP turn lifecycle runtime requires cancellation registry")
+            .expect("client turn lifecycle runtime requires cancellation registry")
             .register(
                 turn_scope.channel_id.clone(),
                 request_id,
                 turn_scope.conversation_id.clone(),
             );
-        Ok(AcpTurnLifecycleLease {
+        Ok(ClientTurnLifecycleLease {
             role_runtime: self.role_runtime.clone(),
             turn_scope,
             active_turn_guard,
@@ -261,11 +261,11 @@ impl RoleRuntime {
 
     pub fn tool_turn_runtime_snapshot(
         &self,
-        acp_session_id: &str,
+        client_session_id: &str,
         tool_turns: &ToolTurnCoordinator,
     ) -> Value {
         if let Some(registry) = self.turn_cancellations.as_ref() {
-            registry.runtime_snapshot_for_session(acp_session_id, tool_turns)
+            registry.runtime_snapshot_for_session(client_session_id, tool_turns)
         } else {
             json!({
                 "state": "idle",
