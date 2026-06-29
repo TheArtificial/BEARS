@@ -9594,7 +9594,16 @@ fn looks_like_den_connectivity_error(err: &anyhow::Error) -> bool {
                     | reqwest::StatusCode::GATEWAY_TIMEOUT
             ) || http_err.status.is_server_error();
         }
-        false
+        let message = cause.to_string();
+        (message.contains("BearWire RPC")
+            || message.contains("ACP auth-check")
+            || message.contains("Den server"))
+            && (message.contains("HTTP 502")
+                || message.contains("HTTP 503")
+                || message.contains("HTTP 504")
+                || message.contains("Gateway Timeout")
+                || message.contains("Bad Gateway")
+                || message.contains("Service Unavailable"))
     })
 }
 
@@ -9649,7 +9658,14 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::{to_bytes, Body}, extract::State, http::Request, response::IntoResponse, routing::any, Json, Router};
+    use axum::{
+        body::{to_bytes, Body},
+        extract::State,
+        http::Request,
+        response::IntoResponse,
+        routing::any,
+        Json, Router,
+    };
     use std::net::SocketAddr;
     use std::sync::Mutex as StdMutex;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -9704,7 +9720,9 @@ mod tests {
         (axum::http::StatusCode::OK, Json(result))
     }
 
-    async fn start_bearwire_test_server(fail_bearwire: bool) -> (String, Arc<TokioMutex<Vec<String>>>) {
+    async fn start_bearwire_test_server(
+        fail_bearwire: bool,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire,
@@ -9821,6 +9839,27 @@ mod tests {
             .expect("hint");
         assert!(hint.contains("armature:chat"));
         assert!(!hint.contains("acp:chat"));
+    }
+
+    #[test]
+    fn bearwire_initialize_gateway_timeout_is_connectivity_error_not_token_error() {
+        let err = anyhow!("BearWire RPC initialize HTTP 504 Gateway Timeout: Gateway Timeout");
+        let value = auth_check_json_rpc_error(
+            &err,
+            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
+        );
+
+        assert_eq!(value["message"], "BEARS Den server unreachable");
+        let data = value.get("data").expect("data");
+        let message = data
+            .get("message")
+            .and_then(Value::as_str)
+            .expect("message");
+        let hint = data.get("hint").and_then(Value::as_str).expect("hint");
+        assert!(message.contains("Could not reach the BEARS Den server"));
+        assert!(message.contains("BearWire RPC initialize HTTP 504"));
+        assert!(hint.contains("does not necessarily mean your token is invalid"));
+        assert!(!hint.contains("armature:chat"));
     }
 
     #[test]
