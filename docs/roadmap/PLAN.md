@@ -18,10 +18,9 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | Area | Status (2026-06) | Canonical docs |
 |---|---|---|
 | **Den-native runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md), [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
-| **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
-| **Crate split / build time** | **v0–v2 complete**: workspace (`den-core`, `den-llm`, `den-memory`, `den-docket`, `den-runtime`, `den-http`, `den-oauth`, `den-web`, `den-acp`, `den-api`); clippy pedantic/nursery gated | [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) |
+| **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
-| **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) |
+| **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
 | **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` read exposed, write remains policy-gated | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
 | **Derived recall** | **Phases 0–3.5 + 5 landed** (indexer, turn recall, hybrid search, temporal + graph legs, `den reindex`); Cabinet + embedding v2 deferred | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
@@ -35,7 +34,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
 | **Channels** | Draft first-party channel layer; web chat exists as Den surface, Slack/WhatsApp/macOS channel adapters planned; channels must not inherit armature/local-tool assumptions | [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md), [`MACOS_BEARS_CLIENT_APP_PLAN.md`](MACOS_BEARS_CLIENT_APP_PLAN.md) |
 | **Prompt registry** | Proposed ADR-0046 extraction of long-lived prompt prose into file-backed fragments while preserving `bear_compiled_configs` as runtime hot-path contract | [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md), [`PROMPT_TEXT_HARDCODE_AUDIT.md`](PROMPT_TEXT_HARDCODE_AUDIT.md) |
-| **Phase 1 product** | Operator console, auth, Garage artifacts, routines, skills/MCP — **partially native-aligned**; Skills now have a consolidated native plan, while several Phase 1 docs still describe Letta paths | [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md), [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
+| **Phase 1 product** | Native product debt consolidated: operator console, onboarding, Garage artifacts, routines, MCP, task-list UX, and Skills | [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md), [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) |
 
 ### What is working today
 
@@ -45,7 +44,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 - **Web chat:** Den-hosted Deep Chat; canonical conversation persistence; native tool loop for server-side Den tools.
 - **ACP/BearWire pair:** Native turn execution over BearWire with `bear-armature` owning local filesystem/git/terminal/MCP execution; legacy ACP HTTP/SSE is compatibility only.
 - **Recall (optional):** Passage indexer + `recall_index` worker; turn-start `## Recalled memory` when Qdrant + embeddings configured.
-- **Build:** Cargo workspace with per-crate `cargo test -p …`; CI clippy `-D warnings`.
+- **Build:** Crate split is complete; Cargo workspace supports per-crate `cargo test -p …`; CI clippy `-D warnings` with pedantic/nursery gated.
 
 ### What is next (priority order)
 
@@ -57,13 +56,13 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 6. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.
 7. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
 8. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack, WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-9. **Phase 1 product debt** — routines/MCP catalog on native execution model, plus the native Skills catalog/manifest/proposal flow ([`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md)).
+9. **Phase 1 product debt** — operator console, onboarding, routines, MCP catalog, Garage artifacts, task-list UX, plus native Skills ([`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)).
 
 ### Important contradictions resolved here
 
 - **Den-native supersedes Letta-era paths everywhere in §1–Summary.** Web chat is **Den → native loop → Bifrost**, not Den → Letta Code → Letta. Memory is **SQLite-canonical**, not "no Den memory store."
 - **Trust stances, not Letta agent types.** `chat`/`pair`/`curate`/`work`/`watch` are Den capability stances with `den-native:{bear_id}:{stance}` bindings — not per-role Letta agent ids (legacy columns may remain for compat).
-- **BearWire supersedes ACP direct-mode transport.** The active armature path is ACP client/editor → `bear-armature` → BearWire → `den-bearwire` → native `pair` runtime. [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md), and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical for architecture, though diagnostics lessons still apply.
+- **BearWire supersedes ACP direct-mode transport.** The active armature path is ACP client/editor → `bear-armature` → BearWire → `den-bearwire` → native `pair` runtime. [`archives/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](archives/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md), and [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) are historical for architecture, though diagnostics lessons still apply.
 - **Workplan ≠ semantic memory.** Activity/workplan artifacts stay in the workflow-state ontology ([`workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md)), not `den.memory.*`.
 - **`memory_search` is hybrid when Qdrant is configured** (vector + keyword + graph + temporal); keyword-only fallback when recall disabled. See [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md).
 
@@ -90,12 +89,12 @@ See [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md):
 
 ### 4. Harden BearWire `pair` and web chat
 
-- [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md`](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md).
+- [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md).
 - Web chat: interactive approval for mutating tools; continued stream/persistence reliability.
 
 ### 5. Phase 1 operator/product (native-aligned)
 
-Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) through the native lens: operator console, routines, Garage artifacts, and MCP — execution model must not assume Letta Code. For Skills, use [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) as the canonical native plan.
+Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): it salvages the still-current operator/product intent from the superseded Phase 1, multi-role, and task-system plans while dropping Letta Code, Codepool, and MemFS assumptions. For Skills, use [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) as the detailed canonical plan.
 
 ## Planning document index
 
@@ -103,40 +102,43 @@ Re-read [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) / [`PHASE1_DECISIONS.md`](P
 
 - [Den-native runtime architecture](../architecture/den-native-runtime.md)
 - [Den native runtime plan](DEN_NATIVE_RUNTIME_PLAN.md) — Phase 7 work sandbox remains active
-- [Den crate split plan](DEN_CRATE_SPLIT_PLAN.md) — workspace layout; **v0–v2 complete**
 - [Derived recall index](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + hybrid search
 - [Bear entity layer](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) — entities + relations
 - [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — pair→curate→work pipeline
 
 ### Active supporting plans
 
-- [Multi-role runtime](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md)
 - [Memory tools](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
 - [Memory curation](MEMORY_CURATION_PLAN.md)
 - [Personalization](PERSONALIZATION_PLAN.md)
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md)
 - [Docket implementation](DOCKET_IMPLEMENTATION_PLAN.md)
-- [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
 - [Context compaction](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md)
 - [BearWire armature wire](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
 - [BearWire v1 protocol refinement](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md)
 - [ACP adapter improvements](ACP_ADAPTER_IMPROVEMENT_PLAN.md)
-- [Role runtime wedge prevention](ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md)
+- [ACP lifecycle reset](ACP_LIFECYCLE_RESET_PLAN.md)
 - [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
+- [Phase 1 native product debt](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
 - [Skills implementation](SKILLS_IMPLEMENTATION_PLAN.md)
-- [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — **partially superseded**; use for operator/product scope, not runtime path
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md)
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
 
 ### Reference / archived (do not drive implementation without explicit revisit)
 
 - [`archives/`](archives/) — capability management, skills brokering, context composition, ACP relay, etc.
-- [Migration backfill](den-migration-backfill-and-rollback-plan.md) — historical Letta extraction/backfill planning; no production migration required
+- [Migration backfill](archives/den-migration-backfill-and-rollback-plan.md) — historical Letta extraction/backfill planning; no production migration required
 - [Letta dependency matrix](../architecture/letta-dependency-matrix.md) — historical inventory
-- [Bear channel plans](BEAR_CHANNEL_PLANS.md) — channel UX; not the canonical `pair` runtime path
-- [ACP direct local-tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — superseded by Den-native runtime + BearWire; retain for historical diagnostics and local-tool design context
+- [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — superseded; product intent salvaged into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
+- [Multi-role runtime](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md) — superseded implementation path; useful concepts salvaged into native runtime, Skills, and Phase 1 product plans
+- [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — partially superseded by Docket/ADR-0045; remaining product/workflow-state intent salvaged into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
+- [Bear channel plans](archives/BEAR_CHANNEL_PLANS.md) — superseded `bear_channel`/Codepool planning; current channel plan is [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
+- [ACP direct local-tool runtime](archives/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — superseded by Den-native runtime + BearWire; retain for historical diagnostics and local-tool design context
+- [ACP discovery prompt](archives/ACP_DISCOVERY_PROMPT.md) — historical ACP discovery checklist
+- [Pair Letta message boundary](archives/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md) — historical Letta-message framing; current transcript/context work is Den-native
+- [Role runtime wedge prevention](archives/ROLE_RUNTIME_WEDGE_PREVENTION_PLAN.md) — superseded Letta-run wedge plan; current lifecycle work is [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md)
 
 **Architecture sources of truth:**
 

@@ -2,6 +2,8 @@
 
 > **Direction changed (2026-06).** The five-role model stands, but the implementation path here (Letta provisioning + `letta_agent_id`, Codepool `bear_channel`, MemFS task pipeline, harness-backed vs API-direct split) is superseded by the Den-native runtime: one in-process loop, a Den-native role registry, per-Bear SQLite memory, and Docket tasks. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
 >
+> **Salvaged native product/runtime concepts:** operator UI slices, stance/status visibility, HITL queues, watch/task/skill management, and risk mitigations have been consolidated into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) where product-facing, [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) where skill-specific, and [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) where runtime-specific.
+>
 > **Skills note.** Skill manifest/proposal/reconciliation concepts below are historical source material. The canonical native Skills plan is [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md).
 
 For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
