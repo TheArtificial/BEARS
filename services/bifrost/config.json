@@ -12,7 +12,7 @@
             "is_enabled": true,
             "admin_username": "env.BIFROST_ADMIN_USERNAME",
             "admin_password": "env.BIFROST_ADMIN_PASSWORD",
-            "disable_auth_on_inference": true
+            "disable_auth_on_inference": false
         }
     },
     "providers": {

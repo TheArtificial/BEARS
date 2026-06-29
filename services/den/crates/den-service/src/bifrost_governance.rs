@@ -338,7 +338,9 @@ impl BifrostGovernanceClient {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            DenError::System("Bifrost virtual key quota validation failed after retries".to_string())
+            DenError::System(
+                "Bifrost virtual key quota validation failed after retries".to_string(),
+            )
         }))
     }
 
@@ -347,11 +349,11 @@ impl BifrostGovernanceClient {
         value: &str,
     ) -> Result<BifrostVirtualKeyValidation, DenError> {
         let quota = self
-            .virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XApiKey)
+            .virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XBfVk)
             .await
             .map_err(|err| {
                 DenError::System(format!(
-                    "Bifrost did not recognize the provisioned virtual key via x-api-key: {err}"
+                    "Bifrost did not recognize the provisioned virtual key via x-bf-vk: {err}"
                 ))
             })?;
         Ok(BifrostVirtualKeyValidation {
@@ -495,7 +497,10 @@ impl BifrostGovernanceClient {
         if virtual_key_id.is_empty() {
             return Ok(None);
         }
-        let url = format!("{}/governance/virtual-keys/{virtual_key_id}", self.management_url);
+        let url = format!(
+            "{}/governance/virtual-keys/{virtual_key_id}",
+            self.management_url
+        );
         let response = self
             .apply_management_auth(self.http.get(&url), &auth)
             .send()
@@ -515,14 +520,13 @@ impl BifrostGovernanceClient {
             )));
         }
         let payload = serde_json::from_str::<serde_json::Value>(&text).map_err(|err| {
+            DenError::Parsing(format!("Bifrost virtual key get JSON: {err}; body: {text}"))
+        })?;
+        let virtual_key = payload.get("virtual_key").cloned().ok_or_else(|| {
             DenError::Parsing(format!(
-                "Bifrost virtual key get JSON: {err}; body: {text}"
+                "Bifrost virtual key get response missing virtual_key: {text}"
             ))
         })?;
-        let virtual_key = payload
-            .get("virtual_key")
-            .cloned()
-            .ok_or_else(|| DenError::Parsing(format!("Bifrost virtual key get response missing virtual_key: {text}")))?;
         let id = virtual_key
             .get("id")
             .and_then(serde_json::Value::as_str)
@@ -582,12 +586,13 @@ impl BifrostGovernanceClient {
             )
             .send()
             .await
-            .map_err(|err| DenError::System(format!("Bifrost usage rankings request failed: {err}")))?;
+            .map_err(|err| {
+                DenError::System(format!("Bifrost usage rankings request failed: {err}"))
+            })?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|err| DenError::System(format!("Bifrost usage rankings body failed: {err}")))?;
+        let text = response.text().await.map_err(|err| {
+            DenError::System(format!("Bifrost usage rankings body failed: {err}"))
+        })?;
         if !status.is_success() {
             return Err(DenError::System(format!(
                 "Bifrost usage rankings HTTP {status}: {text}"
@@ -621,11 +626,11 @@ impl BifrostGovernanceClient {
         &self,
         value: &str,
     ) -> Result<BifrostVirtualKeyQuota, DenError> {
-        self.virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XApiKey)
+        self.virtual_key_quota_with_mode(value, BifrostVirtualKeyAuthMode::XBfVk)
             .await
             .map_err(|err| {
                 DenError::System(format!(
-                    "Bifrost did not recognize the virtual key via x-api-key: {err}"
+                    "Bifrost did not recognize the virtual key via x-bf-vk: {err}"
                 ))
             })
     }

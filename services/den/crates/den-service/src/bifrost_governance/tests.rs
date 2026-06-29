@@ -294,9 +294,9 @@ async fn auth_disabled_login_error_includes_config_store_reset_hint() {
 }
 
 #[tokio::test]
-async fn validate_virtual_key_value_accepts_x_api_key() {
+async fn validate_virtual_key_value_accepts_x_bf_vk() {
     let (management_url, records) =
-        spawn_quota_validation_mock(Some(BifrostVirtualKeyAuthMode::XApiKey));
+        spawn_quota_validation_mock(Some(BifrostVirtualKeyAuthMode::XBfVk));
     let client = BifrostGovernanceClient::new(&test_config(management_url));
 
     let validation = client
@@ -304,15 +304,15 @@ async fn validate_virtual_key_value_accepts_x_api_key() {
         .await
         .expect("validate virtual key");
 
-    assert_eq!(validation.auth_mode, BifrostVirtualKeyAuthMode::XApiKey);
+    assert_eq!(validation.auth_mode, BifrostVirtualKeyAuthMode::XBfVk);
     let records = records.lock().expect("records mutex");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].path, "/api/governance/virtual-keys/quota");
-    assert_eq!(records[0].x_api_key.as_deref(), Some("sk-bf-test"));
+    assert_eq!(records[0].x_bf_vk.as_deref(), Some("sk-bf-test"));
 }
 
 #[tokio::test]
-async fn validate_virtual_key_value_reports_x_api_key_failure_only() {
+async fn validate_virtual_key_value_reports_x_bf_vk_failure_only() {
     let (management_url, records) = spawn_quota_validation_mock(None);
     let client = BifrostGovernanceClient::new(&test_config(management_url));
 
@@ -322,12 +322,12 @@ async fn validate_virtual_key_value_reports_x_api_key_failure_only() {
         .expect_err("validation should fail");
     let message = err.to_string();
 
-    assert!(message.contains("x-api-key"));
-    assert!(!message.contains("x-bf-vk"));
+    assert!(message.contains("x-bf-vk"));
+    assert!(!message.contains("x-api-key"));
     assert!(!message.contains("bearer"));
     let records = records.lock().expect("records mutex");
     assert_eq!(records.len(), 4);
     assert!(records
         .iter()
-        .all(|record| record.x_api_key.as_deref() == Some("sk-bf-test")));
+        .all(|record| record.x_bf_vk.as_deref() == Some("sk-bf-test")));
 }

@@ -209,6 +209,17 @@ def validate_bifrost_model_metadata_config() -> None:
         fail(
             "Bifrost config governance.auth_config.admin_password must be env.BIFROST_ADMIN_PASSWORD"
         )
+    if auth_config.get("disable_auth_on_inference") is not False:
+        fail(
+            "Bifrost config governance.auth_config.disable_auth_on_inference must be false; BEARS requires virtual keys for all model inference"
+        )
+    client = config.get("client")
+    if not isinstance(client, dict):
+        fail("Bifrost config client must be an object")
+    if client.get("enforce_auth_on_inference") is not True:
+        fail(
+            "Bifrost config client.enforce_auth_on_inference must be true; BEARS requires virtual keys for all model inference"
+        )
 
     providers = config.get("providers")
     if not isinstance(providers, dict) or not providers:
