@@ -585,7 +585,6 @@ dependencies = [
  "axum",
  "axum-login",
  "bytes",
- "den-acp",
  "den-api",
  "den-bearwire",
  "den-core",

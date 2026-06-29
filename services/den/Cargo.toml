@@ -181,7 +181,6 @@ den-memory = { path = "crates/den-memory" }
 den-docket = { path = "crates/den-docket" }
 den-runtime = { path = "crates/den-runtime" }
 den-http = { path = "crates/den-http" }
-den-acp = { path = "crates/den-acp" }
 den-api = { path = "crates/den-api" }
 den-bearwire = { path = "crates/den-bearwire" }
 den-web = { path = "crates/den-web" }
