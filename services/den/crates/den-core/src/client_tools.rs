@@ -312,9 +312,6 @@ impl ClientToolName {
                 return Some(*tool);
             }
         }
-        if let Some(rest) = raw.strip_prefix("acp.") {
-            return Self::from_provider_alias(&format!("armature.{rest}"));
-        }
         match raw {
             "bears/read_text_file"
             | "fs.read_text_file"

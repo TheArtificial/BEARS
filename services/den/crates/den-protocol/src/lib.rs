@@ -31,7 +31,6 @@ pub struct RuntimeTurnRef {
 pub struct EnsureConversationRequest {
     pub bear_id: uuid::Uuid,
     pub role: String,
-    #[serde(alias = "acp_session_id")]
     pub client_session_id: String,
     pub requested_selection: Option<String>,
     pub binding: RoleRuntimeBinding,
@@ -63,7 +62,6 @@ pub struct StartTurnRequest {
     pub binding: RoleRuntimeBinding,
     pub human_message: String,
     pub runtime_context: Option<String>,
-    #[serde(alias = "acp_session_id")]
     pub client_session_id: Option<String>,
     pub client_tools: Option<serde_json::Value>,
     pub stream_tokens: bool,
@@ -162,7 +160,6 @@ pub struct CancelTurnResult {
 pub struct RuntimeCleanupRequest {
     pub conversation: RuntimeConversationRef,
     pub binding: RoleRuntimeBinding,
-    #[serde(alias = "acp_session_id")]
     pub client_session_id: String,
     pub bear_id: uuid::Uuid,
     pub run_ids: Vec<String>,
