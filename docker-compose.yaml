@@ -34,12 +34,9 @@ x-preflight-environment: &preflight-environment
     BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
     BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
     BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
-    BIFROST_BASE_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
-    BIFROST_MANAGEMENT_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}/api
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
-    LLM_API_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}/v1
     DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
     BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
     DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
@@ -227,11 +224,8 @@ services:
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
             TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
             BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
-            BIFROST_BASE_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
-            BIFROST_MANAGEMENT_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}/api
             BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
             BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
-            LLM_API_URL: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}/v1
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
             # set to http://bears-qdrant:6333 with COMPOSE_PROFILES=recall to enable. Embedding

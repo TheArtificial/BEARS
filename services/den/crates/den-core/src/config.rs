@@ -348,19 +348,34 @@ impl Config {
         let den_secret_encryption_key =
             std::env::var("DEN_SECRET_ENCRYPTION_KEY").unwrap_or_default();
 
-        let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
-        let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
-        let bifrost_management_url = std::env::var("BIFROST_MANAGEMENT_URL")
+        let bifrost_origin = std::env::var("BIFROST_ORIGIN")
             .ok()
             .map(|value| value.trim_end_matches('/').to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                if bifrost_base_url.is_empty() {
-                    String::new()
-                } else {
-                    format!("{bifrost_base_url}/api")
-                }
-            });
+            .filter(|value| !value.is_empty());
+        let bifrost_base_url = if let Some(origin) = bifrost_origin.clone() {
+            origin
+        } else {
+            std::env::var("BIFROST_BASE_URL")
+                .ok()
+                .map(|value| value.trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_default()
+        };
+        let bifrost_management_url = if let Some(origin) = bifrost_origin.as_deref() {
+            format!("{origin}/api")
+        } else {
+            std::env::var("BIFROST_MANAGEMENT_URL")
+                .ok()
+                .map(|value| value.trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    if bifrost_base_url.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{bifrost_base_url}/api")
+                    }
+                })
+        };
         let bifrost_admin_username = std::env::var("BIFROST_ADMIN_USERNAME").unwrap_or_default();
         let bifrost_admin_password = std::env::var("BIFROST_ADMIN_PASSWORD").unwrap_or_default();
         let bifrost_catalog_refresh_secs = std::env::var("BIFROST_CATALOG_REFRESH_SECS")
@@ -368,17 +383,21 @@ impl Config {
             .and_then(|v| v.trim().parse::<u64>().ok())
             .unwrap_or(300);
 
-        let llm_api_url = std::env::var("LLM_API_URL")
-            .ok()
-            .map(|v| v.trim_end_matches('/').to_string())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| {
-                if bifrost_base_url.is_empty() {
-                    String::new()
-                } else {
-                    format!("{bifrost_base_url}/v1")
-                }
-            });
+        let llm_api_url = if let Some(origin) = bifrost_origin.as_deref() {
+            format!("{origin}/v1")
+        } else {
+            std::env::var("LLM_API_URL")
+                .ok()
+                .map(|v| v.trim_end_matches('/').to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| {
+                    if bifrost_base_url.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{bifrost_base_url}/v1")
+                    }
+                })
+        };
         let llm_api_key = std::env::var("LLM_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .unwrap_or_default();

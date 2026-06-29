@@ -333,14 +333,17 @@ def validate_config_shape() -> None:
 
     validate_database_url(reachable=False)
 
-    management = (
-        os.environ.get("BIFROST_MANAGEMENT_URL", "").strip()
-        or "http://bears-bifrost:8080/api"
-    )
+    origin = os.environ.get("BIFROST_ORIGIN", "").strip().rstrip("/")
+    if origin:
+        management = f"{origin}/api"
+        llm = f"{origin}/v1"
+    else:
+        origin = "http://bears-bifrost:8080"
+        management = os.environ.get("BIFROST_MANAGEMENT_URL", "").strip() or f"{origin}/api"
+        llm = os.environ.get("LLM_API_URL", "").strip() or f"{origin}/v1"
     validate_http_url("BIFROST_MANAGEMENT_URL", management)
     info(f"BIFROST_MANAGEMENT_URL OK ({management})")
 
-    llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
 
