@@ -1,8 +1,8 @@
-//! Minimal Agent Client Protocol (ACP) gateway for adapter clients.
+//! Minimal Agent Client Protocol (web) gateway for adapter clients.
 //!
 //! This is the Phase 7 basic-chat slice: Den authenticates, authorizes the selected bear,
 //! injects trusted context, and maps text prompts to the Bear's Den-native `pair` profile.
-//! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
+//! Client-tool relay and full web stdio transport live in later slices / an external adapter.
 
 pub(super) mod client;
 pub mod client_tool_advertisement;
@@ -87,7 +87,7 @@ async fn log_legacy_acp_http_usage(request: Request<Body>, next: Next) -> impl I
     tracing::warn!(
         method = %request.method(),
         path = %request.uri().path(),
-        "legacy ACP HTTP route used during BearWire migration"
+        "legacy web HTTP route used during BearWire migration"
     );
     next.run(request).await
 }
@@ -151,7 +151,7 @@ pub(crate) use self::config::{
     acp_text_chunk_chars, acp_tool_result_followup_timeout_ms, acp_tool_timeout_ms_for_provider,
 };
 pub(crate) use self::http_types::{
-    AcpCompactionStatusResponse, AcpConversationHistoryMessage, AcpConversationRow,
+    CompactionStatusResponse, AcpConversationHistoryMessage, AcpConversationRow,
     AcpErrorResponse, AcpPromptRequest, AcpToolResultResponse,
 };
 use self::http_types::{

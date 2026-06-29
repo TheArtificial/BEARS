@@ -163,7 +163,7 @@ pub(super) async fn conversation_history_inner(
     let compaction = if canonical_visible_count > 0 {
         compaction_history.first().cloned()
     } else {
-        Some(crate::acp::AcpCompactionStatusResponse {
+        Some(crate::acp::CompactionStatusResponse {
             status: "unavailable".to_string(),
             policy_version: "canonical_only".to_string(),
             trigger: None,
@@ -171,7 +171,7 @@ pub(super) async fn conversation_history_inner(
             source_group_start: None,
             source_group_end: None,
             diagnostic: Some(
-                "Canonical ACP conversation history is not yet available for this conversation. Live provider history fallback has been disabled for pair ACP reads during migration.".to_string(),
+                "Canonical web conversation history is not yet available for this conversation. Live provider history fallback has been disabled for pair web reads during migration.".to_string(),
             ),
             artifact: None,
             context_envelope: None,

@@ -6,12 +6,12 @@ use crate::runtime_compaction_observability::RuntimeCompactionEvent;
 use den_core::DenError;
 use serde::Serialize;
 
-/// Serialized compaction status for a conversation, as surfaced to ACP/web clients.
+/// Serialized compaction status for a conversation, as surfaced to client/web clients.
 ///
 /// Produced here by the runtime compaction store and consumed by the `den` API edge
-/// (re-exported as `crate::core::runtime_compaction_store::AcpCompactionStatusResponse`).
+/// (re-exported as `crate::core::runtime_compaction_store::CompactionStatusResponse`).
 #[derive(Debug, Clone, Serialize)]
-pub struct AcpCompactionStatusResponse {
+pub struct CompactionStatusResponse {
     pub status: String,
     pub policy_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,11 +31,11 @@ pub struct AcpCompactionStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_memory_diagnostic: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_artifact: Option<AcpCompactionArtifactResponse>,
+    pub latest_artifact: Option<CompactionArtifactResponse>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AcpCompactionArtifactResponse {
+pub struct CompactionArtifactResponse {
     pub id: Uuid,
     pub artifact_kind: String,
     pub policy_version: String,
@@ -101,7 +101,7 @@ pub async fn list_runtime_compaction_events(
     pool: &PgPool,
     conversation_id: &str,
     limit: i64,
-) -> Result<Vec<AcpCompactionStatusResponse>, DenError> {
+) -> Result<Vec<CompactionStatusResponse>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -130,7 +130,7 @@ pub async fn list_runtime_compaction_events(
         let artifact = row
             .try_get::<Option<serde_json::Value>, _>("artifact")
             .map_err(|err| DenError::Database(format!("decode compaction artifact: {err}")))?;
-        items.push(AcpCompactionStatusResponse {
+        items.push(CompactionStatusResponse {
             status: row
                 .try_get::<String, _>("status")
                 .map_err(|err| DenError::Database(format!("decode compaction status: {err}")))?,
@@ -174,7 +174,7 @@ pub async fn list_runtime_compaction_events(
 pub async fn latest_compaction_artifact_for_conversation(
     pool: &PgPool,
     conversation_uuid: Uuid,
-) -> Result<Option<AcpCompactionArtifactResponse>, DenError> {
+) -> Result<Option<CompactionArtifactResponse>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT
@@ -205,7 +205,7 @@ pub async fn latest_compaction_artifact_for_conversation(
         return Ok(None);
     };
 
-    Ok(Some(AcpCompactionArtifactResponse {
+    Ok(Some(CompactionArtifactResponse {
         id: row
             .try_get::<Uuid, _>("id")
             .map_err(|err| DenError::Database(format!("decode compaction artifact id: {err}")))?,

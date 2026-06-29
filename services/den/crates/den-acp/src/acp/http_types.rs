@@ -35,7 +35,7 @@ pub struct AcpPromptRequest {
     pub client_capabilities: serde_json::Value,
     #[serde(default)]
     pub client_context: serde_json::Value,
-    /// Adapter-local mode selected before Den has necessarily persisted the ACP
+    /// Adapter-local mode selected before Den has necessarily persisted the web
     /// session binding. Den treats this as initial intent for new sessions only;
     /// existing sessions continue to use Den's stored current_mode/plan state.
     #[serde(default)]
@@ -180,8 +180,8 @@ pub(crate) struct AcpConversationHistoryMessage {
 }
 
 // Relocated to den-runtime (it is produced by the runtime compaction store); re-exported
-// here so existing `super::http_types::AcpCompactionStatusResponse` paths keep compiling.
-pub(crate) use den_runtime::runtime_compaction_store::AcpCompactionStatusResponse;
+// here so existing `super::http_types::CompactionStatusResponse` paths keep compiling.
+pub(crate) use den_runtime::runtime_compaction_store::CompactionStatusResponse;
 
 #[derive(Debug, Serialize)]
 pub(super) struct AcpConversationHistoryResponse {
@@ -190,9 +190,9 @@ pub(super) struct AcpConversationHistoryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) next_before: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) compaction: Option<AcpCompactionStatusResponse>,
+    pub(super) compaction: Option<CompactionStatusResponse>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub(super) compaction_history: Vec<AcpCompactionStatusResponse>,
+    pub(super) compaction_history: Vec<CompactionStatusResponse>,
 }
 
 #[derive(Debug, Deserialize)]
