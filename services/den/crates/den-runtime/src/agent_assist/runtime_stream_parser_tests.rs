@@ -58,7 +58,7 @@ fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
         "tool_call": {
             "name": "fs_read_text_file",
             "tool_call_id": "call-read-e2e",
-            "arguments": "{\"limit\":10,\"line\":1,\"path\":\"/tmp/acp-workspace/README.md\"}"
+            "arguments": "{\"limit\":10,\"line\":1,\"path\":\"/tmp/armature-workspace/README.md\"}"
         }
     });
     let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
@@ -79,7 +79,7 @@ fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
             // accumulation parses them. Assert the path is present rather than an empty object.
             let args_str = arguments.as_str().unwrap_or_default();
             assert!(
-                args_str.contains("/tmp/acp-workspace/README.md"),
+                args_str.contains("/tmp/armature-workspace/README.md"),
                 "arguments fragment lost: {arguments:?}"
             );
         }

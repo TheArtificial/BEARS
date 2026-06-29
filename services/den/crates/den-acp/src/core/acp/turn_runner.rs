@@ -33,13 +33,13 @@ pub struct AcpStaleRuntimeCleanupParams {
 pub async fn start_acp_turn_event_stream_with_retries(
     request: TurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
-    den_runtime::native_runtime::start_native_acp_turn_event_stream(request).await
+    den_runtime::native_runtime::start_native_client_turn_event_stream(request).await
 }
 
 pub async fn continue_acp_turn_with_runtime(
     request: TurnContinueRequest<'_>,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    den_runtime::native_runtime::continue_native_acp_turn_event_stream(
+    den_runtime::native_runtime::continue_native_client_turn_event_stream(
         request,
         den_core::BearProfile::Pair,
     )

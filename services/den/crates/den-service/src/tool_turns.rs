@@ -378,7 +378,7 @@ impl ToolTurnCoordinator {
             tool_call_id = %tool_call_id,
             tool_name = %tool_name,
             active_turn_count = turns.len(),
-            "ACP registered pending tool turn"
+            "armature registered pending tool turn"
         );
         Ok(())
     }
@@ -412,7 +412,7 @@ impl ToolTurnCoordinator {
                     || cached.tool_call_id != tool_call_id
                 {
                     return Err(DenError::Authorization(
-                        "tool result does not match the authenticated ACP session".to_string(),
+                        "tool result does not match the authenticated client session".to_string(),
                     ));
                 }
                 return Ok(ToolResultDelivery::RecentlySettled {
@@ -432,7 +432,7 @@ impl ToolTurnCoordinator {
             || turn.tool_call_id != tool_call_id
         {
             return Err(DenError::Authorization(
-                "tool result does not match the authenticated ACP session".to_string(),
+                "tool result does not match the authenticated client session".to_string(),
             ));
         }
         if let Some(body_tool_call_id) = body.tool_call_id.as_deref().filter(|s| !s.is_empty()) {
@@ -744,7 +744,7 @@ impl ToolTurnCoordinator {
 
     fn cache_settled_result(&self, result: SettledToolResult) -> Result<(), DenError> {
         let mut settled = self.settled_results.lock().map_err(|_| {
-            DenError::System("ACP settled tool result cache lock poisoned".to_string())
+            DenError::System("armature settled tool result cache lock poisoned".to_string())
         })?;
         prune_settled_results(&mut settled);
         settled.insert(

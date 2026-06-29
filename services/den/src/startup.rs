@@ -162,15 +162,15 @@ mod tests {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
         }
 
-        let mut acp_on = Config::test_stub();
-        acp_on.run_api = true;
+        let mut api_on = Config::test_stub();
+        api_on.run_api = true;
         assert!(
-            validate_runtime_config(&acp_on).is_err(),
+            validate_runtime_config(&api_on).is_err(),
             "API runtime requires LLM_API_URL"
         );
 
-        acp_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
-        validate_runtime_config(&acp_on).expect("API with LLM_API_URL should pass");
+        api_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
+        validate_runtime_config(&api_on).expect("API with LLM_API_URL should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },

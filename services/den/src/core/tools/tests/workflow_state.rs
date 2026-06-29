@@ -11,7 +11,7 @@ fn pair_context() -> DenToolInvocationContext {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -35,7 +35,7 @@ use crate::core::{
         support::validate_memory_write_entry_semantics,
     },
 };
-use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
+use den_core::client_tools::{ClientToolName, provider_tool_descriptor};
 use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
 use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
 use den_runtime::{plan_mode::PlanModeSessionRow};
@@ -56,10 +56,10 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 }
 
 #[test]
-fn acp_client_descriptors_expose_execution_domain_metadata() {
-    let descriptor = client_tool_descriptor(ClientToolName::ReadTextFile);
-    assert_eq!(descriptor["x-bears-domain"], "execution");
-    assert_eq!(descriptor["x-bears-content-class"], "read_files");
+fn armature_client_descriptors_expose_execution_domain_metadata() {
+    let descriptor = provider_tool_descriptor(ClientToolName::ReadTextFile);
+    assert_eq!(descriptor["name"], "fs_read_text_file");
+    assert!(descriptor["description"].as_str().is_some_and(|text| text.contains("armature.fs.read_text_file")));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn plan_mode_payload_is_workplan_native() {
         user_id: 1,
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        acp_session_id: "acp-test".to_string(),
+        client_session_id: "client-test".to_string(),
         state: "submitted".to_string(),
         reason: "test".to_string(),
         requested_by: "pair".to_string(),
@@ -121,7 +121,7 @@ fn work_plan_payload_is_activity_native() {
         items: vec![item.clone()],
         current_item: Some(item),
         source_conversation_id: Some("conv".to_string()),
-        source_acp_session_id: Some("acp".to_string()),
+        source_client_session_id: Some("armature".to_string()),
         handoff_intent_path: None,
         handoff_task_id: None,
         created_at: now,
@@ -295,7 +295,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
@@ -357,7 +357,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),

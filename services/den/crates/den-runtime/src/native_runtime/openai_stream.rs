@@ -123,10 +123,10 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                         ) {
                             Ok(events) => {
                                 for event in events {
-                                    // Tool-call finishes are not turn terminals: the ACP layer must
+                                    // Tool-call finishes are not turn terminals: the client adapter layer must
                                     // park for tool results and continue. A synthetic TurnCompleted
                                     // here preempts that continuation (same class of provider bug
-                                    // requires_approval pauses in acp_turn_runner_stream_tests).
+                                    // requires_approval pauses in client_turn_runner_stream_tests).
                                     if matches!(
                                         &event,
                                         RuntimeStreamEvent::Semantic(

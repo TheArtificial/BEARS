@@ -20,7 +20,7 @@ use den_http::{errors::CustomError, web_policy};
 use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
-    native_runtime::continue_native_acp_turn_event_stream,
+    native_runtime::continue_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
@@ -179,7 +179,7 @@ fn spawn_continuation_task(
             binding_id,
             compatibility_backend: Some("native".to_string()),
         };
-        let result = continue_native_acp_turn_event_stream(
+        let result = continue_native_client_turn_event_stream(
             TurnContinueRequest {
                 sqlx_pool: &pool,
                 config: config.as_ref(),
@@ -467,7 +467,7 @@ pub(crate) async fn client_tool_result_result(
     .await?
     .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
     let continuation_conversation_id = continuation_conversation_id(&session);
-    if !den_runtime::native_runtime::native_acp_session_exists(
+    if !den_runtime::native_runtime::native_client_session_exists(
         &continuation_conversation_id,
         &session_id,
     ) {
@@ -708,7 +708,7 @@ pub(crate) async fn client_permission_result_result(
     .await?
     .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
     let continuation_conversation_id = continuation_conversation_id(&session);
-    if !den_runtime::native_runtime::native_acp_session_exists(
+    if !den_runtime::native_runtime::native_client_session_exists(
         &continuation_conversation_id,
         &session_id,
     ) {

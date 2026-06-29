@@ -1,4 +1,4 @@
-//! Shared helpers for tool execution outcomes across web chat, ACP, and transcript repair.
+//! Shared helpers for tool execution outcomes across web chat, client adapters, and transcript repair.
 
 use den_protocol::{RuntimeSemanticEvent, ToolCallFinishStatus};
 use crate::{

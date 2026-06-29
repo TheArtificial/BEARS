@@ -1,7 +1,7 @@
 //! Strip model harness text that should not appear in end-user chat or derived titles.
 //!
 //! This includes `<system-reminder>…` (and `system_reminder` variants), role-local resource
-//! payloads, ACP workflow scaffolding, and plain-text subagent fork notices the primary thread
+//! payloads, client workflow scaffolding, and plain-text subagent fork notices the primary thread
 //! may still receive as message content.
 
 use regex::Regex;
@@ -19,7 +19,7 @@ pub fn strip_harness_for_user(s: &str) -> String {
 ///
 /// Prompt assembly may legitimately add runtime scaffolding to model input, but transcript UIs
 /// should render only human/assistant-authored content. Apply this before returning or replaying
-/// user-visible chat messages across ACP, web chat, and future Workplace chat surfaces.
+/// user-visible chat messages across client adapters, web chat, and future Workplace chat surfaces.
 pub fn sanitize_visible_transcript_text(s: &str) -> String {
     let blocks = SYSTEM_REMINDER_BLOCKS.get_or_init(|| {
         Regex::new(r"(?is)<\s*system[-_]reminder\b[^>]*>.*?</\s*system[-_]reminder\s*>")
@@ -54,7 +54,7 @@ pub fn sanitize_visible_transcript_text(s: &str) -> String {
 /// Shared display normalizer for Den-owned operational/status messages.
 ///
 /// Use this for complete status units such as tool lifecycle messages, recovery notices,
-/// approval notices, and memory-update notices before sending them to chat/ACP display
+/// approval notices, and memory-update notices before sending them to chat/client display
 /// surfaces. Do not use this for model-authored token deltas, assistant text deltas, or raw
 /// reasoning deltas; those must preserve exact model text.
 pub fn normalize_display_status_text(s: &str) -> String {
@@ -69,7 +69,7 @@ pub fn normalize_display_status_text(s: &str) -> String {
 
 fn strip_prompt_scaffolding_prefix(s: &str) -> String {
     let trimmed = s.trim_start();
-    let is_scaffold = find_ascii_case_insensitive(trimmed, "ACP workflow state for this session:")
+    let is_scaffold = find_ascii_case_insensitive(trimmed, "client workflow state for this session:")
         == Some(0)
         || find_ascii_case_insensitive(trimmed, "AUTHORITATIVE WORKFLOW STATE for this turn:")
             == Some(0);
@@ -83,7 +83,7 @@ fn strip_prompt_scaffolding_prefix(s: &str) -> String {
 }
 
 fn strip_hidden_resource_blocks(raw: &str) -> String {
-    strip_tagged_block(raw, "<bears-acp-resource", "</bears-acp-resource>")
+    strip_tagged_block(raw, "<bears-armature-resource", "</bears-armature-resource>")
 }
 
 fn strip_tagged_block(raw: &str, open: &str, close: &str) -> String {
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn sanitizes_hidden_resource_blocks() {
-        let s = "Please read this.\n<bears-acp-resource uri=\"file:///secret\">hidden context</bears-acp-resource>";
+        let s = "Please read this.\n<bears-armature-resource uri=\"file:///secret\">hidden context</bears-armature-resource>";
         let out = sanitize_visible_transcript_text(s);
         assert_eq!(out, "Please read this.");
     }
@@ -181,8 +181,8 @@ mod tests {
     }
 
     #[test]
-    fn strips_acp_prompt_scaffolding_prefix_when_tags_are_lost() {
-        let s = "ACP workflow state for this session: workflow_id=123 workflow_state=submitted submitted_plan_present=true approval_status=awaiting_human_approval execution_unlocked=false. Workflow state is authoritative; artifact path is audit context only.\n\nPlease implement the fix.";
+    fn strips_client_prompt_scaffolding_prefix_when_tags_are_lost() {
+        let s = "client workflow state for this session: workflow_id=123 workflow_state=submitted submitted_plan_present=true approval_status=awaiting_human_approval execution_unlocked=false. Workflow state is authoritative; artifact path is audit context only.\n\nPlease implement the fix.";
         let out = strip_harness_for_user(s);
         assert_eq!(out, "Please implement the fix.");
     }

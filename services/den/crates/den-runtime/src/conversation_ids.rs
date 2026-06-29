@@ -2,8 +2,8 @@
 //!
 //! These predicates decide how a client-supplied conversation selection maps onto runtime
 //! history/archive targets. They have no storage or session dependencies, so they live at
-//! the runtime root and are shared by the runtime conversation layer and the ACP edge
-//! (`core::acp::runtime` re-exports them for existing call sites).
+//! the runtime root and are shared by the runtime conversation layer and the adapter edge
+//! (adapter runtime re-exports them for existing call sites).
 
 use den_core::DenError;
 

@@ -496,7 +496,7 @@ fn native_provider_tool_request_event_with_args(
 
 /// Defensive compatibility layer for provider tool-call streaming.
 ///
-/// The preferred ACP path uses the conversation-scoped provider messages endpoint with
+/// The preferred client adapter path uses the conversation-scoped provider messages endpoint with
 /// `streaming=true` and `stream_tokens=false`, which should normally yield coherent
 /// step-level tool events. Older/deployed provider builds and some provider paths may
 /// still surface tool calls as repeated delta-like `approval_request_message` events:

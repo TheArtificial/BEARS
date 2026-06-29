@@ -1,10 +1,10 @@
 //! Display metadata for model-facing tools.
 //!
 //! `ToolDisplayDescriptor` is the static presentation shape (labels, progress
-//! verbs, target/sensitive argument keys, approval summary) consumed by ACP-facing
+//! verbs, target/sensitive argument keys, approval summary) consumed by adapter-facing
 //! descriptors and the built-in Den tool descriptor table. It lives here, in the
 //! descriptor authority crate, so both `den-tools` descriptors and the `den`-side
-//! ACP tool surface share a single definition.
+//! armature tool surface share a single definition.
 
 use serde_json::json;
 

@@ -1,5 +1,5 @@
 // Den-executed server tools. Adding a new Den tool here and to
-// `builtin_den_tool_descriptors` should not require an ACP adapter update when
+// `builtin_den_tool_descriptors` should not require an adapter update when
 // it uses existing stream/result shapes. Keep provider names semantic and
 // provider-safe; accept legacy aliases only at routing boundaries.
 pub const DEN_BEAR_GET_SELF: &str = "den.bear.get_self";

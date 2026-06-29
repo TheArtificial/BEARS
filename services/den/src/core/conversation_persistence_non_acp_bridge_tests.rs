@@ -372,11 +372,11 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
     let projection = Projection {
         provenance: ProjectionProvenance {
             source: ProjectionSource::PairReflection,
-            scope_id: format!("bear:{bear_id}:acp:acp-test-session"),
+            scope_id: format!("bear:{bear_id}:client:client-test-session"),
         },
         event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
             reflection_run_id: Uuid::new_v4(),
-            acp_session_id: "acp-test-session".to_string(),
+            client_session_id: "client-test-session".to_string(),
             trigger: "manual".to_string(),
             status: "completed".to_string(),
             summary_path: Some("pair/summary.md".to_string()),
@@ -384,16 +384,16 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
             considered_message_count: 3,
             completed_at: None,
         }),
-        workflow_text: "Pair reflection completed for session acp-test-session".to_string(),
+        workflow_text: "Pair reflection completed for session client-test-session".to_string(),
         visible_summary: Some(
-            "Pair reflection summary completed for session acp-test-session and saved to pair/summary.md.".to_string(),
+            "Pair reflection summary completed for session client-test-session and saved to pair/summary.md.".to_string(),
         ),
     };
     persist_for_test(
         &pool,
         bear_id,
         "conv-pair-reflection-test",
-        &format!("bear:{bear_id}:acp:acp-test-session"),
+        &format!("bear:{bear_id}:client:client-test-session"),
         projection,
     )
     .await?;
@@ -401,8 +401,8 @@ async fn non_acp_pair_reflection_completion_persists_records_when_conversation_i
     let messages = list_messages_page(&pool, conversation.id, None, 20).await?;
     assert!(messages.iter().any(|m| m
         .content_text
-        .contains("Pair reflection completed for session acp-test-session")));
-    assert!(messages.iter().any(|m| m.content_text.contains("Pair reflection summary completed for session acp-test-session and saved to pair/summary.md.")));
+        .contains("Pair reflection completed for session client-test-session")));
+    assert!(messages.iter().any(|m| m.content_text.contains("Pair reflection summary completed for session client-test-session and saved to pair/summary.md.")));
     Ok(())
 }
 

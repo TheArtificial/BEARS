@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GovernanceMode {
-    /// Human present (ACP/web); live collaboration, approvals via client/channel.
+    /// Human present (client/web); live collaboration, approvals via client/channel.
     Interactive,
     /// Human recently disconnected; finish in-flight turn, await return.
     Grace,

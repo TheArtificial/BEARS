@@ -265,6 +265,6 @@ pub fn spawn_persist_incomplete_acp_tool_results(
         request_id,
         tool_calls,
         reason,
-        "acp_interrupted_turn",
+        "client_interrupted_turn",
     );
 }

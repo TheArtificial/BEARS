@@ -94,7 +94,7 @@ impl AgentLoopSessionStore {
             .remove(key);
     }
 
-    /// Read and clear the overflow-recovery flag for ACP turn outcome mapping.
+    /// Read and clear the overflow-recovery flag for client turn outcome mapping.
     pub fn take_overflow_compaction_recovered(&self, key: &str) -> bool {
         let mut recovered = false;
         self.update(key, |session| {

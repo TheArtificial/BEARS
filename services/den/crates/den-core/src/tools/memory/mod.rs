@@ -126,7 +126,7 @@ pub fn source_client_session_id(context: &DenToolInvocationContext) -> Option<St
     ]
     .into_iter()
     .flatten()
-    .any(|value| matches!(value.to_ascii_lowercase().as_str(), "acp" | "bearwire"));
+    .any(|value| matches!(value.to_ascii_lowercase().as_str(), "armature" | "bearwire"));
     if has_stateful_client {
         clean_optional(&context.session_id)
     } else {

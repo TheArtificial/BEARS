@@ -49,7 +49,7 @@ mod tests {
             override_system: None,
             boundary: PairTurnBoundaryLog {
                 request_id: "request-test",
-                channel_family: "acp",
+                channel_family: "armature",
                 session_id: "session-test",
                 runtime_context_len: 42,
             },

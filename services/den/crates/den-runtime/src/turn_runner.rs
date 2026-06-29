@@ -1,8 +1,8 @@
-//! Runtime-side ACP turn contracts: the start/continue request inputs the native runtime
+//! Runtime-side client turn contracts: the start/continue request inputs the native runtime
 //! consumes, the stream context, and conversation materialization.
 //!
-//! The ACP *edge* orchestration (retry wrappers, stale-state cleanup) stays in `den`'s
-//! `core::acp::turn_runner`, which re-exports these types for existing call sites.
+//! The adapter edge orchestration (retry wrappers, stale-state cleanup) stays in `den`'s
+//! adapter turn-runner glue, which re-exports these types for existing call sites.
 
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -16,7 +16,7 @@ use den_service::client_sessions;
 use crate::{conversation_ids::is_native_runtime_conversation_id, llm::LlmApiStyle};
 
 /// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
-pub const STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
+pub const STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired client approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 
 pub struct TurnStartRequest<'a> {
     pub sqlx_pool: &'a PgPool,
@@ -112,7 +112,7 @@ pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBa
             bear_slug: request.bear_slug.to_string(),
             client_session_id: request.session_id.to_string(),
             runtime_session_id: format!(
-                "acp-api-direct:{}:{}:{}",
+                "client-api-direct:{}:{}:{}",
                 request.client, request.bear_id, request.session_id
             ),
             conversation_id: request.conversation_selection.to_string(),

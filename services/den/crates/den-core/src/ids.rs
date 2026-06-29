@@ -100,9 +100,9 @@ impl fmt::Display for UserId {
     }
 }
 
-/// Opaque ACP/runtime session identifier (`session_id`, `acp_session_id`).
+/// Opaque client/runtime session identifier (`session_id`, `client_session_id`).
 ///
-/// These are provider-/client-issued strings (e.g. `acp-…`, `zed-acp-…`), not
+/// These are provider-/client-issued strings (e.g. `client-…`, `zed-client-…`), not
 /// UUIDs, so the inner type is `String`.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type,

@@ -11,7 +11,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn acp_turn_lifecycle_runtime_builds_pair_scope() {
+    fn client_turn_lifecycle_runtime_builds_pair_scope() {
         let tool_turns = ToolTurnCoordinator::new();
         let cancellations = ActiveTurnCancelRegistry::new();
         let runtime = ClientTurnLifecycleRuntime::new(tool_turns, cancellations);

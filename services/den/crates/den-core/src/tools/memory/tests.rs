@@ -15,7 +15,7 @@
             membership_role: Some("admin".to_string()),
             conversation_id: "conv-1".to_string(),
             session_id: "session-1".to_string(),
-            client_session_id: Some("acp-1".to_string()),
+            client_session_id: Some("client-1".to_string()),
             conversation_selection: Some("conv-1".to_string()),
             runtime_target: Some("conv-1".to_string()),
             workspace_roots: vec![],

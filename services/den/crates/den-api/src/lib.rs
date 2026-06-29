@@ -2,7 +2,7 @@
 //!
 //! Owns the public API service (`create_api_app` / `service`), the v1
 //! user/profile/oauth routes (`v1`), and the OpenAPI docs (`docs`). Peer HTTP
-//! edges (e.g. the ACP edge in `den-acp`) are injected by the binary composition
+//! sibling edge routers are injected by the binary composition
 //! root as peer routers; this crate has no dependency on any sibling edge and
 //! shares the protocol-neutral `den_service::DenState` (ADR-0043).
 //!
@@ -13,5 +13,5 @@ pub mod docs;
 pub mod service;
 pub mod v1;
 
-// Public entry point: the binary calls this to build the API/ACP app.
+// Public entry point: the binary calls this to build the API app.
 pub use service::create_api_app;

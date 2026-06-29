@@ -5,10 +5,10 @@
         let registry = ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let (handle, cancel_rx) =
-            registry.register("acp-session-1", request_id, Some("conv-1".to_string()));
+            registry.register("client-session-1", request_id, Some("conv-1".to_string()));
 
         let active = registry
-            .active_for_session("acp-session-1")
+            .active_for_session("client-session-1")
             .expect("active registration");
         assert_eq!(active.request_id, request_id);
         assert_eq!(active.conversation_id.as_deref(), Some("conv-1"));
@@ -16,14 +16,14 @@
         assert!(!*cancel_rx.borrow());
 
         let cancelled = registry
-            .cancel_session("acp-session-1")
+            .cancel_session("client-session-1")
             .expect("cancelled registration");
         assert_eq!(cancelled.request_id, request_id);
         assert!(cancelled.run_ids.is_empty());
         assert!(*cancel_rx.borrow());
 
         drop(handle);
-        assert!(registry.active_for_session("acp-session-1").is_none());
+        assert!(registry.active_for_session("client-session-1").is_none());
     }
 
     #[test]
@@ -31,17 +31,17 @@
         let registry = ActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
         let wrong_request_id = Uuid::new_v4();
-        let (_handle, _rx) = registry.register("acp-session-1", request_id, None);
+        let (_handle, _rx) = registry.register("client-session-1", request_id, None);
 
-        assert!(!registry.record_run_id("acp-session-1", request_id, "   "));
-        assert!(!registry.record_run_id("acp-session-1", wrong_request_id, "run-wrong"));
+        assert!(!registry.record_run_id("client-session-1", request_id, "   "));
+        assert!(!registry.record_run_id("client-session-1", wrong_request_id, "run-wrong"));
         assert!(!registry.record_run_id("missing-session", request_id, "run-missing"));
-        assert!(registry.record_run_id("acp-session-1", request_id, " run-1 "));
-        assert!(!registry.record_run_id("acp-session-1", request_id, "run-1"));
-        assert!(registry.record_run_id("acp-session-1", request_id, "run-2"));
+        assert!(registry.record_run_id("client-session-1", request_id, " run-1 "));
+        assert!(!registry.record_run_id("client-session-1", request_id, "run-1"));
+        assert!(registry.record_run_id("client-session-1", request_id, "run-2"));
 
         let active = registry
-            .active_for_session("acp-session-1")
+            .active_for_session("client-session-1")
             .expect("active registration");
         assert_eq!(
             active.run_ids,
@@ -49,7 +49,7 @@
         );
 
         let cancelled = registry
-            .cancel_session("acp-session-1")
+            .cancel_session("client-session-1")
             .expect("cancelled registration");
         assert_eq!(
             cancelled.run_ids,
@@ -62,13 +62,13 @@
         let registry = ActiveTurnCancelRegistry::new();
         let old_request_id = Uuid::new_v4();
         let new_request_id = Uuid::new_v4();
-        let (old_handle, _old_rx) = registry.register("acp-session-1", old_request_id, None);
-        let (_new_handle, _new_rx) = registry.register("acp-session-1", new_request_id, None);
+        let (old_handle, _old_rx) = registry.register("client-session-1", old_request_id, None);
+        let (_new_handle, _new_rx) = registry.register("client-session-1", new_request_id, None);
 
         drop(old_handle);
         assert_eq!(
             registry
-                .active_for_session("acp-session-1")
+                .active_for_session("client-session-1")
                 .expect("newer turn survives")
                 .request_id,
             new_request_id
@@ -79,7 +79,7 @@
     fn active_turn_runtime_snapshot_reports_idle_without_active_turn() {
         let registry = ActiveTurnCancelRegistry::new();
         let tool_turns = ToolTurnCoordinator::new();
-        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+        let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
 
         assert_eq!(snapshot["state"], "idle");
         assert_eq!(snapshot["active_turn"]["present"], false);
@@ -94,9 +94,9 @@
         let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
         let (_handle, _rx) =
-            registry.register("acp-session", request_id, Some("conv-test".to_string()));
-        assert!(registry.record_run_id("acp-session", request_id, "run-snapshot"));
-        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+            registry.register("client-session", request_id, Some("conv-test".to_string()));
+        assert!(registry.record_run_id("client-session", request_id, "run-snapshot"));
+        let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
 
         assert_eq!(snapshot["state"], "running");
         assert_eq!(snapshot["active_turn"]["present"], true);
@@ -112,14 +112,14 @@
         let registry = ActiveTurnCancelRegistry::new();
         let tool_turns = ToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
-        let (_handle, _rx) = registry.register("acp-session", request_id, None);
+        let (_handle, _rx) = registry.register("client-session", request_id, None);
         let (tx, _rx) = tokio::sync::oneshot::channel();
         tool_turns
             .register(crate::tool_turns::ToolTurnRegistration {
                 user_id: 1,
                 bear_id: Uuid::new_v4(),
                 bear_slug: "test-bear".to_string(),
-                client_session_id: "acp-session".to_string(),
+                client_session_id: "client-session".to_string(),
                 request_id,
                 tool_call_id: "call-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
@@ -128,7 +128,7 @@
                 result_tx: tx,
             })
             .unwrap();
-        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+        let snapshot = registry.runtime_snapshot_for_session("client-session", &tool_turns);
 
         assert_eq!(snapshot["state"], "requires_action");
         assert_eq!(snapshot["active_turn"]["present"], true);
@@ -139,7 +139,7 @@
     }
 
     #[test]
-    fn acp_turn_text_only_completes_once() {
+    fn client_turn_text_only_completes_once() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_stream_end();
@@ -152,7 +152,7 @@
     }
 
     #[test]
-    fn acp_turn_waits_for_adapter_local_tool_before_terminal() {
+    fn client_turn_waits_for_adapter_local_tool_before_terminal() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
@@ -182,7 +182,7 @@
     }
 
     #[test]
-    fn acp_turn_den_server_tool_does_not_create_adapter_obligation() {
+    fn client_turn_den_server_tool_does_not_create_adapter_obligation() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request("call_1", "session_info", ToolExecutionRoute::DenServer);
@@ -205,7 +205,7 @@
     }
 
     #[test]
-    fn acp_turn_unsupported_tool_settles_without_hanging() {
+    fn client_turn_unsupported_tool_settles_without_hanging() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request("call_1", "unknown_tool", ToolExecutionRoute::Unsupported);
@@ -217,7 +217,7 @@
     }
 
     #[test]
-    fn acp_turn_timeout_settles_pending_adapter_tool() {
+    fn client_turn_timeout_settles_pending_adapter_tool() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
@@ -241,7 +241,7 @@
     }
 
     #[test]
-    fn acp_turn_cancel_settles_pending_adapter_tool() {
+    fn client_turn_cancel_settles_pending_adapter_tool() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
@@ -264,7 +264,7 @@
     }
 
     #[test]
-    fn acp_turn_late_result_after_terminal_is_ignored() {
+    fn client_turn_late_result_after_terminal_is_ignored() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_stream_end();
@@ -279,7 +279,7 @@
     }
 
     #[test]
-    fn acp_turn_orphaned_requires_approval_triggers_recovery_path() {
+    fn client_turn_orphaned_requires_approval_triggers_recovery_path() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_requires_approval_stop();
@@ -296,7 +296,7 @@
     }
 
     #[test]
-    fn acp_turn_status_snapshot_reports_phase_and_obligations() {
+    fn client_turn_status_snapshot_reports_phase_and_obligations() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         turn.on_tool_request(
@@ -336,7 +336,7 @@
     }
 
     #[test]
-    fn acp_turn_heartbeat_status_rotates_while_streaming() {
+    fn client_turn_heartbeat_status_rotates_while_streaming() {
         let mut turn = TurnController::new();
         turn.on_stream_started();
         let first = turn.heartbeat_status_update();
@@ -346,7 +346,7 @@
     }
 
     #[test]
-    fn acp_turn_status_updates_are_deduplicated() {
+    fn client_turn_status_updates_are_deduplicated() {
         let mut turn = TurnController::new();
         assert_eq!(turn.take_status_update(), None);
 

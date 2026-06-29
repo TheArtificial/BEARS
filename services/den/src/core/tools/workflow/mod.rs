@@ -590,7 +590,7 @@ pub(crate) async fn execute_job(
     {
         if !mode_label.eq_ignore_ascii_case("write") {
             return Err(DenError::Authorization(format!(
-                "Docket execution is active, but ACP mode is {mode_label}; switch the session to Write mode before proceeding"
+                "Docket execution is active, but client mode is {mode_label}; switch the session to Write mode before proceeding"
             ))
             .into());
         }

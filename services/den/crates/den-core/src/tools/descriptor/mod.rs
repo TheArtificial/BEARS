@@ -255,7 +255,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_BEAR_ENVIRONMENT,
             "Bear environment",
-            "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, ACP-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.",
+            "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, client-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.",
             "session",
             &["situation.read"],
             PAIR_PROFILES,
@@ -588,7 +588,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under a job or ACP session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Status/results remain run-scoped and are not stored on the task definition.",
+            "Create a durable Docket task under a job or client session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Status/results remain run-scoped and are not stored on the task definition.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -633,7 +633,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_ENTER,
             "Enter planning mode",
-            "Enter ACP pair workplan mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.",
+            "Enter client pair workplan mode and reflect that mode in the client session UI. Use this when the user asks to enter planning mode.",
             "bear.workplan",
             &["plan_mode.enter"],
             PAIR_PROFILES,
@@ -642,7 +642,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_STATUS,
             "Get plan mode status",
-            "Return the current ACP pair workplan gate for this session, if any.",
+            "Return the current client pair workplan gate for this session, if any.",
             "bear.workplan",
             &["plan_mode.read"],
             PAIR_PROFILES,
@@ -669,7 +669,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_CANCEL,
             "Cancel plan mode",
-            "Cancel the current ACP pair workplan gate without approving implementation.",
+            "Cancel the current client pair workplan gate without approving implementation.",
             "bear.workplan",
             &["plan_mode.cancel"],
             PAIR_PROFILES,
@@ -763,7 +763,7 @@ pub fn render_profile_tool_surface_blurb(role: BearProfile) -> String {
     lines.join("\n")
 }
 
-/// Den tools on the ACP pair surface (adapter environment + native pair LLM turns).
+/// Den tools on the client pair surface (adapter environment + native pair LLM turns).
 /// Keeps session/memory/plan tools without session-admin or plan-mode control noise.
 pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
     &[
@@ -1325,7 +1325,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             complete_verb: "Entered planning mode",
             target_arg_keys: &[],
             sensitive_arg_keys: &["reason"],
-            approval_summary: "Enter ACP planning mode.",
+            approval_summary: "Enter client planning mode.",
         },
         DEN_PLAN_MODE_STATUS => ToolDisplayDescriptor {
             label,

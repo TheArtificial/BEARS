@@ -86,8 +86,8 @@ async fn memory_request_review_projects_typed_conversation_records(
         username: Some("tester".to_string()),
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-memory-review-tool-test".to_string(),
-        session_id: "acp-memory-review-tool-session".to_string(),
-        acp_session_id: Some("acp-memory-review-tool-session".to_string()),
+        session_id: "client-memory-review-tool-session".to_string(),
+        client_session_id: Some("client-memory-review-tool-session".to_string()),
         conversation_selection: Some("conv-memory-review-tool-test".to_string()),
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -126,7 +126,7 @@ async fn memory_request_review_projects_typed_conversation_records(
         "conv-memory-review-tool-test".to_string(),
         None,
         None,
-        "acp-memory-review-tool-session".to_string(),
+        "client-memory-review-tool-session".to_string(),
         false,
     );
     den_service::conversation::events::persist_projection(
@@ -134,7 +134,7 @@ async fn memory_request_review_projects_typed_conversation_records(
         &den_service::conversation::events::Projection {
             provenance: den_service::conversation::events::ProjectionProvenance {
                 source: den_service::conversation::events::ProjectionSource::DenTools,
-                scope_id: "acp-memory-review-tool-session".to_string(),
+                scope_id: "client-memory-review-tool-session".to_string(),
             },
             event: den_service::conversation::events::ProjectionEvent::MemoryReviewRequested(
                 den_service::conversation::events::MemoryReviewRequestedPayload {

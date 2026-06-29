@@ -86,7 +86,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: json!({
                 "conversation_id": "conv-memory-apply-tool-test",
-                "session_id": "acp-memory-apply-tool-session"
+                "session_id": "client-memory-apply-tool-session"
             }),
             suggested_action: "promote_to_core",
             target_ref: None,
@@ -112,8 +112,8 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         username: Some("tester".to_string()),
         membership_role: Some("admin".to_string()),
         conversation_id: "conv-memory-apply-tool-test".to_string(),
-        session_id: "acp-memory-apply-tool-session".to_string(),
-        acp_session_id: Some("acp-memory-apply-tool-session".to_string()),
+        session_id: "client-memory-apply-tool-session".to_string(),
+        client_session_id: Some("client-memory-apply-tool-session".to_string()),
         conversation_selection: Some("conv-memory-apply-tool-test".to_string()),
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -151,7 +151,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         "conv-memory-apply-tool-test".to_string(),
         None,
         None,
-        "acp-memory-apply-tool-session".to_string(),
+        "client-memory-apply-tool-session".to_string(),
         false,
     );
     den_service::conversation::events::persist_projection(
@@ -159,7 +159,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         &den_service::conversation::events::memory_proposal_resolved_projection(
             den_service::conversation::events::ProjectionProvenance {
                 source: den_service::conversation::events::ProjectionSource::DenTools,
-                scope_id: "acp-memory-apply-tool-session".to_string(),
+                scope_id: "client-memory-apply-tool-session".to_string(),
             },
             proposal.id,
             "pair".to_string(),

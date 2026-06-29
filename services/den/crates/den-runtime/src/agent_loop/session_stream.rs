@@ -40,7 +40,7 @@ use super::transcript::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
-    /// ACP and similar clients execute tools and continue via `/tool-results`.
+    /// armature and similar clients execute tools and continue via `/tool-results`.
     #[default]
     DeferToClient,
     /// Browser web chat executes Den server tools in-process and continues the loop.
@@ -274,7 +274,7 @@ impl SessionTrackingStream {
             context_budget: None,
             request_id: self.request_id.clone(),
             channel: DenToolChannelContext {
-                family: Some("acp".to_string()),
+                family: Some("armature".to_string()),
                 client: Some("bearwire".to_string()),
                 protocol: Some("bearwire".to_string()),
             },
@@ -841,7 +841,7 @@ mod tests {
             bear_slug: "test-bear".to_string(),
             user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
-            client_session_id: "acp-test".to_string(),
+            client_session_id: "client-test".to_string(),
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
@@ -897,7 +897,7 @@ mod tests {
     #[tokio::test]
     async fn server_tool_continuation_cleanup_removes_recent_tool_chain() {
         let bear_id = uuid::Uuid::new_v4();
-        let mut session = test_session("den-conv-test:acp-test", bear_id);
+        let mut session = test_session("den-conv-test:client-test", bear_id);
         session.messages.push(ChatMessage {
             role: "user".to_string(),
             content: Some("continue".to_string()),
@@ -931,7 +931,7 @@ mod tests {
             "test-bear".to_string(),
             Some(7),
             "den-conv-test".to_string(),
-            "acp-test".to_string(),
+            "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
             MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -949,7 +949,7 @@ mod tests {
     #[tokio::test]
     async fn den_tools_route_server_side_but_client_tools_do_not() {
         let bear_id = uuid::Uuid::new_v4();
-        let session = test_session("den-conv-test:acp-test", bear_id);
+        let session = test_session("den-conv-test:client-test", bear_id);
         let store = AgentLoopSessionStore::new();
         store.insert(session.clone());
         let stream = SessionTrackingStream::new(
@@ -962,7 +962,7 @@ mod tests {
             "test-bear".to_string(),
             Some(7),
             "den-conv-test".to_string(),
-            "acp-test".to_string(),
+            "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
             MemoryStoreManager::new(&den_core::config::Config::test_stub()),
@@ -982,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn approval_required_tool_call_wakes_after_installing_pending_future() {
         let bear_id = uuid::Uuid::new_v4();
-        let session = test_session("den-conv-test:acp-test", bear_id);
+        let session = test_session("den-conv-test:client-test", bear_id);
         let store = AgentLoopSessionStore::new();
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
@@ -1008,7 +1008,7 @@ mod tests {
             "test-bear".to_string(),
             Some(7),
             "den-conv-test".to_string(),
-            "acp-test".to_string(),
+            "client-test".to_string(),
             Some("request-test".to_string()),
             Arc::new(den_core::config::Config::test_stub()),
             MemoryStoreManager::new(&den_core::config::Config::test_stub()),

@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn acp_mutating_tools_do_not_support_unilateral_execution() {
+    fn armature_mutating_tools_do_not_support_unilateral_execution() {
         assert!(!provider_tool_supports_unilateral_execution("fs_edit_file"));
         assert!(provider_tool_requires_approval("fs_edit_file"));
     }

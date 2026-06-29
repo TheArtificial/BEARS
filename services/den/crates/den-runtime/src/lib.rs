@@ -31,7 +31,7 @@ pub mod llm;
 pub mod agent_assist;
 
 /// Pure conversation-id classification + normalization helpers (shared by the runtime
-/// conversation layer and the ACP edge).
+/// conversation layer and the adapter edge).
 pub mod conversation_ids;
 
 /// Persisted BearWire event log for the Den ↔ armature wire.

@@ -44,7 +44,7 @@ use den_core::DenError;
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
 
 /// Returns whether this turn recovered from context overflow via emergency compaction.
-/// Clears the session flag after reading (for ACP terminal turn_result mapping).
+/// Clears the session flag after reading (for client terminal turn_result mapping).
 pub fn take_session_overflow_compaction_recovered(
     conversation_id: &str,
     client_session_id: &str,
@@ -53,7 +53,7 @@ pub fn take_session_overflow_compaction_recovered(
     SESSION_STORE.take_overflow_compaction_recovered(&key)
 }
 
-pub fn native_acp_session_exists(conversation_id: &str, client_session_id: &str) -> bool {
+pub fn native_client_session_exists(conversation_id: &str, client_session_id: &str) -> bool {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.get(&key).is_some()
 }
@@ -482,7 +482,7 @@ pub async fn start_native_web_chat_turn_event_stream(
     )))
 }
 
-pub async fn start_native_acp_turn_event_stream(
+pub async fn start_native_client_turn_event_stream(
     request: TurnStartRequest<'_>,
 ) -> Result<RuntimeEventStream, DenError> {
     start_native_profile_turn_event_stream(request, BearProfile::Pair).await
@@ -588,7 +588,7 @@ pub async fn continue_native_profile_turn_event_stream(
     request: TurnContinueRequest<'_>,
     role: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {
-    continue_native_acp_turn_event_stream(request, role).await
+    continue_native_client_turn_event_stream(request, role).await
 }
 
 fn find_pending_tool_call(session: &AgentLoopSession, tool_call_id: &str) -> Option<ChatToolCall> {
@@ -638,7 +638,7 @@ async fn record_web_fetch_url_approval(
     sqlx::query(
         r#"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
-        VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
+        VALUES ($1, 'url', $2, $3, 'armature', now() + interval '1 hour')
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
@@ -694,7 +694,7 @@ async fn execute_approved_den_tool_for_session(
         context_budget: None,
         request_id: Some(request.request_id.to_string()),
         channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
+            family: Some("armature".to_string()),
             client: Some("bearwire".to_string()),
             protocol: Some("bearwire".to_string()),
         },
@@ -722,7 +722,7 @@ async fn execute_approved_den_tool_for_session(
     })
 }
 
-pub async fn continue_native_acp_turn_event_stream(
+pub async fn continue_native_client_turn_event_stream(
     request: TurnContinueRequest<'_>,
     profile: BearProfile,
 ) -> Result<(RuntimeStreamContinuation, RuntimeEventStream), DenError> {

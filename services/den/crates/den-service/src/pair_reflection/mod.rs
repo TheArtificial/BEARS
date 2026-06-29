@@ -83,7 +83,7 @@ pub async fn create_run(
 fn reflection_provenance(bear_id: Uuid, client_session_id: &str) -> ProjectionProvenance {
     ProjectionProvenance {
         source: ProjectionSource::PairReflection,
-        scope_id: format!("bear:{bear_id}:acp:{client_session_id}"),
+        scope_id: format!("bear:{bear_id}:client:{client_session_id}"),
     }
 }
 

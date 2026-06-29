@@ -1,12 +1,12 @@
 //! Golden adapter-SSE traces (ADR-0043 step-0 safety net).
 //!
 //! These lock the *wire output* of the runtime → BearWire → adapter-SSE
-//! projection so the ADR-0043 rename/relocation of `acp_*` symbols cannot
+//! projection so the ADR-0043 rename/relocation of `client_* ` symbols cannot
 //! silently change client-visible behavior. They are written entirely against
 //! protocol-neutral entry points — `openai_byte_stream_to_event_stream`,
 //! `runtime_stream_event_to_bearwire_sse`, and `RuntimeSemanticEvent` — and
 //! assert on the serialized SSE payloads, so they remain valid as the
-//! `GatewayEvent` overlay moves into the ACP adapter.
+//! `GatewayEvent` overlay moves into the adapter.
 
 use bytes::Bytes;
 use futures::StreamExt;

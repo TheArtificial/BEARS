@@ -35,7 +35,7 @@ async fn duplicate_source_event_id_returns_existing_sequence(
         None,
     )
     .await?;
-    let source_event_id = "acp:assistant-output:req-123";
+    let source_event_id = "client:assistant-output:req-123";
     let content_json = serde_json::json!({
         "event": "assistant_output",
         "request_id": "req-123"

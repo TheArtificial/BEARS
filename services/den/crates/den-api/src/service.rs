@@ -30,7 +30,7 @@ use den_oauth::oauth::{endpoints::OAuthState, router::create_oauth_router};
 use std::sync::Arc;
 
 // `DenState` lives in `den-service` (below every HTTP edge) per ADR-0043, so the
-// JSON/REST edge no longer depends on the ACP edge for shared state. Re-exported
+// JSON/REST edge no longer depends on sibling edges for shared state. Re-exported
 // so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
 pub use den_service::DenState;
 
@@ -79,7 +79,7 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// - Integrates with existing permission system
 /// Assemble the JSON/REST + OAuth HTTP app.
 ///
-/// Peer edge surfaces (e.g. the ACP edge in `den-acp`) are *injected* by the
+/// Peer edge surfaces are *injected* by the
 /// binary composition root as `(mount_path, router)` pairs rather than mounted
 /// here, so this crate has no compile-time dependency on any sibling edge
 /// (ADR-0043: edges are peers; the binary wires them together). Injected routers
@@ -129,7 +129,7 @@ pub async fn create_api_app(
         // API documentation (no authentication required)
         .merge(crate::docs::router());
 
-    // Mount peer edge routers injected by the composition root (e.g. den-acp).
+    // Mount peer edge routers injected by the composition root.
     for (mount_path, router) in peer_routers {
         main_router = main_router.nest(mount_path, router);
     }

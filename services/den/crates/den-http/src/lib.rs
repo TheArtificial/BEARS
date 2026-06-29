@@ -1,4 +1,4 @@
-//! Shared HTTP/identity foundation for the den edge crates (den-web / den-api / den-acp).
+//! Shared HTTP/identity foundation for the Den edge crates.
 //!
 //! See the crate-level rationale in `Cargo.toml`. Contents:
 //! - [`errors`] — `CustomError`, the web-boundary adapter over `den_core::DenError`.

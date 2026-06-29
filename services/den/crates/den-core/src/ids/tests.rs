@@ -28,9 +28,9 @@
 
     #[test]
     fn string_ids_are_transparent() {
-        let s = SessionId::new("acp-123");
-        assert_eq!(s.as_str(), "acp-123");
-        assert_eq!(serde_json::to_string(&s).unwrap(), "\"acp-123\"");
+        let s = SessionId::new("client-123");
+        assert_eq!(s.as_str(), "client-123");
+        assert_eq!(serde_json::to_string(&s).unwrap(), "\"client-123\"");
 
         let c = ConversationId::from("default");
         assert_eq!(c.to_string(), "default");

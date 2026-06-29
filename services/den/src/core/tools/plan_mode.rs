@@ -1,4 +1,4 @@
-//! `den`-side wiring for the ACP plan-mode tools.
+//! `den`-side wiring for the client plan-mode tools.
 //!
 //! Argument parsing/validation and the static response envelopes now live in
 //! `den_core::tools::plan_mode`; this module provides the concrete [`PlanModeOps`]

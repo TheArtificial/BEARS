@@ -15,7 +15,7 @@ use crate::tools::{arguments::SetConversationTitleArguments, context::DenToolInv
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
 #[allow(async_fn_in_trait)]
 pub trait ConversationTitleOps: Send + Sync {
-    /// Set the title on the Bear conversation; returns synced ACP-session count.
+    /// Set the title on the Bear conversation; returns synced client-session count.
     async fn set_title(
         &self,
         bear_id: Uuid,

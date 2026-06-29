@@ -10,7 +10,7 @@ use den_protocol::RoleRuntimeBinding;
 use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
-    native_runtime::start_native_acp_turn_event_stream,
+    native_runtime::start_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     turn_runner::TurnStartRequest,
 };
@@ -915,7 +915,7 @@ pub(crate) async fn run_start_result(
         )
         .await;
         let native_start = Instant::now();
-        let stream_result = start_native_acp_turn_event_stream(TurnStartRequest {
+        let stream_result = start_native_client_turn_event_stream(TurnStartRequest {
             sqlx_pool: &pool,
             config: config.as_ref(),
             memory_stores: &memory_stores,

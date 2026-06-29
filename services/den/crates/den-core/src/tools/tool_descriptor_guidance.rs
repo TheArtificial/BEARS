@@ -1,7 +1,7 @@
 //! Shared guidance snippets for model-facing tool descriptors.
 //!
 //! The goal is to keep scope, side-effect, and orientation language consistent across Den tools,
-//! ACP-local tools, future pair channels, and agentic skills without moving runtime context into
+//! armature-local tools, future pair channels, and agentic skills without moving runtime context into
 //! persisted user messages.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

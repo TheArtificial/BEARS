@@ -90,7 +90,7 @@ async fn prompt_memory_tools_round_trip_through_store() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("sess-test".to_string()),
+        client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -100,9 +100,9 @@ async fn prompt_memory_tools_round_trip_through_store() {
         context_budget: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
+            family: Some("armature".to_string()),
             client: Some("zed".to_string()),
-            protocol: Some("acp".to_string()),
+            protocol: Some("armature".to_string()),
         },
     };
     let upsert = prompt_memory_upsert(
@@ -321,7 +321,7 @@ async fn prompt_memory_upsert_archives_superseded_block() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("sess-test".to_string()),
+        client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -331,9 +331,9 @@ async fn prompt_memory_upsert_archives_superseded_block() {
         context_budget: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
+            family: Some("armature".to_string()),
             client: Some("zed".to_string()),
-            protocol: Some("acp".to_string()),
+            protocol: Some("armature".to_string()),
         },
     };
     let original_block_id = format!("pm-original-{}", Uuid::new_v4());
@@ -410,7 +410,7 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("sess-test".to_string()),
+        client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -420,9 +420,9 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
         context_budget: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
+            family: Some("armature".to_string()),
             client: Some("zed".to_string()),
-            protocol: Some("acp".to_string()),
+            protocol: Some("armature".to_string()),
         },
     };
     prompt_memory_upsert(
@@ -495,7 +495,7 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("sess-test".to_string()),
+        client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -505,9 +505,9 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
         context_budget: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
+            family: Some("armature".to_string()),
             client: Some("zed".to_string()),
-            protocol: Some("acp".to_string()),
+            protocol: Some("armature".to_string()),
         },
     };
     prompt_memory_upsert(
