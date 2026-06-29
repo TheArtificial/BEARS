@@ -644,6 +644,13 @@ pub async fn provision_bifrost_virtual_key_for_bear(
         None => false,
     };
     let key = client.create_bear_virtual_key(bear_id, bear_slug).await?;
+    let created_validation = client.validate_virtual_key_value(&key.value).await?;
+    tracing::info!(
+        %bear_id,
+        virtual_key_id = %key.id,
+        auth_mode = created_validation.auth_mode.as_str(),
+        "validated newly created Bifrost virtual key before storing it in Den"
+    );
     bears_db::set_bear_bifrost_virtual_key(
         state.sqlx_pool(),
         bear_id,

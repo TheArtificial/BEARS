@@ -1780,6 +1780,13 @@ async fn models_post(
             )
             .await?;
         } else {
+            let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
+            let validation = client.validate_virtual_key_value(new_value).await?;
+            tracing::info!(
+                bear_id = %bear.id,
+                auth_mode = validation.auth_mode.as_str(),
+                "validated manually supplied Bifrost virtual key before saving"
+            );
             bears_db::set_bear_bifrost_virtual_key(
                 state.sqlx_pool(),
                 bear.id,
