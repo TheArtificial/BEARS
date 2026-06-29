@@ -140,7 +140,7 @@ pub fn map_provider_stream_event_to_gateway_event(
                     message: format!(
                         "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
                     ),
-                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside model provider, or the run hit a continuation budget. Check `Posting provider ACP tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
+                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside model provider, or the run hit a continuation budget. Check `Posting provider armature tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
                     error_type: Some("pseudo_tool_call_text".to_string()),
                     request_id: None,
                     context: Some(serde_json::json!({
@@ -382,7 +382,7 @@ fn native_provider_tool_request_event_with_args(
             );
         }
         Some(format!(
-            "Unsupported ACP/Den tool: {tool_name}. Supported ACP/Den tools: {}.",
+            "Unsupported client/Den tool: {tool_name}. Supported client/Den tools: {}.",
             supported.join(", ")
         ))
     } else {
@@ -487,7 +487,7 @@ fn native_provider_tool_request_event_with_args(
         },
         approval_required: adapter_approval_required,
         approval_reason: adapter_approval_required.then(|| {
-            "BEARS requires client approval before running this local ACP tool.".to_string()
+            "BEARS requires client approval before running this local armature tool.".to_string()
         }),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
@@ -904,7 +904,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "policy": den_tool_policy_json_for_provider(&tool_name)
                     .unwrap_or_else(|| client_tool_policy_json_for_provider(&tool_name)),
                 "diagnostic": {
-                    "component": "den.acp",
+                    "component": "den.armature",
                     "phase": diag_phase::RUNTIME_TOOL_CALL_MAPPED,
                     "transport_version": 4,
                 },
@@ -930,7 +930,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "target": target,
             "options": options,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "permission_request_mapped",
                 "transport_version": 3,
             }
@@ -945,7 +945,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "title": title,
                 "updated_at": updated_at,
                 "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                     "phase": "session_info_update"
                 }
             });
@@ -990,7 +990,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 })
             }).collect::<Vec<_>>(),
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_update_mapped",
                 "transport_version": 3,
             }
@@ -999,7 +999,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "type": "plan_update",
             "entries": entries,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_update_mapped",
                 "transport_version": 3,
             }
@@ -1038,7 +1038,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "approval_status": approval_status,
             },
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_approval_fallback_mapped",
                 "transport_version": 3,
             }
@@ -1047,7 +1047,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "type": "mode_update",
             "mode": mode,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "mode_update_mapped",
                 "transport_version": 3,
             }

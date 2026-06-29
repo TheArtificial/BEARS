@@ -223,7 +223,7 @@ impl ActiveTurnCancelRegistry {
                 },
                 "last_terminal": Value::Null,
                 "last_recovery": Value::Null,
-                "source": "acp_active_turn_registry",
+                "source": "client_active_turn_registry",
             });
         };
         let pending = tool_turns
@@ -257,7 +257,7 @@ impl ActiveTurnCancelRegistry {
             },
             "last_terminal": Value::Null,
             "last_recovery": Value::Null,
-            "source": "acp_active_turn_registry",
+            "source": "client_active_turn_registry",
         })
     }
 
@@ -710,6 +710,9 @@ fn client_display_name(client: &str) -> &'static str {
 }
 
 fn humanize_tool_name(tool_name: &str) -> String {
+    if let Some(tool) = den_core::client_tools::ClientToolName::from_provider_alias(tool_name) {
+        return tool.descriptor().title.to_string();
+    }
     if let Some(rest) = tool_name.strip_prefix("mcp__") {
         let parts: Vec<&str> = rest.split("__").collect();
         if parts.len() >= 2 {
@@ -723,4 +726,3 @@ fn humanize_tool_name(tool_name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
-

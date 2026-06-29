@@ -62,7 +62,7 @@ impl PendingToolTurn {
             "status": self.status,
             "age_ms": self.registered_at.elapsed().as_millis(),
             "time_to_deadline_ms": self.deadline_at.saturating_duration_since(Instant::now()).as_millis(),
-            "component": "den.acp",
+            "component": "den.armature",
             "phase": "pending_tool_turn",
         })
     }
@@ -152,7 +152,7 @@ impl SettledToolResult {
             "content_bytes": self.content_bytes,
             "structured_content_bytes": self.structured_content_bytes,
             "age_ms": self.settled_at.elapsed().as_millis(),
-            "component": "den.acp",
+            "component": "den.armature",
             "phase": "recently_settled_result",
         })
     }
@@ -228,7 +228,7 @@ impl ActiveTurn {
             "conversation_id": self.conversation_id,
             "age_ms": self.started_at.elapsed().as_millis(),
             "time_to_deadline_ms": self.deadline_at.saturating_duration_since(Instant::now()).as_millis(),
-            "component": "den.acp",
+            "component": "den.armature",
             "phase": "active_turn",
         })
     }
@@ -295,12 +295,12 @@ impl ToolTurnCoordinator {
         let mut active_turns = self
             .active_turns
             .lock()
-            .map_err(|_| DenError::System("ACP active turn registry lock poisoned".to_string()))?;
+            .map_err(|_| DenError::System("client active turn registry lock poisoned".to_string()))?;
         let now = Instant::now();
         active_turns.retain(|_, turn| turn.deadline_at > now);
         if let Some(existing) = active_turns.get(session_id) {
             return Err(DenError::ValidationError(format!(
-                "ACP turn already active for this session: {}",
+                "client turn already active for this session: {}",
                 existing.diagnostic()
             )));
         }
@@ -351,7 +351,7 @@ impl ToolTurnCoordinator {
         let mut turns = self
             .turns
             .lock()
-            .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
+            .map_err(|_| DenError::System("armature tool turn registry lock poisoned".to_string()))?;
         let now = Instant::now();
         let client_session_id = registration.client_session_id.clone();
         let tool_call_id = registration.tool_call_id.clone();
@@ -395,14 +395,14 @@ impl ToolTurnCoordinator {
         let mut turns = self
             .turns
             .lock()
-            .map_err(|_| DenError::System("ACP tool turn registry lock poisoned".to_string()))?;
+            .map_err(|_| DenError::System("armature tool turn registry lock poisoned".to_string()))?;
         let Some(turn) = turns.get_mut(&key) else {
             tracing::warn!(
                 client_session_id = %session_id,
                 tool_call_id = %tool_call_id,
                 active_turn_count = turns.len(),
                 active_tool_keys = ?turns.keys().cloned().collect::<Vec<_>>(),
-                "ACP tool result delivery found no pending turn"
+                "armature tool result delivery found no pending turn"
             );
             drop(turns);
             if let Some(cached) = self.recently_settled(session_id, tool_call_id) {
@@ -559,7 +559,7 @@ impl ToolTurnCoordinator {
             content: Some(reason),
             structured_content: serde_json::json!({}),
             diagnostic: serde_json::json!({
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "auto_timeout_denial",
                 "tool_call_id": turn.tool_call_id,
                 "tool_name": turn.tool_name,

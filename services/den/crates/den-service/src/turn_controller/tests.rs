@@ -85,7 +85,7 @@
         assert_eq!(snapshot["active_turn"]["present"], false);
         assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
         assert_eq!(snapshot["active_turn"]["run_ids"], json!([]));
-        assert_eq!(snapshot["source"], "acp_active_turn_registry");
+        assert_eq!(snapshot["source"], "client_active_turn_registry");
     }
 
     #[test]

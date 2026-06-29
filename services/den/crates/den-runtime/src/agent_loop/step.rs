@@ -470,7 +470,7 @@ impl Stream for LazyAgentStepStream {
 /// Starts an agent step stream without blocking on the upstream LLM HTTP handshake.
 ///
 /// The prompt handler must return SSE headers before Bifrost accepts the chat/completions
-/// request; deferring the LLM call until the stream is polled avoids wedging ACP clients
+/// request; deferring the LLM call until the stream is polled avoids wedging client streams
 /// that wait on `POST /prompt` with no timeout.
 pub async fn run_agent_step_stream(
     llm: &LlmClient,

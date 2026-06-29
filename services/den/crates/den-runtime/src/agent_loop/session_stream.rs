@@ -702,7 +702,7 @@ impl Stream for SessionTrackingStream {
             )))) => {
                 self.pending_server_tool_continuation = None;
                 if !self.tool_calls.is_empty() {
-                    // Tool-call finishes must not emit TurnCompleted: ACP parks for adapter-local
+                    // Tool-call finishes must not emit TurnCompleted: client stream parks for adapter-local
                     // tool results and continues via /tool-results (same class of bug as
                     // openai_stream synthetic TurnCompleted).
                     self.persist_assistant_tool_step();
