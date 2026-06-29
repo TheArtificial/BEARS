@@ -480,12 +480,12 @@ impl EnvironmentOps for DenToolContext<'_> {
         self.environment().session_entities(context, role).await
     }
 
-    async fn fetch_acp_adapter_environment(
+    async fn fetch_adapter_environment(
         &self,
         context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError> {
         self.environment()
-            .fetch_acp_adapter_environment(context)
+            .fetch_adapter_environment(context)
             .await
     }
 }

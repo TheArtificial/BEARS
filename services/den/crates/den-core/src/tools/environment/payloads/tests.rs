@@ -16,7 +16,7 @@
             membership_role: None,
             conversation_id: "conv-test".to_string(),
             session_id: "sess-test".to_string(),
-            client_session_id: Some("acp-test".to_string()),
+            client_session_id: Some("client-test".to_string()),
             conversation_selection: Some("src/main.rs".to_string()),
             runtime_target: Some("repo:builder-bear".to_string()),
             workspace_roots: vec!["/workspace".to_string()],
@@ -186,7 +186,7 @@
             membership_role: Some("admin".to_string()),
             conversation_id: "conv-123".to_string(),
             session_id: "sess-123".to_string(),
-            client_session_id: Some("acp-123".to_string()),
+            client_session_id: Some("client-123".to_string()),
             conversation_selection: Some("conv-123".to_string()),
             runtime_target: Some("conv-123".to_string()),
             workspace_roots: vec!["/workspace".to_string()],
@@ -199,9 +199,9 @@
             context_budget: Some(json!({ "status": "unavailable" })),
             request_id: Some("req-123".to_string()),
             channel: DenToolChannelContext {
-                family: Some("acp".to_string()),
+                family: Some("bearwire".to_string()),
                 client: Some("api-direct".to_string()),
-                protocol: Some("acp".to_string()),
+                protocol: Some("bearwire".to_string()),
             },
         };
         let payload = bear_environment_payload(
@@ -213,7 +213,7 @@
             &json!({ "status": "ok" }),
             &json!({
                 "status": "ok",
-                "runtime": { "ok": true, "channel_kind": "acp_session" },
+                "runtime": { "ok": true, "channel_kind": "client_session" },
                 "adapter_environment": {
                     "browser": { "active_source": "host_bridge", "status": "ok" },
                     "services": { "den": { "status": "ok" } },
@@ -227,7 +227,7 @@
         assert_eq!(payload["session"]["id"], "sess-123");
         assert_eq!(payload["workspace"]["cwd"], "/workspace");
         assert_eq!(payload["browser"]["active_source"], "host_bridge");
-        assert_eq!(payload["environment_variants"]["acp"]["status"], "ok");
+        assert_eq!(payload["environment_variants"]["client"]["status"], "ok");
         assert_eq!(payload["environment_variants"]["adapter"]["status"], "ok");
         assert_eq!(payload["diagnostics"]["warnings"][0], "adapter warning");
         assert!(payload["tools"]["available_den_tools"].is_array());

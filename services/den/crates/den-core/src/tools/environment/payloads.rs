@@ -113,11 +113,11 @@ pub fn bear_environment_payload(
             "details": adapter_service,
         },
     });
-    let is_acp = source_client_session_id(context).is_some();
+    let has_client_session = source_client_session_id(context).is_some();
     let adapter_environment_status = adapter_runtime
         .get("status")
         .and_then(Value::as_str)
-        .unwrap_or(if is_acp {
+        .unwrap_or(if has_client_session {
             "unavailable"
         } else {
             "not_applicable"
@@ -129,8 +129,8 @@ pub fn bear_environment_payload(
     } else {
         "ok"
     };
-    let acp_variant = if is_acp {
-        let acp_runtime = adapter_runtime
+    let client_variant = if has_client_session {
+        let client_runtime = adapter_runtime
             .get("runtime")
             .cloned()
             .unwrap_or_else(|| runtime.clone());
@@ -141,13 +141,13 @@ pub fn bear_environment_payload(
                 "conversation_selection": context.conversation_selection,
                 "runtime_target": context.runtime_target,
             },
-            "runtime": acp_runtime,
+            "runtime": client_runtime,
             "permissions": context.session_policy,
         })
     } else {
         json!({ "status": "not_applicable" })
     };
-    let adapter_variant = if is_acp {
+    let adapter_variant = if has_client_session {
         if adapter_environment.is_object() {
             json!({
                 "status": adapter_environment_status,
@@ -156,7 +156,7 @@ pub fn bear_environment_payload(
         } else {
             json!({
                 "status": adapter_environment_status,
-                "note": "Adapter enrichment could not be fetched for this ACP session.",
+                "note": "Adapter enrichment is not available for this client session.",
             })
         }
     } else {
@@ -164,9 +164,9 @@ pub fn bear_environment_payload(
     };
     let diagnostics_warnings = {
         let mut warnings = Vec::<Value>::new();
-        if is_acp && !adapter_environment.is_object() {
+        if has_client_session && !adapter_environment.is_object() {
             warnings.push(json!(
-                "Adapter enrichment could not be fetched for this ACP session."
+                "Adapter enrichment is not available for this client session."
             ));
         }
         if let Some(values) = adapter_environment
@@ -219,7 +219,7 @@ pub fn bear_environment_payload(
         "browser": browser,
         "services": services,
         "environment_variants": {
-            "acp": acp_variant,
+            "client": client_variant,
             "adapter": adapter_variant,
         },
         "diagnostics": {

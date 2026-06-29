@@ -2,7 +2,7 @@
 //!
 //! The payload shaping is pure (see `payloads.rs`); [`EnvironmentOps`] exposes the
 //! few runtime-coupled inputs those builders need — the memory-status snapshot,
-//! the optional ACP adapter-runtime fetch, and two config flags. The `den`
+//! optional adapter environment data, and two config flags. The `den`
 //! implementation owns the DB/HTTP access; membership/user lookups come from
 //! [`crate::tools::identity::BearDirectory`].
 
@@ -32,8 +32,8 @@ pub trait EnvironmentOps: Send + Sync {
         role: BearProfile,
     ) -> Result<Value, DenError>;
 
-    /// Optional ACP adapter-runtime enrichment for the current session.
-    async fn fetch_acp_adapter_environment(
+    /// Optional adapter-provided environment enrichment for the current session.
+    async fn fetch_adapter_environment(
         &self,
         context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError>;

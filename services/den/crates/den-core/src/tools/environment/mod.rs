@@ -80,7 +80,7 @@ pub async fn bear_environment(
         .session_entities(context, role)
         .await
         .unwrap_or_else(|err| json!({ "status": "degraded", "error": err.to_string() }));
-    let adapter_runtime = match env.fetch_acp_adapter_environment(context).await {
+    let adapter_runtime = match env.fetch_adapter_environment(context).await {
         Ok(Some(value)) => value,
         Ok(None) => json!({
             "status": if source_client_session_id(context).is_some() {
