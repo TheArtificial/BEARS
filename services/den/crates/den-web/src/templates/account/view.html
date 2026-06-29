@@ -6,7 +6,7 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
         Account created {{ user.created | dateformat(format="medium") }}
 
         <h3>Code tokens</h3>
-        {% if acp_tokens and acp_tokens | length > 0 %}
+        {% if armature_tokens and armature_tokens | length > 0 %}
         <table>
             <thead>
                 <tr>
@@ -21,7 +21,7 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
                 </tr>
             </thead>
             <tbody>
-                {% for token in acp_tokens %}
+                {% for token in armature_tokens %}
                 <tr>
                     <td>{{ token.name | e }}</td>
                     <td>{{ token.token_type | e }}</td>
@@ -55,7 +55,7 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
                         {% if not token.revoked_at %}
                         <form
                             method="post"
-                            action="/account/acp-tokens/{{ token.id }}/revoke"
+                            action="/account/armature-tokens/{{ token.id }}/revoke"
                         >
                             <button type="submit">Revoke</button>
                         </form>

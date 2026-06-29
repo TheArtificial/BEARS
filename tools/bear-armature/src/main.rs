@@ -9726,7 +9726,7 @@ mod tests {
         Config {
             api_url,
             bear: "test-bear".to_string(),
-            token: "bears_armature_test_token".to_string(),
+            token: "bear_arm_test_token".to_string(),
             client: "zed".to_string(),
         }
     }

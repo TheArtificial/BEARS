@@ -24,7 +24,7 @@ use den_service::bears::{
 pub const SMOKE_USERNAME: &str = "alice";
 pub const SMOKE_PASSWORD: &str = "Never deploy seed passwords.";
 pub const SMOKE_BEAR_SLUG: &str = "test-bear";
-pub const SMOKE_ARMATURE_TOKEN: &str = "bears_armature_smoke_known_token_for_dev_and_ci_only_000000000000";
+pub const SMOKE_ARMATURE_TOKEN: &str = "bear_arm_smoke_known_token_for_dev_and_ci_only_000000000000";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedProfile {

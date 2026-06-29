@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-const TOKEN_PREFIX: &str = "bears_armature_";
+const TOKEN_PREFIX: &str = "bear_arm_";
 const ARMATURE_CHAT_SCOPE: &str = "armature:chat";
 const ARMATURE_TOOLS_SCOPE: &str = "armature:tools";
 
@@ -318,7 +318,7 @@ pub async fn diagnose_for_bear_slug(
 
     let mut failure_reasons = Vec::new();
     if !token_prefix_ok {
-        failure_reasons.push("token does not start with bears_armature_".to_string());
+        failure_reasons.push("token does not start with bear_arm_".to_string());
     }
     if !token_found {
         failure_reasons.push("token hash was not found in this Den database".to_string());
