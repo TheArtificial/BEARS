@@ -9649,7 +9649,87 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{body::{to_bytes, Body}, extract::State, http::Request, response::IntoResponse, routing::any, Json, Router};
+    use std::net::SocketAddr;
+    use std::sync::Mutex as StdMutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[derive(Clone)]
+    struct BearWireTestServerState {
+        fail_bearwire: bool,
+        paths: Arc<TokioMutex<Vec<String>>>,
+    }
+
+    async fn bearwire_test_handler(
+        State(state): State<BearWireTestServerState>,
+        request: Request<Body>,
+    ) -> impl IntoResponse {
+        let path = request.uri().path().to_string();
+        state.paths.lock().await.push(path.clone());
+        if path != "/bearwire/v1/rpc" {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(json!({ "error": "not found" })),
+            );
+        }
+        if state.fail_bearwire {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "bearwire unavailable" })),
+            );
+        }
+
+        let body = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        let id = value.get("id").cloned().unwrap_or(Value::Null);
+        let result = match value.get("method").and_then(Value::as_str) {
+            Some("initialize") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "protocol": "bearwire", "version": 1 }
+            }),
+            Some("session.state") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "kind": "session_state", "sessions": [] }
+            }),
+            other => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": format!("unknown method: {other:?}") }
+            }),
+        };
+        (axum::http::StatusCode::OK, Json(result))
+    }
+
+    async fn start_bearwire_test_server(fail_bearwire: bool) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        let paths = Arc::new(TokioMutex::new(Vec::new()));
+        let state = BearWireTestServerState {
+            fail_bearwire,
+            paths: paths.clone(),
+        };
+        let app = Router::new()
+            .route("/bearwire/v1/rpc", any(bearwire_test_handler))
+            .fallback(any(bearwire_test_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), paths)
+    }
+
+    fn test_config(api_url: String) -> Config {
+        Config {
+            api_url,
+            bear: "test-bear".to_string(),
+            token: "bears_armature_test_token".to_string(),
+            client: "zed".to_string(),
+        }
+    }
 
     fn unique_test_dir(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -9687,6 +9767,60 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
+    }
+
+    #[tokio::test]
+    async fn validate_den_code_token_uses_bearwire() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(false).await;
+        let http = reqwest::Client::new();
+
+        validate_den_code_token(&http, &test_config(api_url))
+            .await
+            .expect("bearwire token validation");
+
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc", "/bearwire/v1/rpc"]);
+    }
+
+    #[tokio::test]
+    async fn validate_den_code_token_does_not_fallback_to_acp_auth_check() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(true).await;
+        let http = reqwest::Client::new();
+
+        let err = validate_den_code_token(&http, &test_config(api_url))
+            .await
+            .expect_err("bearwire validation should fail");
+        assert!(format!("{err:#}").contains("BearWire RPC initialize HTTP 502"));
+
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
+        assert!(!paths.iter().any(|path| path.contains("/acp/")));
+    }
+
+    #[test]
+    fn auth_check_error_hint_mentions_armature_scope() {
+        let err = anyhow!("token failed");
+        let value = auth_check_json_rpc_error(
+            &err,
+            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
+        );
+
+        let hint = value
+            .pointer("/data/hint")
+            .and_then(Value::as_str)
+            .expect("hint");
+        assert!(hint.contains("armature:chat"));
+        assert!(!hint.contains("acp:chat"));
     }
 
     #[test]
