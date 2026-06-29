@@ -19,13 +19,6 @@ Axum routes for the API server (`RUN_API=true`).
 - `GET /v1.0/me` — bearer-token authenticated profile endpoint.
 - `GET|POST /v1.0/oauth/*` — token management endpoints.
 
-## ACP gateway
+## BearWire
 
-- `GET /acp/bears/{slug}/sessions` — bearer-token authenticated ACP session binding list. Requires `RUN_API=true` and a bearer token with `acp:chat` scope.
-- `GET /acp/bears/{slug}/sessions/{session_id}` — bearer-token authenticated ACP session binding detail. Response uses `runtime_session_id` (not historical `codepool_session_id`).
-- `POST /acp/bears/{slug}/sessions/{session_id}/prompt` — API-only bearer-token authenticated gateway for ACP adapter clients. Requires `RUN_API=true`, a provisioned `bear_profile_bindings(profile='pair')`, and a bearer token with `acp:chat` scope.
-- `POST /acp/bears/{slug}/sessions/{session_id}/cancel` — cancels active native runtime work when possible; otherwise returns a diagnostic response.
-- `POST /acp/bears/{slug}/sessions/{session_id}/close` — marks the ACP session binding closed and archives the resolved Den conversation where possible.
-- `GET /acp/bears/{slug}/conversations` — lists conversations for the Bear's pair role agent.
-- `GET /acp/bears/{slug}/conversations/{conversation_id}/history` — loads conversation history for the Bear's pair role agent.
-- `GET /acp/bears/{slug}/auth-check` — validates bearer token and membership for the Bear.
+BearWire is mounted by the binary composition root under `/bearwire`; it is not part of `den-api` itself.

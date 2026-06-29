@@ -22,7 +22,6 @@ Key crates and areas:
 - `crates/den-bearwire/` — BearWire RPC/SSE edge for armatures.
 - `crates/den-runtime/` — native runtime, agent loop, conversation persistence, BearWire event projection, memory/runtime helpers.
 - `crates/den-core/` — descriptor-owned Den tools, tool constants, dispatch, policy/context types.
-- `crates/den-acp/` — legacy ACP HTTP/SSE compatibility and historical ACP helpers. Do not add new first-class ACP behavior here unless maintaining a legacy boundary.
 - `src/core/tools/` — concrete Den tool context wiring for builtin Den-hosted tools.
 - `migrations/` — Postgres schema.
 - `src/lib.rs` / `src/main.rs` — binary composition and service startup.
@@ -32,7 +31,6 @@ For repository-wide project rules, Bear concepts, worktree safety, and stack com
 ## BearWire / ACP runtime rules
 
 - BearWire is the canonical Den ↔ armature wire. Prefer `den-bearwire` for new armature-facing behavior.
-- `den-acp` is legacy compatibility unless explicitly working on migration/shims.
 - Do not reintroduce adapter-SSE or legacy `/acp/**` hot-path behavior when BearWire can handle the flow.
 - ACP/Zed is an armature, not a generic channel. It owns local filesystem/git/terminal/MCP execution and permission UI.
 - Channels such as Slack, WhatsApp, web chat, and macOS app chat should be implemented as channel adapters, not as ACP armatures. See [`../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](../../docs/roadmap/DEN_CHANNELS_IMPLEMENTATION_PLAN.md).
@@ -97,7 +95,7 @@ Useful focused checks:
 cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 cargo test --manifest-path services/den/Cargo.toml -p den-runtime pair_
 cargo test --manifest-path services/den/Cargo.toml -p den-runtime den_tools_route_server_side_but_client_tools_do_not
-cargo test --manifest-path services/den/Cargo.toml -p den-acp canonical_history_page
+cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 ```
 
 **Docker build:** For release/deploy-impacting changes, do not treat the change as complete until a `docker build` of [`Dockerfile`](Dockerfile) from `services/den/` succeeds. For narrow Rust/runtime changes, run the most specific cargo tests first and explicitly state if Docker was not run. Release images use `--features production`, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
@@ -121,7 +119,7 @@ cargo test --manifest-path services/den/Cargo.toml -p den-acp canonical_history_
 - **BearWire / armatures** — `crates/den-bearwire/`, `crates/den-runtime/src/runtime/bearwire_projection/`, and `tools/bear-armature/` at the repo root.
 - **Native runtime / agent loop** — `crates/den-runtime/src/agent_loop/`, `crates/den-runtime/src/native_runtime/`.
 - **Den-hosted tools** — descriptors and dispatch in `crates/den-core/src/tools/`; concrete service wiring in `src/core/tools/`.
-- **Conversation persistence/history** — `crates/den-runtime/src/conversation/`, `crates/den-runtime/src/native_runtime/turn.rs`, ACP history compatibility in `crates/den-acp/src/acp/history.rs`.
+- **Conversation persistence/history** — `crates/den-runtime/src/conversation/`, `crates/den-runtime/src/native_runtime/turn.rs`, BearWire history/replay in `crates/den-bearwire/`.
 - **HTTP web UI** — `src/web/`, templates under `src/web/templates/`. CSS: follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
 - **HTTP API / OAuth provider** — `src/api/`.
 - **Config** — `src/config.rs`, plus env and ops notes in [`docs/deploy.md`](docs/deploy.md), [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md), and [`.env.example`](.env.example).

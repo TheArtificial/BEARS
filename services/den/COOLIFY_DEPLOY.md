@@ -73,7 +73,7 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | `SQLX_MIGRATE_IGNORE_MISSING` | Optional migration recovery switch for `DATABASE_URL`; leave **false** in normal deployments. |
 | `JWT_SECRET` | **Required for release images** (Dockerfile builds with `--features production`). Use a long random value. Also required whenever `RUN_API=true` in dev builds so OAuth access tokens can be signed (HS256). |
 | `RUN_WEB` | `true` to serve the web UI (recommended first smoke). |
-| `RUN_API` | `true` for the standalone API listener. In the root BEARS Compose stack this defaults to `true` so the ACP gateway is available. |
+| `RUN_API` | `true` for the standalone API listener. In the root BEARS Compose stack this defaults to `true` so BearWire is available. |
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
 | `PORT` | Web listen port inside the container (default **3000**). |
 | `API_PORT` | API listen port when `RUN_API=true` (default **3001**). |
@@ -83,8 +83,8 @@ Strongly recommended for production:
 
 | Variable | Notes |
 | -------- | ----- |
-| `WEB_SERVER_URL` | Public origin of the web app (**no** trailing slash), for example `https://den.example.com`. |
-| `API_SERVER_URL` | Public origin of the API when `RUN_API=true`; for BEARS ACP this can be a subdomain such as `https://api.bears.[domain]`, another hostname, or a published port such as `https://bears.[domain]:3001`. |
+| `DEN_WEB_ORIGIN` | Public origin of the web app (**no** trailing slash), for example `https://den.example.com`; compose derives `WEB_SERVER_URL` from this. |
+| `DEN_API_ORIGIN` | Public origin of the API when `RUN_API=true`; for armatures this can be a subdomain such as `https://api.bears.[domain]`, another hostname, or a published port such as `https://bears.[domain]:3001`; compose derives `API_SERVER_URL` from this. |
 | `SESSION_COOKIE_DOMAIN` | Cookie `Domain` when sessions must span subdomains; omit for host-only cookies. |
 | `DEN_GIT_SHA_OVERRIDE` | Optional runtime-only commit identifier for `/version` and `/status.json`. Recommended when your Coolify build omits `GIT_SHA` build args to preserve Docker cache reuse. If your Coolify setup exposes a commit variable at container runtime, map it here. |
 | `DEN_BUILT_AT_OVERRIDE` | Optional runtime-only timestamp for `/version` and `/status.json` (for example an RFC 3339 deploy timestamp). Use this if you want the status page to show deploy-time metadata instead of the compile-time timestamp from the crate build script. |
@@ -93,9 +93,9 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LLM_API_URL` | Internal Bifrost/OpenAI-compatible base URL. Root compose uses `http://bears-bifrost:8080/v1`. |
-| `BIFROST_BASE_URL` | Optional Bifrost governance/metadata URL when using Den-managed model selection or virtual keys. |
-| `RUN_API` | When enabled, mounts the API, ACP compatibility routes under `/acp/*`, and BearWire under `/bearwire`. BearWire is the preferred armature wire for new integrations. |
+| `BEARS_STAGE_SUFFIX` | Optional shared-network DNS suffix such as `-prod` or `-test`; compose creates aliases like `bears-bifrost-test`. |
+| `BIFROST_ORIGIN` | Canonical internal Bifrost origin. Root compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. |
+| `RUN_API` | When enabled, mounts the API and BearWire under `/bearwire`. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 
@@ -143,7 +143,7 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 ### 11. Networking with Bifrost
 
 - If Den and Bifrost are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
-- Set `LLM_API_URL` to Bifrost's OpenAI-compatible internal URL, for example `http://bears-bifrost:8080/v1`.
+- Set `BIFROST_ORIGIN` to Bifrost's internal origin, for example `http://bears-bifrost:8080`; compose derives `LLM_API_URL` as `${BIFROST_ORIGIN}/v1`.
 - Operator-facing Bifrost governance/metadata integration is configured via env keys documented in [`.env.example`](.env.example); align hostnames with your Bifrost service name inside Coolify.
 
 ---

@@ -13,7 +13,7 @@ Use the root [`docker-compose.yaml`](../../../docker-compose.yaml). It starts:
 | `bears-preflight-config` | One-shot deploy preflight: required env shape and secrets |
 | `bears-preflight-den-db` | One-shot Den Postgres connectivity check (when `bundled` profile provides Postgres) |
 | `bears-bifrost` | Model gateway on port `8080` |
-| `bears-den` | Den web UI on port `3000` and Den API/ACP gateway on port `3001` |
+| `bears-den` | Den web UI on port `3000` and Den API/BearWire on port `3001` |
 
 Optional compose profiles:
 
@@ -59,7 +59,7 @@ In the Compose resource general configuration:
 3. Under **Build**, enable **Preserve Repository During Deployment**.
 4. Save.
 
-Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts the ACP gateway used by local ACP adapters such as `bear-armature`.
+Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts BearWire for local armatures such as `bear-armature`.
 
 ## 4. Connect The Network
 
@@ -81,8 +81,8 @@ Set these on the Compose resource:
 | `JWT_SECRET` | Random secret string |
 | `OPENAI_API_KEY` | Your OpenAI API key |
 | `DATABASE_URL` | Den Postgres **Postgres URL (internal)** from Coolify |
-| `WEB_SERVER_URL` | Public Den web origin, e.g. `https://bears.[domain]` |
-| `API_SERVER_URL` | Public Den API origin, e.g. `https://api.bears.[domain]` or `https://bears.[domain]:3001` |
+| `DEN_WEB_ORIGIN` | Public Den web origin, e.g. `https://bears.[domain]`; compose derives `WEB_SERVER_URL` from this |
+| `DEN_API_ORIGIN` | Public Den API origin, e.g. `https://api.bears.[domain]` or `https://bears.[domain]:3001`; compose derives `API_SERVER_URL` from this |
 | `BEAR_SQLITE_DATA_DIR` | Leave default `/var/lib/den/bear-sqlite` unless you customize the volume mount |
 
 Optional:
@@ -91,16 +91,18 @@ Optional:
 | -------- | ----- |
 | `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
 | `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
-| `BIFROST_BASE_URL` | Internal Bifrost URL for status probes (default `http://bears-bifrost:8080`) |
-| `LLM_API_URL` | OpenAI-compatible inference URL (default `http://bears-bifrost:8080/v1`) |
+| `BEARS_STAGE_SUFFIX` | Optional shared-network DNS suffix such as `-prod` or `-test`; compose creates aliases like `bears-bifrost-test` |
+| `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults web+API on) |
 
 You usually do not need to set internal service URLs. The compose file already defaults to:
 
 | Variable | Default |
 | -------- | ------- |
-| `LLM_API_URL` | `http://bears-bifrost:8080/v1` |
-| `BIFROST_BASE_URL` | `http://bears-bifrost:8080` |
+| `BIFROST_ORIGIN` | `http://bears-bifrost${BEARS_STAGE_SUFFIX}:8080` |
+| `LLM_API_URL` | `${BIFROST_ORIGIN}/v1` |
+| `BIFROST_BASE_URL` | `${BIFROST_ORIGIN}` |
+| `BIFROST_MANAGEMENT_URL` | `${BIFROST_ORIGIN}/api` |
 | `BEAR_SQLITE_DATA_DIR` | `/var/lib/den/bear-sqlite` |
 
 ## 6. Deploy
@@ -128,14 +130,14 @@ From Coolify's terminal for a service on the same network:
 | Den API | `curl ${API_SERVER_URL}/healthcheck` |
 | Den readiness | `curl ${API_SERVER_URL}/health/ready` |
 | Stack status | Open `${WEB_SERVER_URL}/status` or `curl ${WEB_SERVER_URL}/status.json` |
-| ACP gateway auth check | `curl -i -X POST ${API_SERVER_URL}/acp/bears/test-bear/sessions/smoke-session/prompt -H 'Content-Type: application/json' -d '{"message":"hello"}'` should return `401` without a bearer token |
+| BearWire auth check | `curl -i ${API_SERVER_URL}/bearwire/v1/sessions/smoke-session/events?bear_slug=test-bear` should return `401` without a bearer token |
 
 End-to-end check: create or open a bear in Den, go to its chat page, and send a message.
 
 ## Troubleshooting
 
 - If Den cannot start, confirm `DATABASE_URL`, `JWT_SECRET`, `WEB_SERVER_URL`, `API_SERVER_URL`, and `LLM_API_URL`.
-- If chat does not stream, confirm `bears-den` can reach `http://bears-bifrost:8080/v1` and `OPENAI_API_KEY` is set for Bifrost.
+- If chat does not stream, confirm `bears-den` can reach `${BIFROST_ORIGIN}/v1` and `OPENAI_API_KEY` is set for Bifrost.
 - If Bifrost is unhealthy, confirm `OPENAI_API_KEY` and `services/bifrost/config.json`.
 - If Bear memory does not persist across redeploys, confirm the `bears-den-sqlite-data` volume is attached and `BEAR_SQLITE_DATA_DIR` matches the mount path.
 

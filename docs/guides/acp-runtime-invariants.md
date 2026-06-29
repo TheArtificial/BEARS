@@ -106,7 +106,7 @@ If pieces of the runtime move into optional workers or projectors later, the sys
 Optional workers should control **where capabilities run**, not redefine the Bear or profile model.
 
 Good pattern:
-- Den binary with API enabled (`RUN_API=true`; ACP compatibility and BearWire routes mount with the API listener)
+- Den binary with API enabled (`RUN_API=true`; BearWire routes mount with the API listener)
 - Den binary with in-process native agent loop (`AGENT_RUNTIME=native`)
 - Den binary with projector/backfill workers enabled only where needed
 

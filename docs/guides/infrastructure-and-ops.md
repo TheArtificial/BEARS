@@ -5,7 +5,7 @@
 **This project** builds as **one Rust binary** (crate name defaults to **`newapp`**). At runtime you enable:
 
 - **Web** — `RUN_WEB=true` (port from `PORT`, default `3000`)
-- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the Bear Den stack this hosts the API-only ACP gateway and must have a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
+- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the Bear Den stack this hosts BearWire and must have a public origin reachable by armatures (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
 - **Workers** — `RUN_WORKERS=true` (background tasks in the same process)
 
 Legacy `SERVER_MODE=web|api|both` may still be parsed for migration; prefer the `RUN_*` flags (see `src/config.rs`).
@@ -47,7 +47,7 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
-When `RUN_API=true`, the API also serves ACP compatibility routes such as `POST /acp/bears/{slug}/sessions/{session_id}/prompt` and BearWire routes under `/bearwire`. Assign the API port a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `API_SERVER_URL` to that origin.
+When `RUN_API=true`, the API also serves BearWire routes under `/bearwire`. Assign the API port a public origin reachable by armatures (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `DEN_API_ORIGIN` to that origin in compose deployments.
 
 **Build identity:** `GET /version` (web and API) returns JSON with `built_at_utc` (RFC 3339 UTC) from when the build script last ran, plus `git_sha` when the image was built with `GIT_SHA`. Set `SOURCE_DATE_EPOCH` during the image build if you need a deterministic timestamp (reproducible builds).
 
