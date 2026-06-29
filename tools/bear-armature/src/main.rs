@@ -1867,7 +1867,7 @@ impl RuntimeConfig {
         }
         if token.is_empty() {
             diagnostics.push(
-                "Missing Den bearer token. Set DEN_TOKEN, set DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den ACP tokens include the acp:chat scope."
+                "Missing Den bearer token. Set DEN_TOKEN, set DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den armature tokens include the armature:chat scope."
                     .to_string(),
             );
         }
@@ -2026,7 +2026,7 @@ fn print_browser_bridge_help_to_stderr() {
 fn print_acp_help_to_stderr() {
     eprintln!(
         "bear-armature acp\n\nUsage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den armature token with armature:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n\n\
 Legacy editors may still invoke `bear-armature --api-url ... --bear ...` without the `acp` subcommand.\n\
 DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint."
@@ -2773,7 +2773,7 @@ async fn handle_request(
                         id,
                         Err(auth_check_json_rpc_error(
                             &err,
-                            Some("Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."),
+                            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
                         )),
                     )
                     .await?;
@@ -3296,35 +3296,11 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
 
 async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
     if bearwire::enabled() {
-        match bearwire::validate_code_token(http, config).await {
-            Ok(()) => return Ok(()),
-            Err(err) if bearwire::required() => return Err(err),
-            Err(err) => eprintln!(
-                "bear-armature: BearWire auth validation failed; falling back to legacy ACP auth-check error={err:#}"
-            ),
-        }
+        return bearwire::validate_code_token(http, config).await;
     }
-
-    let url = format!(
-        "{}/acp/bears/{}/auth-check",
-        config.api_url,
-        urlencoding::encode(&config.bear)
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("validate BEARS Code token with Den at {url}"))?;
-    if response.status().is_success() {
-        return Ok(());
-    }
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    Err(anyhow!(DenHttpError { status, body }))
+    Err(anyhow!(
+        "BearWire is disabled in this adapter process; legacy /acp auth-check is retired. Enable BearWire by unsetting BEARS_LEGACY_ACP_HTTP and setting BEARS_BEARWIRE=auto or true."
+    ))
 }
 
 async fn validate_den_code_token_for_diagnostics(
@@ -6116,7 +6092,7 @@ fn server_version_json(server_version: ServerVersion) -> Value {
 
 fn den_request_context(url: &str) -> String {
     format!(
-        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with BearWire/ACP gateway routes enabled, and that the network/VPN/firewall permits the connection"
+        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with BearWire routes enabled, and that the network/VPN/firewall permits the connection"
     )
 }
 
@@ -6129,13 +6105,13 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
             "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token."
         }
         403 => {
-            "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes."
+            "The token authenticated but is not allowed to use this bear or armature access. Check bear membership and token scopes."
         }
         404 => {
-            "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with RUN_API=true."
+            "The BearWire endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with RUN_API=true."
         }
         405 => {
-            "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions."
+            "The server exists but did not accept the BearWire request. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions."
         }
         429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
         500..=599 => {
