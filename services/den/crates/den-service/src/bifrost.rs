@@ -5,7 +5,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use time::{Duration as TimeDuration, OffsetDateTime};
+use uuid::Uuid;
 
 use den_core::{config::Config, DenError};
 
@@ -143,28 +144,27 @@ impl BifrostCatalogSnapshot {
 }
 
 pub type BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>;
+pub type BearBifrostCatalogStore = Arc<RwLock<HashMap<Uuid, BifrostCatalogSnapshot>>>;
 
 pub fn new_catalog_store() -> BifrostCatalogStore {
     Arc::new(RwLock::new(BifrostCatalogSnapshot::default()))
+}
+
+pub fn new_bear_catalog_store() -> BearBifrostCatalogStore {
+    Arc::new(RwLock::new(HashMap::new()))
 }
 
 /// Spawn a background task that warms `store` immediately and then refreshes it
 /// every `refresh_secs`. Failed refreshes keep the last good snapshot and flag
 /// it `stale`. A `refresh_secs` of `0` warms once with no periodic refresh.
 pub fn spawn_catalog_refresh(
-    client: Arc<BifrostClient>,
-    store: BifrostCatalogStore,
-    refresh_secs: u64,
+    _client: Arc<BifrostClient>,
+    _store: BifrostCatalogStore,
+    _refresh_secs: u64,
 ) {
-    tokio::spawn(async move {
-        loop {
-            client.warm_model_catalog(&store).await;
-            if refresh_secs == 0 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_secs(refresh_secs)).await;
-        }
-    });
+    // Bifrost now requires virtual-key auth for all model API use in BEARS.
+    // A process-global `/v1/models` refresh has no Bear virtual key to use, so
+    // model availability is refreshed on demand through Bear-scoped cache entries.
 }
 
 fn default_enabled() -> bool {
@@ -288,6 +288,7 @@ pub struct BifrostClient {
     http: reqwest::Client,
     llm_api_url: String,
     api_key: String,
+    bear_catalogs: BearBifrostCatalogStore,
 }
 
 impl BifrostClient {
@@ -301,6 +302,7 @@ impl BifrostClient {
             http,
             llm_api_url: config.llm_api_url.trim_end_matches('/').to_string(),
             api_key: config.llm_api_key.clone(),
+            bear_catalogs: new_bear_catalog_store(),
         }
     }
 
@@ -316,10 +318,25 @@ impl BifrostClient {
                     .to_string(),
             ));
         }
+        self.list_available_models_with_virtual_key(None).await
+    }
+
+    pub async fn list_available_models_with_virtual_key(
+        &self,
+        virtual_key: Option<&str>,
+    ) -> Result<Vec<BifrostModelMetadata>, DenError> {
+        if self.llm_api_url.is_empty() {
+            return Err(DenError::System(
+                "Bifrost /v1 API is not configured (set LLM_API_URL or BIFROST_BASE_URL)"
+                    .to_string(),
+            ));
+        }
         let mut models = Vec::new();
         let mut page_token: Option<String> = None;
         for _ in 0..25 {
-            let payload = self.fetch_live_models_page(page_token.as_deref()).await?;
+            let payload = self
+                .fetch_live_models_page(page_token.as_deref(), virtual_key)
+                .await?;
             models.extend(
                 payload
                     .data
@@ -342,13 +359,16 @@ impl BifrostClient {
     async fn fetch_live_models_page(
         &self,
         page_token: Option<&str>,
+        virtual_key: Option<&str>,
     ) -> Result<BifrostLiveModelsResponse, DenError> {
         let url = format!("{}/models", self.llm_api_url);
         let mut req = self.http.get(&url).query(&[("page_size", "1000")]);
         if let Some(token) = page_token {
             req = req.query(&[("page_token", token)]);
         }
-        if !self.api_key.trim().is_empty() {
+        if let Some(virtual_key) = virtual_key.map(str::trim).filter(|value| !value.is_empty()) {
+            req = req.header("x-bf-vk", virtual_key);
+        } else if !self.api_key.trim().is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
         let resp = req
@@ -367,6 +387,54 @@ impl BifrostClient {
         }
         serde_json::from_str(&text)
             .map_err(|e| DenError::Parsing(format!("Bifrost /v1/models JSON: {e}; body: {text}")))
+    }
+
+    pub async fn refresh_bear_catalog_snapshot(
+        &self,
+        pool: &sqlx::PgPool,
+        bear_id: Uuid,
+        secret_encryption_key: &str,
+    ) -> Result<BifrostCatalogSnapshot, DenError> {
+        let virtual_key = crate::bears::db::bifrost_virtual_key_for_inference(
+            pool,
+            bear_id,
+            secret_encryption_key,
+        )
+        .await?
+        .ok_or_else(|| {
+            DenError::System(format!(
+                "Bear {bear_id} has no Bifrost virtual key for Bear-scoped model catalog refresh"
+            ))
+        })?;
+        let models = self
+            .list_available_models_with_virtual_key(Some(&virtual_key))
+            .await?;
+        let snapshot = BifrostCatalogSnapshot::from_available_models(models);
+        if let Ok(mut guard) = self.bear_catalogs.write() {
+            guard.insert(bear_id, snapshot.clone());
+        }
+        Ok(snapshot)
+    }
+
+    pub async fn bear_catalog_snapshot(
+        &self,
+        pool: &sqlx::PgPool,
+        bear_id: Uuid,
+        secret_encryption_key: &str,
+    ) -> Result<BifrostCatalogSnapshot, DenError> {
+        if let Ok(guard) = self.bear_catalogs.read() {
+            if let Some(snapshot) = guard.get(&bear_id) {
+                if let Some(fetched_at) = snapshot.fetched_at {
+                    if !snapshot.stale
+                        && OffsetDateTime::now_utc() - fetched_at < TimeDuration::hours(1)
+                    {
+                        return Ok(snapshot.clone());
+                    }
+                }
+            }
+        }
+        self.refresh_bear_catalog_snapshot(pool, bear_id, secret_encryption_key)
+            .await
     }
 
     pub async fn refresh_catalog_snapshot(
@@ -435,4 +503,3 @@ impl BifrostClient {
 
 #[cfg(test)]
 mod tests;
-

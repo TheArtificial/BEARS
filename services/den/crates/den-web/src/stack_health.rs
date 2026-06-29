@@ -81,12 +81,18 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
 
     let den_pg = check_den_postgres(state.sqlx_pool()).await;
     let bifrost_h = check_bifrost_http(&cfg.bifrost_base_url).await;
-    let bifrost_models = check_bifrost_live_models(&cfg.llm_api_url).await;
     let bifrost_management_auth = check_bifrost_management_auth(&cfg.bifrost_management_url).await;
 
     checks.push(den_pg);
     checks.push(bifrost_h);
-    checks.push(bifrost_models);
+    checks.push(HealthCheck {
+        id: "bifrost_models",
+        label: "Bifrost models",
+        state: CheckState::Skipped,
+        detail:
+            "global /v1/models probe disabled; BEARS requires Bear-scoped x-bf-vk for model listing"
+                .into(),
+    });
     checks.push(bifrost_management_auth);
     checks.push(check_qdrant(cfg).await);
 
@@ -322,6 +328,7 @@ async fn check_bifrost_http(base: &str) -> HealthCheck {
     }
 }
 
+#[allow(dead_code)]
 async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
     let base = llm_api_url.trim().trim_end_matches('/');
     if base.is_empty() {
@@ -560,6 +567,7 @@ fn stale_bifrost_auth_config_check(observed: String) -> HealthCheck {
     }
 }
 
+#[allow(dead_code)]
 fn count_usable_bifrost_models(value: &serde_json::Value) -> (usize, usize) {
     let Some(items) = value.get("data").and_then(|data| data.as_array()) else {
         return (0, 0);

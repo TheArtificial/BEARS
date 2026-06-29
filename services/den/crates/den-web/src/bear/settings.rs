@@ -49,7 +49,7 @@ use crate::web::admin::bears::{
     BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
-    all_model_catalog_options_context, canonical_default_model_handle,
+    all_model_catalog_options_context_for_bear, canonical_default_model_handle,
     provision_bifrost_virtual_key_for_bear,
 };
 use den_llm::ModelOption;
@@ -73,8 +73,14 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/stances/{stance}", get(stance_detail_view))
         .route_with_tsr("/bear/{slug}/profiles/{stance}", get(stance_detail_view))
-        .route_with_tsr("/bear/{slug}/stances/{stance}/model", post(stance_model_post))
-        .route_with_tsr("/bear/{slug}/profiles/{stance}/model", post(stance_model_post))
+        .route_with_tsr(
+            "/bear/{slug}/stances/{stance}/model",
+            post(stance_model_post),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/profiles/{stance}/model",
+            post(stance_model_post),
+        )
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
@@ -1599,7 +1605,7 @@ async fn render_models_page(
             .await
             .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
     let (model_catalog_configured, live_model_options, models_fetch_error) =
-        all_model_catalog_options_context(&state).await;
+        all_model_catalog_options_context_for_bear(&state, bear.id).await;
     let all_model_options = merge_model_options(&model_options, &live_model_options);
     let rows = model_page_rows(
         state.sqlx_pool(),
@@ -1682,7 +1688,8 @@ async fn models_post(
         den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
             .await
             .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (_, live_model_options, fetch_error) = all_model_catalog_options_context(&state).await;
+    let (_, live_model_options, fetch_error) =
+        all_model_catalog_options_context_for_bear(&state, bear.id).await;
     let validation_options = merge_model_options(&model_options, &live_model_options);
     if validation_options.is_empty() {
         let message = fetch_error
@@ -1860,7 +1867,8 @@ async fn stance_model_post(
         den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
             .await
             .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (_, live_model_options, fetch_error) = all_model_catalog_options_context(&state).await;
+    let (_, live_model_options, fetch_error) =
+        all_model_catalog_options_context_for_bear(&state, bear.id).await;
     let validation_options = merge_model_options(&model_options, &live_model_options);
     if validation_options.is_empty() {
         let message = fetch_error
@@ -1889,8 +1897,7 @@ async fn stance_model_post(
         .into_response());
     }
     let model = configured_model_from_form(raw);
-    bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, role, model.as_deref())
-        .await?;
+    bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, role, model.as_deref()).await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/stances/{}?message={}",
         bear.slug,
@@ -1956,7 +1963,9 @@ async fn conversations_view(
                     .current_title
                     .filter(|t| !t.is_empty())
                     .unwrap_or_else(|| "Untitled".to_string()),
-                source_session: c.source_client_session_id.unwrap_or_else(|| "—".to_string()),
+                source_session: c
+                    .source_client_session_id
+                    .unwrap_or_else(|| "—".to_string()),
                 updated_at: c.updated_at.to_string(),
                 compaction_status: stats
                     .map(|(_, status, _)| status.clone())

@@ -168,7 +168,58 @@ pub(crate) fn model_option_from_bifrost_metadata(
     )
 }
 
-/// Full Bifrost availability list enriched by Den model metadata where known.
+fn model_options_from_bifrost_models(
+    models: Vec<den_service::bifrost::BifrostModelMetadata>,
+) -> Vec<ModelOption> {
+    let mut options = models
+        .into_iter()
+        .map(model_option_from_bifrost_metadata)
+        .collect::<Vec<_>>();
+    options.sort_by(|a, b| a.label.cmp(&b.label));
+    options
+}
+
+/// Full Bear-scoped Bifrost availability list enriched by Den metadata where known.
+pub async fn all_model_catalog_options_context_for_bear(
+    state: &AppState,
+    bear_id: Uuid,
+) -> (bool, Vec<ModelOption>, Option<String>) {
+    if !state.bifrost.is_enabled() {
+        return (false, Vec::new(), None);
+    }
+
+    let snapshot = match state
+        .bifrost
+        .bear_catalog_snapshot(
+            state.sqlx_pool(),
+            bear_id,
+            &state.config.den_secret_encryption_key,
+        )
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            return (
+                true,
+                Vec::new(),
+                Some(format!(
+                    "Could not load Bear-scoped Bifrost model catalog: {err}."
+                )),
+            );
+        }
+    };
+    let models = snapshot.models_vec();
+    if models.is_empty() {
+        return (
+            true,
+            Vec::new(),
+            Some("Bear-scoped Bifrost model catalog snapshot is empty.".into()),
+        );
+    }
+    (true, model_options_from_bifrost_models(models), None)
+}
+
+/// Full Bifrost availability list enriched by Den metadata where known.
 pub async fn all_model_catalog_options_context(
     state: &AppState,
 ) -> (bool, Vec<ModelOption>, Option<String>) {
@@ -193,12 +244,7 @@ pub async fn all_model_catalog_options_context(
             Some("Bifrost model catalog snapshot is empty.".into()),
         );
     }
-    let mut options = models
-        .into_iter()
-        .map(model_option_from_bifrost_metadata)
-        .collect::<Vec<_>>();
-    options.sort_by(|a, b| a.label.cmp(&b.label));
-    (true, options, None)
+    (true, model_options_from_bifrost_models(models), None)
 }
 
 pub fn curated_model_options_from_all(all_options: &[ModelOption]) -> Vec<ModelOption> {

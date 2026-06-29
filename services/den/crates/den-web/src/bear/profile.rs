@@ -1,11 +1,11 @@
 //! Profile detail view model for bear settings.
 
-use serde::Serialize;
 use crate::{errors::CustomError, web::AppState};
 use den_llm::ModelOption;
 use den_service::bears::{
     compose_role_context, db as bears_db, Bear, BearProfile, BearProfileBinding,
 };
+use serde::Serialize;
 
 #[derive(Serialize)]
 pub(crate) struct RoleDetailView {
@@ -219,12 +219,18 @@ pub(crate) async fn build_role_detail_view(
         composed.role_contract
     };
 
-    let model_options = den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
-        .await
-        .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
-    let (_, live_model_options, _) = crate::web::bear::create_support::all_model_catalog_options_context(state).await;
+    let model_options =
+        den_service::model_selection::list_selectable_model_options(state.sqlx_pool())
+            .await
+            .unwrap_or_else(|_| den_llm::model_registry::selectable_model_options());
+    let (_, live_model_options, _) =
+        crate::web::bear::create_support::all_model_catalog_options_context_for_bear(
+            state, bear.id,
+        )
+        .await;
     let all_model_options = merge_model_options(&model_options, &live_model_options);
-    let profile_settings = bears_db::list_profile_model_settings(state.sqlx_pool(), bear.id).await?;
+    let profile_settings =
+        bears_db::list_profile_model_settings(state.sqlx_pool(), bear.id).await?;
     let configured_model = profile_settings
         .iter()
         .find(|row| row.profile == role.as_str())
@@ -238,13 +244,12 @@ pub(crate) async fn build_role_detail_view(
     } else {
         configured_model.clone()
     };
-    let configured_model_custom = if configured_model.is_empty()
-        || model_available(&model_options, &configured_model)
-    {
-        String::new()
-    } else {
-        configured_model.clone()
-    };
+    let configured_model_custom =
+        if configured_model.is_empty() || model_available(&model_options, &configured_model) {
+            String::new()
+        } else {
+            configured_model.clone()
+        };
 
     let mut actions = Vec::new();
     match role {
@@ -292,7 +297,8 @@ pub(crate) async fn build_role_detail_view(
         } else {
             "Stance override".to_string()
         },
-        model_availability_status: model_availability_status(&all_model_options, &resolved_model).to_string(),
+        model_availability_status: model_availability_status(&all_model_options, &resolved_model)
+            .to_string(),
         model_metadata_status: model_metadata_status(&resolved_model).to_string(),
         configured_model_custom,
         model_options,
@@ -305,7 +311,10 @@ pub(crate) async fn build_role_detail_view(
 fn merge_model_options(primary: &[ModelOption], secondary: &[ModelOption]) -> Vec<ModelOption> {
     let mut merged = primary.to_vec();
     for option in secondary {
-        if !merged.iter().any(|existing| existing.handle == option.handle) {
+        if !merged
+            .iter()
+            .any(|existing| existing.handle == option.handle)
+        {
             merged.push(option.clone());
         }
     }

@@ -7,12 +7,16 @@ use uuid::Uuid;
 
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
-use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::start_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     turn_runner::TurnStartRequest,
+};
+use den_service::{
+    bears::{db as bears_db, BearProfile},
+    bifrost::BifrostCatalogSnapshot,
+    client_sessions, DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -219,32 +223,25 @@ async fn preflight_pair_run_model(
     conversation_id: &str,
 ) -> Result<ResolvedRunModel, CustomError> {
     let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
-    // Cold start: if the background warm has not landed a snapshot yet, fetch
-    // inline so early runs validate against live availability instead of failing
-    // against an empty snapshot. `fetched_at.is_none()` means never fetched (a
-    // failed-but-previously-good snapshot keeps its timestamp and is left alone).
-    let never_fetched = state
-        .bifrost_catalog
-        .read()
-        .map(|snapshot| snapshot.fetched_at.is_none())
-        .unwrap_or(true);
-    if never_fetched {
-        if let Err(err) = state
-            .bifrost
-            .refresh_catalog_snapshot(&state.bifrost_catalog)
-            .await
-        {
+    let snapshot = match state
+        .bifrost
+        .bear_catalog_snapshot(
+            &state.sqlx_pool,
+            bear.id,
+            &state.config.den_secret_encryption_key,
+        )
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
             tracing::warn!(
                 error = %err,
-                "inline Bifrost catalog refresh before Pair preflight failed; proceeding with current snapshot"
+                bear_id = %bear.id,
+                "Bear-scoped Bifrost catalog refresh before Pair preflight failed; proceeding without catalog validation"
             );
+            BifrostCatalogSnapshot::default()
         }
-    }
-    let snapshot = state.bifrost_catalog.read().map_err(|_| {
-        CustomError::System(
-            "could not read Bifrost model catalog snapshot before starting Pair run".to_string(),
-        )
-    })?;
+    };
     let available = snapshot.models_vec();
     let catalog_entry = snapshot.resolve(&resolved.handle);
     let resolved = ResolvedRunModel {
@@ -1082,7 +1079,9 @@ pub(crate) async fn run_cancel_result(
     let stream_cancel = state
         .turn_cancellations
         .cancel_session(&session.client_session_id);
-    let active_turn = state.tool_turns.cancel_active_turn(&session.client_session_id);
+    let active_turn = state
+        .tool_turns
+        .cancel_active_turn(&session.client_session_id);
     let active_run = bearwire_runs::active_run_for_session(&state.sqlx_pool, &session_id).await?;
     if let Some(run) = &active_run {
         let _ = bearwire_runs::transition_run(
