@@ -93,8 +93,8 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `BEARS_STAGE_SUFFIX` | Optional shared-network DNS suffix such as `-prod` or `-test`; compose creates aliases like `bears-bifrost-test`. |
-| `BIFROST_ORIGIN` | Canonical internal Bifrost origin. Root compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. |
+| `BIFROST_APP_PORT` | Bifrost listen port. Use distinct values per environment on shared networks, for example prod `8080`, test `8081`. |
+| `BIFROST_ORIGIN` | Canonical internal Bifrost origin. Root compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost:${BIFROST_APP_PORT}`. |
 | `RUN_API` | When enabled, mounts the API and BearWire under `/bearwire`. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).

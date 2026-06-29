@@ -91,15 +91,15 @@ Optional:
 | -------- | ----- |
 | `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
 | `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
-| `BEARS_STAGE_SUFFIX` | Optional shared-network DNS suffix such as `-prod` or `-test`; compose creates aliases like `bears-bifrost-test` |
-| `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this |
+| `BIFROST_APP_PORT` | Bifrost listen port. Use distinct values per environment on shared networks, for example prod `8080`, test `8081` |
+| `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost:${BIFROST_APP_PORT}` |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults web+API on) |
 
 You usually do not need to set internal service URLs. The compose file already defaults to:
 
 | Variable | Default |
 | -------- | ------- |
-| `BIFROST_ORIGIN` | `http://bears-bifrost${BEARS_STAGE_SUFFIX}:8080` |
+| `BIFROST_ORIGIN` | `http://bears-bifrost:${BIFROST_APP_PORT}` |
 | `LLM_API_URL` | `${BIFROST_ORIGIN}/v1` |
 | `BIFROST_BASE_URL` | `${BIFROST_ORIGIN}` |
 | `BIFROST_MANAGEMENT_URL` | `${BIFROST_ORIGIN}/api` |

@@ -73,7 +73,7 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 
 ### 7. Deploy
 
-**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:8080`** by default. If multiple BEARS projects share a predefined Docker network, set `BEARS_STAGE_SUFFIX` (for example `-prod` or `-test`) and use the stage alias such as `http://bears-bifrost-test:8080` via `BIFROST_ORIGIN`.
+**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:${BIFROST_APP_PORT:-8080}`** by default. If multiple BEARS projects share a predefined Docker network, use distinct `BIFROST_APP_PORT` values per environment and let Den derive `BIFROST_ORIGIN` from that port.
 
 ### 8. Connecting Den across stacks
 
