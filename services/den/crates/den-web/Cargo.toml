@@ -6,11 +6,11 @@ edition = "2021"
 # den-web: the server-rendered web UI + `/v1/*` JSON/SSE edge of the den binary.
 # It owns the MiniJinja template environment + embedded assets, the session-cookie
 # UI routes (home/onboarding/admin/bear management/user settings), and the in-app
-# chat surface. It sits above den-http (identity/errors/web policy/ACP tokens),
+# chat surface. It sits above den-http (identity/errors/web policy/armature tokens),
 # den-oauth, den-runtime, den-docket, and den-core. Builtin Den tool execution is
 # injected via `den_runtime::native_runtime::tool_invoker`, so the den-side tool
 # composition stays in the binary. (den-web deliberately does NOT depend on
-# den-api/den-acp, so it compiles in parallel with those edges.)
+# den-api, so it compiles in parallel with that edge.)
 
 [lints]
 workspace = true

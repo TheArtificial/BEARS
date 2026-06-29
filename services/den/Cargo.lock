@@ -619,35 +619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "den-acp"
-version = "0.1.2"
-dependencies = [
- "axum",
- "axum-extra",
- "base64",
- "bytes",
- "den-core",
- "den-docket",
- "den-http",
- "den-memory",
- "den-oauth",
- "den-protocol",
- "den-runtime",
- "den-service",
- "dotenvy",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "time",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "den-api"
 version = "0.1.2"
 dependencies = [

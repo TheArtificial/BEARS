@@ -4,8 +4,7 @@ version.workspace = true
 edition = "2021"
 
 # den-bearwire: BearWire v1 HTTP/SSE edge for trusted armatures. This is the
-# future Den ↔ armature protocol boundary; ACP-specific translation stays in the
-# armature and legacy `den-acp` during migration.
+# Den ↔ armature protocol boundary.
 
 [lints]
 workspace = true

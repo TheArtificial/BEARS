@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 # den-http: the shared HTTP/identity foundation for the den binary's edge crates
-# (den-web / den-api / den-acp). It owns the web-boundary error adapter
+# (den-web / den-api / den-bearwire). It owns the web-boundary error adapter
 # (`errors::CustomError`, the axum `IntoResponse` over the web-free `den_core::DenError`),
 # the axum-login auth backend (`auth_backend`), small request (de)serialization
 # helpers (`api_utils`), and the identity layer the auth backend depends on

@@ -5,8 +5,8 @@ edition = "2021"
 
 # den-api: the JSON/REST + OAuth HTTP edge of the den binary. It owns the public
 # API service (`service::create_api_app`), the v1 user/profile/oauth routes, the
-# OAuth2 authorization server, and the OpenAPI docs. Peer HTTP edges (e.g. the ACP
-# edge in den-acp) are injected by the binary composition root as peer routers, so
+# OAuth2 authorization server, and the OpenAPI docs. Peer HTTP edges are injected
+# by the binary composition root as peer routers, so
 # this crate has no dependency on any sibling edge (ADR-0043: edges are peers). It
 # shares the protocol-neutral `den_service::DenState` and sits above den-http
 # (identity/error foundation), den-oauth, den-service (shared state/services),

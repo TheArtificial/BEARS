@@ -6,9 +6,8 @@ edition = "2021"
 # den-oauth: the OAuth 2.0 authorization server (RFC 6749 / RFC 7636) plus the
 # shared bearer-auth layer (`ApiError`, `BearerPrincipal`, token extraction /
 # scope checks) and the OAuth consent/authorize page rendering. It sits *below*
-# the HTTP edges (den-api / den-web / den-acp) so all of them can depend on the
-# bearer-auth primitives without a cycle (den-api mounts the ACP surface, and
-# both need OAuth). Depends only on den-http (errors/auth_backend/user) and
+# the HTTP edges (den-api / den-web / den-bearwire) so all of them can depend on
+# the bearer-auth primitives without a cycle. Depends only on den-http (errors/auth_backend/user) and
 # den-core (config).
 
 [lints]
