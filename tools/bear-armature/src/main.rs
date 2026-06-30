@@ -4167,27 +4167,24 @@ async fn den_get_acp_session(
     config: &Config,
     session_id: &str,
 ) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("get ACP session at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(DenHttpError { status, body }));
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "session.state",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+        }),
+    )
+    .await
+    .with_context(|| format!("get BearWire session.state for session {session_id}"))?;
+    match value.get("session") {
+        Some(Value::Null) | None => Err(anyhow!(DenHttpError {
+            status: reqwest::StatusCode::NOT_FOUND,
+            body: format!("BearWire session {session_id} not found"),
+        })),
+        Some(session) => Ok(session.clone()),
     }
-    serde_json::from_str(&body).with_context(|| "parse Den get session JSON")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9674,11 +9671,32 @@ mod tests {
                 "id": id,
                 "result": { "protocol": "bearwire", "version": 1 }
             }),
-            Some("session.state") => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "kind": "session_state", "sessions": [] }
-            }),
+            Some("session.state") => {
+                if let Some(session_id) =
+                    value.pointer("/params/session_id").and_then(Value::as_str)
+                {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "kind": "single",
+                            "session": {
+                                "client_session_id": session_id,
+                                "conversation_id": "default",
+                                "resolved_conversation_id": "den-conv-test",
+                                "cwd": "/workspace",
+                                "current_mode": "ask"
+                            }
+                        }
+                    })
+                } else {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": { "kind": "session_state", "sessions": [] }
+                    })
+                }
+            }
             other => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -9771,6 +9789,26 @@ mod tests {
 
         let paths = paths.lock().await.clone();
         assert_eq!(paths, vec!["/bearwire/v1/rpc", "/bearwire/v1/rpc"]);
+    }
+
+    #[tokio::test]
+    async fn den_get_session_uses_bearwire_session_state() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(false).await;
+        let http = reqwest::Client::new();
+
+        let session = den_get_acp_session(&http, &test_config(api_url), "acp-test-session")
+            .await
+            .expect("load BearWire session state");
+
+        assert_eq!(session["client_session_id"], "acp-test-session");
+        assert_eq!(session["cwd"], "/workspace");
+        assert_eq!(session["resolved_conversation_id"], "den-conv-test");
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
     }
 
     #[tokio::test]
