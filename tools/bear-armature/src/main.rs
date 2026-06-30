@@ -3299,7 +3299,7 @@ async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Res
         return bearwire::validate_code_token(http, config).await;
     }
     Err(anyhow!(
-        "BearWire is disabled in this adapter process; legacy /acp auth-check is retired. Enable BearWire by unsetting BEARS_LEGACY_ACP_HTTP and setting BEARS_BEARWIRE=auto or true."
+        "BearWire is disabled in this adapter process; legacy /acp auth-check is retired. Enable BearWire by setting BEARS_BEARWIRE=auto or true."
     ))
 }
 
@@ -4603,65 +4603,33 @@ async fn post_session_lifecycle_action(
 }
 
 async fn post_session_lifecycle_action_with_payload(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: &Config,
     session_id: &str,
     action: &str,
-    payload: Value,
+    _payload: Value,
 ) -> Result<()> {
-    if bearwire::enabled() {
-        let result = match action {
-            "close" => Some(bearwire::post_session_close(config, session_id).await),
-            "cancel" => Some(bearwire::post_run_cancel(config, session_id).await),
-            _ => None,
-        };
-        if let Some(result) = result {
-            match result {
-                Ok(value) => {
-                    if bear_debug_verbose() {
-                        eprintln!(
-                            "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
-                            action,
-                            session_id,
-                            truncate_for_log(&value.to_string(), 360)
-                        );
-                    }
-                    return Ok(());
-                }
-                Err(err) if bearwire::required() => return Err(err),
-                Err(err) => eprintln!(
-                    "bear-armature: BearWire session lifecycle action={} failed; falling back to legacy ACP HTTP session_id={} error={err:#}",
-                    action, session_id
-                ),
-            }
-        }
-    }
-
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        action,
-    );
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+    if !bearwire::enabled() {
         return Err(anyhow!(
-            "Den session {action} endpoint returned HTTP {status}: {}",
-            body.trim()
+            "BearWire is disabled in this adapter process, and legacy ACP HTTP is retired. Enable BearWire by setting BEARS_BEARWIRE=auto or true."
         ));
+    }
+    let result = match action {
+        "close" => bearwire::post_session_close(config, session_id).await,
+        "cancel" => bearwire::post_run_cancel(config, session_id).await,
+        other => {
+            return Err(anyhow!(
+                "unsupported BearWire session lifecycle action: {other}"
+            ))
+        }
+    }?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
+            action,
+            session_id,
+            truncate_for_log(&result.to_string(), 360)
+        );
     }
     Ok(())
 }

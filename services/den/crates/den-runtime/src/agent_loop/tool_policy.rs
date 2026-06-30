@@ -41,9 +41,9 @@ pub async fn maybe_pause_for_tool_approval(
     tool_call_id: &str,
     tool_name: &str,
     arguments: &serde_json::Value,
-) -> Option<RuntimeSemanticEvent> {
+) -> Result<Option<RuntimeSemanticEvent>, den_core::DenError> {
     if !provider_tool_requires_approval(tool_name) {
-        return None;
+        return Ok(None);
     }
     let approval_id = create_native_approval(
         pool,
@@ -54,13 +54,12 @@ pub async fn maybe_pause_for_tool_approval(
         tool_name,
         arguments,
     )
-    .await
-    .ok()?;
-    Some(RuntimeSemanticEvent::RunPaused {
+    .await?;
+    Ok(Some(RuntimeSemanticEvent::RunPaused {
         reason: "requires_approval".to_string(),
         resume_token: Some(approval_id),
         expires_at: None,
-    })
+    }))
 }
 
 pub async fn record_approval_decision(
@@ -88,9 +87,15 @@ mod tests {
 
     #[test]
     fn den_capabilities_list_self_supports_unilateral_execution() {
-        assert!(provider_tool_supports_unilateral_execution("den_capabilities_list_self"));
-        assert!(provider_tool_supports_unilateral_execution("den.capabilities.list_self"));
-        assert!(!provider_tool_requires_approval("den_capabilities_list_self"));
+        assert!(provider_tool_supports_unilateral_execution(
+            "den_capabilities_list_self"
+        ));
+        assert!(provider_tool_supports_unilateral_execution(
+            "den.capabilities.list_self"
+        ));
+        assert!(!provider_tool_requires_approval(
+            "den_capabilities_list_self"
+        ));
     }
 
     #[test]

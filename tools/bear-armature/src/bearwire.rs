@@ -43,14 +43,7 @@ fn bearwire_env_value() -> Option<String> {
         .map(|value| value.trim().to_ascii_lowercase())
 }
 
-pub(crate) fn legacy_acp_http_forced() -> bool {
-    env_bool("BEARS_LEGACY_ACP_HTTP")
-}
-
 pub(crate) fn enabled() -> bool {
-    if legacy_acp_http_forced() {
-        return false;
-    }
     match bearwire_env_value().as_deref() {
         None | Some("") | Some("auto") => true,
         Some("0" | "false" | "no" | "off" | "disabled") => false,
@@ -59,16 +52,12 @@ pub(crate) fn enabled() -> bool {
 }
 
 pub(crate) fn required() -> bool {
-    env_bool("BEARS_BEARWIRE_REQUIRED") && !legacy_acp_http_forced()
+    true
 }
 
 pub(crate) fn mode_summary() -> String {
     let raw = std::env::var("BEARS_BEARWIRE").unwrap_or_else(|_| "<unset>".to_string());
-    let legacy_raw =
-        std::env::var("BEARS_LEGACY_ACP_HTTP").unwrap_or_else(|_| "<unset>".to_string());
-    let mode = if legacy_acp_http_forced() {
-        "legacy-forced"
-    } else if required() {
+    let mode = if required() {
         "required"
     } else if raw.trim().is_empty() || raw == "<unset>" || raw.trim().eq_ignore_ascii_case("auto") {
         "auto"
@@ -78,7 +67,7 @@ pub(crate) fn mode_summary() -> String {
         "disabled"
     };
     format!(
-        "{mode} (BEARS_BEARWIRE={raw}, BEARS_BEARWIRE_REQUIRED={}, BEARS_LEGACY_ACP_HTTP={legacy_raw})",
+        "{mode} (BEARS_BEARWIRE={raw}, BEARS_BEARWIRE_REQUIRED={})",
         required()
     )
 }
@@ -473,7 +462,9 @@ pub(crate) async fn try_handle_prompt(
     turn_token: Uuid,
 ) -> Result<bool> {
     if !enabled() {
-        return Ok(false);
+        return Err(anyhow!(
+            "BearWire is disabled in this adapter process, and legacy ACP HTTP is retired. Enable BearWire by setting BEARS_BEARWIRE=auto or true."
+        ));
     }
     match handle_prompt(
         http,
@@ -491,14 +482,7 @@ pub(crate) async fn try_handle_prompt(
     .await
     {
         Ok(()) => Ok(true),
-        Err(err) if required() => Err(err),
-        Err(err) => {
-            eprintln!(
-                "bear-armature: BearWire prompt failed; falling back to legacy ACP HTTP session_id={} error={err:#}",
-                session_id
-            );
-            Ok(false)
-        }
+        Err(err) => Err(err),
     }
 }
 

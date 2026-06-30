@@ -4,9 +4,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures::Stream;
 use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
+use futures::Stream;
 
 use crate::{
     agent_loop::{
@@ -47,7 +47,8 @@ pub enum NativeToolDispatchMode {
     ServerSideInProcess,
 }
 
-type ApprovalPauseFuture = Pin<Box<dyn Future<Output = Option<RuntimeSemanticEvent>> + Send>>;
+type ApprovalPauseFuture =
+    Pin<Box<dyn Future<Output = Result<Option<RuntimeSemanticEvent>, DenError>> + Send>>;
 type ServerToolFuture = Pin<
     Box<
         dyn Future<Output = Result<(ChatToolCall, ChatMessage, RuntimeEventStream), DenError>>
@@ -530,7 +531,7 @@ impl Stream for SessionTrackingStream {
 
         if let Some(fut) = self.pending_approval.as_mut() {
             match fut.as_mut().poll(cx) {
-                Poll::Ready(Some(pause)) => {
+                Poll::Ready(Ok(Some(pause))) => {
                     self.pending_approval = None;
                     self.persist_assistant_tool_step();
                     if let RuntimeSemanticEvent::RunPaused {
@@ -555,11 +556,16 @@ impl Stream for SessionTrackingStream {
                     self.finished = true;
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
                 }
-                Poll::Ready(None) => {
+                Poll::Ready(Ok(None)) => {
                     self.pending_approval = None;
                     if let Some(event) = self.pending_tool_event.take() {
                         return Poll::Ready(Some(Ok(event)));
                     }
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_approval = None;
+                    self.pending_tool_event = None;
+                    return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -642,13 +648,12 @@ impl Stream for SessionTrackingStream {
                             &approval_tool_name,
                             &arguments_value,
                         )
-                        .await
-                        .ok()?;
-                        Some(RuntimeSemanticEvent::RunPaused {
+                        .await?;
+                        Ok(Some(RuntimeSemanticEvent::RunPaused {
                             reason: "requires_approval".to_string(),
                             resume_token: Some(approval_id),
                             expires_at: None,
-                        })
+                        }))
                     }));
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
@@ -807,8 +812,8 @@ mod tests {
     use crate::{
         agent_loop::StrategyProfile,
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
-        den_protocol::RuntimeStreamEvent,
     };
+    use den_protocol::RuntimeStreamEvent;
 
     fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {
         unsafe fn clone(data: *const ()) -> RawWaker {
