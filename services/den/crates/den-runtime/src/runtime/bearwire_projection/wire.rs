@@ -99,7 +99,8 @@ impl BearWireEvent {
     fn with_session(mut self, session_id: String) -> Self {
         self.session_id = Some(session_id.clone());
         self.subject = Some(format!("resource/session/{session_id}"));
-        self.resource_refs.push(ResourceRef::new("session", session_id));
+        self.resource_refs
+            .push(ResourceRef::new("session", session_id));
         self
     }
 }
@@ -218,7 +219,11 @@ pub fn runtime_semantic_event_to_bearwire_events(
             approval_reason,
             run_id,
         } => {
-            let event_type = if approval_required {
+            let has_permission_id = approval_request_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|id| !id.is_empty());
+            let event_type = if approval_required && has_permission_id {
                 "tool_call.blocked"
             } else {
                 "tool_call.requested"
@@ -231,7 +236,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
                     "title": title,
                     "kind": kind.unwrap_or_else(|| "function".to_string()),
                     "arguments": arguments,
-                    "approval_required": approval_required,
+                    "approval_required": approval_required && has_permission_id,
                     "approval_request_id": approval_request_id,
                     "reason": approval_reason,
                 }),
@@ -281,15 +286,17 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "context": context,
             }),
         )],
-        RuntimeSemanticEvent::ConversationResolved { conversation } => vec![BearWireEvent::ephemeral(
-            "session.bound",
-            json!({
-                "binding": {
-                    "conversation_id": conversation.id,
-                }
-            }),
-        )
-        .with_session(conversation.id)],
+        RuntimeSemanticEvent::ConversationResolved { conversation } => {
+            vec![BearWireEvent::ephemeral(
+                "session.bound",
+                json!({
+                    "binding": {
+                        "conversation_id": conversation.id,
+                    }
+                }),
+            )
+            .with_session(conversation.id)]
+        }
         RuntimeSemanticEvent::TurnCompleted { turn } => vec![BearWireEvent::ephemeral(
             "run.completed",
             json!({

@@ -973,6 +973,19 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_visible_output = true;
+            if event
+                .pointer("/data/approval_request_id")
+                .and_then(Value::as_str)
+                .or_else(|| event.pointer("/data/permission_id").and_then(Value::as_str))
+                .or_else(|| resource_ref_id(event, "permission_request"))
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .is_none()
+            {
+                return Err(anyhow!(
+                    "BearWire tool_call.blocked missing permission id for session {session_id}; refusing to show an unanswerable permission prompt"
+                ));
+            }
             let legacy = bearwire_permission_event_to_legacy_permission_request(event);
             handle_den_event(
                 config,

@@ -510,7 +510,21 @@ async fn update_run_state_for_runtime_event(
             approval_required,
             ..
         }) => {
-            let state = if *approval_required {
+            let has_permission_id = approval_request_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|id| !id.is_empty());
+            if *approval_required && !has_permission_id {
+                tracing::warn!(
+                    session_id,
+                    run_id,
+                    tool_call_id,
+                    tool_name,
+                    "runtime emitted approval_required tool call without approval_request_id; treating as tool result obligation"
+                );
+            }
+            let effective_approval_required = *approval_required && has_permission_id;
+            let state = if effective_approval_required {
                 bearwire_runs::BearWireRunState::WaitingForPermission
             } else {
                 bearwire_runs::BearWireRunState::WaitingForToolResult
@@ -520,11 +534,11 @@ async fn update_run_state_for_runtime_event(
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments": arguments,
-                "approval_required": approval_required,
+                "approval_required": effective_approval_required,
                 "approval_request_id": approval_request_id,
                 "request_id": request_id,
             });
-            let obligation = if *approval_required {
+            let obligation = if effective_approval_required {
                 if let Some(permission_id) = approval_request_id.as_deref() {
                     bearwire_obligations::upsert_permission_obligation(
                         pool,
@@ -566,38 +580,8 @@ async fn update_run_state_for_runtime_event(
                     "failed to persist BearWire tool-call obligation"
                 );
             }
-            if *approval_required {
-                if let Some(permission_id) = approval_request_id.as_deref() {
-                    if let Err(err) = bearwire_obligations::upsert_permission_obligation(
-                        pool,
-                        run_id,
-                        session_id,
-                        permission_id,
-                        Some(tool_call_id),
-                        json!({
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "arguments": arguments,
-                            "approval_required": approval_required,
-                            "approval_request_id": approval_request_id,
-                            "request_id": request_id,
-                        }),
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            error = %err,
-                            session_id = %session_id,
-                            run_id = %run_id,
-                            permission_id = %permission_id,
-                            tool_call_id = %tool_call_id,
-                            "failed to persist BearWire permission obligation"
-                        );
-                    }
-                }
-            }
             if let Some(started_at) = started_at {
-                let (kind, text) = if *approval_required {
+                let (kind, text) = if effective_approval_required {
                     (
                         "tool_waiting_for_permission",
                         "Waiting for client permission to run a local tool…",
@@ -621,7 +605,7 @@ async fn update_run_state_for_runtime_event(
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_name,
                         "arguments": arguments,
-                        "approval_required": approval_required,
+                        "approval_required": effective_approval_required,
                         "approval_request_id": approval_request_id,
                         "request_id": request_id,
                     }),
