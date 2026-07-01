@@ -1,5 +1,5 @@
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
@@ -12,18 +12,21 @@ use den_core::tools::{
         compact_client_tool_result_params, compact_client_tool_result_params_with_artifact,
     },
 };
+use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
     RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
     RuntimeToolResultStatus,
 };
-use den_http::{errors::CustomError, web_policy};
-use den_service::{client_sessions, bears::{db as bears_db, BearProfile}, DenState};
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
     native_runtime::continue_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
-    turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
+};
+use den_service::{
+    bears::{db as bears_db, BearProfile},
+    client_sessions, DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -244,7 +247,8 @@ fn spawn_continuation_task(
                     match item {
                         Ok(runtime_event) => {
                             runtime_event_count += 1;
-                            let event_kind = crate::methods::run::runtime_event_kind(&runtime_event);
+                            let event_kind =
+                                crate::methods::run::runtime_event_kind(&runtime_event);
                             last_event_kind = Some(event_kind);
                             if matches!(
                                 &runtime_event,
@@ -482,12 +486,9 @@ pub(crate) async fn client_tool_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
-    let permission_result_count = bearwire_runs::client_result_count_for_run_kind(
-        &state.sqlx_pool,
-        &run_id,
-        "permission",
-    )
-    .await?;
+    let permission_result_count =
+        bearwire_runs::client_result_count_for_run_kind(&state.sqlx_pool, &run_id, "permission")
+            .await?;
     if permission_result_count >= MAX_PERMISSION_RESULTS_PER_RUN {
         persist_run_failed(
             &state.sqlx_pool,
@@ -611,6 +612,7 @@ pub(crate) async fn client_permission_result_result(
     let run_id = required_param_string(params, "run_id")?;
     let session_id = required_param_string(params, "session_id")?;
     let permission_id = required_param_string(params, "permission_id")?;
+    let obligation_id = param_string(params, "obligation_id");
     let decision = param_string(params, "decision").unwrap_or_else(|| "denied".to_string());
     let Some(run) = bearwire_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
@@ -640,6 +642,17 @@ pub(crate) async fn client_permission_result_result(
                     "BearWire permission result has no persisted permission obligation".to_string(),
                 )
             })?;
+    if let Some(obligation_id) = obligation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        if obligation.id.to_string() != obligation_id {
+            return Err(CustomError::ValidationError(
+                "BearWire permission result obligation_id does not match persisted permission obligation".to_string(),
+            ));
+        }
+    }
     if !bearwire_obligations::obligation_accepts_client_method(
         &obligation,
         "client.permission.result",

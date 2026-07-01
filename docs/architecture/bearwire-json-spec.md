@@ -75,6 +75,19 @@ BearWire-Version: 1
 
 ## Core conventions
 
+### Armature-actionable obligation invariant
+
+Den must not emit an armature-actionable wait event unless the exact corresponding BearWire obligation has already been durably persisted and can be answered by the method named in the event.
+
+For permission-mediated tool calls this means:
+
+1. Den creates or updates the `client.permission.result` obligation first.
+2. The streamed event includes `data.obligation_id`, `data.expected_client_method`, `data.tool_call`, and `data.permission`.
+3. The armature renders permission UI only from that answerable event and returns the user's decision against the referenced obligation.
+4. Den validates that returned results match the persisted obligation's run, session, tool call, permission id, expected client method, and open state before continuing the run.
+
+This invariant prevents unanswerable permission prompts and avoids reconstructing continuation state from loosely matched permission IDs, transcript text, or rendered error strings.
+
 ### JSON-RPC framing
 
 All BearWire requests and responses use standard JSON-RPC 2.0 framing.
@@ -526,7 +539,35 @@ Recommended pause reasons include:
 }
 ```
 
-#### `tool_call.blocked`
+#### `client.waiting`
+
+Canonical BearWire v1 event for an armature-actionable wait. Permission waits use nested `tool_call` and `permission` objects so the armature does not infer prompt state from flat or legacy fields.
+
+```json
+{
+  "obligation_id": "obl_123",
+  "expected_client_method": "client.permission.result",
+  "tool_call": {
+    "id": "tc_123",
+    "name": "fs_edit_file",
+    "title": "Edit file",
+    "kind": "function",
+    "arguments": {
+      "path": "/workspace/README.md"
+    }
+  },
+  "permission": {
+    "id": "perm_123",
+    "reason": "permission_required"
+  }
+}
+```
+
+The event must include a `client_obligation` resource ref and the `obligation_id` must identify a persisted open obligation.
+
+#### `tool_call.blocked` legacy projection
+
+Older BearWire draft projections used `tool_call.blocked` for permission-mediated waits:
 
 ```json
 {
@@ -536,6 +577,8 @@ Recommended pause reasons include:
   "permission_request_id": "perm_123"
 }
 ```
+
+New Den ↔ armature code should prefer `client.waiting`. Armatures may accept `tool_call.blocked` during migration only when it contains enough information to answer a persisted permission obligation.
 
 #### `tool_call.started`
 

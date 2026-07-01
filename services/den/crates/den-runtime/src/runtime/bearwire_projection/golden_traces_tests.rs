@@ -15,7 +15,10 @@ use crate::{
     native_runtime::openai_byte_stream_to_event_stream,
     runtime::bearwire_projection::{
         runtime_stream_event_to_bearwire_sse,
-        wire::{runtime_stream_event_to_bearwire_notifications, runtime_semantic_event_to_bearwire_events},
+        wire::{
+            runtime_semantic_event_to_bearwire_events,
+            runtime_stream_event_to_bearwire_notifications,
+        },
     },
     runtime_contracts::{
         RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
@@ -73,7 +76,11 @@ fn bearwire_types(event: RuntimeSemanticEvent) -> Vec<String> {
         .collect()
 }
 
-fn assert_type_mapping(event: RuntimeSemanticEvent, adapter_types: &[&str], bearwire_types_expected: &[&str]) {
+fn assert_type_mapping(
+    event: RuntimeSemanticEvent,
+    adapter_types: &[&str],
+    bearwire_types_expected: &[&str],
+) {
     let adapter_payloads = project_semantic(event.clone());
     assert_eq!(types(&adapter_payloads), adapter_types);
     assert_eq!(bearwire_types(event), bearwire_types_expected);
@@ -91,7 +98,10 @@ async fn golden_trace_text_then_tool_call() {
     let payloads = project_openai_frames(frames).await;
 
     // A `tool_calls` finish must NOT synthesize a turn_complete.
-    assert_eq!(types(&payloads), vec!["assistant_text_delta", "tool_request"]);
+    assert_eq!(
+        types(&payloads),
+        vec!["assistant_text_delta", "tool_request"]
+    );
 
     assert_eq!(
         payloads[0],
@@ -103,7 +113,10 @@ async fn golden_trace_text_then_tool_call() {
     assert_eq!(tool["type"], "tool_request");
     assert_eq!(tool["tool_call_id"], "call_golden_1");
     assert_eq!(tool["tool_name"], "memory_read");
-    assert_eq!(tool["args"], serde_json::json!({"path": "pair/notes/demo.md"}));
+    assert_eq!(
+        tool["args"],
+        serde_json::json!({"path": "pair/notes/demo.md"})
+    );
     assert_eq!(tool["approval"]["required"], false);
     assert_eq!(tool["diagnostic"]["transport_version"], 4);
 }
@@ -216,8 +229,36 @@ fn migration_type_mapping_covers_tool_and_error_semantics() {
             run_id: Some("run-2".to_string()),
         },
         &["tool_request"],
-        &["tool_call.blocked"],
+        &["client.waiting"],
     );
+    let waiting_events =
+        runtime_semantic_event_to_bearwire_events(RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: "call-wait".to_string(),
+            tool_name: "fs_edit_file".to_string(),
+            title: Some("Edit file".to_string()),
+            kind: Some("function".to_string()),
+            arguments: serde_json::json!({"path": "/workspace/README.md"}),
+            approval_request_id: Some("perm-wait".to_string()),
+            approval_required: true,
+            approval_reason: Some("permission required".to_string()),
+            run_id: Some("run-wait".to_string()),
+        });
+    assert_eq!(waiting_events.len(), 1);
+    let waiting = &waiting_events[0];
+    assert_eq!(waiting.event_type, "client.waiting");
+    assert_eq!(
+        waiting.data["expected_client_method"],
+        "client.permission.result"
+    );
+    assert_eq!(waiting.data["tool_call"]["id"], "call-wait");
+    assert_eq!(waiting.data["tool_call"]["name"], "fs_edit_file");
+    assert_eq!(
+        waiting.data["tool_call"]["arguments"]["path"],
+        "/workspace/README.md"
+    );
+    assert_eq!(waiting.data["permission"]["id"], "perm-wait");
+    assert_eq!(waiting.data["permission"]["reason"], "permission required");
+
     assert_type_mapping(
         RuntimeSemanticEvent::ToolCallFinished {
             tool_call_id: "call-3".to_string(),
@@ -242,11 +283,11 @@ fn migration_type_mapping_covers_tool_and_error_semantics() {
 
 #[test]
 fn bearwire_projection_serializes_as_json_rpc_event_notification() {
-    let notifications = runtime_stream_event_to_bearwire_notifications(RuntimeStreamEvent::Semantic(
-        RuntimeSemanticEvent::AssistantTextDelta {
+    let notifications = runtime_stream_event_to_bearwire_notifications(
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
             text: "Hello".to_string(),
-        },
-    ));
+        }),
+    );
     assert_eq!(notifications.len(), 1);
     let value = serde_json::to_value(&notifications[0]).expect("serialize notification");
     assert_eq!(value["jsonrpc"], "2.0");
@@ -425,8 +466,9 @@ fn golden_tool_call_finished_error_emits_status_then_error() {
 
 #[test]
 fn golden_untranslated_provider_event_yields_no_sse() {
-    let mapped = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::UntranslatedProviderEvent {
-        value: serde_json::json!({"message_type": "provider_only"}),
-    });
+    let mapped =
+        runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::UntranslatedProviderEvent {
+            value: serde_json::json!({"message_type": "provider_only"}),
+        });
     assert!(mapped.is_empty());
 }

@@ -405,7 +405,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
-    update_run_state_for_runtime_event(
+    let active_obligation = update_run_state_for_runtime_event(
         pool,
         session_id,
         run_id,
@@ -417,6 +417,37 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     )
     .await;
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
+        if event.event_type == "client.waiting" {
+            if let Some(obligation) = active_obligation.as_ref() {
+                event.data["obligation_id"] = json!(obligation.id.to_string());
+                event.data["expected_client_method"] = json!(obligation.expected_client_method);
+                event.data["permission_id"] = json!(obligation.permission_id);
+                event.data["tool_call_id"] = json!(obligation.tool_call_id);
+                event.resource_refs.push(
+                    den_runtime::runtime::bearwire_projection::wire::ResourceRef::new(
+                        "client_obligation",
+                        obligation.id.to_string(),
+                    ),
+                );
+            } else {
+                tracing::warn!(
+                    session_id = %session_id,
+                    run_id = %run_id,
+                    "runtime emitted client.waiting event without persisted BearWire obligation; dropping unanswerable event"
+                );
+                continue;
+            }
+        }
+        if event.event_type == "permission.requested" {
+            if active_obligation.is_none() {
+                tracing::warn!(
+                    session_id = %session_id,
+                    run_id = %run_id,
+                    "runtime emitted permission.requested event without persisted BearWire obligation; dropping unanswerable event"
+                );
+                continue;
+            }
+        }
         event.bear_id = Some(bear_id.to_string());
         event.human_id = Some(user_id.to_string());
         event.session_id = Some(session_id.to_string());
@@ -499,7 +530,7 @@ async fn update_run_state_for_runtime_event(
     event: &den_protocol::RuntimeStreamEvent,
     request_id: Uuid,
     started_at: Option<Instant>,
-) {
+) -> Option<bearwire_obligations::BearWireRunObligationRow> {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -571,15 +602,19 @@ async fn update_run_state_for_runtime_event(
                 )
                 .await
             };
-            if let Err(err) = obligation {
-                tracing::warn!(
-                    error = %err,
-                    session_id = %session_id,
-                    run_id = %run_id,
-                    tool_call_id = %tool_call_id,
-                    "failed to persist BearWire tool-call obligation"
-                );
-            }
+            let obligation = match obligation {
+                Ok(obligation) => Some(obligation),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %session_id,
+                        run_id = %run_id,
+                        tool_call_id = %tool_call_id,
+                        "failed to persist BearWire tool-call obligation"
+                    );
+                    None
+                }
+            };
             if let Some(started_at) = started_at {
                 let (kind, text) = if effective_approval_required {
                     (
@@ -612,6 +647,7 @@ async fn update_run_state_for_runtime_event(
                 )
                 .await;
             }
+            obligation
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
             let _ = bearwire_runs::transition_run(
@@ -627,6 +663,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Continued,
             )
             .await;
+            None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
             category,
@@ -658,6 +695,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
+            None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
             let _ = bearwire_runs::transition_run(
@@ -673,6 +711,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Cancelled,
             )
             .await;
+            None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message,
@@ -708,8 +747,9 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
+            None
         }
-        _ => {}
+        _ => None,
     }
 }
 

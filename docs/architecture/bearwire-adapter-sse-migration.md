@@ -11,8 +11,8 @@ This table locks the semantic mapping from the legacy Den → armature adapter-S
 | `assistant_text_delta` | `message.delta` | Payload carries `data.delta`; message/run ids are attached by the edge when known. |
 | `status_text` | `run.progress` | `data.kind = "status_text"`, `data.text` is the display status. |
 | `tool_request` with `approval.required = false` | `tool_call.requested` | `data.tool_call_id`, `data.tool_name`, `data.arguments`; armature executes or translates locally. |
-| `tool_request` with `approval.required = true` | `tool_call.blocked` | `data.approval_required = true`, optional `data.approval_request_id` and `data.reason`. |
-| `permission_request` | `permission.requested` | Direct adapter-SSE permission payloads map to BearWire permission mediation. Runtime semantic projection currently reaches this via blocked tool calls. |
+| `tool_request` with `approval.required = true` | `client.waiting` | Canonical v1 armature-actionable wait. Payload includes `data.obligation_id`, `data.expected_client_method = "client.permission.result"`, nested `data.tool_call`, and nested `data.permission`. Legacy `tool_call.blocked` may be accepted during migration only when answerable. |
+| `permission_request` | `client.waiting` | Permission mediation is an answerable client obligation, not just a display event. Den must persist the obligation before streaming this event. |
 | `turn_complete` | `run.completed` | `data.outcome = "ok"`. |
 | `turn_result` with ok/recovered status | `run.completed` | Diagnostics remain in `data`; edge may coalesce with `turn_complete` during migration. |
 | `turn_result` with error/cancel/timeout status | `run.failed` or `run.cancelled` | `data.reason`, `data.retryable`, and diagnostics are preserved where available. |

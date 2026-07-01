@@ -7867,6 +7867,7 @@ async fn handle_permission_request_event(
         .get("permission_id")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("permission_request missing permission_id"))?;
+    let obligation_id = event.get("obligation_id").and_then(Value::as_str);
     let tool_call_id = event
         .get("tool_call_id")
         .and_then(Value::as_str)
@@ -7973,6 +7974,9 @@ async fn handle_permission_request_event(
         let mut meta = serde_json::Map::new();
         meta.insert("toolName".to_string(), json!(tool_name));
         meta.insert("permissionId".to_string(), json!(permission_id));
+        if let Some(obligation_id) = obligation_id {
+            meta.insert("obligationId".to_string(), json!(obligation_id));
+        }
         if let Some(url) = url {
             meta.insert("targetUrl".to_string(), json!(url));
         }
@@ -8088,6 +8092,7 @@ async fn handle_permission_request_event(
                     permission_id,
                     json!({
                         "decision": "timeout",
+                        "obligation_id": obligation_id,
                         "plan_mode_id": plan_mode_id,
                         "run_id": event.get("run_id").and_then(Value::as_str),
                     }),
@@ -8168,6 +8173,7 @@ async fn handle_permission_request_event(
         permission_id,
         json!({
             "decision": decision_str,
+            "obligation_id": obligation_id,
             "plan_mode_id": plan_mode_id,
             "run_id": event.get("run_id").and_then(Value::as_str),
         }),

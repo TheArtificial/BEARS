@@ -167,6 +167,12 @@ All staged steps landed behind the golden-trace net. Mapping of plan → result:
 
 **No transitional shims remained to remove.** Each rename was done in place (via `git mv` + reference rewrites), so no back-compat `pub use … as acp_*` aliases were introduced in `den-runtime`/`den-core`. The only `as acp_*` re-exports in the tree are inside the **`den-acp` edge** (`den-acp/src/core/mod.rs`: `pub use acp::{runtime,tokens,turn_runner} as acp_*`), which are appropriate there (that crate *is* the ACP edge) and are consumed by the binary's `core/mod.rs`.
 
+### BearWire armature-obligation invariant
+
+Follow-up tightening (2026-07) clarified a protocol boundary rule for permission-mediated armature work: Den must not emit an armature-actionable wait event unless the exact corresponding BearWire obligation has already been durably persisted and can be answered by the method named in the event. The canonical v1 event shape is `client.waiting` with `data.obligation_id`, `data.expected_client_method`, nested `data.tool_call`, and nested `data.permission`. See `docs/architecture/bearwire-json-spec.md` for the wire shape.
+
+This keeps permission mediation in the BearWire wire layer while preserving a protocol-agnostic runtime core: the core emits semantic tool/permission waits, and the BearWire projection turns them into answerable client obligations.
+
 ### Residual `acp_*` / `ACP` surface in Den — strict compatibility rule
 
 Follow-up tightening (2026-06) raised the bar: even DB/log/tool names are candidates for removal unless they have a concrete compatibility reason to remain. The first tightening pass removed more Den-owned vocabulary without changing behavior:

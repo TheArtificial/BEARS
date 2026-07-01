@@ -482,6 +482,7 @@ pub(crate) async fn post_permission_result(
             "session_id": session_id,
             "run_id": run_id,
             "permission_id": permission_id,
+            "obligation_id": payload.get("obligation_id").cloned().unwrap_or(Value::Null),
             "decision": payload.get("decision").and_then(Value::as_str).unwrap_or("denied"),
             "reason": payload.get("reason").cloned().unwrap_or(Value::Null),
             "adapter_contract": adapter_contract_context(),
@@ -656,30 +657,50 @@ fn bearwire_tool_event_to_legacy_tool_request(event: &Value, approval_required: 
 
 fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Value {
     let data = event.get("data").unwrap_or(&Value::Null);
-    let permission_id = data
-        .get("approval_request_id")
+    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
+    let permission = data.get("permission").unwrap_or(&Value::Null);
+    let permission_id = permission
+        .get("id")
+        .or_else(|| data.get("approval_request_id"))
         .or_else(|| data.get("permission_id"))
         .and_then(Value::as_str)
         .or_else(|| resource_ref_id(event, "permission_request"))
         .unwrap_or("unknown");
-    let tool_call_id = data
-        .get("tool_call_id")
+    let tool_call_id = tool_call
+        .get("id")
+        .or_else(|| data.get("tool_call_id"))
         .and_then(Value::as_str)
         .or_else(|| resource_ref_id(event, "tool_call"))
         .unwrap_or(permission_id);
-    let tool_name = data
-        .get("tool_name")
+    let tool_name = tool_call
+        .get("name")
+        .or_else(|| data.get("tool_name"))
         .and_then(Value::as_str)
         .unwrap_or("tool");
     json!({
         "type": "permission_request",
         "run_id": event.get("run_id").and_then(Value::as_str),
+        "obligation_id": data.get("obligation_id").cloned().unwrap_or(Value::Null),
+        "expected_client_method": data.get("expected_client_method").cloned().unwrap_or(Value::Null),
         "permission_id": permission_id,
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
-        "title": data.get("title").and_then(Value::as_str).unwrap_or("Permission request"),
-        "reason": data.get("reason").and_then(Value::as_str).unwrap_or("BEARS requests permission."),
-        "target": data.get("arguments").cloned().unwrap_or_else(|| json!({ "kind": "tool_call" })),
+        "title": tool_call
+            .get("title")
+            .or_else(|| permission.get("title"))
+            .or_else(|| data.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or("Permission request"),
+        "reason": permission
+            .get("reason")
+            .or_else(|| data.get("reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("BEARS requests permission."),
+        "target": tool_call
+            .get("arguments")
+            .or_else(|| data.get("arguments"))
+            .cloned()
+            .unwrap_or_else(|| json!({ "kind": "tool_call" })),
     })
 }
 
@@ -1012,6 +1033,48 @@ async fn handle_bearwire_event(
             diagnostics.saw_error = true;
             handle_bearwire_tool_call_finished_event(session_id, event, true).await?;
         }
+        "client.waiting" => {
+            outcome.saw_tool_activity = true;
+            outcome.saw_visible_output = true;
+            diagnostics.saw_tool_activity = true;
+            diagnostics.saw_visible_output = true;
+            let data = event.get("data").unwrap_or(&Value::Null);
+            let expected = data
+                .get("expected_client_method")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let obligation_id = data
+                .get("obligation_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            let permission_id = data
+                .pointer("/permission/id")
+                .and_then(Value::as_str)
+                .or_else(|| data.get("approval_request_id").and_then(Value::as_str))
+                .or_else(|| data.get("permission_id").and_then(Value::as_str))
+                .or_else(|| resource_ref_id(event, "permission_request"))
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            if obligation_id.is_none()
+                || permission_id.is_none()
+                || expected != "client.permission.result"
+            {
+                return Err(anyhow!(
+                    "BearWire client.waiting missing answerable permission obligation for session {session_id}; refusing to show an unanswerable permission prompt"
+                ));
+            }
+            let legacy = bearwire_permission_event_to_legacy_permission_request(event);
+            handle_den_event(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                &legacy,
+                turn_token,
+            )
+            .await?;
+        }
         "tool_call.blocked" => {
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
@@ -1128,6 +1191,45 @@ mod tests {
         assert_eq!(legacy["type"], "tool_request");
         assert_eq!(legacy["tool_name"], "fs_read_text_file");
         assert_eq!(legacy["approval"]["required"], false);
+    }
+
+    #[test]
+    fn bearwire_client_waiting_projects_to_permission_request() {
+        let event = json!({
+            "type": "client.waiting",
+            "run_id": "run-web-1",
+            "resource_refs": [
+                { "kind": "client_obligation", "id": "obl-web-1" },
+                { "kind": "tool_call", "id": "call-web-1" },
+                { "kind": "permission_request", "id": "perm-web-1" }
+            ],
+            "data": {
+                "obligation_id": "obl-web-1",
+                "expected_client_method": "client.permission.result",
+                "tool_call": {
+                    "id": "call-web-1",
+                    "name": "web_fetch",
+                    "title": "Fetch URL",
+                    "kind": "function",
+                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+                },
+                "permission": {
+                    "id": "perm-web-1",
+                    "reason": "BEARS wants to fetch https://example.com/."
+                }
+            }
+        });
+
+        let legacy = bearwire_permission_event_to_legacy_permission_request(&event);
+
+        assert_eq!(legacy["type"], "permission_request");
+        assert_eq!(legacy["run_id"], "run-web-1");
+        assert_eq!(legacy["obligation_id"], "obl-web-1");
+        assert_eq!(legacy["expected_client_method"], "client.permission.result");
+        assert_eq!(legacy["permission_id"], "perm-web-1");
+        assert_eq!(legacy["tool_call_id"], "call-web-1");
+        assert_eq!(legacy["tool_name"], "web_fetch");
+        assert_eq!(legacy["target"]["url"], "https://example.com/");
     }
 
     #[test]

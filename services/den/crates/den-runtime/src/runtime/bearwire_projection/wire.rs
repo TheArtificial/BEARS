@@ -223,27 +223,46 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|id| !id.is_empty());
-            let event_type = if approval_required && has_permission_id {
-                "tool_call.blocked"
+            let effective_kind = kind.unwrap_or_else(|| "function".to_string());
+            let event = if approval_required && has_permission_id {
+                BearWireEvent::ephemeral(
+                    "client.waiting",
+                    json!({
+                        "expected_client_method": "client.permission.result",
+                        "tool_call": {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "title": title,
+                            "kind": effective_kind,
+                            "arguments": arguments,
+                        },
+                        "permission": {
+                            "id": approval_request_id,
+                            "reason": approval_reason,
+                        },
+                        "approval_required": true,
+                        "approval_request_id": approval_request_id,
+                    }),
+                )
             } else {
-                "tool_call.requested"
+                BearWireEvent::ephemeral(
+                    "tool_call.requested",
+                    json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "title": title,
+                        "kind": effective_kind,
+                        "arguments": arguments,
+                        "approval_required": false,
+                        "approval_request_id": approval_request_id,
+                        "reason": approval_reason,
+                    }),
+                )
             };
-            vec![BearWireEvent::ephemeral(
-                event_type,
-                json!({
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "title": title,
-                    "kind": kind.unwrap_or_else(|| "function".to_string()),
-                    "arguments": arguments,
-                    "approval_required": approval_required && has_permission_id,
-                    "approval_request_id": approval_request_id,
-                    "reason": approval_reason,
-                }),
-            )
-            .with_run_id(run_id)
-            .with_tool_call(tool_call_id)
-            .with_permission_request(approval_request_id)]
+            vec![event
+                .with_run_id(run_id)
+                .with_tool_call(tool_call_id)
+                .with_permission_request(approval_request_id)]
         }
         RuntimeSemanticEvent::ToolCallFinished {
             tool_call_id,
