@@ -46,7 +46,7 @@ pub async fn create_native_approval(
     .bind(arguments.to_string())
     .execute(pool)
     .await
-    .map_err(|e| DenError::System(format!("create native approval failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("create runtime approval failed: {e}")))?;
     Ok(approval_id)
 }
 
@@ -72,6 +72,6 @@ pub async fn decide_native_approval(
     .bind(reason)
     .execute(pool)
     .await
-    .map_err(|e| DenError::System(format!("decide native approval failed: {e}")))?;
+    .map_err(|e| DenError::System(format!("decide runtime approval failed: {e}")))?;
     Ok(())
 }
