@@ -113,6 +113,41 @@ pub async fn upsert_permission_obligation(
     tool_call_id: Option<&str>,
     request_payload: Value,
 ) -> Result<BearWireRunObligationRow, DenError> {
+    if let Some(tool_call_id) = tool_call_id {
+        if let Some(row) = sqlx::query(
+            r#"
+            UPDATE bearwire_run_obligations
+            SET session_id = $2,
+                kind = 'permission',
+                expected_client_method = 'client.permission.result',
+                permission_id = $4,
+                state = CASE
+                    WHEN state IN ('result_received','continued','failed','cancelled')
+                    THEN state
+                    ELSE 'waiting_for_client'
+                END,
+                request_payload = $5,
+                updated_at = NOW()
+            WHERE run_id = $1
+              AND tool_call_id = $3
+              AND (permission_id IS NULL OR permission_id = $4)
+            RETURNING id, run_id, session_id, kind, expected_client_method,
+                      tool_call_id, permission_id, state, request_payload, result_payload,
+                      created_at, updated_at, completed_at
+            "#,
+        )
+        .bind(run_id)
+        .bind(session_id)
+        .bind(tool_call_id)
+        .bind(permission_id)
+        .bind(request_payload.clone())
+        .fetch_optional(pool)
+        .await?
+        {
+            return Ok(row_to_obligation(row));
+        }
+    }
+
     let row = sqlx::query(
         r#"
         INSERT INTO bearwire_run_obligations (
