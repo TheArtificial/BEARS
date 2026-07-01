@@ -721,6 +721,7 @@ pub(crate) async fn run_start_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let session_id = required_param_string(params, "session_id")?;
     let prompt = required_param_string(params, "prompt")?;
+    let prompt_context = params.get("prompt_context").cloned();
     let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
@@ -912,6 +913,7 @@ pub(crate) async fn run_start_result(
             conversation_selection: &conversation_for_task,
             upstream_target: &upstream_target_for_task,
             prompt: &prompt_for_task,
+            prompt_context: prompt_context.clone(),
             client_tools: Some(client_tools_for_task),
             runtime_context: None,
             runtime_context_len: 0,

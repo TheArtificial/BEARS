@@ -5,7 +5,6 @@ use den_core::tools::{
 };
 use std::sync::{Arc, LazyLock};
 
-use futures::StreamExt;
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
@@ -22,6 +21,7 @@ use den_service::{
         persistence as conversation_persistence,
     },
 };
+use futures::StreamExt;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -42,6 +42,106 @@ use crate::{
 use den_core::DenError;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
+
+fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
+    let host_context = prompt_context?.get("host_context")?;
+    if let Some(body_text) = host_context
+        .get("body_text")
+        .and_then(serde_json::Value::as_str)
+    {
+        let body_text = body_text.trim();
+        if !body_text.is_empty() {
+            let kind = host_context
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("referenced_resources");
+            let delivery = host_context
+                .get("delivery")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("reference_only");
+            let persistence = host_context
+                .get("persistence")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("not_human_message");
+            return Some(format!(
+                "<host_context kind=\"{kind}\" delivery=\"{delivery}\" persistence=\"{persistence}\">\n{body_text}\n</host_context>"
+            ));
+        }
+    }
+
+    let resources = host_context
+        .get("resources")
+        .and_then(serde_json::Value::as_array)?;
+    if resources.is_empty() {
+        return None;
+    }
+
+    let kind = host_context
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("referenced_resources");
+    let delivery = host_context
+        .get("delivery")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("reference_only");
+    let persistence = host_context
+        .get("persistence")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("not_human_message");
+    let mut lines = vec![
+        format!(
+            "<host_context kind=\"{kind}\" delivery=\"{delivery}\" persistence=\"{persistence}\">"
+        ),
+        "The ACP client referenced these resources. They are not human-authored instructions."
+            .to_string(),
+        "Use available file/content tools for authoritative contents before quoting, editing, or relying on them.".to_string(),
+        String::new(),
+        "Resources:".to_string(),
+    ];
+    for (index, resource) in resources.iter().enumerate() {
+        let label = resource
+            .get("label")
+            .or_else(|| resource.get("name"))
+            .or_else(|| resource.get("uri"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unnamed resource");
+        lines.push(format!("- resource {}: {}", index + 1, label));
+        if let Some(uri) = resource.get("uri").and_then(serde_json::Value::as_str) {
+            lines.push(format!("  uri: {uri}"));
+        }
+        if let Some(mime_type) = resource
+            .get("mime_type")
+            .and_then(serde_json::Value::as_str)
+        {
+            lines.push(format!("  mime_type: {mime_type}"));
+        }
+        if let Some(text_bytes) = resource
+            .get("embedded_text_bytes")
+            .and_then(serde_json::Value::as_u64)
+        {
+            lines.push(format!(
+                "  embedded_text_bytes: {text_bytes} (body omitted; use tools for contents)"
+            ));
+        }
+    }
+    if let Some(omitted) = host_context
+        .get("omitted_references")
+        .and_then(serde_json::Value::as_u64)
+    {
+        if omitted > 0 {
+            lines.push(format!("- omitted_references: {omitted}"));
+        }
+    }
+    lines.push("</host_context>".to_string());
+    Some(lines.join("\n"))
+}
+
+fn prompt_for_model(prompt: &str, prompt_context: Option<&serde_json::Value>) -> String {
+    let Some(host_context) = render_host_context_for_model(prompt_context) else {
+        return prompt.to_string();
+    };
+    format!("{host_context}\n\n<user_message>\n{prompt}\n</user_message>")
+}
 
 /// Returns whether this turn recovered from context overflow via emergency compaction.
 /// Clears the session flag after reading (for client terminal turn_result mapping).
@@ -500,6 +600,7 @@ pub async fn start_native_profile_turn_event_stream(
     let conversation_id = materialized.conversation_id;
     let client_session_id = request.session_id;
     let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
+    let prompt_for_model = prompt_for_model(request.prompt, request.prompt_context.as_ref());
     let session = build_session(
         &NativeRuntimeDeps {
             pool: request.sqlx_pool,
@@ -510,7 +611,7 @@ pub async fn start_native_profile_turn_event_stream(
         request.bear_id,
         &conversation_id,
         client_session_id,
-        Some(request.prompt),
+        Some(prompt_for_model.as_str()),
         request.runtime_context,
         Some(client_session_id),
         workspace_roots.as_deref(),
@@ -533,6 +634,12 @@ pub async fn start_native_profile_turn_event_stream(
         content_json["client_session_id"] = serde_json::json!(client_session_id);
         content_json["client"] = serde_json::json!(request.client);
         content_json["request_id"] = serde_json::json!(request.request_id.to_string());
+        if let Some(prompt_context) = request.prompt_context.clone() {
+            content_json["prompt_context"] = prompt_context.clone();
+            if let Some(host_context) = prompt_context.get("host_context") {
+                content_json["host_context"] = host_context.clone();
+            }
+        }
         let record =
             CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
         persist_canonical_conversation_record(
@@ -739,10 +846,7 @@ pub async fn continue_native_client_turn_event_stream(
             content,
         } => {
             if let Some(approval_request_id) = approval_request_id.as_deref() {
-                let approve = matches!(
-                    status,
-                    den_protocol::RuntimeToolResultStatus::Ok
-                );
+                let approve = matches!(status, den_protocol::RuntimeToolResultStatus::Ok);
                 record_approval_decision(
                     request.sqlx_pool,
                     approval_request_id,
@@ -769,10 +873,7 @@ pub async fn continue_native_client_turn_event_stream(
             decision,
             reason,
         } => {
-            let approve = matches!(
-                decision,
-                den_protocol::RuntimeApprovalDecision::Approve
-            );
+            let approve = matches!(decision, den_protocol::RuntimeApprovalDecision::Approve);
             record_approval_decision(
                 request.sqlx_pool,
                 approval_request_id,
@@ -876,5 +977,41 @@ mod tests {
             compatibility_backend: Some("runtime:legacy".to_string()),
         };
         assert_eq!(bear_id_from_native_binding(&binding), None);
+    }
+
+    #[test]
+    fn prompt_for_model_wraps_human_prompt_with_structured_host_context() {
+        let prompt = prompt_for_model(
+            "Please inspect this.",
+            Some(&serde_json::json!({
+                "format": "acp_prompt_context.v1",
+                "host_context": {
+                    "kind": "referenced_resources",
+                    "delivery": "reference_only",
+                    "persistence": "not_human_message",
+                    "resources": [
+                        {
+                            "label": "src/lib.rs",
+                            "uri": "file:///workspace/src/lib.rs",
+                            "mime_type": "text/rust",
+                            "embedded_text_bytes": 128
+                        }
+                    ]
+                }
+            })),
+        );
+
+        assert!(prompt.contains("<host_context kind=\"referenced_resources\""));
+        assert!(prompt.contains("file:///workspace/src/lib.rs"));
+        assert!(prompt.contains("embedded_text_bytes: 128 (body omitted"));
+        assert!(prompt.contains("<user_message>\nPlease inspect this.\n</user_message>"));
+    }
+
+    #[test]
+    fn prompt_for_model_leaves_plain_prompt_unchanged_without_host_context() {
+        assert_eq!(
+            prompt_for_model("Please continue.", None),
+            "Please continue."
+        );
     }
 }

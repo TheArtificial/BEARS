@@ -12,23 +12,27 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use sqlx::Row;
 use uuid::Uuid;
 
 use den_http::armature_tokens;
-use den_service::client_sessions;
+use den_protocol::{
+    RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeSemanticEvent,
+    RuntimeStreamEvent,
+};
 use den_runtime::{
+    bearwire_obligations, bearwire_runs, native_runtime::NativeRuntimeConversationBackend,
+};
+use den_service::{
     bears::{db as bears_db, db::BearParams},
-    bearwire_obligations, bearwire_runs,
+    client_sessions,
+    conversation::persistence::{append_message, ensure_conversation_for_external_id},
     conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
         ConversationMessageWrite,
     },
-    den_service::conversation::persistence::{append_message, ensure_conversation_for_external_id},
-    native_runtime::NativeRuntimeConversationBackend,
-    den_protocol::{RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef},
-
+    DenState,
 };
-use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 use crate::{
     events::{events, EventStreamQuery},
@@ -503,10 +507,11 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["result"]["ok"], true, "{value}");
-    let session = client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
-        .await
-        .expect("load session")
-        .expect("session exists");
+    let session =
+        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+            .await
+            .expect("load session")
+            .expect("session exists");
     let resolved = session
         .resolved_conversation_id
         .as_deref()
@@ -532,6 +537,114 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
     .await
     .expect("count persisted user prompt");
     assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let prompt = "Please inspect the library entrypoint.";
+    let prompt_context = json!({
+        "format": "acp_prompt_context.v1",
+        "host_context": {
+            "kind": "referenced_resources",
+            "delivery": "reference_only",
+            "persistence": "not_human_message",
+            "resources": [
+                {
+                    "label": "src/lib.rs",
+                    "uri": "file:///workspace/src/lib.rs",
+                    "name": "src/lib.rs",
+                    "mime_type": "text/rust",
+                    "embedded_text_bytes": 128
+                }
+            ]
+        }
+    });
+
+    let response = rpc(
+        State(state.clone()),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-persist-host-context")),
+            method: "run.start".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+                "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+                "client": "zed",
+                "prompt": prompt,
+                "prompt_context": prompt_context
+            }),
+        }),
+    )
+    .await
+    .expect("run.start response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["result"]["ok"], true, "{value}");
+
+    let session =
+        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+            .await
+            .expect("load session")
+            .expect("session exists");
+    let resolved = session
+        .resolved_conversation_id
+        .as_deref()
+        .expect("run.start should resolve conversation");
+
+    let row = sqlx::query(
+        r#"
+        SELECT content_text, content_json
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE bear_id = $1 AND external_conversation_id = $2
+            LIMIT 1
+        )
+        AND message_type = 'user'
+        AND role = 'user'
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(bear_id)
+    .bind(resolved)
+    .fetch_one(&pool)
+    .await
+    .expect("load persisted user prompt row");
+
+    let persisted_text: String = row.try_get("content_text").expect("decode content_text");
+    let persisted_json: Value = row.try_get("content_json").expect("decode content_json");
+    assert_eq!(persisted_text, "Please inspect the library entrypoint.");
+    assert_eq!(
+        persisted_json["prompt_context"]["format"],
+        "acp_prompt_context.v1"
+    );
+    assert_eq!(
+        persisted_json["host_context"]["kind"],
+        "referenced_resources"
+    );
+    assert_eq!(persisted_json["host_context"]["delivery"], "reference_only");
+    assert_eq!(
+        persisted_json["host_context"]["persistence"],
+        "not_human_message"
+    );
+    assert_eq!(
+        persisted_json["host_context"]["resources"][0]["uri"],
+        "file:///workspace/src/lib.rs"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -591,10 +704,11 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         .expect("first run_id")
         .to_string();
 
-    let session = client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
-        .await
-        .expect("load session")
-        .expect("session exists");
+    let session =
+        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+            .await
+            .expect("load session")
+            .expect("session exists");
     let resolved = session
         .resolved_conversation_id
         .as_deref()
@@ -1240,7 +1354,10 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
         .await
         .expect("load permission obligation")
         .expect("permission obligation exists");
-    assert_eq!(obligation.expected_client_method, "client.permission.result");
+    assert_eq!(
+        obligation.expected_client_method,
+        "client.permission.result"
+    );
     assert_eq!(obligation.tool_call_id.as_deref(), Some(tool_call_id));
 }
 

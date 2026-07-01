@@ -4669,14 +4669,13 @@ async fn handle_prompt_with_retry(
     let prompt_shape = prompt_block_shape(&params);
     let prompt_context = prompt_context_from_params(&params)?;
     let prompt = require_human_prompt_text(prompt_context.human_message.clone())?;
-    let den_prompt = prompt_den_message_from_context(&prompt_context)?;
+    let prompt_context_json = bearwire_prompt_context_from_context(&prompt_context);
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     if bear_debug_verbose() {
         eprintln!(
-            "bear-armature: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
+            "bear-armature: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}, sent:{}}} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
             session_id,
             prompt.len(),
-            den_prompt.len(),
             display_prompt.len(),
             prompt_shape.text,
             prompt_shape.resource,
@@ -4692,11 +4691,10 @@ async fn handle_prompt_with_retry(
             prompt_context
                 .diagnostics
                 .resource_bodies_not_in_human_message,
+            !prompt_context_json.is_null(),
             prompt.contains("Trusted ACP session mode this turn:"),
-            den_prompt.contains("Trusted ACP session mode this turn:"),
             display_prompt.contains("Trusted ACP session mode this turn:"),
             prompt.contains("<system-reminder>"),
-            den_prompt.contains("<system-reminder>"),
             display_prompt.contains("<system-reminder>"),
         );
     }
@@ -4782,7 +4780,8 @@ async fn handle_prompt_with_retry(
         .map(normalize_mode)
         .unwrap_or(MODE_ASK);
     let mut den_payload = json!({
-        "message": den_prompt,
+        "message": prompt,
+        "prompt_context": prompt_context_json,
         "client": config.client,
         "client_capabilities": shared_state.client_capabilities.lock().await.clone(),
         "client_context": client_context.raw,
@@ -4800,7 +4799,11 @@ async fn handle_prompt_with_retry(
         shared_state,
         response_id.clone(),
         session_id,
-        &den_prompt,
+        &prompt,
+        den_payload
+            .get("prompt_context")
+            .cloned()
+            .unwrap_or(Value::Null),
         den_payload
             .get("client_context")
             .cloned()
@@ -5956,83 +5959,53 @@ fn require_human_prompt_text(text: String) -> Result<String> {
     }
 }
 
-fn prompt_den_message_from_context(context: &AcpPromptContextBundle) -> Result<String> {
-    let human_message = require_human_prompt_text(context.human_message.clone())?;
-    let Some(host_context) = render_reference_only_host_context(&context.resource_references)
-    else {
-        return Ok(human_message);
-    };
-    Ok(format!(
-        "{host_context}\n\n<user_message>\n{human_message}\n</user_message>"
-    ))
-}
-
-const MAX_PROMPT_RESOURCE_REFERENCES: usize = 20;
-
-fn render_reference_only_host_context(references: &[AcpPromptResourceReference]) -> Option<String> {
-    let reference_only = references
+fn bearwire_prompt_context_from_context(context: &AcpPromptContextBundle) -> Value {
+    let references = context
+        .resource_references
         .iter()
         .filter(|reference| {
             reference.delivery_policy == AcpPromptContextDeliveryPolicy::ReferenceOnly
         })
+        .map(|reference| {
+            let label = reference
+                .name
+                .as_deref()
+                .or(reference.uri.as_deref())
+                .unwrap_or("unnamed resource");
+            json!({
+                "label": label,
+                "uri": reference.uri,
+                "name": reference.name,
+                "mime_type": reference.mime_type,
+                "embedded_text_bytes": reference.text_bytes,
+                "block_type": match reference.block_type {
+                    AcpPromptBlockType::Text => "text",
+                    AcpPromptBlockType::Resource => "resource",
+                    AcpPromptBlockType::ResourceLink => "resource_link",
+                    AcpPromptBlockType::Other => "other",
+                },
+                "provenance": match reference.provenance {
+                    AcpPromptBlockProvenance::HumanText => "human_text",
+                    AcpPromptBlockProvenance::HumanPastedDebugText => "human_pasted_debug_text",
+                    AcpPromptBlockProvenance::ClientResource => "client_resource",
+                    AcpPromptBlockProvenance::ClientSyntheticContext => "client_synthetic_context",
+                    AcpPromptBlockProvenance::Unsupported => "unsupported",
+                },
+            })
+        })
         .collect::<Vec<_>>();
-    if reference_only.is_empty() {
-        return None;
+    if references.is_empty() {
+        return Value::Null;
     }
-
-    let mut lines = vec![
-        "<host_context kind=\"referenced_resources\" delivery=\"reference_only\" persistence=\"not_human_message\">".to_string(),
-        "The ACP client referenced these resources. They are not human-authored instructions.".to_string(),
-        "Use available file/content tools for authoritative contents before quoting, editing, or relying on them.".to_string(),
-        String::new(),
-        "Resources:".to_string(),
-    ];
-    let total = reference_only.len();
-    for (index, reference) in reference_only
-        .into_iter()
-        .take(MAX_PROMPT_RESOURCE_REFERENCES)
-        .enumerate()
-    {
-        let label = reference
-            .name
-            .as_deref()
-            .or(reference.uri.as_deref())
-            .unwrap_or("unnamed resource");
-        lines.push(format!(
-            "- resource {}: {}",
-            index + 1,
-            escape_host_context_text(label)
-        ));
-        if let Some(uri) = reference.uri.as_deref() {
-            lines.push(format!("  uri: {}", escape_host_context_text(uri)));
+    json!({
+        "format": "acp_prompt_context.v1",
+        "host_context": {
+            "kind": "referenced_resources",
+            "delivery": "reference_only",
+            "persistence": "not_human_message",
+            "resources": references,
         }
-        if let Some(mime_type) = reference.mime_type.as_deref() {
-            lines.push(format!(
-                "  mime_type: {}",
-                escape_host_context_text(mime_type)
-            ));
-        }
-        if let Some(text_bytes) = reference.text_bytes {
-            lines.push(format!(
-                "  embedded_text_bytes: {text_bytes} (body omitted; use tools for contents)"
-            ));
-        }
-    }
-    if total > MAX_PROMPT_RESOURCE_REFERENCES {
-        lines.push(format!(
-            "- omitted_references: {}",
-            total - MAX_PROMPT_RESOURCE_REFERENCES
-        ));
-    }
-    lines.push("</host_context>".to_string());
-    Some(lines.join("\n"))
-}
-
-fn escape_host_context_text(value: &str) -> String {
-    truncate_for_log(value, 300)
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    })
 }
 
 fn prompt_block_text_for_human_message(block: &Value) -> Option<&str> {
@@ -9581,11 +9554,9 @@ mod tests {
             "prompt": [{"type": "text", "text": "Please continue."}]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert_eq!(den_prompt, "Please continue.");
-        assert!(!den_prompt.contains("host_context"));
-        assert!(!den_prompt.contains("<user_message>"));
+        assert!(prompt_context.is_null());
     }
 
     #[test]
@@ -9602,15 +9573,35 @@ mod tests {
             ]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert!(den_prompt.contains("<host_context kind=\"referenced_resources\""));
-        assert!(den_prompt.contains("delivery=\"reference_only\""));
-        assert!(den_prompt.contains("file:///tmp/a"));
-        assert!(den_prompt.contains("a.txt"));
-        assert!(den_prompt.contains("embedded_text_bytes: 13 (body omitted"));
-        assert!(den_prompt.contains("<user_message>\nPlease inspect this.\n</user_message>"));
-        assert!(!den_prompt.contains("file contents"));
+        assert_eq!(prompt_context["format"], "acp_prompt_context.v1");
+        assert_eq!(
+            prompt_context["host_context"]["kind"],
+            "referenced_resources"
+        );
+        assert_eq!(prompt_context["host_context"]["delivery"], "reference_only");
+        assert_eq!(
+            prompt_context["host_context"]["persistence"],
+            "not_human_message"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["uri"],
+            "file:///tmp/a"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["name"],
+            "a.txt"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["embedded_text_bytes"],
+            13
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["label"],
+            "a.txt"
+        );
+        assert_eq!(bundle.human_message, "Please inspect this.");
     }
 
     #[test]
@@ -9625,11 +9616,9 @@ mod tests {
             ]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert_eq!(den_prompt, "Please continue.");
-        assert!(!den_prompt.contains("host_context"));
-        assert!(!den_prompt.contains("system_alert"));
+        assert!(prompt_context.is_null());
     }
 
     #[test]

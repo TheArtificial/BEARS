@@ -653,6 +653,7 @@ dependencies = [
  "den-core",
  "den-http",
  "den-llm",
+ "den-memory",
  "den-protocol",
  "den-runtime",
  "den-service",

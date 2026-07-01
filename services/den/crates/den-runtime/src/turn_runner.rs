@@ -34,6 +34,7 @@ pub struct TurnStartRequest<'a> {
     pub conversation_selection: &'a str,
     pub upstream_target: &'a str,
     pub prompt: &'a str,
+    pub prompt_context: Option<serde_json::Value>,
     pub client_tools: Option<serde_json::Value>,
     pub runtime_context: Option<&'a str>,
     pub runtime_context_len: usize,

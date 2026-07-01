@@ -3,17 +3,13 @@ use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::{
-    conversation_message_types::{
-        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
-        ConversationMessageWrite,
-    },
+use crate::conversation_message_types::{
+    ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+    ConversationMessageWrite,
 };
 
+use super::persistence::{append_message, ensure_conversation_for_external_id, list_messages_page};
 use crate::conversation_ids::is_acp_history_target;
-use super::persistence::{
-    append_message, ensure_conversation_for_external_id, list_messages_page,
-};
 
 pub fn canonical_persistence_enabled_for_conversation(external_conversation_id: &str) -> bool {
     is_acp_history_target(external_conversation_id)
@@ -361,7 +357,9 @@ impl CanonicalConversationRecord {
             ConversationMessageType::ToolCall => {
                 Self::tool_call_event(content_text, content_json, provider_message_id)
             }
-            ConversationMessageType::WorkflowEvent if visibility == ConversationMessageVisibility::DiagnosticOnly => {
+            ConversationMessageType::WorkflowEvent
+                if visibility == ConversationMessageVisibility::DiagnosticOnly =>
+            {
                 Self::workflow_event(content_text, content_json, provider_message_id)
             }
             _ => Self::StructuredEvent {
@@ -384,10 +382,9 @@ impl CanonicalConversationRecord {
                 provider_message_id,
             } => {
                 let (message_type, message_role) = match role {
-                    CanonicalVisibleRole::User => (
-                        ConversationMessageType::User,
-                        ConversationMessageRole::User,
-                    ),
+                    CanonicalVisibleRole::User => {
+                        (ConversationMessageType::User, ConversationMessageRole::User)
+                    }
                     CanonicalVisibleRole::Assistant => (
                         ConversationMessageType::Assistant,
                         ConversationMessageRole::Assistant,
@@ -479,7 +476,8 @@ pub async fn persist_canonical_conversation_record(
     )
     .await?;
     let source_event_id = canonical_record_source_event_id(record);
-    if source_event_id.is_none() && canonical_record_already_persisted(context, canonical.id, record).await?
+    if source_event_id.is_none()
+        && canonical_record_already_persisted(context, canonical.id, record).await?
     {
         return Ok(());
     }
@@ -537,8 +535,7 @@ pub fn normalize_persisted_gateway_record(
                 .unwrap_or(ConversationMessageType::WorkflowEvent);
             let visibility = ConversationMessageVisibility::try_from_storage(visibility)
                 .unwrap_or(ConversationMessageVisibility::DiagnosticOnly);
-            let role = role
-                .and_then(|value| ConversationMessageRole::try_from_storage(value).ok());
+            let role = role.and_then(|value| ConversationMessageRole::try_from_storage(value).ok());
             CanonicalConversationRecord::normalized_structured_event(
                 message_type,
                 role,
@@ -919,7 +916,10 @@ pub fn memory_proposal_resolved_projection(
 ) -> Projection {
     let visible_summary = match status.as_str() {
         "approved" => Some(match result_path.as_deref() {
-            Some(path) => format!("Memory proposal '{}' was approved and applied at {path}.", title),
+            Some(path) => format!(
+                "Memory proposal '{}' was approved and applied at {path}.",
+                title
+            ),
             None => format!("Memory proposal '{}' was approved.", title),
         }),
         "rejected" => Some(format!("Memory proposal '{}' was rejected.", title)),
@@ -994,7 +994,9 @@ pub fn memory_curate_enqueued_projection(
             created_at,
         }),
         workflow_text: format!("Memory curate enqueued with {proposal_count} proposal(s)"),
-        visible_summary: Some(format!("Memory curate was queued for {proposal_count} proposal(s).")),
+        visible_summary: Some(format!(
+            "Memory curate was queued for {proposal_count} proposal(s)."
+        )),
     }
 }
 
@@ -1023,7 +1025,9 @@ pub fn memory_curate_started_projection(
             started_at,
         }),
         workflow_text: format!("Memory curate started with {proposal_count} proposal(s)"),
-        visible_summary: Some(format!("Memory curate started for {proposal_count} proposal(s).")),
+        visible_summary: Some(format!(
+            "Memory curate started for {proposal_count} proposal(s)."
+        )),
     }
 }
 
@@ -1052,7 +1056,9 @@ pub fn memory_curate_completed_projection(
             completed_at,
         }),
         workflow_text: format!("Memory curate completed with {proposal_count} proposal(s)"),
-        visible_summary: Some(format!("Memory curate completed for {proposal_count} proposal(s).")),
+        visible_summary: Some(format!(
+            "Memory curate completed for {proposal_count} proposal(s)."
+        )),
     }
 }
 
@@ -1070,9 +1076,9 @@ pub fn memory_curate_failed_projection(
 ) -> Projection {
     let proposal_count = proposal_ids.len();
     let visible_summary = Some(match error.as_deref() {
-        Some(message) if !message.trim().is_empty() => format!(
-            "Memory curate failed for {proposal_count} proposal(s): {message}"
-        ),
+        Some(message) if !message.trim().is_empty() => {
+            format!("Memory curate failed for {proposal_count} proposal(s): {message}")
+        }
         _ => format!("Memory curate failed for {proposal_count} proposal(s)."),
     });
     Projection {
@@ -1095,7 +1101,8 @@ pub fn memory_curate_failed_projection(
 
 impl Projection {
     pub fn workflow_content_json(&self) -> serde_json::Value {
-        let mut value = serde_json::to_value(&self.event).expect("projection event should serialize");
+        let mut value =
+            serde_json::to_value(&self.event).expect("projection event should serialize");
         let object = value
             .as_object_mut()
             .expect("projection event should serialize to object");
@@ -1140,10 +1147,7 @@ pub async fn persist_projection(
     Ok(())
 }
 
-pub fn spawn_persist_projection(
-    context: ConversationPersistenceContext,
-    projection: Projection,
-) {
+pub fn spawn_persist_projection(context: ConversationPersistenceContext, projection: Projection) {
     if context.skip_persistence {
         return;
     }
@@ -1208,4 +1212,3 @@ pub fn spawn_persist_assistant_summary_message(
 
 #[cfg(test)]
 mod tests;
-

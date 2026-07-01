@@ -31,7 +31,9 @@ fn projection_workflow_content_json_is_derived_from_typed_event() {
 
 #[test]
 fn projection_requires_canonical_conversation_id_shape() {
-    assert!(Some("conv-123").filter(|id| id.starts_with("conv-")).is_some());
+    assert!(Some("conv-123")
+        .filter(|id| id.starts_with("conv-"))
+        .is_some());
     assert!(Some("conversation-123")
         .filter(|id| id.starts_with("conv-"))
         .is_none());
@@ -73,7 +75,10 @@ fn proposal_projection_helpers_build_expected_summaries() {
         Some("core/notes.md".to_string()),
         None,
     );
-    assert_eq!(resolved.workflow_text, "Memory proposal resolved: Proposal B (approved)");
+    assert_eq!(
+        resolved.workflow_text,
+        "Memory proposal resolved: Proposal B (approved)"
+    );
     assert_eq!(
         resolved.visible_summary.as_deref(),
         Some("Memory proposal 'Proposal B' was approved and applied at core/notes.md.")
@@ -91,7 +96,10 @@ fn proposal_projection_helpers_build_expected_summaries() {
         "pending".to_string(),
         vec!["pair/notes/test.md".to_string()],
     );
-    assert_eq!(requested.workflow_text, "Memory review requested: Proposal C");
+    assert_eq!(
+        requested.workflow_text,
+        "Memory review requested: Proposal C"
+    );
     assert_eq!(
         requested.visible_summary.as_deref(),
         Some("Review requested for memory proposal 'Proposal C' from pair.")
@@ -123,7 +131,10 @@ fn projection_memory_review_requested_json_uses_typed_event_shape() {
     assert_eq!(json["scope_id"], "client-session-1");
     assert_eq!(json["title"], "Promote note");
     assert_eq!(json["suggested_action"], "promote_to_core");
-    assert_eq!(json["source_paths"], serde_json::json!(["pair/notes/test.md"]));
+    assert_eq!(
+        json["source_paths"],
+        serde_json::json!(["pair/notes/test.md"])
+    );
 }
 
 #[test]

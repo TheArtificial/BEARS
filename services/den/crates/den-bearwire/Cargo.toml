@@ -31,3 +31,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
+den-memory = { path = "../den-memory" }
