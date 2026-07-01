@@ -159,6 +159,40 @@ pub(crate) async fn validate_code_token(http: &reqwest::Client, config: &Config)
     }
 }
 
+pub(crate) async fn post_session_open(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    client_context: Value,
+    conversation_id: Option<&str>,
+    requested_mode: &str,
+) -> Result<Value> {
+    let cwd = client_context
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    rpc_call(
+        http,
+        config,
+        "session.open",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "client": config.client,
+            "cwd": cwd,
+            "mode": requested_mode,
+            "adapter_contract": adapter_contract_context(),
+            "client_context": client_context,
+        }),
+    )
+    .await
+    .context("BearWire session.open failed")
+}
+
 pub(crate) async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -172,30 +206,15 @@ pub(crate) async fn handle_prompt(
     requested_mode: &str,
     turn_token: Uuid,
 ) -> Result<()> {
-    let cwd = client_context
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-
-    let session_result = rpc_call(
+    let session_result = post_session_open(
         http,
         config,
-        "session.open",
-        json!({
-            "bear_slug": config.bear,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": config.client,
-            "cwd": cwd,
-            "mode": requested_mode,
-            "adapter_contract": adapter_contract_context(),
-            "client_context": client_context.clone(),
-        }),
+        session_id,
+        client_context.clone(),
+        conversation_id,
+        requested_mode,
     )
-    .await
-    .context("BearWire session.open failed")?;
+    .await?;
 
     if crate::bear_debug_verbose() {
         eprintln!(
@@ -218,6 +237,13 @@ pub(crate) async fn handle_prompt(
             session_id
         );
     }
+
+    let cwd = client_context
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
 
     let run_result = rpc_call(
         http,

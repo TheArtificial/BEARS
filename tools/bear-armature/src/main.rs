@@ -2219,6 +2219,40 @@ async fn handle_request(
                         summarize_mcp_for_log(context.raw.get("mcp"))
                     );
                 }
+                let mode = MODE_ASK;
+                let conversation_id = prompt_conversation_id_from_params(&request.params)
+                    .unwrap_or_else(|| "default".to_string());
+                if let Some(config) = runtime.config.as_ref() {
+                    if bearwire::enabled() {
+                        if let Err(err) = bearwire::post_session_open(
+                            http,
+                            config,
+                            &session_id,
+                            context.raw.clone(),
+                            Some(&conversation_id),
+                            mode,
+                        )
+                        .await
+                        {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32003,
+                                    "BEARS session creation failed",
+                                    Some(json!({ "message": format!("{err:#}") })),
+                                )),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                    spawn_adapter_environment_publish(
+                        config.clone(),
+                        session_id.clone(),
+                        adapter_state.clone(),
+                        None,
+                    );
+                }
                 shared_state
                     .session_contexts
                     .lock()
@@ -2227,15 +2261,6 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
-                if let Some(config) = runtime.config.as_ref() {
-                    spawn_adapter_environment_publish(
-                        config.clone(),
-                        session_id.clone(),
-                        adapter_state.clone(),
-                        None,
-                    );
-                }
-                let mode = MODE_ASK;
                 let response = NewSessionResponse::new(session_id.clone())
                     .config_options(session_config_options_for_mode(mode))
                     .modes(session_modes_for_mode(mode))
@@ -4322,6 +4347,14 @@ async fn fetch_conversation_history_chronological(
     Ok(flatten_history_pages_chronological(pages_newest_first))
 }
 
+fn history_replay_error_allows_skip(err: &anyhow::Error) -> bool {
+    let message = format!("{err:#}");
+    message.contains("Den history returned HTTP 404")
+        || message.contains("/conversations/")
+            && message.contains("/history")
+            && message.contains("404")
+}
+
 async fn replay_history_for_den_session(
     http: &reqwest::Client,
     config: &Config,
@@ -4330,7 +4363,20 @@ async fn replay_history_for_den_session(
     lifecycle_method: &str,
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
-        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
+        let messages = match fetch_conversation_history_chronological(http, config, &conv).await {
+            Ok(messages) => messages,
+            Err(err) if history_replay_error_allows_skip(&err) => {
+                eprintln!(
+                    "bear-armature: {} session_id={} skipping unavailable Den history replay for conversation_id={} error={}",
+                    lifecycle_method,
+                    session_id,
+                    conv,
+                    truncate_for_log(&format!("{err:#}"), 240)
+                );
+                Vec::new()
+            }
+            Err(err) => return Err(err),
+        };
         if bear_debug_verbose() {
             eprintln!(
                 "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
@@ -9670,6 +9716,20 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": { "protocol": "bearwire", "version": 1 }
+            }),
+            Some("session.open") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "ok": true,
+                    "session": {
+                        "client_session_id": value.pointer("/params/session_id").and_then(Value::as_str).unwrap_or("acp-test-session"),
+                        "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                        "resolved_conversation_id": null,
+                        "cwd": value.pointer("/params/cwd").and_then(Value::as_str).unwrap_or("/workspace"),
+                        "current_mode": value.pointer("/params/mode").and_then(Value::as_str).unwrap_or("ask")
+                    }
+                }
             }),
             Some("session.state") => {
                 if let Some(session_id) =
