@@ -2221,8 +2221,7 @@ async fn handle_request(
                     );
                 }
                 let mode = MODE_ASK;
-                let conversation_id = prompt_conversation_id_from_params(&request.params)
-                    .unwrap_or_else(|| "default".to_string());
+                let conversation_id = prompt_conversation_id_from_params(&request.params);
                 if let Some(config) = runtime.config.as_ref() {
                     if bearwire::enabled() {
                         if let Err(err) = bearwire::post_session_open(
@@ -2230,7 +2229,7 @@ async fn handle_request(
                             config,
                             &session_id,
                             context.raw.clone(),
-                            Some(&conversation_id),
+                            conversation_id.as_deref(),
                             mode,
                         )
                         .await
