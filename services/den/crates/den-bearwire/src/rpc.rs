@@ -90,6 +90,11 @@ pub(crate) async fn rpc(
             methods::session::session_close_result(&state, &headers, &request.params).await,
             "BearWire session.close failed",
         ),
+        "session.compact" => method_response(
+            request.id,
+            methods::session::session_compact_result(&state, &headers, &request.params).await,
+            "BearWire session.compact failed",
+        ),
         "session.state" => method_response(
             request.id,
             methods::session::session_state_result(&state, &headers, &request.params).await,

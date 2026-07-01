@@ -4523,12 +4523,10 @@ async fn post_session_lifecycle_action_with_payload(
 
 async fn compact_session_conversation(
     _http: &reqwest::Client,
-    _config: &Config,
-    _session_id: &str,
+    config: &Config,
+    session_id: &str,
 ) -> Result<Value> {
-    Err(anyhow!(
-        "Conversation compaction is not available through BearWire yet; legacy ACP compact endpoint is retired."
-    ))
+    bearwire::post_session_compact(config, session_id).await
 }
 
 fn render_compact_recovery_result(result: &Value) -> String {

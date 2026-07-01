@@ -2,11 +2,12 @@ use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
-use den_service::{client_sessions, bears::BearProfile, DenState};
 use den_runtime::{
     bearwire_events,
     runtime::bearwire_projection::wire::BearWireEvent,
+    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
 };
+use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{param_string, required_param_string};
@@ -90,6 +91,51 @@ pub(crate) async fn session_open_result(
         "ok": true,
         "session": session,
         "event_sequence": persisted.sequence_no,
+    }))
+}
+
+pub(crate) async fn session_compact_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session_id = required_param_string(params, "session_id")?;
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let state_result = prepare_turn_compaction(
+        &state.sqlx_pool,
+        &state.config,
+        bear.id,
+        conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await?;
+
+    let compacted = state_result
+        .as_ref()
+        .is_some_and(|state| state.compacted_seq_cutoff.is_some());
+    Ok(json!({
+        "ok": true,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "compact_result": {
+            "status": if compacted { "applied" } else { "skipped" },
+            "reason": "bearwire_manual",
+            "compacted_seq_cutoff": state_result.as_ref().and_then(|state| state.compacted_seq_cutoff),
+            "group_count": state_result.as_ref().map(|state| state.groups.len()).unwrap_or(0),
+        }
     }))
 }
 
@@ -210,10 +256,14 @@ async fn session_model_payload(
     bear: &den_service::bears::Bear,
     session_id: &str,
 ) -> Result<Value, CustomError> {
-    let session =
-        client_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
-            .await?
-            .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
     let conversation_id = session
         .resolved_conversation_id
         .as_deref()

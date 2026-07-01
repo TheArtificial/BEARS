@@ -391,6 +391,20 @@ pub(crate) async fn post_session_close(config: &Config, session_id: &str) -> Res
     .await
 }
 
+pub(crate) async fn post_session_compact(config: &Config, session_id: &str) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "session.compact",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
 pub(crate) async fn post_run_cancel(config: &Config, session_id: &str) -> Result<Value> {
     rpc_call(
         &reqwest::Client::new(),
