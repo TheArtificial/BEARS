@@ -105,6 +105,12 @@ pub(crate) async fn rpc(
             methods::session::session_model_set_result(&state, &headers, &request.params).await,
             "BearWire session.model.set failed",
         ),
+        "conversation.history" => method_response(
+            request.id,
+            methods::conversation::conversation_history_result(&state, &headers, &request.params)
+                .await,
+            "BearWire conversation.history failed",
+        ),
         "run.cancel" => method_response(
             request.id,
             methods::run::run_cancel_result(&state, &headers, &request.params).await,

@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use den_service::DenState;
 
 pub(crate) mod client;
+pub(crate) mod conversation;
 pub(crate) mod resource;
 pub(crate) mod run;
 pub(crate) mod session;

@@ -4132,14 +4132,12 @@ struct ReloadHistoryMessage {
     text: String,
 }
 
-#[allow(dead_code)]
 fn flatten_history_pages_chronological(
     pages_newest_first: Vec<Vec<ReloadHistoryMessage>>,
 ) -> Vec<ReloadHistoryMessage> {
     pages_newest_first.into_iter().rev().flatten().collect()
 }
 
-#[allow(dead_code)]
 fn history_replay_chunks_with_boundaries(
     messages: Vec<ReloadHistoryMessage>,
 ) -> Vec<ReloadHistoryMessage> {
@@ -4159,20 +4157,95 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
+async fn fetch_conversation_history_chronological(
+    http: &reqwest::Client,
+    config: &Config,
+    conversation_id: &str,
+) -> Result<Vec<ReloadHistoryMessage>> {
+    let mut pages_newest_first: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
+    let mut before: Option<String> = None;
+    let mut seen_cursors = std::collections::HashSet::new();
+    loop {
+        let mut params = json!({
+            "bear_slug": config.bear,
+            "conversation_id": conversation_id,
+            "limit": 50,
+        });
+        if let Some(before) = before.as_deref() {
+            params["before"] = json!(before);
+        }
+        let body = bearwire::rpc_call(http, config, "conversation.history", params)
+            .await
+            .with_context(|| format!("get BearWire conversation history for {conversation_id}"))?;
+        let messages = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut page = Vec::new();
+        for m in messages {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+            let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+            if text.trim().is_empty() {
+                continue;
+            }
+            page.push(ReloadHistoryMessage {
+                id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                role: role.to_string(),
+                text: text.to_string(),
+            });
+        }
+        pages_newest_first.push(page);
+        let has_more = body
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !has_more {
+            break;
+        }
+        let Some(next_before) = body
+            .get("next_before")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+        else {
+            break;
+        };
+        if !seen_cursors.insert(next_before.clone()) {
+            return Err(anyhow!(
+                "BearWire history pagination repeated cursor {next_before:?} for conversation {conversation_id}"
+            ));
+        }
+        before = Some(next_before);
+    }
+    Ok(flatten_history_pages_chronological(pages_newest_first))
+}
+
 async fn replay_history_for_den_session(
-    _http: &reqwest::Client,
-    _config: &Config,
+    http: &reqwest::Client,
+    config: &Config,
     session_id: &str,
     den: &Value,
     lifecycle_method: &str,
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
-        eprintln!(
-            "bear-armature: {} session_id={} skipping Den history replay for conversation_id={} because legacy ACP history endpoint is retired and BearWire history is not implemented yet",
-            lifecycle_method,
-            session_id,
-            conv
-        );
+        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
+                lifecycle_method,
+                session_id,
+                messages.len(),
+                conv
+            );
+        }
+        for message in history_replay_chunks_with_boundaries(messages) {
+            match message.role.as_str() {
+                "user" => send_user_message_chunk(session_id, &message.text).await?,
+                "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
+                _ => {}
+            }
+        }
     } else {
         if bear_debug_verbose() {
             eprintln!(
