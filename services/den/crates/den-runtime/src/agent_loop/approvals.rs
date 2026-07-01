@@ -31,7 +31,7 @@ pub async fn create_native_approval(
     let approval_id = Uuid::new_v4().to_string();
     sqlx::query(
         r"
-        INSERT INTO native_runtime_approvals (
+        INSERT INTO runtime_approvals (
             approval_id, bear_id, conversation_id, client_session_id,
             tool_call_id, tool_name, arguments_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -62,7 +62,7 @@ pub async fn decide_native_approval(
     };
     sqlx::query(
         r"
-        UPDATE native_runtime_approvals
+        UPDATE runtime_approvals
         SET status = $2, decision_reason = $3, decided_at = NOW()
         WHERE approval_id = $1
         ",
