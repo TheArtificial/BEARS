@@ -92,6 +92,14 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
   - Do not route Den-hosted tools to `bear-armature` for local execution.
 - If adding, renaming, or aliasing tools, update descriptors/resolvers first. Avoid scattered string `match` arms or hardcoded allowlists except at narrow routing boundaries.
 
+## Typed Boundaries and String Hygiene
+
+- Avoid "stringy" protocol designs. Do not embed control data in transcript text with XML/Markdown/JSON blocks or sentinel strings; use typed BearWire/ACP events, message parts, or explicit fields instead.
+- Prefer typed Rust values and enums over raw `String`/`&str` for distinct concepts such as model handles, provider model IDs, session IDs, conversation IDs, run IDs, tool call IDs, approval IDs, modes, statuses, permission classes, and error kinds.
+- Keep SQL static and parameterized. Do not assemble SQL from runtime strings except through tightly controlled, whitelisted identifiers or query-builder APIs.
+- Parse JSON/tool arguments/config/env once at the boundary into typed structs; avoid passing `serde_json::Value` or raw strings deep into business logic.
+- Do not classify routing, permissions, ownership, or errors by substring/prefix matching rendered strings. Use descriptors, resolvers, structured error types, and explicit metadata.
+
 ## Memory and Reflection
 
 - `pair` is API-direct and uses Den-hosted memory tools. `memory_write_entry` writes pair-local entries; `memory_request_review` asks Reflection/`curate` to review role-local memory.
