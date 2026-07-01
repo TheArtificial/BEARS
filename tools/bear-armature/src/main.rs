@@ -4705,10 +4705,6 @@ async fn handle_prompt_with_retry(
         );
     }
 
-    if should_echo_user_message_chunk(&prompt_context) {
-        send_user_message_chunk(session_id, &display_prompt).await?;
-    }
-
     let requested_mode = client_context
         .current_mode
         .as_deref()
@@ -5887,13 +5883,6 @@ fn require_human_prompt_text(text: String) -> Result<String> {
     } else {
         Ok(text)
     }
-}
-
-fn should_echo_user_message_chunk(context: &AcpPromptContextBundle) -> bool {
-    !context
-        .resource_references
-        .iter()
-        .any(|reference| reference.delivery_policy == AcpPromptContextDeliveryPolicy::ReferenceOnly)
 }
 
 fn prompt_den_message_from_context(context: &AcpPromptContextBundle) -> Result<String> {
@@ -9512,49 +9501,6 @@ mod tests {
         assert_eq!(
             messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["prompt", "reply", "follow-up"]
-        );
-    }
-
-    #[test]
-    fn user_message_chunk_echo_is_suppressed_for_reference_resources() {
-        let params = json!({
-            "prompt": [
-                {"type": "text", "text": "Please read "},
-                {"type": "resource", "resource": {
-                    "uri": "file:///workspace/README.md",
-                    "name": "README.md",
-                    "text": "# README"
-                }},
-                {"type": "text", "text": " and respond simply with ✅"}
-            ]
-        });
-        let bundle = prompt_context_from_params(&params).unwrap();
-
-        assert!(!should_echo_user_message_chunk(&bundle));
-        assert_eq!(bundle.resource_references.len(), 1);
-        assert_eq!(
-            bundle.resource_references[0].delivery_policy,
-            AcpPromptContextDeliveryPolicy::ReferenceOnly
-        );
-    }
-
-    #[test]
-    fn user_message_chunk_echo_is_kept_for_diagnostic_only_synthetic_resources() {
-        let params = json!({
-            "prompt": [
-                {"type": "text", "text": "Please continue."},
-                {"type": "resource", "resource": {
-                    "uri": "zed://system",
-                    "text": "{\"system_alert\":\"client synthetic summary from zed\"}"
-                }}
-            ]
-        });
-        let bundle = prompt_context_from_params(&params).unwrap();
-
-        assert!(should_echo_user_message_chunk(&bundle));
-        assert_eq!(
-            bundle.resource_references[0].delivery_policy,
-            AcpPromptContextDeliveryPolicy::DiagnosticOnly
         );
     }
 
