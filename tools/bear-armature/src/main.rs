@@ -29,14 +29,14 @@ use approvals::{
     PermissionDecision,
 };
 use axum::{extract::State, response::IntoResponse};
-use futures_util::StreamExt;
+
 use http::StatusCode;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{
     file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path,
     resolve_requested_tool_path,
 };
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+
 use reqwest::Url;
 use rmcp::{
     handler::server::{
@@ -167,6 +167,7 @@ struct ActivePromptTurn {
     conversation_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct SseFrameOutcome {
     saw_visible_output: bool,
@@ -3992,58 +3993,29 @@ async fn den_list_acp_sessions(
     config: &Config,
     params: &Value,
 ) -> Result<Value> {
-    let mut url = format!(
-        "{}/acp/bears/{}/sessions",
-        config.api_url,
-        urlencoding::encode(&config.bear)
-    );
-    let mut qs = Vec::new();
-    if let Some(cwd) = params
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        qs.push(format!("cwd={}", urlencoding::encode(cwd)));
-    }
-    if let Some(cursor) = params
-        .get("cursor")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        qs.push(format!("cursor={}", urlencoding::encode(cursor)));
-    }
-    if params
+    let include_closed = params
         .get("includeClosed")
         .or_else(|| params.get("include_closed"))
         .and_then(Value::as_bool)
-        == Some(true)
-    {
-        qs.push("include_closed=true".to_string());
-    }
-    if !qs.is_empty() {
-        url.push('?');
-        url.push_str(&qs.join("&"));
-    }
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("list ACP sessions at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(
-            "Den session list returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    serde_json::from_str(&body).with_context(|| "parse Den session list JSON")
+        .unwrap_or(false);
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_i64)
+        .unwrap_or(50)
+        .clamp(1, 100);
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "session.state",
+        json!({
+            "bear_slug": config.bear,
+            "include_closed": include_closed,
+            "limit": limit,
+        }),
+    )
+    .await
+    .context("list BearWire sessions via session.state")?;
+    Ok(value)
 }
 
 #[derive(Debug)]
@@ -4074,83 +4046,24 @@ fn den_session_error_allows_local_fallback(err: &anyhow::Error) -> bool {
 }
 
 async fn request_den_session_mode(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: Option<&Config>,
     session_id: &str,
     requested_mode: &str,
 ) -> Result<(&'static str, Value)> {
-    let Some(config) = config else {
-        return Ok((MODE_ASK, json!({ "message": "adapter is not configured" })));
-    };
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/mode",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let payload = with_adapter_contract(json!({
-        "mode": requested_mode,
-        "reason": "User selected ACP session mode"
-    }));
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP session mode to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        if status == reqwest::StatusCode::NOT_FOUND && body.contains("ACP session not found") {
-            eprintln!(
-                "bear-armature: Den session mode deferred because session is not known yet session_id={} requested_mode={} status={} body={}",
-                session_id,
-                requested_mode,
-                status,
-                truncate_for_log(body.trim(), 240)
-            );
-            let pending_mode = normalize_mode(requested_mode);
-            return Ok((
-                pending_mode,
-                json!({
-                    "message": "Den session is not created yet; keeping the client-selected mode locally and applying it when the first prompt binds the session.",
-                    "deferred": true,
-                    "status": status.as_u16(),
-                    "source": "adapter.den_session_mode_not_found",
-                    "pending_mode": pending_mode,
-                }),
-            ));
-        }
-        return Err(anyhow!(
-            "Den session mode endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
-    if bear_debug_verbose() {
-        eprintln!(
-            "bear-armature: Den mode response session_id={} requested_mode={} response={}",
-            session_id,
-            requested_mode,
-            serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
-        );
-    }
-    let effective = value
-        .get("effective_mode")
-        .and_then(Value::as_str)
-        .and_then(|mode| match mode {
-            MODE_ASK => Some(MODE_ASK),
-            MODE_PLAN => Some(MODE_PLAN),
-            MODE_WRITE => Some(MODE_WRITE),
-            _ => None,
-        })
-        .unwrap_or(MODE_ASK);
-    Ok((effective, value))
+    let pending_mode = normalize_mode(requested_mode);
+    let configured = config.is_some();
+    Ok((
+        pending_mode,
+        json!({
+            "message": "BearWire has no standalone session mode endpoint; keeping the client-selected mode locally and applying it on the next session.open/run.start.",
+            "deferred": true,
+            "source": "adapter.bearwire_local_mode_until_next_prompt",
+            "pending_mode": pending_mode,
+            "session_id": session_id,
+            "configured": configured,
+        }),
+    ))
 }
 
 fn infer_mode_from_den_session(den: &Value) -> &'static str {
@@ -4212,6 +4125,7 @@ async fn den_get_acp_session(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReloadHistoryMessage {
     id: Option<String>,
@@ -4219,12 +4133,14 @@ struct ReloadHistoryMessage {
     text: String,
 }
 
+#[allow(dead_code)]
 fn flatten_history_pages_chronological(
     pages_newest_first: Vec<Vec<ReloadHistoryMessage>>,
 ) -> Vec<ReloadHistoryMessage> {
     pages_newest_first.into_iter().rev().flatten().collect()
 }
 
+#[allow(dead_code)]
 fn history_replay_chunks_with_boundaries(
     messages: Vec<ReloadHistoryMessage>,
 ) -> Vec<ReloadHistoryMessage> {
@@ -4244,164 +4160,20 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
-async fn fetch_conversation_history_chronological(
-    http: &reqwest::Client,
-    config: &Config,
-    conversation_id: &str,
-) -> Result<Vec<ReloadHistoryMessage>> {
-    let mut pages_newest_first: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
-    let mut before: Option<String> = None;
-    let mut seen_cursors = std::collections::HashSet::new();
-    let mut page_idx = 0usize;
-    loop {
-        let mut url = format!(
-            "{}/acp/bears/{}/conversations/{}/history?limit=50",
-            config.api_url,
-            urlencoding::encode(&config.bear),
-            urlencoding::encode(conversation_id),
-        );
-        if let Some(b) = before.as_ref() {
-            url.push_str("&before=");
-            url.push_str(&urlencoding::encode(b));
-        }
-        let response = http
-            .get(&url)
-            .header(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-            )
-            .send()
-            .await
-            .with_context(|| format!("get conversation history at {url}"))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(anyhow!(
-                "Den history returned HTTP {status}: {}",
-                body.trim()
-            ));
-        }
-        let body: Value = serde_json::from_str(&body).context("parse history JSON")?;
-        let messages = body
-            .get("messages")
-            .and_then(|m| m.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut page = Vec::new();
-        for m in messages {
-            let role = m.get("role").and_then(Value::as_str).unwrap_or("");
-            let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-            if text.trim().is_empty() {
-                continue;
-            }
-            page.push(ReloadHistoryMessage {
-                id: m.get("id").and_then(Value::as_str).map(str::to_string),
-                role: role.to_string(),
-                text: text.to_string(),
-            });
-        }
-        let first_id = page
-            .first()
-            .and_then(|m| m.id.as_deref())
-            .unwrap_or("<none>")
-            .to_string();
-        let last_id = page
-            .last()
-            .and_then(|m| m.id.as_deref())
-            .unwrap_or("<none>")
-            .to_string();
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
-                conversation_id,
-                page_idx,
-                before,
-                page.len(),
-                first_id,
-                last_id
-            );
-        }
-        pages_newest_first.push(page);
-        let has_more = body
-            .get("has_more")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let next_before = body
-            .get("next_before")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        if !has_more {
-            break;
-        }
-        let Some(next_before) = next_before.filter(|s| !s.is_empty()) else {
-            break;
-        };
-        if !seen_cursors.insert(next_before.clone()) {
-            return Err(anyhow!(
-                "Den history pagination repeated cursor {next_before:?} for conversation {conversation_id}"
-            ));
-        }
-        before = Some(next_before);
-        page_idx += 1;
-    }
-    Ok(flatten_history_pages_chronological(pages_newest_first))
-}
-
-fn history_replay_error_allows_skip(err: &anyhow::Error) -> bool {
-    let message = format!("{err:#}");
-    message.contains("Den history returned HTTP 404")
-        || message.contains("/conversations/")
-            && message.contains("/history")
-            && message.contains("404")
-}
-
 async fn replay_history_for_den_session(
-    http: &reqwest::Client,
-    config: &Config,
+    _http: &reqwest::Client,
+    _config: &Config,
     session_id: &str,
     den: &Value,
     lifecycle_method: &str,
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
-        let messages = match fetch_conversation_history_chronological(http, config, &conv).await {
-            Ok(messages) => messages,
-            Err(err) if history_replay_error_allows_skip(&err) => {
-                eprintln!(
-                    "bear-armature: {} session_id={} skipping unavailable Den history replay for conversation_id={} error={}",
-                    lifecycle_method,
-                    session_id,
-                    conv,
-                    truncate_for_log(&format!("{err:#}"), 240)
-                );
-                Vec::new()
-            }
-            Err(err) => return Err(err),
-        };
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
-                lifecycle_method,
-                session_id,
-                messages.len(),
-                conv
-            );
-            eprintln!(
-                "bear-armature: {} session_id={} history_ids={:?}",
-                lifecycle_method,
-                session_id,
-                messages
-                    .iter()
-                    .map(|m| m.id.as_deref().unwrap_or("<none>").to_string())
-                    .collect::<Vec<_>>()
-            );
-        }
-        for message in history_replay_chunks_with_boundaries(messages) {
-            match message.role.as_str() {
-                "user" => send_user_message_chunk(session_id, &message.text).await?,
-                "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
-                _ => {}
-            }
-        }
+        eprintln!(
+            "bear-armature: {} session_id={} skipping Den history replay for conversation_id={} because legacy ACP history endpoint is retired and BearWire history is not implemented yet",
+            lifecycle_method,
+            session_id,
+            conv
+        );
     } else {
         if bear_debug_verbose() {
             eprintln!(
@@ -4677,47 +4449,14 @@ async fn post_session_lifecycle_action_with_payload(
     Ok(())
 }
 
-async fn post_session_lifecycle_action_json(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
-    action: &str,
-) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        action,
-    );
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&json!({ "adapter_contract": adapter_contract_context() }))
-        .send()
-        .await
-        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(
-            "Den session {action} endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
-}
-
 async fn compact_session_conversation(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
+    _http: &reqwest::Client,
+    _config: &Config,
+    _session_id: &str,
 ) -> Result<Value> {
-    post_session_lifecycle_action_json(http, config, session_id, "compact").await
+    Err(anyhow!(
+        "Conversation compaction is not available through BearWire yet; legacy ACP compact endpoint is retired."
+    ))
 }
 
 fn render_compact_recovery_result(result: &Value) -> String {
@@ -4822,7 +4561,6 @@ async fn handle_prompt(
             response_id,
             params,
             turn_token,
-            allow_recovery_retry: true,
         },
     )
     .await;
@@ -4840,7 +4578,6 @@ struct PromptRetryContext {
     response_id: Value,
     params: Value,
     turn_token: Uuid,
-    allow_recovery_retry: bool,
 }
 
 async fn handle_prompt_with_retry(
@@ -4854,7 +4591,6 @@ async fn handle_prompt_with_retry(
         response_id,
         params,
         turn_token,
-        allow_recovery_retry,
     } = retry;
     let session_id = params
         .get("sessionId")
@@ -4974,20 +4710,6 @@ async fn handle_prompt_with_retry(
         send_user_message_chunk(session_id, &display_prompt).await?;
     }
 
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/prompt",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id)
-    );
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
     let requested_mode = client_context
         .current_mode
         .as_deref()
@@ -5005,7 +4727,7 @@ async fn handle_prompt_with_retry(
         den_payload["conversation_id"] = json!(conversation_id);
     }
 
-    if bearwire::try_handle_prompt(
+    bearwire::try_handle_prompt(
         http,
         config,
         adapter_state,
@@ -5021,221 +4743,8 @@ async fn handle_prompt_with_retry(
         requested_mode,
         turn_token,
     )
-    .await?
-    {
-        return Ok(());
-    }
-
-    let response = http
-        .post(&url)
-        .headers(headers)
-        .json(&den_payload)
-        .send()
-        .await
-        .with_context(|| den_request_context(&url))?;
-
-    let status = response.status();
-    eprintln!(
-        "bear-armature: session/prompt Den response session_id={} status={}",
-        session_id, status
-    );
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_else(|_| "".to_string());
-        let message = den_status_error_message(status, text.trim());
-        eprintln!(
-            "bear-armature: Den prompt returned non-success status session_id={} status={} message={}",
-            session_id, status, message
-        );
-        send_agent_message_chunk_for_turn(
-            shared_state,
-            session_id,
-            turn_token,
-            &format!(
-                "BEARS could not complete this turn because Den/runtime returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
-            ),
-        )
-        .await?;
-        write_prompt_end_turn_response(response_id).await?;
-        return Ok(());
-    }
-
-    let mut stream_diagnostics = SseStreamDiagnostics::default();
-    let mut saw_done = false;
-    let mut saw_visible_output = false;
-    let mut saw_tool_activity = false;
-    let mut saw_error = false;
-    let mut recover_and_retry = false;
-    let mut saw_cancellation_error = false;
-    let mut terminal_outcome: Option<String> = None;
-    let mut recovery_hint: Option<String> = None;
-    let mut terminal_user_message: Option<String> = None;
-    let mut upstream_errors = Vec::new();
-    let mut buffer = Vec::<u8>::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = match chunk_result {
-            Ok(chunk) => chunk,
-            Err(err)
-                if stream_has_successful_terminal_condition(
-                    saw_visible_output,
-                    saw_error,
-                    saw_done,
-                    saw_tool_activity,
-                ) =>
-            {
-                eprintln!(
-                    "bear-armature: Den SSE stream ended with recoverable read error after terminal/progress events session_id={} error={err:#}",
-                    session_id
-                );
-                break;
-            }
-            Err(err) => return Err(err).context("read Den SSE chunk"),
-        };
-        buffer.extend_from_slice(&chunk);
-        while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
-            let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                &frame,
-                &mut stream_diagnostics,
-                turn_token,
-            )
-            .await?;
-            saw_done |= outcome.saw_done;
-            saw_visible_output |= outcome.saw_visible_output;
-            saw_tool_activity |= outcome.saw_tool_activity;
-            saw_error |= outcome.saw_error;
-            recover_and_retry |= outcome.recover_and_retry;
-            saw_cancellation_error |= outcome.saw_cancellation_error;
-            if terminal_outcome.is_none() {
-                terminal_outcome = outcome.terminal_outcome;
-            }
-            if recovery_hint.is_none() {
-                recovery_hint = outcome.recovery_hint;
-            }
-            if terminal_user_message.is_none() {
-                terminal_user_message = outcome.terminal_user_message;
-            }
-            upstream_errors.extend(outcome.upstream_errors);
-            if saw_done {
-                eprintln!(
-                    "bear-armature: session/prompt terminal Den event received; ending read loop early session_id={} saw_tool_activity={}",
-                    session_id, saw_tool_activity
-                );
-                break;
-            }
-        }
-    }
-    if !buffer.is_empty() {
-        let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(
-            config,
-            adapter_state,
-            shared_state,
-            session_id,
-            &frame,
-            &mut stream_diagnostics,
-            turn_token,
-        )
-        .await?;
-        saw_done |= outcome.saw_done;
-        saw_visible_output |= outcome.saw_visible_output;
-        saw_tool_activity |= outcome.saw_tool_activity;
-        saw_error |= outcome.saw_error;
-        recover_and_retry |= outcome.recover_and_retry;
-        saw_cancellation_error |= outcome.saw_cancellation_error;
-        if terminal_outcome.is_none() {
-            terminal_outcome = outcome.terminal_outcome;
-        }
-        if recovery_hint.is_none() {
-            recovery_hint = outcome.recovery_hint;
-        }
-        if terminal_user_message.is_none() {
-            terminal_user_message = outcome.terminal_user_message;
-        }
-        upstream_errors.extend(outcome.upstream_errors);
-    }
-
-    if recover_and_retry && !saw_visible_output && !saw_tool_activity {
-        eprintln!(
-            "bear-armature: stale approval recovery requested by Den stream, but automatic compaction recovery is disabled session_id={} allow_recovery_retry={} errors={}",
-            session_id,
-            allow_recovery_retry,
-            upstream_errors.join("; ")
-        );
-    }
-
-    if !upstream_errors.is_empty() {
-        if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
-            eprintln!(
-                "bear-armature: suppressing recovery hint for cancellation session_id={} errors={}",
-                session_id,
-                upstream_errors.join("; ")
-            );
-            let message = terminal_user_message
-                .as_deref()
-                .unwrap_or("BEARS request was cancelled.");
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
-                .await?;
-            saw_visible_output = true;
-            upstream_errors.clear();
-        } else {
-            if saw_visible_output {
-                eprintln!(
-                    "bear-armature: upstream error arrived after visible output; surfacing as terminal ACP turn error: {}",
-                    upstream_errors.join("; ")
-                );
-            }
-            let message = format!(
-                "BEARS upstream stream reported error: {}",
-                upstream_errors.join("; ")
-            );
-            let rendered = match recovery_hint.as_deref() {
-                Some("compact_and_retry") => terminal_user_message.clone().unwrap_or_else(|| {
-                    format!(
-                        "{message}\n\nAutomatic stale-approval recovery by compaction is disabled because compaction does not resolve unresolved runtime approvals. Retry after any active turn finishes; if the conversation remains wedged, use an operator recovery path that denies pending approvals rather than compacting."
-                    )
-                }),
-                Some("check_upstream_logs") => terminal_user_message.clone().unwrap_or_else(|| {
-                    format!(
-                        "{message}\n\nBEARS recommends checking upstream runtime logs before retrying."
-                    )
-                }),
-                _ => terminal_user_message.clone().unwrap_or(message.clone()),
-            };
-            eprintln!(
-                "bear-armature: converting upstream stream error into terminal ACP turn session_id={} message={}",
-                session_id, rendered
-            );
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &rendered)
-                .await?;
-            saw_visible_output = true;
-            upstream_errors.clear();
-        }
-    }
-
-    eprintln!(
-        "bear-armature: Den stream summary session_id={} {}",
-        session_id,
-        stream_diagnostics.summary()
-    );
-    if !stream_has_successful_terminal_condition(
-        saw_visible_output,
-        saw_error,
-        saw_done,
-        saw_tool_activity,
-    ) {
-        return Err(anyhow!(
-            "BEARS ACP stream completed without visible output, tool activity, or an error. Diagnostics: {}",
-            stream_diagnostics.summary()
-        ));
-    }
-
-    write_prompt_end_turn_response(response_id).await?;
-    Ok(())
+    .await?;
+    return Ok(());
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6107,6 +5616,7 @@ fn den_request_context(url: &str) -> String {
     )
 }
 
+#[allow(dead_code)]
 fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
     if let Some(message) = den_compatibility_status_message(body) {
         return message;
@@ -6734,6 +6244,7 @@ fn prompt_text_for_display_from_params(params: &Value) -> Result<String> {
     }
 }
 
+#[allow(dead_code)]
 async fn handle_sse_frame(
     config: &Config,
     adapter_state: &mut AdapterState,
@@ -6867,15 +6378,18 @@ async fn handle_sse_frame(
     Ok(outcome)
 }
 
+#[allow(dead_code)]
 fn den_event_type_is_tool_activity(ty: &str) -> bool {
     matches!(ty, "tool_request" | "permission_request")
 }
 
+#[allow(dead_code)]
 fn looks_like_waiting_for_approval_error(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("waiting for approval") || message.contains("please approve or deny")
 }
 
+#[allow(dead_code)]
 fn looks_like_cancellation_error(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("stop_reason: cancelled")
@@ -6890,6 +6404,7 @@ fn looks_like_cancellation_error(message: &str) -> bool {
         || message.ends_with(": canceled")
 }
 
+#[allow(dead_code)]
 fn format_den_event_error(event: &Value) -> String {
     let message = event
         .get("message")
@@ -6910,6 +6425,7 @@ fn format_den_event_error(event: &Value) -> String {
     out
 }
 
+#[allow(dead_code)]
 fn format_error_context_for_display(context: &Value) -> String {
     let Some(object) = context.as_object() else {
         return context.to_string();
@@ -8037,31 +7553,9 @@ async fn post_permission_result(
         return Ok(result);
     }
 
-    let payload = with_adapter_contract(payload);
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/permissions/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        urlencoding::encode(permission_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP permission decision to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
+    Err(anyhow!(
+        "BearWire permission result payload missing run_id; legacy ACP permission endpoint is retired"
+    ))
 }
 
 fn is_turn_missing_error(err: &anyhow::Error) -> bool {
@@ -8083,50 +7577,13 @@ async fn post_adapter_environment(
         "environment": environment.clone(),
         "conversation_title": title,
     });
-    if bearwire::enabled() {
-        match bearwire::post_resource_update(config, session_id, resource).await {
-            Ok(value) => {
-                if bear_debug_verbose() {
-                    eprintln!(
-                        "bear-armature: posted BearWire resource.update session_id={} response={}",
-                        session_id,
-                        truncate_for_log(&value.to_string(), 360)
-                    );
-                }
-                return Ok(());
-            }
-            Err(err) if bearwire::required() => return Err(err),
-            Err(err) => eprintln!(
-                "bear-armature: BearWire resource.update failed; falling back to legacy ACP adapter-environment session_id={} error={err:#}",
-                session_id
-            ),
-        }
-    }
-    let payload = with_adapter_contract(json!({
-        "environment": environment,
-        "conversation_title": title,
-    }));
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/adapter-environment",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP adapter environment to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
+    let value = bearwire::post_resource_update(config, session_id, resource).await?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: posted BearWire resource.update session_id={} response={}",
+            session_id,
+            truncate_for_log(&value.to_string(), 360)
+        );
     }
     Ok(())
 }
@@ -8151,37 +7608,9 @@ async fn post_tool_result(
         return Ok(());
     }
 
-    let payload = with_adapter_contract(payload);
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/tool-results/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        urlencoding::encode(tool_call_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP tool result to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
-    }
-    eprintln!(
-        "bear-armature: posted tool result session_id={} tool_call_id={} response={}",
-        session_id,
-        tool_call_id,
-        body.trim()
-    );
-    Ok(())
+    Err(anyhow!(
+        "BearWire tool result payload missing run_id for tool_call_id={tool_call_id}; legacy ACP tool-results endpoint is retired"
+    ))
 }
 
 async fn handle_den_event(
@@ -9538,6 +8967,7 @@ async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Valu
     write_json(message).await
 }
 
+#[allow(dead_code)]
 fn with_adapter_contract(mut payload: Value) -> Value {
     if !payload.is_object() {
         payload = json!({ "value": payload });
@@ -9630,6 +9060,7 @@ fn den_connectivity_error(data: Option<Value>) -> Value {
     json_rpc_error(-32012, "BEARS Den server unreachable", data)
 }
 
+#[allow(dead_code)]
 fn den_compatibility_status_message(body: &str) -> Option<String> {
     let value = serde_json::from_str::<Value>(body).ok()?;
     match value.get("error_code").and_then(Value::as_str)? {

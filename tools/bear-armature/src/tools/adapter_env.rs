@@ -3,7 +3,7 @@ use crate::{
     direct_tools_context, session_context, AdapterState, Config, SessionContext,
 };
 use anyhow::Result;
-use reqwest::header::{HeaderValue, AUTHORIZATION};
+
 use serde_json::{json, Value};
 use tokio::time::{timeout, Duration};
 
@@ -219,24 +219,18 @@ pub(crate) async fn fetch_den_runtime_state(
     config: &Config,
     session_id: &str,
 ) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/runtime",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        anyhow::bail!(crate::den_status_error_message(status, body.trim()));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
+    let state = crate::bearwire::rpc_call(
+        http,
+        config,
+        "session.state",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+        }),
+    )
+    .await?;
+    Ok(json!({
+        "source": "bearwire.session.state",
+        "session": state.get("session").cloned().unwrap_or(Value::Null),
+    }))
 }
