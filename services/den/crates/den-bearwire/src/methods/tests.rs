@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use den_http::armature_tokens;
 use den_protocol::{
+    ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
     RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
@@ -26,7 +27,9 @@ use den_runtime::{
 use den_service::{
     bears::{db as bears_db, db::BearParams},
     client_sessions,
-    conversation::persistence::{append_message, ensure_conversation_for_external_id},
+    conversation::persistence::{
+        append_message, ensure_conversation_for_external_id, update_latest_context_budget,
+    },
     conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
         ConversationMessageWrite,
@@ -1041,6 +1044,88 @@ async fn session_state_auth_error_reports_missing_bear_slug(pool: sqlx::PgPool) 
     assert!(
         error.contains("bear slug does not exist in this Den database"),
         "{error}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_state_includes_latest_context_budget_for_resolved_conversation(
+    pool: sqlx::PgPool,
+) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let pending_conversation_id = format!("pending-{}", Uuid::new_v4().simple());
+    let resolved_conversation_id = format!("resolved-{}", Uuid::new_v4().simple());
+    client_sessions::upsert_session(
+        &pool,
+        client_sessions::UpsertClientSession {
+            user_id,
+            bear_id,
+            bear_slug: bear_slug.clone(),
+            client_session_id: session_id.clone(),
+            runtime_session_id: format!("bearwire:{bear_id}:{session_id}"),
+            conversation_id: pending_conversation_id,
+            resolved_conversation_id: Some(resolved_conversation_id.clone()),
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: Some("write".to_string()),
+        },
+    )
+    .await
+    .expect("upsert session");
+
+    let report = ContextBudgetReport {
+        model: "openai/test-model".to_string(),
+        context_window: Some(128_000),
+        max_output_tokens: Some(4_096),
+        reserved_output_tokens: 4_096,
+        estimated_input_tokens: 12_345,
+        estimated_total_tokens: 16_441,
+        estimate_precision: ContextBudgetEstimatePrecision::Approximate,
+        near_budget: false,
+        over_budget: false,
+        components: vec![ContextBudgetComponentReport {
+            key: "history".to_string(),
+            label: "Conversation history".to_string(),
+            estimated_tokens: 12_000,
+            estimated_characters: 48_000,
+        }],
+    };
+    update_latest_context_budget(
+        &pool,
+        bear_id,
+        &resolved_conversation_id,
+        Some(&session_id),
+        &report,
+    )
+    .await
+    .expect("persist latest context budget");
+
+    let response = rpc(
+        State(test_state(pool)),
+        bearer_headers(&token),
+        Json(JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("req-context-budget")),
+            method: "session.state".to_string(),
+            params: json!({
+                "bear_slug": bear_slug,
+                "session_id": session_id,
+            }),
+        }),
+    )
+    .await
+    .expect("session.state response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        value.pointer("/result/session/context_budget").cloned(),
+        Some(serde_json::to_value(report).unwrap())
     );
 }
 

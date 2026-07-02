@@ -12,6 +12,47 @@ use den_service::{bears::BearProfile, client_sessions, DenState};
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{param_string, required_param_string};
 
+async fn session_state_payload(
+    state: &DenState,
+    session: client_sessions::ClientSessionRow,
+) -> Result<Value, CustomError> {
+    let conversation_external_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or(session.conversation_id.as_str());
+    let latest_context_budget = den_service::conversation::persistence::get_conversation_for_external_id(
+        &state.sqlx_pool,
+        session.bear_id,
+        conversation_external_id,
+    )
+    .await?
+    .and_then(|conversation| conversation.latest_context_budget);
+
+    Ok(json!({
+        "id": session.id,
+        "user_id": session.user_id,
+        "bear_id": session.bear_id,
+        "bear_slug": session.bear_slug,
+        "client_session_id": session.client_session_id,
+        "runtime_session_id": session.runtime_session_id,
+        "conversation_id": session.conversation_id,
+        "resolved_conversation_id": session.resolved_conversation_id,
+        "client": session.client,
+        "cwd": session.cwd,
+        "adapter_environment": session.adapter_environment,
+        "current_mode": session.current_mode,
+        "conversation_title": session.conversation_title,
+        "conversation_title_updated_at": session.conversation_title_updated_at,
+        "conversation_title_synced_at": session.conversation_title_synced_at,
+        "closed_at": session.closed_at,
+        "archived_at": session.archived_at,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "context_budget": latest_context_budget,
+    }))
+}
+
 pub(crate) async fn session_open_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -217,7 +258,10 @@ pub(crate) async fn session_state_result(
         return Ok(json!({
             "kind": "single",
             "bear_slug": bear_slug,
-            "session": session,
+            "session": match session {
+                Some(session) => Some(session_state_payload(state, session).await?),
+                None => None,
+            },
         }));
     }
 
@@ -243,10 +287,14 @@ pub(crate) async fn session_state_result(
         },
     )
     .await?;
+    let mut sessions_payload = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        sessions_payload.push(session_state_payload(state, session).await?);
+    }
     Ok(json!({
         "kind": "list",
         "bear_slug": bear_slug,
-        "sessions": sessions,
+        "sessions": sessions_payload,
     }))
 }
 
