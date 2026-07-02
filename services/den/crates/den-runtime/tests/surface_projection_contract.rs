@@ -27,23 +27,35 @@ fn obligation(kind: &str, action: &str) -> TurnObligationRow {
 
 #[test]
 fn projects_bearwire_tool_and_permission_actions() {
-    let tool = project_obligation_for_surface(
-        &obligation("tool_result", "tool_result"),
-        TurnSurfaceKind::BearWireArmature,
-    );
+    let tool_obligation = obligation("tool_result", "tool_result");
+    let tool = project_obligation_for_surface(&tool_obligation, TurnSurfaceKind::BearWireArmature);
     assert_eq!(
         tool.action_kind,
         SurfaceActionKind::BearWireClientToolResult
     );
     assert!(tool.is_supported());
-
-    let permission = project_obligation_for_surface(
-        &obligation("permission_decision", "permission_decision"),
-        TurnSurfaceKind::BearWireArmature,
+    assert_eq!(tool.obligation_id, tool_obligation.id.to_string());
+    assert_eq!(tool.payload["tool_call_id"], "call-test");
+    assert_eq!(
+        tool.payload["turn_step_id"],
+        tool_obligation.turn_step_id.unwrap().to_string()
     );
+
+    let permission_obligation = obligation("permission_decision", "permission_decision");
+    let permission =
+        project_obligation_for_surface(&permission_obligation, TurnSurfaceKind::BearWireArmature);
     assert_eq!(
         permission.action_kind,
         SurfaceActionKind::BearWireClientPermissionResult
+    );
+    assert_eq!(
+        permission.obligation_id,
+        permission_obligation.id.to_string()
+    );
+    assert_eq!(permission.payload["permission_id"], "perm-test");
+    assert_eq!(
+        permission.payload["turn_step_id"],
+        permission_obligation.turn_step_id.unwrap().to_string()
     );
 }
 

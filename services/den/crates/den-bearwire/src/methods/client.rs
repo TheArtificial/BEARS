@@ -19,15 +19,15 @@ use den_protocol::{
 };
 use den_runtime::{
     bearwire_events,
-    turn_obligations::{self, ExpectedResponderAction},
-    turn_runs,
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
     native_runtime::continue_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    turn_obligations::{self, ExpectedResponderAction},
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
+    turn_runs,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
@@ -625,6 +625,8 @@ pub(crate) async fn client_tool_result_result(
             let transitioned = match coordinator_outcome {
                 ToolResultCoordinatorOutcome::ContinueModel { run } => run,
                 ToolResultCoordinatorOutcome::WaitingForMoreClientResults { .. }
+                | ToolResultCoordinatorOutcome::DuplicateIdentical { .. }
+                | ToolResultCoordinatorOutcome::DuplicateConflict { .. }
                 | ToolResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
                     "tool-result coordinator outcome was handled before continuation"
                 ),
@@ -895,6 +897,8 @@ pub(crate) async fn client_permission_result_result(
             let transitioned = match coordinator_outcome {
                 PermissionResultCoordinatorOutcome::ContinueModel { run } => run,
                 PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
+                | PermissionResultCoordinatorOutcome::DuplicateIdentical { .. }
+                | PermissionResultCoordinatorOutcome::DuplicateConflict { .. }
                 | PermissionResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
                     "permission-result coordinator outcome was handled before continuation"
                 ),

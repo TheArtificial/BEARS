@@ -5,7 +5,7 @@ use den_core::DenError;
 
 use den_core::tools::constants::DEN_WEB_FETCH;
 
-use crate::{turn_obligations, turn_steps, turn_runs};
+use crate::{turn_obligations, turn_runs, turn_steps};
 
 fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
     let tool_name = obligation_payload
@@ -26,6 +26,13 @@ pub enum ToolResultCoordinatorOutcome {
     ContinueModel {
         run: Option<turn_runs::TurnRunRow>,
     },
+    DuplicateIdentical {
+        result: turn_runs::TurnObligationResultRow,
+        run_state: String,
+    },
+    DuplicateConflict {
+        existing_hash: String,
+    },
     IgnoredLateResult {
         run_state: String,
         obligation_state: String,
@@ -44,10 +51,144 @@ pub enum PermissionResultCoordinatorOutcome {
     ContinueModel {
         run: Option<turn_runs::TurnRunRow>,
     },
+    DuplicateIdentical {
+        result: turn_runs::TurnObligationResultRow,
+        run_state: String,
+    },
+    DuplicateConflict {
+        existing_hash: String,
+    },
     IgnoredLateResult {
         run_state: String,
         obligation_state: String,
     },
+}
+
+fn validate_result_turn_step(
+    obligation: &turn_obligations::TurnObligationRow,
+    result_turn_step_id: Option<uuid::Uuid>,
+) -> Result<(), DenError> {
+    if result_turn_step_id.is_some() && result_turn_step_id != obligation.turn_step_id {
+        return Err(DenError::ValidationError(format!(
+            "turn_step_id mismatch for obligation {}: expected {:?}, got {:?}",
+            obligation.id, obligation.turn_step_id, result_turn_step_id
+        )));
+    }
+    Ok(())
+}
+
+pub async fn record_and_settle_tool_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: Value,
+) -> Result<ToolResultCoordinatorOutcome, DenError> {
+    record_and_settle_tool_result_for_step(
+        pool,
+        run,
+        obligation,
+        obligation.turn_step_id,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await
+}
+
+pub async fn record_and_settle_tool_result_for_step(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    result_turn_step_id: Option<uuid::Uuid>,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: Value,
+) -> Result<ToolResultCoordinatorOutcome, DenError> {
+    validate_result_turn_step(obligation, result_turn_step_id)?;
+    match turn_runs::record_client_result_for_step(
+        pool,
+        run.run_id.as_str(),
+        obligation.turn_step_id,
+        obligation_kind,
+        obligation_id,
+        result_payload.clone(),
+    )
+    .await?
+    {
+        turn_runs::TurnObligationResultRecord::Inserted { .. } => {
+            settle_tool_result(pool, run, obligation, result_payload).await
+        }
+        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
+            Ok(ToolResultCoordinatorOutcome::DuplicateIdentical {
+                result: row,
+                run_state: run.state.clone(),
+            })
+        }
+        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
+            Ok(ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash })
+        }
+    }
+}
+
+pub async fn record_and_settle_permission_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    normalized_decision: &str,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: Value,
+) -> Result<PermissionResultCoordinatorOutcome, DenError> {
+    record_and_settle_permission_result_for_step(
+        pool,
+        run,
+        obligation,
+        obligation.turn_step_id,
+        normalized_decision,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await
+}
+
+pub async fn record_and_settle_permission_result_for_step(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    result_turn_step_id: Option<uuid::Uuid>,
+    normalized_decision: &str,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: Value,
+) -> Result<PermissionResultCoordinatorOutcome, DenError> {
+    validate_result_turn_step(obligation, result_turn_step_id)?;
+    match turn_runs::record_client_result_for_step(
+        pool,
+        run.run_id.as_str(),
+        obligation.turn_step_id,
+        obligation_kind,
+        obligation_id,
+        result_payload.clone(),
+    )
+    .await?
+    {
+        turn_runs::TurnObligationResultRecord::Inserted { .. } => {
+            settle_permission_result(pool, run, obligation, normalized_decision, result_payload)
+                .await
+        }
+        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
+            Ok(PermissionResultCoordinatorOutcome::DuplicateIdentical {
+                result: row,
+                run_state: run.state.clone(),
+            })
+        }
+        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
+            Ok(PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash })
+        }
+    }
 }
 
 pub async fn settle_tool_result(
@@ -84,13 +225,9 @@ pub async fn settle_tool_result(
         });
     }
 
-    let transitioned = turn_runs::transition_run(
-        pool,
-        &run.run_id,
-        turn_runs::TurnRunState::Continuing,
-        None,
-    )
-    .await?;
+    let transitioned =
+        turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
+            .await?;
     let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.turn_step_id {
         let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
@@ -156,13 +293,9 @@ pub async fn settle_permission_result(
         });
     }
 
-    let transitioned = turn_runs::transition_run(
-        pool,
-        &run.run_id,
-        turn_runs::TurnRunState::Continuing,
-        None,
-    )
-    .await?;
+    let transitioned =
+        turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
+            .await?;
     let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.turn_step_id {
         let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
