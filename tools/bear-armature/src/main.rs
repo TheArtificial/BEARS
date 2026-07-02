@@ -849,6 +849,43 @@ async fn send_den_runtime_session_info_update(
     .await
 }
 
+fn context_budget_token_count(context_budget: &Value, key: &str) -> Option<u64> {
+    context_budget.get(key).and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().and_then(|count| u64::try_from(count).ok()))
+    })
+}
+
+fn acp_usage_update_payload(session_id: &str, context_budget: Value) -> Option<Value> {
+    let used = context_budget_token_count(&context_budget, "estimated_total_tokens")
+        .or_else(|| context_budget_token_count(&context_budget, "estimated_input_tokens"))?;
+    let size = context_budget_token_count(&context_budget, "context_window")?;
+    if size == 0 {
+        return None;
+    }
+    Some(json!({
+        "sessionId": session_id,
+        "update": {
+            "sessionUpdate": "usage_update",
+            "used": used,
+            "size": size,
+            "_meta": {
+                "bears": {
+                    "context_budget": context_budget,
+                }
+            }
+        }
+    }))
+}
+
+async fn send_context_budget_usage_update(session_id: &str, context_budget: Value) -> Result<()> {
+    let Some(payload) = acp_usage_update_payload(session_id, context_budget) else {
+        return Ok(());
+    };
+    write_notification("session/update", payload).await
+}
+
 fn acp_plan_update_payload(session_id: &str, entries: Vec<PlanEntry>) -> Result<Value> {
     Ok(json!({
         "sessionId": session_id,
@@ -2668,7 +2705,7 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok(mode) => {
+                    Ok((mode, context_budget)) => {
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
@@ -2680,6 +2717,9 @@ async fn handle_request(
                             .unwrap_or("");
                         if !session_id.is_empty() {
                             send_available_commands_update(session_id).await?;
+                            if let Some(context_budget) = context_budget {
+                                send_context_budget_usage_update(session_id, context_budget).await?;
+                            }
                         }
                     }
                     Err(err) => {
@@ -4263,7 +4303,7 @@ async fn restore_session_from_den(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     params: &Value,
-) -> Result<&'static str> {
+) -> Result<(&'static str, Option<Value>)> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -4324,10 +4364,13 @@ async fn restore_session_from_den(
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
     }
-    Ok(den
-        .as_ref()
-        .map(infer_mode_from_den_session)
-        .unwrap_or(MODE_ASK))
+    Ok((
+        den.as_ref()
+            .map(infer_mode_from_den_session)
+            .unwrap_or(MODE_ASK),
+        den.as_ref()
+            .and_then(|session| session.get("context_budget").cloned()),
+    ))
 }
 
 async fn handle_session_load(
@@ -4405,6 +4448,9 @@ async fn handle_session_load(
         .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     send_available_commands_update(session_id).await?;
+    if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
+        send_context_budget_usage_update(session_id, context_budget).await?;
+    }
     Ok(())
 }
 
@@ -7737,17 +7783,20 @@ async fn handle_den_event(
                 .and_then(Value::as_str)
                 .map(str::to_string);
             send_session_info_update(session_id, title, updated_at).await?;
+            let context_budget = event
+                .pointer("/meta/bears/context_budget")
+                .cloned()
+                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
+                .or_else(|| event.get("context_budget").cloned());
+            if let Some(context_budget) = context_budget.clone() {
+                send_context_budget_usage_update(session_id, context_budget).await?;
+            }
             if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
                 let runtime = event
                     .pointer("/meta/bears/runtime")
                     .cloned()
                     .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
                     .or_else(|| event.get("runtime").cloned());
-                let context_budget = event
-                    .pointer("/meta/bears/context_budget")
-                    .cloned()
-                    .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
-                    .or_else(|| event.get("context_budget").cloned());
                 send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
             }
             Ok(false)
@@ -9214,7 +9263,19 @@ mod tests {
                                 "conversation_id": "default",
                                 "resolved_conversation_id": "den-conv-test",
                                 "cwd": "/workspace",
-                                "current_mode": "ask"
+                                "current_mode": "ask",
+                                "context_budget": {
+                                    "model": "openai/test-model",
+                                    "context_window": 200000,
+                                    "max_output_tokens": 4096,
+                                    "reserved_output_tokens": 4096,
+                                    "estimated_input_tokens": 48904,
+                                    "estimated_total_tokens": 53000,
+                                    "estimate_precision": "approximate",
+                                    "near_budget": false,
+                                    "over_budget": false,
+                                    "components": []
+                                }
                             }
                         }
                     })
@@ -9336,6 +9397,7 @@ mod tests {
         assert_eq!(session["client_session_id"], "acp-test-session");
         assert_eq!(session["cwd"], "/workspace");
         assert_eq!(session["resolved_conversation_id"], "den-conv-test");
+        assert_eq!(session["context_budget"]["estimated_total_tokens"], 53000);
         let paths = paths.lock().await.clone();
         assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
     }
@@ -10585,6 +10647,44 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(payload["update"]["entries"][0]["priority"], "high");
         assert_eq!(payload["update"]["entries"][0]["status"], "completed");
         assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
+    }
+
+    #[test]
+    fn acp_usage_update_payload_matches_prompt_turn_spec() {
+        let payload = acp_usage_update_payload(
+            "sess_abc123def456",
+            json!({
+                "model": "openai/test-model",
+                "context_window": 200000,
+                "estimated_input_tokens": 48904,
+                "estimated_total_tokens": 53000,
+                "estimate_precision": "approximate",
+                "near_budget": false,
+                "over_budget": false,
+                "components": []
+            }),
+        )
+        .expect("usage update payload");
+        assert_eq!(payload["sessionId"], "sess_abc123def456");
+        assert_eq!(payload["update"]["sessionUpdate"], "usage_update");
+        assert_eq!(payload["update"]["used"], 53000);
+        assert_eq!(payload["update"]["size"], 200000);
+        assert_eq!(
+            payload["update"]["_meta"]["bears"]["context_budget"]["estimate_precision"],
+            "approximate"
+        );
+    }
+
+    #[test]
+    fn acp_usage_update_payload_requires_context_window() {
+        let payload = acp_usage_update_payload(
+            "sess",
+            json!({
+                "estimated_total_tokens": 53000,
+                "components": []
+            }),
+        );
+        assert!(payload.is_none());
     }
 
     #[tokio::test]
