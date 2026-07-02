@@ -21,7 +21,7 @@ use den_protocol::{
     RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
-use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligations};
+use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligations, turn_runs};
 use den_service::{
     bears::{db as bears_db, db::BearParams},
     client_sessions,
@@ -1196,7 +1196,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
         .await
         .expect("create run");
 
-    turn_obligations::upsert_permission_obligation(
+    turn_obligations::upsert_permission_decision_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1209,7 +1209,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
     let tool_response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "tool_result",
+        "client.tool.result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_id,
@@ -1226,7 +1226,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
         "{tool_response}"
     );
 
-    turn_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1239,7 +1239,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
     let permission_response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "permission_decision",
+        "client.permission.result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_id,
@@ -1275,7 +1275,7 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
         .await
         .expect("transition run to running");
-    turn_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1297,7 +1297,7 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     let response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "tool_result",
+        "client.tool.result",
         params.clone(),
     )
     .await;
@@ -1454,7 +1454,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     turn_runs::create_run(&pool, &run_b, &session_b, bear_id, user_id)
         .await
         .expect("create run b");
-    turn_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_a,
         &session_a,
@@ -1464,7 +1464,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     )
     .await
     .expect("insert session a obligation");
-    turn_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_b,
         &session_b,
@@ -1478,7 +1478,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     let wrong_session = rpc_value(
         test_state(pool.clone()),
         &token,
-        "tool_result",
+        "client.tool.result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_b,
@@ -1498,7 +1498,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     let response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "tool_result",
+        "client.tool.result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_a,
@@ -1538,7 +1538,7 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    turn_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1548,7 +1548,7 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     )
     .await
     .expect("insert tool obligation");
-    turn_obligations::upsert_permission_obligation(
+    turn_obligations::upsert_permission_decision_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1617,8 +1617,8 @@ async fn planned_v1_methods_are_recognized() {
         "session.state",
         "run.start",
         "run.cancel",
-        "tool_result",
-        "permission_decision",
+        "client.tool.result",
+        "client.permission.result",
         "resource.update",
     ] {
         let response = rpc(
@@ -1716,7 +1716,7 @@ async fn bear_scoped_methods_require_bearer_token() {
     )
     .await;
     assert_method_requires_bearer_token(
-        "tool_result",
+        "client.tool.result",
         json!({
             "bear_slug": "meta",
             "session_id": "session-test",
@@ -1727,7 +1727,7 @@ async fn bear_scoped_methods_require_bearer_token() {
     )
     .await;
     assert_method_requires_bearer_token(
-        "permission_decision",
+        "client.permission.result",
         json!({
             "bear_slug": "meta",
             "session_id": "session-test",

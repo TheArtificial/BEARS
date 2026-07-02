@@ -438,38 +438,7 @@ pub(crate) async fn client_tool_result_result(
         }
     }
     let payload = compacted.payload.clone();
-    if !turn_obligations::obligation_is_open(&obligation) {
-        return match turn_runs::existing_client_result_for_payload(
-            &state.sqlx_pool,
-            &run_id,
-            "tool",
-            &tool_call_id,
-            &payload,
-        )
-        .await?
-        {
-            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                Ok(json!({
-                    "ok": true,
-                    "duplicate": true,
-                    "result_id": row.id,
-                    "run_state": run.state,
-                    "obligation_state": obligation.state,
-                }))
-            }
-            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                Err(CustomError::ValidationError(format!(
-                    "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
-                )))
-            }
-            _ => Ok(json!({
-                "ok": false,
-                "status": "late_result_ignored",
-                "run_state": run.state,
-                "obligation_state": obligation.state,
-            })),
-        };
-    }
+
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -518,49 +487,43 @@ pub(crate) async fn client_tool_result_result(
             "max_permission_results": MAX_PERMISSION_RESULTS_PER_RUN,
         }));
     }
-    let record = turn_runs::record_client_result_for_step(
+    let coordinator_outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &state.sqlx_pool,
-        &run_id,
-        obligation.turn_step_id,
+        &run,
+        &obligation,
         "tool",
         &tool_call_id,
         payload.clone(),
     )
     .await?;
-    match record {
-        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
+    match coordinator_outcome {
+        ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
             )))
         }
-        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
-            Ok(json!({
-                "ok": true,
-                "duplicate": true,
-                "result_id": row.id,
-                "run_state": run.state,
-            }))
-        }
-        turn_runs::TurnObligationResultRecord::Inserted { row } => {
-            let coordinator_outcome = client_obligation_coordinator::settle_tool_result(
-                &state.sqlx_pool,
-                &run,
-                &obligation,
-                payload.clone(),
-            )
-            .await?;
-            if let ToolResultCoordinatorOutcome::IgnoredLateResult {
-                run_state,
-                obligation_state,
-            } = coordinator_outcome.clone()
-            {
-                return Ok(json!({
-                    "ok": false,
-                    "status": "late_result_ignored",
-                    "run_state": run_state,
-                    "obligation_state": obligation_state,
-                }));
-            }
+        ToolResultCoordinatorOutcome::DuplicateIdentical { result, run_state } => Ok(json!({
+            "ok": true,
+            "duplicate": true,
+            "result_id": result.id,
+            "run_state": run_state,
+            "obligation_state": obligation.state,
+        })),
+        ToolResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "run_state": run_state,
+            "obligation_state": obligation_state,
+        })),
+        ToolResultCoordinatorOutcome::WaitingForMoreClientResults {
+            run: transitioned,
+            open_obligations,
+            result,
+        } => {
+            let result = result.expect("record-and-settle tool outcome should include result row");
             let event_type = if status == "ok" {
                 "tool_call.completed"
             } else {
@@ -580,57 +543,66 @@ pub(crate) async fn client_tool_result_result(
                 event,
             )
             .await?;
-            if let ToolResultCoordinatorOutcome::WaitingForMoreClientResults {
-                run: transitioned,
-                open_obligations,
-            } = coordinator_outcome.clone()
-            {
-                let content = compacted.content.clone();
-                let continuation_status = match status.as_str() {
-                    "ok" => RuntimeToolResultStatus::Ok,
-                    "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
-                    _ => RuntimeToolResultStatus::Error,
-                };
-                den_runtime::native_runtime::record_native_client_tool_result(
-                    &state.sqlx_pool,
-                    &continuation_conversation_id,
-                    &session_id,
-                    &Uuid::new_v4().to_string(),
-                    Some(&run_id),
-                    &tool_call_id,
-                    obligation.permission_id.as_deref(),
-                    continuation_status,
-                    content,
-                )
-                .await?;
-                return Ok(json!({
-                    "ok": true,
-                    "duplicate": false,
-                    "result_id": row.id,
-                    "event_sequence": persisted.sequence_no,
-                    "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
-                    "continuation": "waiting_for_more_client_results",
-                    "open_obligation_count": open_obligations.len(),
-                    "open_obligations": open_obligations.into_iter().map(|obligation| json!({
-                        "obligation_id": obligation.id,
-                        "kind": obligation.kind,
-                        "expected_responder_action": obligation.expected_responder_action,
-                        "tool_call_id": obligation.tool_call_id,
-                        "permission_id": obligation.permission_id,
-                        "state": obligation.state,
-                    })).collect::<Vec<_>>(),
-                }));
-            }
-
-            let transitioned = match coordinator_outcome {
-                ToolResultCoordinatorOutcome::ContinueModel { run } => run,
-                ToolResultCoordinatorOutcome::WaitingForMoreClientResults { .. }
-                | ToolResultCoordinatorOutcome::DuplicateIdentical { .. }
-                | ToolResultCoordinatorOutcome::DuplicateConflict { .. }
-                | ToolResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
-                    "tool-result coordinator outcome was handled before continuation"
-                ),
+            let content = compacted.content.clone();
+            let continuation_status = match status.as_str() {
+                "ok" => RuntimeToolResultStatus::Ok,
+                "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
+                _ => RuntimeToolResultStatus::Error,
             };
+            den_runtime::native_runtime::record_native_client_tool_result(
+                &state.sqlx_pool,
+                &continuation_conversation_id,
+                &session_id,
+                &Uuid::new_v4().to_string(),
+                Some(&run_id),
+                &tool_call_id,
+                obligation.permission_id.as_deref(),
+                continuation_status,
+                content,
+            )
+            .await?;
+            Ok(json!({
+                "ok": true,
+                "duplicate": false,
+                "result_id": result.id,
+                "event_sequence": persisted.sequence_no,
+                "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                "continuation": "waiting_for_more_client_results",
+                "open_obligation_count": open_obligations.len(),
+                "open_obligations": open_obligations.into_iter().map(|obligation| json!({
+                    "obligation_id": obligation.id,
+                    "kind": obligation.kind,
+                    "expected_responder_action": obligation.expected_responder_action,
+                    "tool_call_id": obligation.tool_call_id,
+                    "permission_id": obligation.permission_id,
+                    "state": obligation.state,
+                })).collect::<Vec<_>>(),
+            }))
+        }
+        ToolResultCoordinatorOutcome::ContinueModel {
+            run: transitioned,
+            result,
+        } => {
+            let result = result.expect("record-and-settle tool outcome should include result row");
+            let event_type = if status == "ok" {
+                "tool_call.completed"
+            } else {
+                "tool_call.failed"
+            };
+            let mut event = BearWireEvent::ephemeral(event_type, payload);
+            event.bear_id = Some(bear.id.to_string());
+            event.human_id = Some(user_id.to_string());
+            event.session_id = Some(session_id.clone());
+            event.run_id = Some(run_id.clone());
+            event.subject = Some(format!("resource/tool_call/{tool_call_id}"));
+            let persisted = bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                &session_id,
+                Some(bear.id),
+                Some(user_id),
+                event,
+            )
+            .await?;
             let content = compacted.content.clone();
             let continuation_status = match status.as_str() {
                 "ok" => RuntimeToolResultStatus::Ok,
@@ -652,7 +624,7 @@ pub(crate) async fn client_tool_result_result(
             Ok(json!({
                 "ok": true,
                 "duplicate": false,
-                "result_id": row.id,
+                "result_id": result.id,
                 "event_sequence": persisted.sequence_no,
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
                 "continuation": "started",
@@ -738,38 +710,7 @@ pub(crate) async fn client_permission_result_result(
         "decision": normalized_decision,
         "reason": params.get("reason").cloned().unwrap_or(Value::Null),
     });
-    if !turn_obligations::obligation_is_open(&obligation) {
-        return match turn_runs::existing_client_result_for_payload(
-            &state.sqlx_pool,
-            &run_id,
-            "permission",
-            &permission_id,
-            &payload,
-        )
-        .await?
-        {
-            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                Ok(json!({
-                    "ok": true,
-                    "duplicate": true,
-                    "result_id": row.id,
-                    "run_state": run.state,
-                    "obligation_state": obligation.state,
-                }))
-            }
-            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                Err(CustomError::ValidationError(format!(
-                    "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
-                )))
-            }
-            _ => Ok(json!({
-                "ok": false,
-                "status": "late_result_ignored",
-                "run_state": run.state,
-                "obligation_state": obligation.state,
-            })),
-        };
-    }
+
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -794,30 +735,47 @@ pub(crate) async fn client_permission_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
-    let record = turn_runs::record_client_result_for_step(
+    let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
         &state.sqlx_pool,
-        &run_id,
-        obligation.turn_step_id,
+        &run,
+        &obligation,
+        normalized_decision,
         "permission",
         &permission_id,
         payload.clone(),
     )
     .await?;
-    match record {
-        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
+    match coordinator_outcome {
+        PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
             )))
         }
-        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
-            Ok(json!({
-                "ok": true,
-                "duplicate": true,
-                "result_id": row.id,
-                "run_state": run.state,
-            }))
-        }
-        turn_runs::TurnObligationResultRecord::Inserted { row } => {
+        PermissionResultCoordinatorOutcome::DuplicateIdentical { result, run_state } => Ok(json!({
+            "ok": true,
+            "duplicate": true,
+            "result_id": result.id,
+            "run_state": run_state,
+            "obligation_state": obligation.state,
+        })),
+        PermissionResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => Ok(json!({
+            "ok": false,
+            "status": "late_result_ignored",
+            "run_state": run_state,
+            "obligation_state": obligation_state,
+        })),
+        PermissionResultCoordinatorOutcome::DispatchLocalTool {
+            run: transitioned,
+            tool_obligation,
+            tool_call_id,
+            tool_name,
+            args,
+            result,
+        } => {
+            let result = result.expect("record-and-settle permission outcome should include result row");
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
@@ -827,26 +785,6 @@ pub(crate) async fn client_permission_result_result(
                     &obligation.request_payload,
                 )
                 .await?;
-            }
-            let coordinator_outcome = client_obligation_coordinator::settle_permission_result(
-                &state.sqlx_pool,
-                &run,
-                &obligation,
-                normalized_decision,
-                payload.clone(),
-            )
-            .await?;
-            if let PermissionResultCoordinatorOutcome::IgnoredLateResult {
-                run_state,
-                obligation_state,
-            } = coordinator_outcome.clone()
-            {
-                return Ok(json!({
-                    "ok": false,
-                    "status": "late_result_ignored",
-                    "run_state": run_state,
-                    "obligation_state": obligation_state,
-                }));
             }
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
@@ -867,42 +805,55 @@ pub(crate) async fn client_permission_result_result(
                 event,
             )
             .await?;
-            if let PermissionResultCoordinatorOutcome::DispatchLocalTool {
-                run: transitioned,
-                tool_obligation,
-                tool_call_id,
-                tool_name,
-                args,
-            } = coordinator_outcome.clone()
-            {
-                return Ok(json!({
-                    "ok": true,
-                    "duplicate": false,
-                    "result_id": row.id,
-                    "event_sequence": persisted.sequence_no,
-                    "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
-                    "continuation": "waiting_for_tool_result",
-                    "obligation_state": tool_obligation.state,
-                    "local_tool_request": {
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "result_tool_name": tool_name,
-                        "args": args,
-                        "permission_id": permission_id,
-                        "obligation_id": obligation.id.to_string()
-                    }
-                }));
+            Ok(json!({
+                "ok": true,
+                "duplicate": false,
+                "result_id": result.id,
+                "event_sequence": persisted.sequence_no,
+                "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                "continuation": "waiting_for_tool_result",
+                "obligation_state": tool_obligation.state,
+                "local_tool_request": {
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "result_tool_name": tool_name,
+                    "args": args,
+                    "permission_id": permission_id,
+                    "obligation_id": obligation.id.to_string()
+                }
+            }))
+        }
+        PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned, result } => {
+            let result = result.expect("record-and-settle permission outcome should include result row");
+            if normalized_decision == "granted" {
+                record_web_fetch_approval_from_permission(
+                    &state.sqlx_pool,
+                    bear.id,
+                    user_id,
+                    decision.as_str(),
+                    &obligation.request_payload,
+                )
+                .await?;
             }
-
-            let transitioned = match coordinator_outcome {
-                PermissionResultCoordinatorOutcome::ContinueModel { run } => run,
-                PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
-                | PermissionResultCoordinatorOutcome::DuplicateIdentical { .. }
-                | PermissionResultCoordinatorOutcome::DuplicateConflict { .. }
-                | PermissionResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
-                    "permission-result coordinator outcome was handled before continuation"
-                ),
+            let event_type = match normalized_decision {
+                "granted" => "permission.granted",
+                "expired" => "permission.expired",
+                _ => "permission.denied",
             };
+            let mut event = BearWireEvent::ephemeral(event_type, payload);
+            event.bear_id = Some(bear.id.to_string());
+            event.human_id = Some(user_id.to_string());
+            event.session_id = Some(session_id.clone());
+            event.run_id = Some(run_id.clone());
+            event.subject = Some(format!("resource/permission_request/{permission_id}"));
+            let persisted = bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                &session_id,
+                Some(bear.id),
+                Some(user_id),
+                event,
+            )
+            .await?;
             let decision = if normalized_decision == "granted" {
                 RuntimeApprovalDecision::Approve
             } else {
@@ -927,7 +878,7 @@ pub(crate) async fn client_permission_result_result(
             Ok(json!({
                 "ok": true,
                 "duplicate": false,
-                "result_id": row.id,
+                "result_id": result.id,
                 "event_sequence": persisted.sequence_no,
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
                 "continuation": "started",
