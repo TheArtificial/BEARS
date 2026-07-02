@@ -114,6 +114,23 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> (uuid::Uuid, String) {
     (bear_id, slug)
 }
 
+async fn seed_test_bifrost_virtual_key(
+    pool: &sqlx::PgPool,
+    bear_id: uuid::Uuid,
+    config: &den_core::config::Config,
+) {
+    bears_db::set_bear_bifrost_virtual_key(
+        pool,
+        bear_id,
+        Some("vk-test"),
+        Some("BearWire test virtual key"),
+        Some("sk-bf-bearwire-test"),
+        &config.den_secret_encryption_key,
+    )
+    .await
+    .expect("seed test Bifrost virtual key");
+}
+
 async fn create_token_for_bear(pool: &sqlx::PgPool, user_id: i32, bear_id: uuid::Uuid) -> String {
     bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
@@ -415,8 +432,10 @@ async fn run_start_persists_message_delta_and_completed_events_for_mock_llm(pool
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server();
     config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
@@ -478,8 +497,10 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server();
     config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let prompt = "Remember this first prompt for future turns";
@@ -546,8 +567,10 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server();
     config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let prompt = "Please inspect the library entrypoint.";
@@ -666,6 +689,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         .push((second_prompt.to_string(), 1));
 
     let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
         MockLlmRequestAssertion {
             required_body_substrings: vec![first_prompt.to_string()],
@@ -674,6 +698,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         second,
     ]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
 
     let first_response = rpc(
@@ -719,7 +744,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
     let mut first_turn_ready = false;
     for _ in 0..50 {
         let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM bearwire_runs WHERE run_id = $1 LIMIT 1")
+            sqlx::query_scalar("SELECT state FROM turn_runs WHERE run_id = $1 LIMIT 1")
                 .bind(&first_run_id)
                 .fetch_optional(&pool)
                 .await
@@ -918,12 +943,14 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
     .expect("append prior assistant message");
 
     let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
     config.llm_api_url = start_mock_openai_sse_server_asserting_body(vec![
         "Earlier user asked about cached history".to_string(),
         "Earlier assistant reply from persisted history".to_string(),
         "Current turn should see history".to_string(),
     ]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let response = rpc(
         State(state.clone()),
@@ -1357,7 +1384,7 @@ async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
         .expect_err("second active run in one ACP session should be rejected");
     assert!(
         err.to_string()
-            .contains("idx_bearwire_runs_one_active_per_session"),
+            .contains("idx_turn_runs_one_active_per_session"),
         "unexpected error: {err}"
     );
 }
