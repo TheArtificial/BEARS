@@ -207,6 +207,8 @@ Done when:
 
 ### Phase 1: add open-obligation barrier
 
+Status: implemented baseline (2026-07-02).
+
 Add repository helpers:
 
 ```rust
@@ -232,6 +234,8 @@ Done when:
 
 ### Phase 2: extract coordinator facade
 
+Status: partially implemented (2026-07-02). `den_runtime::client_obligation_coordinator` now owns the tool-result and permission-result outcome decisions for the current run-level barrier. BearWire still performs transport/auth/result projection and starts continuation tasks from coordinator outcomes.
+
 Create the coordinator module and move continuation decision logic out of BearWire handlers.
 
 Move or wrap logic for:
@@ -256,6 +260,8 @@ Done when:
 - Coordinator tests cover local approvals, Den-hosted approvals, denial, tool error result, duplicate result, and late result.
 
 ### Phase 3: add run-step identity
+
+Status: additive schema baseline added (2026-07-02). `bearwire_run_steps` and nullable `step_id` columns are available; follow-up work must populate step ids for new runs and switch barriers from run-level to step-level.
 
 Add schema:
 

@@ -19,6 +19,9 @@ use den_protocol::{
 };
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_runs,
+    client_obligation_coordinator::{
+        self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
+    },
     native_runtime::continue_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::BearWireEvent,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
@@ -51,16 +54,6 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
         .resolved_conversation_id
         .clone()
         .unwrap_or_else(|| session.conversation_id.clone())
-}
-
-fn permission_obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
-    let tool_name = obligation_payload
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-        .map(|descriptor| descriptor.name == DEN_WEB_FETCH)
-        .unwrap_or(false)
 }
 
 async fn record_web_fetch_approval_from_permission(
@@ -543,19 +536,25 @@ pub(crate) async fn client_tool_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
-            let Some(_received_obligation) = bearwire_obligations::mark_result_received(
+            let coordinator_outcome = client_obligation_coordinator::settle_tool_result(
                 &state.sqlx_pool,
-                obligation.id,
+                &run,
+                &obligation,
                 payload.clone(),
             )
-            .await? else {
+            .await?;
+            if let ToolResultCoordinatorOutcome::IgnoredLateResult {
+                run_state,
+                obligation_state,
+            } = coordinator_outcome.clone()
+            {
                 return Ok(json!({
                     "ok": false,
                     "status": "late_result_ignored",
-                    "run_state": run.state,
-                    "obligation_state": obligation.state,
+                    "run_state": run_state,
+                    "obligation_state": obligation_state,
                 }));
-            };
+            }
             let event_type = if status == "ok" {
                 "tool_call.completed"
             } else {
@@ -575,10 +574,11 @@ pub(crate) async fn client_tool_result_result(
                 event,
             )
             .await?;
-            let open_obligations =
-                bearwire_obligations::open_client_obligations_for_run(&state.sqlx_pool, &run_id)
-                    .await?;
-            if !open_obligations.is_empty() {
+            if let ToolResultCoordinatorOutcome::WaitingForMoreClientResults {
+                run: transitioned,
+                open_obligations,
+            } = coordinator_outcome.clone()
+            {
                 let content = compacted.content.clone();
                 let continuation_status = match status.as_str() {
                     "ok" => RuntimeToolResultStatus::Ok,
@@ -595,13 +595,6 @@ pub(crate) async fn client_tool_result_result(
                     obligation.permission_id.as_deref(),
                     continuation_status,
                     content,
-                )
-                .await?;
-                let transitioned = bearwire_runs::transition_run(
-                    &state.sqlx_pool,
-                    &run_id,
-                    bearwire_runs::BearWireRunState::WaitingForToolResult,
-                    None,
                 )
                 .await?;
                 return Ok(json!({
@@ -623,13 +616,13 @@ pub(crate) async fn client_tool_result_result(
                 }));
             }
 
-            let transitioned = bearwire_runs::transition_run(
-                &state.sqlx_pool,
-                &run_id,
-                bearwire_runs::BearWireRunState::Continuing,
-                None,
-            )
-            .await?;
+            let transitioned = match coordinator_outcome {
+                ToolResultCoordinatorOutcome::ContinueModel { run } => run,
+                ToolResultCoordinatorOutcome::WaitingForMoreClientResults { .. }
+                | ToolResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
+                    "tool-result coordinator outcome was handled before continuation"
+                ),
+            };
             let content = compacted.content.clone();
             let continuation_status = match status.as_str() {
                 "ok" => RuntimeToolResultStatus::Ok,
@@ -648,7 +641,6 @@ pub(crate) async fn client_tool_result_result(
                     content,
                 },
             );
-            let _ = bearwire_obligations::mark_continued(&state.sqlx_pool, obligation.id).await?;
             Ok(json!({
                 "ok": true,
                 "duplicate": false,
@@ -817,19 +809,6 @@ pub(crate) async fn client_permission_result_result(
             }))
         }
         bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
-            let Some(_received_obligation) = bearwire_obligations::mark_result_received(
-                &state.sqlx_pool,
-                obligation.id,
-                payload.clone(),
-            )
-            .await? else {
-                return Ok(json!({
-                    "ok": false,
-                    "status": "late_result_ignored",
-                    "run_state": run.state,
-                    "obligation_state": obligation.state,
-                }));
-            };
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
@@ -839,6 +818,26 @@ pub(crate) async fn client_permission_result_result(
                     &obligation.request_payload,
                 )
                 .await?;
+            }
+            let coordinator_outcome = client_obligation_coordinator::settle_permission_result(
+                &state.sqlx_pool,
+                &run,
+                &obligation,
+                normalized_decision,
+                payload.clone(),
+            )
+            .await?;
+            if let PermissionResultCoordinatorOutcome::IgnoredLateResult {
+                run_state,
+                obligation_state,
+            } = coordinator_outcome.clone()
+            {
+                return Ok(json!({
+                    "ok": false,
+                    "status": "late_result_ignored",
+                    "run_state": run_state,
+                    "obligation_state": obligation_state,
+                }));
             }
             let event_type = match normalized_decision {
                 "granted" => "permission.granted",
@@ -859,42 +858,14 @@ pub(crate) async fn client_permission_result_result(
                 event,
             )
             .await?;
-            let den_hosted_web_fetch = permission_obligation_is_den_web_fetch(&obligation.request_payload);
-            if normalized_decision == "granted" && !den_hosted_web_fetch {
-                let Some(tool_call_id) = obligation.tool_call_id.clone() else {
-                    return Err(CustomError::ValidationError(
-                        "granted armature-local permission obligation missing tool_call_id".to_string(),
-                    ));
-                };
-                let Some(tool_obligation) = bearwire_obligations::mark_waiting_for_tool_result(
-                    &state.sqlx_pool,
-                    obligation.id,
-                )
-                .await? else {
-                    return Ok(json!({
-                        "ok": false,
-                        "status": "late_result_ignored",
-                        "run_state": run.state,
-                        "obligation_state": obligation.state,
-                    }));
-                };
-                let transitioned = bearwire_runs::transition_run(
-                    &state.sqlx_pool,
-                    &run_id,
-                    bearwire_runs::BearWireRunState::WaitingForToolResult,
-                    None,
-                )
-                .await?;
-                let tool_name = obligation
-                    .request_payload
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("local_tool");
-                let args = obligation
-                    .request_payload
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
+            if let PermissionResultCoordinatorOutcome::DispatchLocalTool {
+                run: transitioned,
+                tool_obligation,
+                tool_call_id,
+                tool_name,
+                args,
+            } = coordinator_outcome.clone()
+            {
                 return Ok(json!({
                     "ok": true,
                     "duplicate": false,
@@ -914,13 +885,13 @@ pub(crate) async fn client_permission_result_result(
                 }));
             }
 
-            let transitioned = bearwire_runs::transition_run(
-                &state.sqlx_pool,
-                &run_id,
-                bearwire_runs::BearWireRunState::Continuing,
-                None,
-            )
-            .await?;
+            let transitioned = match coordinator_outcome {
+                PermissionResultCoordinatorOutcome::ContinueModel { run } => run,
+                PermissionResultCoordinatorOutcome::DispatchLocalTool { .. }
+                | PermissionResultCoordinatorOutcome::IgnoredLateResult { .. } => unreachable!(
+                    "permission-result coordinator outcome was handled before continuation"
+                ),
+            };
             let decision = if normalized_decision == "granted" {
                 RuntimeApprovalDecision::Approve
             } else {
@@ -942,7 +913,6 @@ pub(crate) async fn client_permission_result_result(
                     reason,
                 },
             );
-            let _ = bearwire_obligations::mark_continued(&state.sqlx_pool, obligation.id).await?;
             Ok(json!({
                 "ok": true,
                 "duplicate": false,

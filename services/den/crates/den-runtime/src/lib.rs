@@ -36,12 +36,14 @@ pub mod conversation_ids;
 
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
-/// Final-request context budget estimation and component attribution.
-pub mod context_budget;
 /// Persisted BearWire client obligations for tool/permission waits and continuations.
 pub mod bearwire_obligations;
 /// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
 pub mod bearwire_runs;
+/// Protocol-neutral coordinator decisions for BearWire client obligations.
+pub mod client_obligation_coordinator;
+/// Final-request context budget estimation and component attribution.
+pub mod context_budget;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
@@ -65,6 +67,11 @@ pub mod recall;
 
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.
+pub use agent_assist::runtime_stream_parser;
+pub use memory::bear_observations;
+pub use memory::curate_executor as memory_curate_executor;
+pub use reflection::conductor as reflection_conductor;
+pub use reflection::conversations as reflection_conversations;
 pub use runtime::bearwire_projection as runtime_bearwire_projection;
 pub use runtime::compaction as runtime_compaction;
 pub use runtime::compaction_observability as runtime_compaction_observability;
@@ -75,8 +82,3 @@ pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;
 pub use runtime::role_registry as role_runtime_registry;
 pub use runtime::turn_state;
-pub use agent_assist::runtime_stream_parser;
-pub use memory::bear_observations;
-pub use memory::curate_executor as memory_curate_executor;
-pub use reflection::conductor as reflection_conductor;
-pub use reflection::conversations as reflection_conversations;
