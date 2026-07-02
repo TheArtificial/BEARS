@@ -285,6 +285,8 @@ Done when:
 
 ### Phase 4: transactional obligation/event outbox
 
+Status: baseline helper implemented (2026-07-02). Runtime `client.waiting` events are now appended through a single persisted-obligation-backed helper that validates `obligation_id`, `expected_client_method`, `permission_id`, and `tool_call_id` before emitting the event. Full SQL transaction consolidation remains follow-up work.
+
 Create a single operation for answerable waits:
 
 ```text
@@ -302,6 +304,8 @@ Done when:
 - Tests assert event payload IDs match persisted obligations.
 
 ### Phase 5: make `run.paused` non-actionable and remove compatibility paths
+
+Status: implemented for active armature flow (2026-07-02). The armature treats `run.paused` as status-only and ignores legacy `tool_call.blocked` / `permission.requested` as actionable permission UI. `client.waiting` is the only active permission wait path.
 
 - Stop using `tool_call.blocked` for active permission flow.
 - Keep `tool_call.blocked` only as legacy/replay compatibility if still needed.

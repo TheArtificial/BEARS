@@ -10,7 +10,9 @@ use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
     bearwire_events, bearwire_obligations, bearwire_run_steps, bearwire_runs,
     native_runtime::start_native_client_turn_event_stream,
-    runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
+    runtime::bearwire_projection::wire::{
+        runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
+    },
     turn_runner::TurnStartRequest,
 };
 use den_service::{
@@ -395,6 +397,74 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
+async fn append_answerable_client_waiting_event(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    run_id: &str,
+    mut event: BearWireEvent,
+    obligation: &bearwire_obligations::BearWireRunObligationRow,
+) -> Result<(), den_core::DenError> {
+    if obligation.expected_client_method != "client.permission.result" {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            expected_client_method = %obligation.expected_client_method,
+            "refusing to append client.waiting event for non-permission obligation"
+        );
+        return Ok(());
+    }
+    let Some(permission_id) = obligation
+        .permission_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    else {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            "refusing to append client.waiting event without persisted permission id"
+        );
+        return Ok(());
+    };
+    let Some(tool_call_id) = obligation
+        .tool_call_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    else {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            "refusing to append client.waiting event without persisted tool call id"
+        );
+        return Ok(());
+    };
+
+    event.data["obligation_id"] = json!(obligation.id.to_string());
+    event.data["expected_client_method"] = json!(obligation.expected_client_method);
+    event.data["permission_id"] = json!(permission_id);
+    event.data["tool_call_id"] = json!(tool_call_id);
+    event.data["step_id"] = json!(obligation.step_id.map(|id| id.to_string()));
+    event.resource_refs.push(ResourceRef::new(
+        "client_obligation",
+        obligation.id.to_string(),
+    ));
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    if event.run_id.is_none() {
+        event.run_id = Some(run_id.to_string());
+    }
+    bearwire_events::append_bearwire_event(pool, session_id, Some(bear_id), Some(user_id), event)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn persist_runtime_event_as_bearwire(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -419,24 +489,27 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         if event.event_type == "client.waiting" {
             if let Some(obligation) = active_obligation.as_ref() {
-                event.data["obligation_id"] = json!(obligation.id.to_string());
-                event.data["expected_client_method"] = json!(obligation.expected_client_method);
-                event.data["permission_id"] = json!(obligation.permission_id);
-                event.data["tool_call_id"] = json!(obligation.tool_call_id);
-                event.resource_refs.push(
-                    den_runtime::runtime::bearwire_projection::wire::ResourceRef::new(
-                        "client_obligation",
-                        obligation.id.to_string(),
-                    ),
-                );
+                if let Err(err) = append_answerable_client_waiting_event(
+                    pool, session_id, bear_id, user_id, run_id, event, obligation,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %session_id,
+                        run_id = %run_id,
+                        obligation_id = %obligation.id,
+                        "failed to append answerable client.waiting BearWire event"
+                    );
+                }
             } else {
                 tracing::warn!(
                     session_id = %session_id,
                     run_id = %run_id,
                     "runtime emitted client.waiting event without persisted BearWire obligation; dropping unanswerable event"
                 );
-                continue;
             }
+            continue;
         }
         if event.event_type == "permission.requested" {
             if active_obligation.is_none() {
