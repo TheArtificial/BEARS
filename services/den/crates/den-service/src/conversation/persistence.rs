@@ -1,4 +1,5 @@
 use den_core::DenError;
+use den_protocol::ContextBudgetReport;
 use serde::Serialize;
 use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
@@ -15,6 +16,8 @@ pub struct ConversationRecord {
     pub external_conversation_id: Option<String>,
     pub source_client_session_id: Option<String>,
     pub current_title: Option<String>,
+    pub latest_context_budget: Option<ContextBudgetReport>,
+    pub latest_context_budget_updated_at: Option<time::OffsetDateTime>,
     pub updated_at: time::OffsetDateTime,
 }
 
@@ -144,7 +147,7 @@ pub async fn ensure_conversation_for_external_id(
         )
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
-        RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
+        RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
         ",
     )
     .bind(bear_id)
@@ -166,7 +169,7 @@ pub async fn ensure_conversation_for_external_id(
                 current_title = COALESCE($4, conversations.current_title)
             WHERE bear_id = $1
               AND external_conversation_id = $2
-            RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
+            RETURNING id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
             ",
         )
         .bind(bear_id)
@@ -196,6 +199,28 @@ pub async fn ensure_conversation_for_external_id(
         current_title: row.try_get("current_title").map_err(|err| {
             DenError::Database(format!("decode conversation current_title: {err}"))
         })?,
+        latest_context_budget: row
+            .try_get::<Option<Json<serde_json::Value>>, _>("latest_context_budget_json")
+            .map_err(|err| {
+                DenError::Database(format!(
+                    "decode conversation latest_context_budget_json: {err}"
+                ))
+            })?
+            .map(|value| {
+                serde_json::from_value(value.0).map_err(|err| {
+                    DenError::Parsing(format!(
+                        "decode conversation latest_context_budget_json payload: {err}"
+                    ))
+                })
+            })
+            .transpose()?,
+        latest_context_budget_updated_at: row
+            .try_get("latest_context_budget_updated_at")
+            .map_err(|err| {
+                DenError::Database(format!(
+                    "decode conversation latest_context_budget_updated_at: {err}"
+                ))
+            })?,
         updated_at: row
             .try_get("updated_at")
             .map_err(|err| DenError::Database(format!("decode conversation updated_at: {err}")))?,
@@ -208,7 +233,7 @@ pub async fn get_conversation_by_id(
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
         FROM conversations
         WHERE id = $1
         LIMIT 1
@@ -238,6 +263,28 @@ pub async fn get_conversation_by_id(
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
             })?,
+            latest_context_budget: row
+                .try_get::<Option<Json<serde_json::Value>>, _>("latest_context_budget_json")
+                .map_err(|err| {
+                    DenError::Database(format!(
+                        "decode conversation latest_context_budget_json: {err}"
+                    ))
+                })?
+                .map(|value| {
+                    serde_json::from_value(value.0).map_err(|err| {
+                        DenError::Parsing(format!(
+                            "decode conversation latest_context_budget_json payload: {err}"
+                        ))
+                    })
+                })
+                .transpose()?,
+            latest_context_budget_updated_at: row
+                .try_get("latest_context_budget_updated_at")
+                .map_err(|err| {
+                    DenError::Database(format!(
+                        "decode conversation latest_context_budget_updated_at: {err}"
+                    ))
+                })?,
             updated_at: row.try_get("updated_at").map_err(|err| {
                 DenError::Database(format!("decode conversation updated_at: {err}"))
             })?,
@@ -253,7 +300,7 @@ pub async fn get_conversation_for_external_id(
 ) -> Result<Option<ConversationRecord>, DenError> {
     let row = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
         FROM conversations
         WHERE bear_id = $1
           AND external_conversation_id = $2
@@ -285,6 +332,28 @@ pub async fn get_conversation_for_external_id(
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
             })?,
+            latest_context_budget: row
+                .try_get::<Option<Json<serde_json::Value>>, _>("latest_context_budget_json")
+                .map_err(|err| {
+                    DenError::Database(format!(
+                        "decode conversation latest_context_budget_json: {err}"
+                    ))
+                })?
+                .map(|value| {
+                    serde_json::from_value(value.0).map_err(|err| {
+                        DenError::Parsing(format!(
+                            "decode conversation latest_context_budget_json payload: {err}"
+                        ))
+                    })
+                })
+                .transpose()?,
+            latest_context_budget_updated_at: row
+                .try_get("latest_context_budget_updated_at")
+                .map_err(|err| {
+                    DenError::Database(format!(
+                        "decode conversation latest_context_budget_updated_at: {err}"
+                    ))
+                })?,
             updated_at: row.try_get("updated_at").map_err(|err| {
                 DenError::Database(format!("decode conversation updated_at: {err}"))
             })?,
@@ -341,6 +410,40 @@ pub async fn set_conversation_title(
     Ok(result.rows_affected())
 }
 
+pub async fn update_latest_context_budget(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+    source_client_session_id: Option<&str>,
+    budget: &ContextBudgetReport,
+) -> Result<(), DenError> {
+    let conversation = ensure_conversation_for_external_id(
+        pool,
+        bear_id,
+        None,
+        external_conversation_id,
+        source_client_session_id,
+        None,
+    )
+    .await?;
+    let budget_json = serde_json::to_value(budget)
+        .map_err(|err| DenError::System(format!("serialize context budget report: {err}")))?;
+    sqlx::query(
+        r"
+        UPDATE conversations
+        SET latest_context_budget_json = $2,
+            latest_context_budget_updated_at = NOW()
+        WHERE id = $1
+        ",
+    )
+    .bind(conversation.id)
+    .bind(budget_json)
+    .execute(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("update latest context budget: {err}")))?;
+    Ok(())
+}
+
 pub async fn list_conversations_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
@@ -348,7 +451,7 @@ pub async fn list_conversations_for_bear(
 ) -> Result<Vec<ConversationRecord>, DenError> {
     let rows = sqlx::query(
         r"
-        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, updated_at
+        SELECT id, bear_id, external_conversation_id, source_client_session_id, current_title, latest_context_budget_json, latest_context_budget_updated_at, updated_at
         FROM conversations
         WHERE bear_id = $1
         ORDER BY updated_at DESC
@@ -383,6 +486,28 @@ pub async fn list_conversations_for_bear(
                 current_title: row.try_get("current_title").map_err(|err| {
                     DenError::Database(format!("decode conversation current_title: {err}"))
                 })?,
+                latest_context_budget: row
+                    .try_get::<Option<Json<serde_json::Value>>, _>("latest_context_budget_json")
+                    .map_err(|err| {
+                        DenError::Database(format!(
+                            "decode conversation latest_context_budget_json: {err}"
+                        ))
+                    })?
+                    .map(|value| {
+                        serde_json::from_value(value.0).map_err(|err| {
+                            DenError::Parsing(format!(
+                                "decode conversation latest_context_budget_json payload: {err}"
+                            ))
+                        })
+                    })
+                    .transpose()?,
+                latest_context_budget_updated_at: row
+                    .try_get("latest_context_budget_updated_at")
+                    .map_err(|err| {
+                        DenError::Database(format!(
+                            "decode conversation latest_context_budget_updated_at: {err}"
+                        ))
+                    })?,
                 updated_at: row.try_get("updated_at").map_err(|err| {
                     DenError::Database(format!("decode conversation updated_at: {err}"))
                 })?,

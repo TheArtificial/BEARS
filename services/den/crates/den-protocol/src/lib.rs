@@ -5,6 +5,12 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
+pub mod context_budget;
+
+pub use context_budget::{
+    ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRuntimeBinding {
     /// Den-owned opaque handle for the configured compatibility/runtime binding for a Bear role.
