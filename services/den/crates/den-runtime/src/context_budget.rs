@@ -32,6 +32,8 @@ fn component(key: &str, label: &str, chars: u32) -> ContextBudgetComponentReport
 pub fn estimate_context_budget(
     request: &ChatCompletionRequest,
     parts: &AssembledTurnBudgetComponents,
+    fallback_context_window: Option<u32>,
+    fallback_max_output_tokens: Option<u32>,
 ) -> ContextBudgetReport {
     let body = request.to_body().to_string();
     let body_chars = body.chars().count() as u32;
@@ -77,8 +79,12 @@ pub fn estimate_context_budget(
 
     let total_input_tokens = estimated_tokens(body_chars);
     let model_entry = model_registry::entry_for_handle(&request.model);
-    let context_window = model_entry.map(|entry| entry.context_window);
-    let max_output_tokens = model_entry.and_then(|entry| entry.max_output_tokens);
+    let context_window = model_entry
+        .map(|entry| entry.context_window)
+        .or(fallback_context_window);
+    let max_output_tokens = model_entry
+        .and_then(|entry| entry.max_output_tokens)
+        .or(fallback_max_output_tokens);
     let reserved_output_tokens = request
         .max_tokens
         .unwrap_or(max_output_tokens.unwrap_or(2048))
@@ -144,6 +150,8 @@ mod tests {
                 current_user_input_chars: 32,
                 tool_message_chars: 16,
             },
+            None,
+            None,
         );
 
         assert_eq!(report.model, "openai/gpt-4.1");
@@ -180,6 +188,8 @@ mod tests {
                 compiled_prompt_chars: 5_000_000,
                 ..Default::default()
             },
+            None,
+            None,
         );
 
         assert!(report.near_budget);

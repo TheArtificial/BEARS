@@ -499,7 +499,12 @@ pub async fn run_agent_step_stream(
         max_tokens: None,
         telemetry: Some(session.llm_telemetry()),
     };
-    let budget = estimate_context_budget(&request, &session.budget_components);
+    let budget = estimate_context_budget(
+        &request,
+        &session.budget_components,
+        session.model_context_window,
+        session.model_max_output_tokens,
+    );
     if budget.near_budget {
         tracing::warn!(
             session_key = %session.session_key,

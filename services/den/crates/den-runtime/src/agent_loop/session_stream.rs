@@ -858,6 +858,8 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,

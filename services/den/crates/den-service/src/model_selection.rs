@@ -63,3 +63,26 @@ pub async fn list_selectable_model_options(pool: &PgPool) -> Result<Vec<ModelOpt
     }
     Ok(options)
 }
+
+pub async fn resolve_model_option(pool: &PgPool, handle: &str) -> Result<Option<ModelOption>, DenError> {
+    let trimmed = handle.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(Some(row)) = sqlx::query_as::<_, ModelSelectionOptionRow>(
+        r#"
+        SELECT handle, display_name, metadata_json
+        FROM model_selection_options
+        WHERE handle = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(trimmed)
+    .fetch_optional(pool)
+    .await
+    {
+        return Ok(Some(option_from_row(row)));
+    }
+    Ok(den_llm::model_registry::entry_for_handle(trimmed)
+        .map(|entry| entry.to_model_option_for_handle(trimmed)))
+}

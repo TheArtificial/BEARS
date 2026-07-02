@@ -27,6 +27,8 @@ pub struct AgentLoopSession {
     pub tools: Vec<LlmToolDefinition>,
     pub budget_components: AssembledTurnBudgetComponents,
     pub model: String,
+    pub model_context_window: Option<u32>,
+    pub model_max_output_tokens: Option<u32>,
     pub bifrost_virtual_key: Option<String>,
     pub api_style: Option<LlmApiStyle>,
     pub step: u32,

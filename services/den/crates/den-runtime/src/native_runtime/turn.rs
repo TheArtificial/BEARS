@@ -416,6 +416,7 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
+    let model_option = den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
     let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(
         deps.pool,
         bear.id,
@@ -435,6 +436,8 @@ async fn build_session(
         tools,
         budget_components,
         model,
+        model_context_window: model_option.as_ref().and_then(|option| option.context_window),
+        model_max_output_tokens: model_option.as_ref().and_then(|option| option.max_output_tokens),
         bifrost_virtual_key,
         api_style,
         step: 0,
