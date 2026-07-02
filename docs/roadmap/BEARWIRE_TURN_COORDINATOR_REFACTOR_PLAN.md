@@ -353,6 +353,8 @@ Done when:
 
 #### Phase 6C: add surface projection contracts
 
+Status: implemented (2026-07-02). `den_runtime::surface_projection` defines neutral surface kinds and action projections for BearWire armatures, web chat, Slack, and macOS app surfaces. Unsupported obligation/surface pairs are explicit rather than silently inventing a state machine.
+
 Define how core obligations project to each surface:
 
 - BearWire armature projection:

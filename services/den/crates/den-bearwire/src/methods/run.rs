@@ -14,6 +14,7 @@ use den_runtime::{
     runtime::bearwire_projection::wire::{
         runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
     },
+    surface_projection::bearwire_client_method_for_action,
     turn_obligations,
     turn_runner::TurnStartRequest,
     turn_runs, turn_steps,
@@ -400,14 +401,6 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
-fn bearwire_method_for_responder_action(action: &str) -> Option<&'static str> {
-    match action {
-        "tool_result" => Some("client.tool.result"),
-        "permission_decision" => Some("client.permission.result"),
-        _ => None,
-    }
-}
-
 fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
     turn_obligations::TurnObligationRow {
         id: row.get("id"),
@@ -438,7 +431,7 @@ async fn append_answerable_client_waiting_event(
     obligation: &turn_obligations::TurnObligationRow,
 ) -> Result<(), den_core::DenError> {
     let Some(expected_client_method) =
-        bearwire_method_for_responder_action(&obligation.expected_responder_action)
+        bearwire_client_method_for_action(&obligation.expected_responder_action)
     else {
         tracing::warn!(
             session_id = %session_id,
@@ -757,7 +750,7 @@ async fn persist_tool_call_requested_transactionally(
         let permission_id = obligation.permission_id.clone().unwrap_or_default();
         event.data["obligation_id"] = json!(obligation.id.to_string());
         event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
-        event.data["expected_client_method"] = json!(bearwire_method_for_responder_action(
+        event.data["expected_client_method"] = json!(bearwire_client_method_for_action(
             &obligation.expected_responder_action
         )
         .unwrap_or("client.permission.result"));

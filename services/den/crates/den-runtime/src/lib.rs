@@ -36,16 +36,18 @@ pub mod conversation_ids;
 
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
-/// Persisted BearWire client obligations for tool/permission waits and continuations.
-pub mod turn_obligations;
-/// Persisted BearWire model-step lifecycle for the Den ↔ armature wire.
-pub mod turn_steps;
-/// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
-pub mod turn_runs;
-/// Protocol-neutral coordinator decisions for BearWire client obligations.
+/// Protocol-neutral coordinator decisions for turn obligations.
 pub mod client_obligation_coordinator;
 /// Final-request context budget estimation and component attribution.
 pub mod context_budget;
+/// Surface projection contracts for turn obligations.
+pub mod surface_projection;
+/// Persisted BearWire client obligations for tool/permission waits and continuations.
+pub mod turn_obligations;
+/// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
+pub mod turn_runs;
+/// Persisted BearWire model-step lifecycle for the Den ↔ armature wire.
+pub mod turn_steps;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
