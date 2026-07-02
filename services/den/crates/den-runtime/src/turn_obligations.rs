@@ -23,16 +23,16 @@ impl TurnObligationKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ExpectedClientMethod {
+pub enum ExpectedResponderAction {
     ToolResult,
     PermissionResult,
 }
 
-impl ExpectedClientMethod {
+impl ExpectedResponderAction {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::ToolResult => "client.tool.result",
-            Self::PermissionResult => "client.permission.result",
+            Self::ToolResult => "tool_result",
+            Self::PermissionResult => "permission_decision",
         }
     }
 }
@@ -67,7 +67,7 @@ pub struct TurnObligationRow {
     pub run_id: String,
     pub session_id: String,
     pub kind: String,
-    pub expected_client_method: String,
+    pub expected_responder_action: String,
     pub tool_call_id: Option<String>,
     pub permission_id: Option<String>,
     pub state: String,
@@ -85,7 +85,7 @@ fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
         run_id: row.get("run_id"),
         session_id: row.get("session_id"),
         kind: row.get("kind"),
-        expected_client_method: row.get("expected_client_method"),
+        expected_responder_action: row.get("expected_responder_action"),
         tool_call_id: row.get("tool_call_id"),
         permission_id: row.get("permission_id"),
         state: row.get("state"),
@@ -130,13 +130,13 @@ pub async fn upsert_tool_call_obligation_for_step(
     let row = sqlx::query(
         r#"
         INSERT INTO turn_obligations (
-            run_id, session_id, turn_step_id, kind, expected_client_method,
+            run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
-        ) VALUES ($1, $2, $3, 'tool_call', 'client.tool.result', $4, $5, 'waiting_for_client', $6)
+        ) VALUES ($1, $2, $3, 'tool_call', 'tool_result', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
                       turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
-                      expected_client_method = EXCLUDED.expected_client_method,
+                      expected_responder_action = EXCLUDED.expected_responder_action,
                       permission_id = COALESCE(EXCLUDED.permission_id, turn_obligations.permission_id),
                       state = CASE
                         WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
@@ -145,7 +145,7 @@ pub async fn upsert_tool_call_obligation_for_step(
                       END,
                       request_payload = EXCLUDED.request_payload,
                       updated_at = NOW()
-        RETURNING id, run_id, session_id, kind, expected_client_method,
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
         "#,
@@ -197,7 +197,7 @@ pub async fn upsert_permission_obligation_for_step(
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
                 kind = 'permission',
-                expected_client_method = 'client.permission.result',
+                expected_responder_action = 'permission_decision',
                 permission_id = $4,
                 state = CASE
                     WHEN state IN ('result_received','continued','failed','cancelled')
@@ -209,7 +209,7 @@ pub async fn upsert_permission_obligation_for_step(
             WHERE run_id = $1
               AND tool_call_id = $3
               AND (permission_id IS NULL OR permission_id = $4)
-            RETURNING id, run_id, session_id, kind, expected_client_method,
+            RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
             "#,
@@ -230,9 +230,9 @@ pub async fn upsert_permission_obligation_for_step(
     let row = sqlx::query(
         r#"
         INSERT INTO turn_obligations (
-            run_id, session_id, turn_step_id, kind, expected_client_method,
+            run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
-        ) VALUES ($1, $2, $3, 'permission', 'client.permission.result', $4, $5, 'waiting_for_client', $6)
+        ) VALUES ($1, $2, $3, 'permission', 'permission_decision', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
                       turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -244,7 +244,7 @@ pub async fn upsert_permission_obligation_for_step(
                       END,
                       request_payload = EXCLUDED.request_payload,
                       updated_at = NOW()
-        RETURNING id, run_id, session_id, kind, expected_client_method,
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
         "#,
@@ -267,7 +267,7 @@ pub async fn get_tool_call_obligation(
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
-        SELECT id, run_id, session_id, kind, expected_client_method,
+        SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
@@ -288,7 +288,7 @@ pub async fn get_permission_obligation(
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
-        SELECT id, run_id, session_id, kind, expected_client_method,
+        SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
@@ -315,7 +315,7 @@ pub async fn mark_result_received(
             updated_at = NOW()
         WHERE id = $1
           AND state IN ('requested','waiting_for_client','result_received')
-        RETURNING id, run_id, session_id, kind, expected_client_method,
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
         "#,
@@ -335,13 +335,13 @@ pub async fn mark_waiting_for_tool_result(
         r#"
         UPDATE turn_obligations
         SET kind = 'tool_call',
-            expected_client_method = 'client.tool.result',
+            expected_responder_action = 'tool_result',
             state = 'waiting_for_client',
             updated_at = NOW()
         WHERE id = $1
           AND state IN ('requested','waiting_for_client','result_received')
           AND tool_call_id IS NOT NULL
-        RETURNING id, run_id, session_id, kind, expected_client_method,
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
         "#,
@@ -364,7 +364,7 @@ pub async fn mark_continued(
             updated_at = NOW()
         WHERE id = $1
           AND state IN ('result_received','continued')
-        RETURNING id, run_id, session_id, kind, expected_client_method,
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
         "#,
@@ -381,7 +381,7 @@ pub async fn open_client_obligations_for_step(
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, run_id, session_id, kind, expected_client_method,
+        SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
@@ -402,7 +402,7 @@ pub async fn open_client_obligations_for_run(
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, run_id, session_id, kind, expected_client_method,
+        SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
@@ -440,11 +440,11 @@ pub async fn settle_outstanding_for_run(
     Ok(result.rows_affected())
 }
 
-pub fn obligation_accepts_client_method(
+pub fn obligation_accepts_responder_action(
     obligation: &TurnObligationRow,
-    method: ExpectedClientMethod,
+    method: ExpectedResponderAction,
 ) -> bool {
-    obligation.expected_client_method == method.as_str()
+    obligation.expected_responder_action == method.as_str()
 }
 
 pub fn obligation_is_open(obligation: &TurnObligationRow) -> bool {

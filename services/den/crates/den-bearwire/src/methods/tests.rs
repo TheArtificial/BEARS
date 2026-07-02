@@ -1211,7 +1211,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
     let tool_response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "client.tool.result",
+        "tool_result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_id,
@@ -1241,7 +1241,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
     let permission_response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "client.permission.result",
+        "permission_decision",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_id,
@@ -1304,7 +1304,7 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     let response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "client.tool.result",
+        "tool_result",
         params.clone(),
     )
     .await;
@@ -1440,8 +1440,8 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
         .expect("load permission obligation")
         .expect("permission obligation exists");
     assert_eq!(
-        obligation.expected_client_method,
-        "client.permission.result"
+        obligation.expected_responder_action,
+        "permission_decision"
     );
     assert_eq!(obligation.tool_call_id.as_deref(), Some(tool_call_id));
 }
@@ -1488,7 +1488,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     let wrong_session = rpc_value(
         test_state(pool.clone()),
         &token,
-        "client.tool.result",
+        "tool_result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_b,
@@ -1508,7 +1508,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     let response = rpc_value(
         test_state(pool.clone()),
         &token,
-        "client.tool.result",
+        "tool_result",
         json!({
             "bear_slug": bear_slug,
             "session_id": session_a,
@@ -1628,8 +1628,8 @@ async fn planned_v1_methods_are_recognized() {
         "session.state",
         "run.start",
         "run.cancel",
-        "client.tool.result",
-        "client.permission.result",
+        "tool_result",
+        "permission_decision",
         "resource.update",
     ] {
         let response = rpc(
@@ -1727,7 +1727,7 @@ async fn bear_scoped_methods_require_bearer_token() {
     )
     .await;
     assert_method_requires_bearer_token(
-        "client.tool.result",
+        "tool_result",
         json!({
             "bear_slug": "meta",
             "session_id": "session-test",
@@ -1738,7 +1738,7 @@ async fn bear_scoped_methods_require_bearer_token() {
     )
     .await;
     assert_method_requires_bearer_token(
-        "client.permission.result",
+        "permission_decision",
         json!({
             "bear_slug": "meta",
             "session_id": "session-test",

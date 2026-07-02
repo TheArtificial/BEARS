@@ -75,8 +75,8 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     assert_eq!(permission.id, tool.id);
     assert_eq!(permission.kind, "permission");
     assert_eq!(
-        permission.expected_client_method,
-        "client.permission.result"
+        permission.expected_responder_action,
+        "permission_decision"
     );
     assert_eq!(permission.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(permission.permission_id.as_deref(), Some(permission_id));
@@ -95,8 +95,8 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     assert_eq!(waiting_for_tool.id, permission.id);
     assert_eq!(waiting_for_tool.kind, "tool_call");
     assert_eq!(
-        waiting_for_tool.expected_client_method,
-        "client.tool.result"
+        waiting_for_tool.expected_responder_action,
+        "tool_result"
     );
     assert_eq!(waiting_for_tool.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(

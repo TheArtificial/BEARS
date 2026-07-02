@@ -9,12 +9,14 @@ use uuid::Uuid;
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
-    bearwire_events, turn_obligations, turn_steps, turn_runs,
+    bearwire_events,
     native_runtime::start_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{
         runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
     },
+    turn_obligations,
     turn_runner::TurnStartRequest,
+    turn_runs, turn_steps,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
@@ -398,15 +400,21 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
-fn obligation_from_row(
-    row: sqlx::postgres::PgRow,
-) -> turn_obligations::TurnObligationRow {
+fn bearwire_method_for_responder_action(action: &str) -> Option<&'static str> {
+    match action {
+        "tool_result" => Some("client.tool.result"),
+        "permission_decision" => Some("client.permission.result"),
+        _ => None,
+    }
+}
+
+fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
     turn_obligations::TurnObligationRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         session_id: row.get("session_id"),
         kind: row.get("kind"),
-        expected_client_method: row.get("expected_client_method"),
+        expected_responder_action: row.get("expected_responder_action"),
         tool_call_id: row.get("tool_call_id"),
         permission_id: row.get("permission_id"),
         state: row.get("state"),
@@ -428,12 +436,24 @@ async fn append_answerable_client_waiting_event(
     mut event: BearWireEvent,
     obligation: &turn_obligations::TurnObligationRow,
 ) -> Result<(), den_core::DenError> {
-    if obligation.expected_client_method != "client.permission.result" {
+    let Some(expected_client_method) =
+        bearwire_method_for_responder_action(&obligation.expected_responder_action)
+    else {
         tracing::warn!(
             session_id = %session_id,
             run_id = %run_id,
             obligation_id = %obligation.id,
-            expected_client_method = %obligation.expected_client_method,
+            expected_responder_action = %obligation.expected_responder_action,
+            "refusing to append client.waiting event for obligation without BearWire client method"
+        );
+        return Ok(());
+    };
+    if obligation.expected_responder_action != "permission_decision" {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            expected_responder_action = %obligation.expected_responder_action,
             "refusing to append client.waiting event for non-permission obligation"
         );
         return Ok(());
@@ -468,7 +488,8 @@ async fn append_answerable_client_waiting_event(
     };
 
     event.data["obligation_id"] = json!(obligation.id.to_string());
-    event.data["expected_client_method"] = json!(obligation.expected_client_method);
+    event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
+    event.data["expected_client_method"] = json!(expected_client_method);
     event.data["permission_id"] = json!(permission_id);
     event.data["tool_call_id"] = json!(tool_call_id);
     event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));
@@ -590,7 +611,7 @@ async fn persist_tool_call_requested_transactionally(
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
                 kind = 'permission',
-                expected_client_method = 'client.permission.result',
+                expected_responder_action = 'permission_decision',
                 permission_id = $4,
                 state = CASE
                     WHEN state IN ('result_received','continued','failed','cancelled') THEN state
@@ -601,7 +622,7 @@ async fn persist_tool_call_requested_transactionally(
             WHERE run_id = $1
               AND tool_call_id = $3
               AND (permission_id IS NULL OR permission_id = $4)
-            RETURNING id, run_id, session_id, kind, expected_client_method,
+            RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
             "#,
@@ -620,9 +641,9 @@ async fn persist_tool_call_requested_transactionally(
             sqlx::query(
                 r#"
                 INSERT INTO turn_obligations (
-                    run_id, session_id, turn_step_id, kind, expected_client_method,
+                    run_id, session_id, turn_step_id, kind, expected_responder_action,
                     tool_call_id, permission_id, state, request_payload
-                ) VALUES ($1, $2, $3, 'permission', 'client.permission.result', $4, $5, 'waiting_for_client', $6)
+                ) VALUES ($1, $2, $3, 'permission', 'permission_decision', $4, $5, 'waiting_for_client', $6)
                 ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
                 DO UPDATE SET session_id = EXCLUDED.session_id,
                               turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -634,7 +655,7 @@ async fn persist_tool_call_requested_transactionally(
                               END,
                               request_payload = EXCLUDED.request_payload,
                               updated_at = NOW()
-                RETURNING id, run_id, session_id, kind, expected_client_method,
+                RETURNING id, run_id, session_id, kind, expected_responder_action,
                           tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                           created_at, updated_at, completed_at
                 "#,
@@ -652,13 +673,13 @@ async fn persist_tool_call_requested_transactionally(
         sqlx::query(
             r#"
             INSERT INTO turn_obligations (
-                run_id, session_id, turn_step_id, kind, expected_client_method,
+                run_id, session_id, turn_step_id, kind, expected_responder_action,
                 tool_call_id, permission_id, state, request_payload
-            ) VALUES ($1, $2, $3, 'tool_call', 'client.tool.result', $4, $5, 'waiting_for_client', $6)
+            ) VALUES ($1, $2, $3, 'tool_call', 'tool_result', $4, $5, 'waiting_for_client', $6)
             ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
             DO UPDATE SET session_id = EXCLUDED.session_id,
                           turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
-                          expected_client_method = EXCLUDED.expected_client_method,
+                          expected_responder_action = EXCLUDED.expected_responder_action,
                           permission_id = COALESCE(EXCLUDED.permission_id, turn_obligations.permission_id),
                           state = CASE
                             WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
@@ -667,7 +688,7 @@ async fn persist_tool_call_requested_transactionally(
                           END,
                           request_payload = EXCLUDED.request_payload,
                           updated_at = NOW()
-            RETURNING id, run_id, session_id, kind, expected_client_method,
+            RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
             "#,
@@ -688,6 +709,7 @@ async fn persist_tool_call_requested_transactionally(
         BearWireEvent::ephemeral(
             "client.waiting",
             json!({
+                "expected_responder_action": "permission_decision",
                 "expected_client_method": "client.permission.result",
                 "tool_call": {
                     "id": tool_call_id,
@@ -733,7 +755,8 @@ async fn persist_tool_call_requested_transactionally(
     if effective_approval_required {
         let permission_id = obligation.permission_id.clone().unwrap_or_default();
         event.data["obligation_id"] = json!(obligation.id.to_string());
-        event.data["expected_client_method"] = json!(obligation.expected_client_method);
+        event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
+        event.data["expected_client_method"] = json!(bearwire_method_for_responder_action(&obligation.expected_responder_action).unwrap_or("client.permission.result"));
         event.data["permission_id"] = json!(permission_id);
         event.data["tool_call_id"] = json!(tool_call_id);
         event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));
@@ -933,13 +956,8 @@ pub(crate) async fn persist_run_failed(
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
-    let _ = turn_runs::transition_run(
-        pool,
-        run_id,
-        turn_runs::TurnRunState::Failed,
-        Some(reason),
-    )
-    .await;
+    let _ = turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
+        .await;
     let _ = turn_obligations::settle_outstanding_for_run(
         pool,
         run_id,
@@ -1126,8 +1144,7 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Continued,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued")
-                .await;
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued").await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
@@ -1160,8 +1177,7 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Failed,
             )
             .await;
-            let _ =
-                turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
@@ -1178,8 +1194,7 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Cancelled,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled")
-                .await;
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled").await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
@@ -1216,8 +1231,7 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Failed,
             )
             .await;
-            let _ =
-                turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         _ => None,

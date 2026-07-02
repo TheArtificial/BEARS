@@ -19,7 +19,7 @@ use den_protocol::{
 };
 use den_runtime::{
     bearwire_events,
-    turn_obligations::{self, ExpectedClientMethod},
+    turn_obligations::{self, ExpectedResponderAction},
     turn_runs,
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
@@ -392,14 +392,14 @@ pub(crate) async fn client_tool_result_result(
                     "BearWire tool result has no persisted tool-call obligation".to_string(),
                 )
             })?;
-    if !turn_obligations::obligation_accepts_client_method(
+    if !turn_obligations::obligation_accepts_responder_action(
         &obligation,
-        ExpectedClientMethod::ToolResult,
+        ExpectedResponderAction::ToolResult,
     ) {
         return Err(CustomError::ValidationError(format!(
             "BearWire tool obligation {} does not accept client.tool.result (expected {}, state {})",
             obligation.id,
-            obligation.expected_client_method,
+            obligation.expected_responder_action,
             obligation.state
         )));
     }
@@ -614,7 +614,7 @@ pub(crate) async fn client_tool_result_result(
                     "open_obligations": open_obligations.into_iter().map(|obligation| json!({
                         "obligation_id": obligation.id,
                         "kind": obligation.kind,
-                        "expected_client_method": obligation.expected_client_method,
+                        "expected_responder_action": obligation.expected_responder_action,
                         "tool_call_id": obligation.tool_call_id,
                         "permission_id": obligation.permission_id,
                         "state": obligation.state,
@@ -709,14 +709,14 @@ pub(crate) async fn client_permission_result_result(
             ));
         }
     }
-    if !turn_obligations::obligation_accepts_client_method(
+    if !turn_obligations::obligation_accepts_responder_action(
         &obligation,
-        ExpectedClientMethod::PermissionResult,
+        ExpectedResponderAction::PermissionResult,
     ) {
         return Err(CustomError::ValidationError(format!(
             "BearWire permission obligation {} does not accept client.permission.result (expected {}, state {})",
             obligation.id,
-            obligation.expected_client_method,
+            obligation.expected_responder_action,
             obligation.state
         )));
     }

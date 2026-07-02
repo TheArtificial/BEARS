@@ -19,6 +19,45 @@ BEGIN
     END IF;
 END $$;
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'turn_obligations'
+          AND column_name = 'expected_client_method'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'turn_obligations'
+          AND column_name = 'expected_responder_action'
+    ) THEN
+        ALTER TABLE turn_obligations RENAME COLUMN expected_client_method TO expected_responder_action;
+    END IF;
+END $$;
+
+UPDATE turn_obligations
+SET expected_responder_action = CASE expected_responder_action
+    WHEN 'client.tool.result' THEN 'tool_result'
+    WHEN 'client.permission.result' THEN 'permission_decision'
+    ELSE expected_responder_action
+END;
+
+ALTER TABLE turn_obligations
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_expected_client_method_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_expected_client_method_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_expected_responder_action_check;
+
+ALTER TABLE turn_obligations
+    ADD CONSTRAINT turn_obligations_expected_responder_action_check
+    CHECK (expected_responder_action IN (
+        'tool_result',
+        'permission_decision',
+        'human_input',
+        'resource_binding',
+        'handoff_decision'
+    ));
+
 -- Rename old indexes where PostgreSQL retained their original names across table rename.
 DO $$
 BEGIN
@@ -104,7 +143,7 @@ SELECT pg_temp.rename_public_constraint('turn_runs', 'bearwire_runs_state_check'
 SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_pkey', 'turn_obligations_pkey');
 SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_run_id_fkey', 'turn_obligations_run_id_fkey');
 SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_kind_check', 'turn_obligations_kind_check');
-SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_expected_client_method_check', 'turn_obligations_expected_client_method_check');
+
 SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_state_check', 'turn_obligations_state_check');
 SELECT pg_temp.rename_public_constraint('turn_obligations', 'bearwire_run_obligations_check', 'turn_obligations_tool_or_permission_check');
 
