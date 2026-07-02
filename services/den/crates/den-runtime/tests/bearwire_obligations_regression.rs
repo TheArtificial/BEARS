@@ -191,7 +191,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     )
     .await
     .expect("create first step obligation");
-    assert_eq!(first.step_id, Some(first_step.id));
+    assert_eq!(first.turn_step_id, Some(first_step.id));
 
     turn_steps::transition_step(&pool, first_step.id, "continued")
         .await

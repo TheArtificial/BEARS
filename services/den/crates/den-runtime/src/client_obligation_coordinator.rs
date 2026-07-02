@@ -20,11 +20,11 @@ fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
 #[derive(Debug, Clone)]
 pub enum ToolResultCoordinatorOutcome {
     WaitingForMoreClientResults {
-        run: Option<turn_runs::BearWireRunRow>,
-        open_obligations: Vec<turn_obligations::BearWireRunObligationRow>,
+        run: Option<turn_runs::TurnRunRow>,
+        open_obligations: Vec<turn_obligations::TurnObligationRow>,
     },
     ContinueModel {
-        run: Option<turn_runs::BearWireRunRow>,
+        run: Option<turn_runs::TurnRunRow>,
     },
     IgnoredLateResult {
         run_state: String,
@@ -35,14 +35,14 @@ pub enum ToolResultCoordinatorOutcome {
 #[derive(Debug, Clone)]
 pub enum PermissionResultCoordinatorOutcome {
     DispatchLocalTool {
-        run: Option<turn_runs::BearWireRunRow>,
-        tool_obligation: turn_obligations::BearWireRunObligationRow,
+        run: Option<turn_runs::TurnRunRow>,
+        tool_obligation: turn_obligations::TurnObligationRow,
         tool_call_id: String,
         tool_name: String,
         args: Value,
     },
     ContinueModel {
-        run: Option<turn_runs::BearWireRunRow>,
+        run: Option<turn_runs::TurnRunRow>,
     },
     IgnoredLateResult {
         run_state: String,
@@ -52,8 +52,8 @@ pub enum PermissionResultCoordinatorOutcome {
 
 pub async fn settle_tool_result(
     pool: &PgPool,
-    run: &turn_runs::BearWireRunRow,
-    obligation: &turn_obligations::BearWireRunObligationRow,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
     result_payload: Value,
 ) -> Result<ToolResultCoordinatorOutcome, DenError> {
     let Some(_received_obligation) =
@@ -74,7 +74,7 @@ pub async fn settle_tool_result(
         let transitioned = turn_runs::transition_run(
             pool,
             &run.run_id,
-            turn_runs::BearWireRunState::WaitingForToolResult,
+            turn_runs::TurnRunState::WaitingForToolResult,
             None,
         )
         .await?;
@@ -87,7 +87,7 @@ pub async fn settle_tool_result(
     let transitioned = turn_runs::transition_run(
         pool,
         &run.run_id,
-        turn_runs::BearWireRunState::Continuing,
+        turn_runs::TurnRunState::Continuing,
         None,
     )
     .await?;
@@ -100,8 +100,8 @@ pub async fn settle_tool_result(
 
 pub async fn settle_permission_result(
     pool: &PgPool,
-    run: &turn_runs::BearWireRunRow,
-    obligation: &turn_obligations::BearWireRunObligationRow,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
     normalized_decision: &str,
     result_payload: Value,
 ) -> Result<PermissionResultCoordinatorOutcome, DenError> {
@@ -132,7 +132,7 @@ pub async fn settle_permission_result(
         let transitioned = turn_runs::transition_run(
             pool,
             &run.run_id,
-            turn_runs::BearWireRunState::WaitingForToolResult,
+            turn_runs::TurnRunState::WaitingForToolResult,
             None,
         )
         .await?;
@@ -159,7 +159,7 @@ pub async fn settle_permission_result(
     let transitioned = turn_runs::transition_run(
         pool,
         &run.run_id,
-        turn_runs::BearWireRunState::Continuing,
+        turn_runs::TurnRunState::Continuing,
         None,
     )
     .await?;

@@ -400,8 +400,8 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
 
 fn obligation_from_row(
     row: sqlx::postgres::PgRow,
-) -> turn_obligations::BearWireRunObligationRow {
-    turn_obligations::BearWireRunObligationRow {
+) -> turn_obligations::TurnObligationRow {
+    turn_obligations::TurnObligationRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         session_id: row.get("session_id"),
@@ -426,7 +426,7 @@ async fn append_answerable_client_waiting_event(
     user_id: i32,
     run_id: &str,
     mut event: BearWireEvent,
-    obligation: &turn_obligations::BearWireRunObligationRow,
+    obligation: &turn_obligations::TurnObligationRow,
 ) -> Result<(), den_core::DenError> {
     if obligation.expected_client_method != "client.permission.result" {
         tracing::warn!(
@@ -521,9 +521,9 @@ async fn persist_tool_call_requested_transactionally(
     }
     let effective_approval_required = approval_required && has_permission_id;
     let run_state = if effective_approval_required {
-        turn_runs::BearWireRunState::WaitingForPermission
+        turn_runs::TurnRunState::WaitingForPermission
     } else {
-        turn_runs::BearWireRunState::WaitingForToolResult
+        turn_runs::TurnRunState::WaitingForToolResult
     };
     let request_payload = json!({
         "tool_call_id": tool_call_id,
@@ -936,14 +936,14 @@ pub(crate) async fn persist_run_failed(
     let _ = turn_runs::transition_run(
         pool,
         run_id,
-        turn_runs::BearWireRunState::Failed,
+        turn_runs::TurnRunState::Failed,
         Some(reason),
     )
     .await;
     let _ = turn_obligations::settle_outstanding_for_run(
         pool,
         run_id,
-        turn_obligations::BearWireObligationState::Failed,
+        turn_obligations::TurnObligationState::Failed,
     )
     .await;
     let mut event = BearWireEvent::ephemeral(
@@ -977,7 +977,7 @@ async fn update_run_state_for_runtime_event(
     event: &den_protocol::RuntimeStreamEvent,
     request_id: Uuid,
     started_at: Option<Instant>,
-) -> Option<turn_obligations::BearWireRunObligationRow> {
+) -> Option<turn_obligations::TurnObligationRow> {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -1003,9 +1003,9 @@ async fn update_run_state_for_runtime_event(
             }
             let effective_approval_required = *approval_required && has_permission_id;
             let state = if effective_approval_required {
-                turn_runs::BearWireRunState::WaitingForPermission
+                turn_runs::TurnRunState::WaitingForPermission
             } else {
-                turn_runs::BearWireRunState::WaitingForToolResult
+                turn_runs::TurnRunState::WaitingForToolResult
             };
             let _ = turn_runs::transition_run(pool, run_id, state, None).await;
             let turn_step_id = match turn_steps::ensure_active_step(pool, run_id).await {
@@ -1116,14 +1116,14 @@ async fn update_run_state_for_runtime_event(
             let _ = turn_runs::transition_run(
                 pool,
                 run_id,
-                turn_runs::BearWireRunState::Completed,
+                turn_runs::TurnRunState::Completed,
                 Some("completed"),
             )
             .await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
-                turn_obligations::BearWireObligationState::Continued,
+                turn_obligations::TurnObligationState::Continued,
             )
             .await;
             let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued")
@@ -1150,14 +1150,14 @@ async fn update_run_state_for_runtime_event(
             let _ = turn_runs::transition_run(
                 pool,
                 run_id,
-                turn_runs::BearWireRunState::Failed,
+                turn_runs::TurnRunState::Failed,
                 Some(&reason),
             )
             .await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
-                turn_obligations::BearWireObligationState::Failed,
+                turn_obligations::TurnObligationState::Failed,
             )
             .await;
             let _ =
@@ -1168,14 +1168,14 @@ async fn update_run_state_for_runtime_event(
             let _ = turn_runs::transition_run(
                 pool,
                 run_id,
-                turn_runs::BearWireRunState::Cancelled,
+                turn_runs::TurnRunState::Cancelled,
                 Some("cancelled"),
             )
             .await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
-                turn_obligations::BearWireObligationState::Cancelled,
+                turn_obligations::TurnObligationState::Cancelled,
             )
             .await;
             let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled")
@@ -1206,14 +1206,14 @@ async fn update_run_state_for_runtime_event(
             let _ = turn_runs::transition_run(
                 pool,
                 run_id,
-                turn_runs::BearWireRunState::Failed,
+                turn_runs::TurnRunState::Failed,
                 error_type.as_deref().or(Some("error")),
             )
             .await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
-                turn_obligations::BearWireObligationState::Failed,
+                turn_obligations::TurnObligationState::Failed,
             )
             .await;
             let _ =
@@ -1301,7 +1301,7 @@ pub(crate) async fn run_start_result(
         let _ = turn_obligations::settle_outstanding_for_run(
             &state.sqlx_pool,
             &active_run.run_id,
-            turn_obligations::BearWireObligationState::Failed,
+            turn_obligations::TurnObligationState::Failed,
         )
         .await;
     }
@@ -1368,7 +1368,7 @@ pub(crate) async fn run_start_result(
         let _ = turn_runs::transition_run(
             &pool,
             &run_id_for_task,
-            turn_runs::BearWireRunState::Running,
+            turn_runs::TurnRunState::Running,
             None,
         )
         .await;
@@ -1584,14 +1584,14 @@ pub(crate) async fn run_cancel_result(
         let _ = turn_runs::transition_run(
             &state.sqlx_pool,
             &run.run_id,
-            turn_runs::BearWireRunState::Cancelled,
+            turn_runs::TurnRunState::Cancelled,
             Some("client_requested"),
         )
         .await?;
         let _ = turn_obligations::settle_outstanding_for_run(
             &state.sqlx_pool,
             &run.run_id,
-            turn_obligations::BearWireObligationState::Cancelled,
+            turn_obligations::TurnObligationState::Cancelled,
         )
         .await?;
     }

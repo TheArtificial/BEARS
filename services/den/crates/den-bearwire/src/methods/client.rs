@@ -125,7 +125,7 @@ async fn record_web_fetch_approval_from_permission(
 }
 
 fn continuation_unavailable_response(
-    run: &turn_runs::BearWireRunRow,
+    run: &turn_runs::TurnRunRow,
     session_id: &str,
     conversation_id: &str,
     obligation_state: &str,
@@ -151,7 +151,7 @@ fn continuation_unavailable_response(
 
 fn spawn_continuation_task(
     state: &DenState,
-    run: turn_runs::BearWireRunRow,
+    run: turn_runs::TurnRunRow,
     binding_id: String,
     conversation_id: String,
     continuation: RuntimeContinuation,
@@ -179,7 +179,7 @@ fn spawn_continuation_task(
         let _ = turn_runs::transition_run(
             &pool,
             &run.run_id,
-            turn_runs::BearWireRunState::Continuing,
+            turn_runs::TurnRunState::Continuing,
             None,
         )
         .await;
@@ -448,7 +448,7 @@ pub(crate) async fn client_tool_result_result(
         )
         .await?
         {
-            Some(turn_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
                 Ok(json!({
                     "ok": true,
                     "duplicate": true,
@@ -457,7 +457,7 @@ pub(crate) async fn client_tool_result_result(
                     "obligation_state": obligation.state,
                 }))
             }
-            Some(turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
                 Err(CustomError::ValidationError(format!(
                     "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
                 )))
@@ -528,12 +528,12 @@ pub(crate) async fn client_tool_result_result(
     )
     .await?;
     match record {
-        turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
+        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
             )))
         }
-        turn_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
+        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
             Ok(json!({
                 "ok": true,
                 "duplicate": true,
@@ -541,7 +541,7 @@ pub(crate) async fn client_tool_result_result(
                 "run_state": run.state,
             }))
         }
-        turn_runs::BearWireClientResultRecord::Inserted { row } => {
+        turn_runs::TurnObligationResultRecord::Inserted { row } => {
             let coordinator_outcome = client_obligation_coordinator::settle_tool_result(
                 &state.sqlx_pool,
                 &run,
@@ -746,7 +746,7 @@ pub(crate) async fn client_permission_result_result(
         )
         .await?
         {
-            Some(turn_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
                 Ok(json!({
                     "ok": true,
                     "duplicate": true,
@@ -755,7 +755,7 @@ pub(crate) async fn client_permission_result_result(
                     "obligation_state": obligation.state,
                 }))
             }
-            Some(turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
                 Err(CustomError::ValidationError(format!(
                     "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
                 )))
@@ -802,12 +802,12 @@ pub(crate) async fn client_permission_result_result(
     )
     .await?;
     match record {
-        turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
+        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
             )))
         }
-        turn_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
+        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
             Ok(json!({
                 "ok": true,
                 "duplicate": true,
@@ -815,7 +815,7 @@ pub(crate) async fn client_permission_result_result(
                 "run_state": run.state,
             }))
         }
-        turn_runs::BearWireClientResultRecord::Inserted { row } => {
+        turn_runs::TurnObligationResultRecord::Inserted { row } => {
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,

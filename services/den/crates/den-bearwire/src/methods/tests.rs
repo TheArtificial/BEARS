@@ -1155,7 +1155,7 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record first result");
     assert!(matches!(
         first,
-        turn_runs::BearWireClientResultRecord::Inserted { .. }
+        turn_runs::TurnObligationResultRecord::Inserted { .. }
     ));
 
     let duplicate = turn_runs::record_client_result(
@@ -1169,7 +1169,7 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record duplicate result");
     assert!(matches!(
         duplicate,
-        turn_runs::BearWireClientResultRecord::DuplicateIdentical { .. }
+        turn_runs::TurnObligationResultRecord::DuplicateIdentical { .. }
     ));
 
     let conflict = turn_runs::record_client_result(
@@ -1183,7 +1183,7 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record conflicting result");
     assert!(matches!(
         conflict,
-        turn_runs::BearWireClientResultRecord::DuplicateConflict { .. }
+        turn_runs::TurnObligationResultRecord::DuplicateConflict { .. }
     ));
 }
 
@@ -1277,7 +1277,7 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     turn_runs::transition_run(
         &pool,
         &run_id,
-        turn_runs::BearWireRunState::Running,
+        turn_runs::TurnRunState::Running,
         None,
     )
     .await
