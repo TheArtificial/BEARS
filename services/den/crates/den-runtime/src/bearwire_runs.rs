@@ -165,6 +165,7 @@ pub struct BearWireClientResultRow {
     pub obligation_id: String,
     pub result_hash: String,
     pub payload_json: serde_json::Value,
+    pub step_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
 }
 
@@ -192,6 +193,7 @@ fn row_to_client_result(row: sqlx::postgres::PgRow) -> BearWireClientResultRow {
         obligation_id: row.get("obligation_id"),
         result_hash: row.get("result_hash"),
         payload_json: row.get("payload_json"),
+        step_id: row.try_get("step_id").ok(),
         created_at: row.get("created_at"),
     }
 }
@@ -205,7 +207,7 @@ pub async fn existing_client_result_for_payload(
 ) -> Result<Option<BearWireClientResultRecord>, DenError> {
     let Some(existing) = sqlx::query(
         r#"
-        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, step_id, created_at
         FROM bearwire_client_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
         "#,
@@ -235,17 +237,37 @@ pub async fn record_client_result(
     obligation_id: &str,
     payload_json: serde_json::Value,
 ) -> Result<BearWireClientResultRecord, DenError> {
+    record_client_result_for_step(
+        pool,
+        run_id,
+        None,
+        obligation_kind,
+        obligation_id,
+        payload_json,
+    )
+    .await
+}
+
+pub async fn record_client_result_for_step(
+    pool: &PgPool,
+    run_id: &str,
+    step_id: Option<Uuid>,
+    obligation_kind: &str,
+    obligation_id: &str,
+    payload_json: serde_json::Value,
+) -> Result<BearWireClientResultRecord, DenError> {
     let hash = result_hash(&payload_json)?;
     let inserted = sqlx::query(
         r#"
         INSERT INTO bearwire_client_results (
-            run_id, obligation_kind, obligation_id, result_hash, payload_json
-        ) VALUES ($1, $2, $3, $4, $5)
+            run_id, step_id, obligation_kind, obligation_id, result_hash, payload_json
+        ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
-        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, step_id, created_at
         "#,
     )
     .bind(run_id)
+    .bind(step_id)
     .bind(obligation_kind)
     .bind(obligation_id)
     .bind(&hash)
@@ -260,7 +282,7 @@ pub async fn record_client_result(
 
     let existing = sqlx::query(
         r#"
-        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, created_at
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, step_id, created_at
         FROM bearwire_client_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
         "#,

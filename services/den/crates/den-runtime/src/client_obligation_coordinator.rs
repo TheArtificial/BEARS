@@ -5,7 +5,7 @@ use den_core::DenError;
 
 use den_core::tools::constants::DEN_WEB_FETCH;
 
-use crate::{bearwire_obligations, bearwire_runs};
+use crate::{bearwire_obligations, bearwire_run_steps, bearwire_runs};
 
 fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
     let tool_name = obligation_payload
@@ -65,8 +65,11 @@ pub async fn settle_tool_result(
         });
     };
 
-    let open_obligations =
-        bearwire_obligations::open_client_obligations_for_run(pool, &run.run_id).await?;
+    let open_obligations = if let Some(step_id) = obligation.step_id {
+        bearwire_obligations::open_client_obligations_for_step(pool, step_id).await?
+    } else {
+        bearwire_obligations::open_client_obligations_for_run(pool, &run.run_id).await?
+    };
     if !open_obligations.is_empty() {
         let transitioned = bearwire_runs::transition_run(
             pool,
@@ -89,6 +92,9 @@ pub async fn settle_tool_result(
     )
     .await?;
     let _ = bearwire_obligations::mark_continued(pool, obligation.id).await?;
+    if let Some(step_id) = obligation.step_id {
+        let _ = bearwire_run_steps::transition_step(pool, step_id, "continued").await?;
+    }
     Ok(ToolResultCoordinatorOutcome::ContinueModel { run: transitioned })
 }
 
@@ -158,5 +164,8 @@ pub async fn settle_permission_result(
     )
     .await?;
     let _ = bearwire_obligations::mark_continued(pool, obligation.id).await?;
+    if let Some(step_id) = obligation.step_id {
+        let _ = bearwire_run_steps::transition_step(pool, step_id, "continued").await?;
+    }
     Ok(PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned })
 }

@@ -8,7 +8,7 @@ use uuid::Uuid;
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
-    bearwire_events, bearwire_obligations, bearwire_runs,
+    bearwire_events, bearwire_obligations, bearwire_run_steps, bearwire_runs,
     native_runtime::start_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{runtime_stream_event_to_bearwire_events, BearWireEvent},
     turn_runner::TurnStartRequest,
@@ -561,6 +561,19 @@ async fn update_run_state_for_runtime_event(
                 bearwire_runs::BearWireRunState::WaitingForToolResult
             };
             let _ = bearwire_runs::transition_run(pool, run_id, state, None).await;
+            let step_id = match bearwire_run_steps::ensure_active_step(pool, run_id).await {
+                Ok(step) => Some(step.id),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %session_id,
+                        run_id = %run_id,
+                        tool_call_id = %tool_call_id,
+                        "failed to ensure BearWire run step for tool-call obligation"
+                    );
+                    None
+                }
+            };
             let request_payload = json!({
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -571,20 +584,22 @@ async fn update_run_state_for_runtime_event(
             });
             let obligation = if effective_approval_required {
                 if let Some(permission_id) = approval_request_id.as_deref() {
-                    bearwire_obligations::upsert_permission_obligation(
+                    bearwire_obligations::upsert_permission_obligation_for_step(
                         pool,
                         run_id,
                         session_id,
+                        step_id,
                         permission_id,
                         Some(tool_call_id),
                         request_payload,
                     )
                     .await
                 } else {
-                    bearwire_obligations::upsert_tool_call_obligation(
+                    bearwire_obligations::upsert_tool_call_obligation_for_step(
                         pool,
                         run_id,
                         session_id,
+                        step_id,
                         tool_call_id,
                         None,
                         request_payload,
@@ -592,10 +607,11 @@ async fn update_run_state_for_runtime_event(
                     .await
                 }
             } else {
-                bearwire_obligations::upsert_tool_call_obligation(
+                bearwire_obligations::upsert_tool_call_obligation_for_step(
                     pool,
                     run_id,
                     session_id,
+                    step_id,
                     tool_call_id,
                     approval_request_id.as_deref(),
                     request_payload,
@@ -663,6 +679,8 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Continued,
             )
             .await;
+            let _ = bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "continued")
+                .await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
@@ -695,6 +713,8 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
+            let _ =
+                bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
@@ -711,6 +731,8 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Cancelled,
             )
             .await;
+            let _ = bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "cancelled")
+                .await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
@@ -747,6 +769,8 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Failed,
             )
             .await;
+            let _ =
+                bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         _ => None,

@@ -513,9 +513,10 @@ pub(crate) async fn client_tool_result_result(
             "max_permission_results": MAX_PERMISSION_RESULTS_PER_RUN,
         }));
     }
-    let record = bearwire_runs::record_client_result(
+    let record = bearwire_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
+        obligation.step_id,
         "tool",
         &tool_call_id,
         payload.clone(),
@@ -786,9 +787,10 @@ pub(crate) async fn client_permission_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
-    let record = bearwire_runs::record_client_result(
+    let record = bearwire_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
+        obligation.step_id,
         "permission",
         &permission_id,
         payload.clone(),

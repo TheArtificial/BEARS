@@ -261,7 +261,7 @@ Done when:
 
 ### Phase 3: add run-step identity
 
-Status: additive schema baseline added (2026-07-02). `bearwire_run_steps` and nullable `step_id` columns are available; follow-up work must populate step ids for new runs and switch barriers from run-level to step-level.
+Status: partially implemented (2026-07-02). `bearwire_run_steps` and nullable `step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
 
 Add schema:
 

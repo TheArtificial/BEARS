@@ -38,6 +38,8 @@ pub mod conversation_ids;
 pub mod bearwire_events;
 /// Persisted BearWire client obligations for tool/permission waits and continuations.
 pub mod bearwire_obligations;
+/// Persisted BearWire model-step lifecycle for the Den ↔ armature wire.
+pub mod bearwire_run_steps;
 /// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
 pub mod bearwire_runs;
 /// Protocol-neutral coordinator decisions for BearWire client obligations.

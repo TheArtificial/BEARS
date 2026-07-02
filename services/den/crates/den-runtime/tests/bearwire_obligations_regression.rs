@@ -1,4 +1,4 @@
-use den_runtime::{bearwire_obligations, bearwire_runs};
+use den_runtime::{bearwire_obligations, bearwire_run_steps, bearwire_runs};
 use uuid::Uuid;
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
@@ -165,4 +165,64 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
         .await
         .expect("list open obligations after all received");
     assert!(open.is_empty(), "all tool results are received: {open:#?}");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let first_step = bearwire_run_steps::ensure_active_step(&pool, &run_id)
+        .await
+        .expect("ensure first step");
+    let first = bearwire_obligations::upsert_tool_call_obligation_for_step(
+        &pool,
+        &run_id,
+        &session_id,
+        Some(first_step.id),
+        "call-first-step",
+        None,
+        serde_json::json!({ "tool": "first-step" }),
+    )
+    .await
+    .expect("create first step obligation");
+    assert_eq!(first.step_id, Some(first_step.id));
+
+    bearwire_run_steps::transition_step(&pool, first_step.id, "continued")
+        .await
+        .expect("close first step");
+    let second_step = bearwire_run_steps::ensure_active_step(&pool, &run_id)
+        .await
+        .expect("ensure second step");
+    assert_ne!(first_step.id, second_step.id);
+    let second = bearwire_obligations::upsert_tool_call_obligation_for_step(
+        &pool,
+        &run_id,
+        &session_id,
+        Some(second_step.id),
+        "call-second-step",
+        None,
+        serde_json::json!({ "tool": "second-step" }),
+    )
+    .await
+    .expect("create second step obligation");
+
+    let open_first_step =
+        bearwire_obligations::open_client_obligations_for_step(&pool, first_step.id)
+            .await
+            .expect("list first step open obligations");
+    assert_eq!(open_first_step.len(), 1);
+    assert_eq!(open_first_step[0].id, first.id);
+
+    let open_second_step =
+        bearwire_obligations::open_client_obligations_for_step(&pool, second_step.id)
+            .await
+            .expect("list second step open obligations");
+    assert_eq!(open_second_step.len(), 1);
+    assert_eq!(open_second_step[0].id, second.id);
 }
