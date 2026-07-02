@@ -87,4 +87,20 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
             .expect("load by permission id")
             .expect("permission obligation exists");
     assert_eq!(by_permission.id, permission.id);
+
+    let waiting_for_tool = bearwire_obligations::mark_waiting_for_tool_result(&pool, permission.id)
+        .await
+        .expect("mark waiting for tool result")
+        .expect("obligation still open");
+    assert_eq!(waiting_for_tool.id, permission.id);
+    assert_eq!(waiting_for_tool.kind, "tool_call");
+    assert_eq!(
+        waiting_for_tool.expected_client_method,
+        "client.tool.result"
+    );
+    assert_eq!(waiting_for_tool.tool_call_id.as_deref(), Some(tool_call_id));
+    assert_eq!(
+        waiting_for_tool.permission_id.as_deref(),
+        Some(permission_id)
+    );
 }

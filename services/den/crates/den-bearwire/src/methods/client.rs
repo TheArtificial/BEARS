@@ -53,6 +53,16 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
         .unwrap_or_else(|| session.conversation_id.clone())
 }
 
+fn permission_obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
+    let tool_name = obligation_payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+        .map(|descriptor| descriptor.name == DEN_WEB_FETCH)
+        .unwrap_or(false)
+}
+
 async fn record_web_fetch_approval_from_permission(
     pool: &sqlx::PgPool,
     bear_id: uuid::Uuid,
@@ -801,6 +811,61 @@ pub(crate) async fn client_permission_result_result(
                 event,
             )
             .await?;
+            let den_hosted_web_fetch = permission_obligation_is_den_web_fetch(&obligation.request_payload);
+            if normalized_decision == "granted" && !den_hosted_web_fetch {
+                let Some(tool_call_id) = obligation.tool_call_id.clone() else {
+                    return Err(CustomError::ValidationError(
+                        "granted armature-local permission obligation missing tool_call_id".to_string(),
+                    ));
+                };
+                let Some(tool_obligation) = bearwire_obligations::mark_waiting_for_tool_result(
+                    &state.sqlx_pool,
+                    obligation.id,
+                )
+                .await? else {
+                    return Ok(json!({
+                        "ok": false,
+                        "status": "late_result_ignored",
+                        "run_state": run.state,
+                        "obligation_state": obligation.state,
+                    }));
+                };
+                let transitioned = bearwire_runs::transition_run(
+                    &state.sqlx_pool,
+                    &run_id,
+                    bearwire_runs::BearWireRunState::WaitingForToolResult,
+                    None,
+                )
+                .await?;
+                let tool_name = obligation
+                    .request_payload
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("local_tool");
+                let args = obligation
+                    .request_payload
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                return Ok(json!({
+                    "ok": true,
+                    "duplicate": false,
+                    "result_id": row.id,
+                    "event_sequence": persisted.sequence_no,
+                    "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                    "continuation": "waiting_for_tool_result",
+                    "obligation_state": tool_obligation.state,
+                    "local_tool_request": {
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "result_tool_name": tool_name,
+                        "args": args,
+                        "permission_id": permission_id,
+                        "obligation_id": obligation.id.to_string()
+                    }
+                }));
+            }
+
             let transitioned = bearwire_runs::transition_run(
                 &state.sqlx_pool,
                 &run_id,

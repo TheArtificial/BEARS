@@ -246,6 +246,31 @@ pub async fn mark_result_received(
     Ok(row.map(row_to_obligation))
 }
 
+pub async fn mark_waiting_for_tool_result(
+    pool: &PgPool,
+    obligation_id: Uuid,
+) -> Result<Option<BearWireRunObligationRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bearwire_run_obligations
+        SET kind = 'tool_call',
+            expected_client_method = 'client.tool.result',
+            state = 'waiting_for_client',
+            updated_at = NOW()
+        WHERE id = $1
+          AND state IN ('requested','waiting_for_client','result_received')
+          AND tool_call_id IS NOT NULL
+        RETURNING id, run_id, session_id, kind, expected_client_method,
+                  tool_call_id, permission_id, state, request_payload, result_payload,
+                  created_at, updated_at, completed_at
+        "#,
+    )
+    .bind(obligation_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
 pub async fn mark_continued(
     pool: &PgPool,
     obligation_id: Uuid,
