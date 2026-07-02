@@ -2718,7 +2718,8 @@ async fn handle_request(
                         if !session_id.is_empty() {
                             send_available_commands_update(session_id).await?;
                             if let Some(context_budget) = context_budget {
-                                send_context_budget_usage_update(session_id, context_budget).await?;
+                                send_context_budget_usage_update(session_id, context_budget)
+                                    .await?;
                             }
                         }
                     }
@@ -8404,6 +8405,32 @@ impl ToolDisplay {
     }
 }
 
+fn fallback_tool_title(tool_name: &str) -> String {
+    let trimmed = tool_name.trim();
+    if trimmed.is_empty() {
+        return "Local tool".to_string();
+    }
+    let words = trimmed
+        .split(|ch: char| matches!(ch, '_' | '-' | '.' | '/' | ':'))
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return "Local tool".to_string();
+    }
+    let mut out = String::new();
+    for (index, word) in words.into_iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    out
+}
+
 fn is_den_server_tool_request(event: &Value) -> bool {
     event
         .get("policy")
@@ -8573,12 +8600,15 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Deleting",
             "delete this path",
         ),
-        _ => ToolDisplay::builtin(
-            "Local tool",
-            ToolKind::Read,
-            "Running",
-            "run this local tool",
-        ),
+        _ => ToolDisplay {
+            title: fallback_tool_title(tool_name),
+            kind: ToolKind::Other,
+            verb: "Running".to_string(),
+            permission_operation: format!("run `{tool_name}`"),
+            subtitle: None,
+            category: None,
+            arguments_summary: None,
+        },
     }
 }
 
@@ -10788,6 +10818,12 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(tool_display("fs_list_directory").title, "List directory");
         assert_eq!(tool_display("fs_search_files").title, "Search files");
         assert_eq!(tool_display("fs_edit_file").title, "Edit file");
+    }
+
+    #[test]
+    fn tool_display_humanizes_unknown_tool_names() {
+        assert_eq!(tool_display("memory_read").title, "Memory Read");
+        assert_eq!(tool_display("mcp.call_tool").title, "Mcp Call Tool");
     }
 
     #[test]

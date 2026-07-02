@@ -16,6 +16,48 @@ const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 
+fn generic_tool_summary(summary: &str) -> bool {
+    matches!(summary.trim(), "Tool failed." | "Tool completed.")
+}
+
+fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
+    let title = crate::fallback_tool_title(tool_name);
+    if title == "Local tool" {
+        return if failed {
+            "Tool failed.".to_string()
+        } else {
+            "Tool completed.".to_string()
+        };
+    }
+    if failed {
+        format!("{title} failed.")
+    } else {
+        format!("{title} completed.")
+    }
+}
+
+fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> String {
+    let candidate = [
+        data.get("error_message").and_then(Value::as_str),
+        data.get("summary").and_then(Value::as_str),
+        data.get("message").and_then(Value::as_str),
+        data.get("content").and_then(Value::as_str),
+        data.get("detail").and_then(Value::as_str),
+        data.pointer("/diagnostic/message").and_then(Value::as_str),
+        data.pointer("/diagnostic/error").and_then(Value::as_str),
+        data.pointer("/diagnostic/reason").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|message| !message.is_empty() && !generic_tool_summary(message));
+
+    match candidate {
+        Some(message) => message.to_string(),
+        None => default_tool_status_summary(tool_name, failed),
+    }
+}
+
 fn compact_json_preview(value: &Value, max_chars: usize) -> Value {
     let mut serialized = value.to_string();
     if serialized.chars().count() <= max_chars {
@@ -783,16 +825,7 @@ async fn handle_bearwire_tool_call_finished_event(
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or("tool");
-    let summary = data
-        .get("error_message")
-        .and_then(Value::as_str)
-        .filter(|message| !message.trim().is_empty())
-        .or_else(|| data.get("summary").and_then(Value::as_str))
-        .unwrap_or(if failed {
-            "Tool failed."
-        } else {
-            "Tool completed."
-        });
+    let summary = tool_call_finished_summary(data, tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
     let legacy = json!({
         "type": "tool_result",
@@ -806,7 +839,7 @@ async fn handle_bearwire_tool_call_finished_event(
         tool_name,
         ToolCallUpdatePayload {
             status,
-            text: summary,
+            text: &summary,
             event: Some(&legacy),
             raw_output: Some(compact_json_preview(
                 data,
@@ -1286,6 +1319,35 @@ mod tests {
         let message = bearwire_run_failed_user_message(&event);
 
         assert_eq!(message, "BEARS run failed: BearWire run failed");
+    }
+
+    #[test]
+    fn tool_call_finished_summary_uses_tool_name_when_upstream_summary_is_generic() {
+        let data = json!({
+            "tool_name": "memory_read",
+            "summary": "Tool failed."
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "memory_read", true),
+            "Memory Read failed."
+        );
+    }
+
+    #[test]
+    fn tool_call_finished_summary_prefers_specific_error_detail() {
+        let data = json!({
+            "tool_name": "memory_read",
+            "summary": "Tool failed.",
+            "diagnostic": {
+                "error": "permission denied reading pair/notes.md"
+            }
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "memory_read", true),
+            "permission denied reading pair/notes.md"
+        );
     }
 
     #[test]
