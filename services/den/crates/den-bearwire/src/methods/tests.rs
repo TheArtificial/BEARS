@@ -21,9 +21,7 @@ use den_protocol::{
     RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
-use den_runtime::{
-    turn_obligations, bearturn_runstive_runtime::NativeRuntimeConversationBackend,
-};
+use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligations};
 use den_service::{
     bears::{db as bears_db, db::BearParams},
     client_sessions,
@@ -1274,14 +1272,9 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    turn_runs::transition_run(
-        &pool,
-        &run_id,
-        turn_runs::TurnRunState::Running,
-        None,
-    )
-    .await
-    .expect("transition run to running");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("transition run to running");
     turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
@@ -1439,10 +1432,7 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
         .await
         .expect("load permission obligation")
         .expect("permission obligation exists");
-    assert_eq!(
-        obligation.expected_responder_action,
-        "permission_decision"
-    );
+    assert_eq!(obligation.expected_responder_action, "permission_decision");
     assert_eq!(obligation.tool_call_id.as_deref(), Some(tool_call_id));
 }
 
@@ -1587,11 +1577,10 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
         .await
         .expect("load tool obligation")
         .expect("tool obligation exists");
-    let permission =
-        turn_obligations::get_permission_obligation(&pool, &run_id, "perm-cancelled")
-            .await
-            .expect("load permission obligation")
-            .expect("permission obligation exists");
+    let permission = turn_obligations::get_permission_obligation(&pool, &run_id, "perm-cancelled")
+        .await
+        .expect("load permission obligation")
+        .expect("permission obligation exists");
     assert_eq!(tool.state, "cancelled");
     assert_eq!(permission.state, "cancelled");
 }
