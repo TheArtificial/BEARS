@@ -9,7 +9,8 @@ use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
     RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
-    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, StartTurnRequest,
+    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, RuntimeToolResultStatus,
+    StartTurnRequest,
 };
 use den_service::{
     bears::BearProfile,
@@ -156,6 +157,54 @@ pub fn take_session_overflow_compaction_recovered(
 pub fn native_client_session_exists(conversation_id: &str, client_session_id: &str) -> bool {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.get(&key).is_some()
+}
+
+pub async fn record_native_client_tool_result(
+    pool: &PgPool,
+    conversation_id: &str,
+    client_session_id: &str,
+    request_id: &str,
+    run_id: Option<&str>,
+    tool_call_id: &str,
+    approval_request_id: Option<&str>,
+    status: RuntimeToolResultStatus,
+    content: String,
+) -> Result<(), DenError> {
+    if let Some(approval_request_id) = approval_request_id {
+        let approve = matches!(status, RuntimeToolResultStatus::Ok);
+        record_approval_decision(
+            pool,
+            approval_request_id,
+            approve,
+            Some(if approve {
+                "tool_result_delivered"
+            } else {
+                "tool_result_failed"
+            }),
+        )
+        .await?;
+    }
+
+    let session_key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE.update(&session_key, |session| {
+        session.request_id = Some(request_id.to_string());
+        session.run_id = run_id
+            .map(str::to_string)
+            .or_else(|| session.run_id.clone());
+        session.messages.push(ChatMessage {
+            role: "tool".to_string(),
+            content: Some(content),
+            tool_call_id: Some(tool_call_id.to_string()),
+            name: None,
+            tool_calls: None,
+        });
+    });
+    if SESSION_STORE.get(&session_key).is_none() {
+        return Err(DenError::System(
+            "native agent loop session not found".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn overflow_context(
@@ -416,7 +465,8 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
-    let model_option = den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
+    let model_option =
+        den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
     let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(
         deps.pool,
         bear.id,
@@ -436,8 +486,12 @@ async fn build_session(
         tools,
         budget_components,
         model,
-        model_context_window: model_option.as_ref().and_then(|option| option.context_window),
-        model_max_output_tokens: model_option.as_ref().and_then(|option| option.max_output_tokens),
+        model_context_window: model_option
+            .as_ref()
+            .and_then(|option| option.context_window),
+        model_max_output_tokens: model_option
+            .as_ref()
+            .and_then(|option| option.max_output_tokens),
         bifrost_virtual_key,
         api_style,
         step: 0,

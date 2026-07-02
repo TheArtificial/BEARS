@@ -1128,8 +1128,9 @@ async fn handle_bearwire_event(
                 .pointer("/data/resume_token")
                 .and_then(Value::as_str)
                 .unwrap_or("<none>");
-            outcome.saw_tool_activity = reason == "requires_approval";
-            diagnostics.saw_tool_activity |= outcome.saw_tool_activity;
+            // `run.paused` is status/diagnostic state only. Actionable waits must arrive
+            // as `client.waiting` with a persisted obligation; treating this as tool
+            // activity can make stale pause events look like fresh permission work.
             eprintln!(
                 "bear-armature: BearWire run paused session_id={} reason={} resume_token={}",
                 session_id, reason, resume_token

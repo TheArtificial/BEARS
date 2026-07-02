@@ -104,3 +104,65 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
         Some(permission_id)
     );
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let first = bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-first",
+        None,
+        serde_json::json!({ "tool": "first" }),
+    )
+    .await
+    .expect("create first obligation");
+    let second = bearwire_obligations::upsert_tool_call_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-second",
+        None,
+        serde_json::json!({ "tool": "second" }),
+    )
+    .await
+    .expect("create second obligation");
+
+    bearwire_obligations::mark_result_received(
+        &pool,
+        first.id,
+        serde_json::json!({ "status": "ok" }),
+    )
+    .await
+    .expect("mark first received")
+    .expect("first still open before receive");
+
+    let open = bearwire_obligations::open_client_obligations_for_run(&pool, &run_id)
+        .await
+        .expect("list open obligations");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].id, second.id);
+    assert_eq!(open[0].tool_call_id.as_deref(), Some("call-second"));
+
+    bearwire_obligations::mark_result_received(
+        &pool,
+        second.id,
+        serde_json::json!({ "status": "ok" }),
+    )
+    .await
+    .expect("mark second received")
+    .expect("second still open before receive");
+
+    let open = bearwire_obligations::open_client_obligations_for_run(&pool, &run_id)
+        .await
+        .expect("list open obligations after all received");
+    assert!(open.is_empty(), "all tool results are received: {open:#?}");
+}

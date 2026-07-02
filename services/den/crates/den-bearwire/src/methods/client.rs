@@ -575,6 +575,54 @@ pub(crate) async fn client_tool_result_result(
                 event,
             )
             .await?;
+            let open_obligations =
+                bearwire_obligations::open_client_obligations_for_run(&state.sqlx_pool, &run_id)
+                    .await?;
+            if !open_obligations.is_empty() {
+                let content = compacted.content.clone();
+                let continuation_status = match status.as_str() {
+                    "ok" => RuntimeToolResultStatus::Ok,
+                    "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
+                    _ => RuntimeToolResultStatus::Error,
+                };
+                den_runtime::native_runtime::record_native_client_tool_result(
+                    &state.sqlx_pool,
+                    &continuation_conversation_id,
+                    &session_id,
+                    &Uuid::new_v4().to_string(),
+                    Some(&run_id),
+                    &tool_call_id,
+                    obligation.permission_id.as_deref(),
+                    continuation_status,
+                    content,
+                )
+                .await?;
+                let transitioned = bearwire_runs::transition_run(
+                    &state.sqlx_pool,
+                    &run_id,
+                    bearwire_runs::BearWireRunState::WaitingForToolResult,
+                    None,
+                )
+                .await?;
+                return Ok(json!({
+                    "ok": true,
+                    "duplicate": false,
+                    "result_id": row.id,
+                    "event_sequence": persisted.sequence_no,
+                    "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                    "continuation": "waiting_for_more_client_results",
+                    "open_obligation_count": open_obligations.len(),
+                    "open_obligations": open_obligations.into_iter().map(|obligation| json!({
+                        "obligation_id": obligation.id,
+                        "kind": obligation.kind,
+                        "expected_client_method": obligation.expected_client_method,
+                        "tool_call_id": obligation.tool_call_id,
+                        "permission_id": obligation.permission_id,
+                        "state": obligation.state,
+                    })).collect::<Vec<_>>(),
+                }));
+            }
+
             let transitioned = bearwire_runs::transition_run(
                 &state.sqlx_pool,
                 &run_id,

@@ -294,6 +294,27 @@ pub async fn mark_continued(
     Ok(row.map(row_to_obligation))
 }
 
+pub async fn open_client_obligations_for_run(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Vec<BearWireRunObligationRow>, DenError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, run_id, session_id, kind, expected_client_method,
+               tool_call_id, permission_id, state, request_payload, result_payload,
+               created_at, updated_at, completed_at
+        FROM bearwire_run_obligations
+        WHERE run_id = $1
+          AND state IN ('requested','waiting_for_client')
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_to_obligation).collect())
+}
+
 pub async fn settle_outstanding_for_run(
     pool: &PgPool,
     run_id: &str,
