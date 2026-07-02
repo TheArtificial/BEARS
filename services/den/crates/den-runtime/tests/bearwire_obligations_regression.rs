@@ -53,7 +53,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
         .await
         .expect("create run");
 
-    let tool = turn_obligations::upsert_tool_call_obligation(
+    let tool = turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -64,7 +64,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     .await
     .expect("create tool obligation");
 
-    let permission = turn_obligations::upsert_permission_obligation(
+    let permission = turn_obligations::upsert_permission_decision_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -76,7 +76,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     .expect("promote to permission obligation");
 
     assert_eq!(permission.id, tool.id);
-    assert_eq!(permission.kind, "permission");
+    assert_eq!(permission.kind, "permission_decision");
     assert_eq!(permission.expected_responder_action, "permission_decision");
     assert_eq!(permission.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(permission.permission_id.as_deref(), Some(permission_id));
@@ -92,7 +92,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
         .expect("mark waiting for tool result")
         .expect("obligation still open");
     assert_eq!(waiting_for_tool.id, permission.id);
-    assert_eq!(waiting_for_tool.kind, "tool_call");
+    assert_eq!(waiting_for_tool.kind, "tool_result");
     assert_eq!(waiting_for_tool.expected_responder_action, "tool_result");
     assert_eq!(waiting_for_tool.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(
@@ -111,7 +111,7 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
         .await
         .expect("create run");
 
-    let first = turn_obligations::upsert_tool_call_obligation(
+    let first = turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -121,7 +121,7 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     )
     .await
     .expect("create first obligation");
-    let second = turn_obligations::upsert_tool_call_obligation(
+    let second = turn_obligations::upsert_tool_result_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -168,7 +168,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     let first_step = turn_steps::ensure_active_step(&pool, &run_id)
         .await
         .expect("ensure first step");
-    let first = turn_obligations::upsert_tool_call_obligation_for_step(
+    let first = turn_obligations::upsert_tool_result_obligation_for_step(
         &pool,
         &run_id,
         &session_id,
@@ -188,7 +188,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
         .await
         .expect("ensure second step");
     assert_ne!(first_step.id, second_step.id);
-    let second = turn_obligations::upsert_tool_call_obligation_for_step(
+    let second = turn_obligations::upsert_tool_result_obligation_for_step(
         &pool,
         &run_id,
         &session_id,

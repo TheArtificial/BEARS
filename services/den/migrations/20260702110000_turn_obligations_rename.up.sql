@@ -40,6 +40,13 @@ ALTER TABLE turn_obligations
     ADD COLUMN IF NOT EXISTS responder_ref_id TEXT NULL;
 
 UPDATE turn_obligations
+SET kind = CASE kind
+    WHEN 'tool_call' THEN 'tool_result'
+    WHEN 'permission' THEN 'permission_decision'
+    ELSE kind
+END;
+
+UPDATE turn_obligations
 SET expected_responder_action = CASE expected_responder_action
     WHEN 'client.tool.result' THEN 'tool_result'
     WHEN 'client.permission.result' THEN 'permission_decision'
@@ -75,10 +82,7 @@ ALTER TABLE turn_obligations
         'permission_decision',
         'human_input',
         'resource_binding',
-        'handoff_decision',
-        -- legacy storage values accepted during rollout
-        'tool_call',
-        'permission'
+        'handoff_decision'
     ));
 
 ALTER TABLE turn_obligations

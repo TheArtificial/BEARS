@@ -611,7 +611,7 @@ async fn persist_tool_call_requested_transactionally(
             UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
-                kind = 'permission',
+                kind = 'permission_decision',
                 expected_responder_action = 'permission_decision',
                 permission_id = $4,
                 state = CASE
@@ -644,7 +644,7 @@ async fn persist_tool_call_requested_transactionally(
                 INSERT INTO turn_obligations (
                     run_id, session_id, turn_step_id, kind, expected_responder_action,
                     tool_call_id, permission_id, state, request_payload
-                ) VALUES ($1, $2, $3, 'permission', 'permission_decision', $4, $5, 'waiting_for_client', $6)
+                ) VALUES ($1, $2, $3, 'permission_decision', 'permission_decision', $4, $5, 'waiting_for_client', $6)
                 ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
                 DO UPDATE SET session_id = EXCLUDED.session_id,
                               turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -676,7 +676,7 @@ async fn persist_tool_call_requested_transactionally(
             INSERT INTO turn_obligations (
                 run_id, session_id, turn_step_id, kind, expected_responder_action,
                 tool_call_id, permission_id, state, request_payload
-            ) VALUES ($1, $2, $3, 'tool_call', 'tool_result', $4, $5, 'waiting_for_client', $6)
+            ) VALUES ($1, $2, $3, 'tool_result', 'tool_result', $4, $5, 'waiting_for_client', $6)
             ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
             DO UPDATE SET session_id = EXCLUDED.session_id,
                           turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -1053,7 +1053,7 @@ async fn update_run_state_for_runtime_event(
             });
             let obligation = if effective_approval_required {
                 if let Some(permission_id) = approval_request_id.as_deref() {
-                    turn_obligations::upsert_permission_obligation_for_step(
+                    turn_obligations::upsert_permission_decision_obligation_for_step(
                         pool,
                         run_id,
                         session_id,
@@ -1064,7 +1064,7 @@ async fn update_run_state_for_runtime_event(
                     )
                     .await
                 } else {
-                    turn_obligations::upsert_tool_call_obligation_for_step(
+                    turn_obligations::upsert_tool_result_obligation_for_step(
                         pool,
                         run_id,
                         session_id,
@@ -1076,7 +1076,7 @@ async fn update_run_state_for_runtime_event(
                     .await
                 }
             } else {
-                turn_obligations::upsert_tool_call_obligation_for_step(
+                turn_obligations::upsert_tool_result_obligation_for_step(
                     pool,
                     run_id,
                     session_id,

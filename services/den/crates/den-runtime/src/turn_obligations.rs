@@ -147,7 +147,7 @@ pub async fn create_turn_obligation_for_step(
     Ok(row_to_obligation(row))
 }
 
-pub async fn upsert_tool_call_obligation(
+pub async fn upsert_tool_result_obligation(
     pool: &PgPool,
     run_id: &str,
     session_id: &str,
@@ -155,7 +155,7 @@ pub async fn upsert_tool_call_obligation(
     permission_id: Option<&str>,
     request_payload: Value,
 ) -> Result<TurnObligationRow, DenError> {
-    upsert_tool_call_obligation_for_step(
+    upsert_tool_result_obligation_for_step(
         pool,
         run_id,
         session_id,
@@ -167,7 +167,7 @@ pub async fn upsert_tool_call_obligation(
     .await
 }
 
-pub async fn upsert_tool_call_obligation_for_step(
+pub async fn upsert_tool_result_obligation_for_step(
     pool: &PgPool,
     run_id: &str,
     session_id: &str,
@@ -181,7 +181,7 @@ pub async fn upsert_tool_call_obligation_for_step(
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
-        ) VALUES ($1, $2, $3, 'tool_call', 'tool_result', $4, $5, 'waiting_for_client', $6)
+        ) VALUES ($1, $2, $3, 'tool_result', 'tool_result', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
                       turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -210,7 +210,7 @@ pub async fn upsert_tool_call_obligation_for_step(
     Ok(row_to_obligation(row))
 }
 
-pub async fn upsert_permission_obligation(
+pub async fn upsert_permission_decision_obligation(
     pool: &PgPool,
     run_id: &str,
     session_id: &str,
@@ -218,7 +218,7 @@ pub async fn upsert_permission_obligation(
     tool_call_id: Option<&str>,
     request_payload: Value,
 ) -> Result<TurnObligationRow, DenError> {
-    upsert_permission_obligation_for_step(
+    upsert_permission_decision_obligation_for_step(
         pool,
         run_id,
         session_id,
@@ -230,7 +230,7 @@ pub async fn upsert_permission_obligation(
     .await
 }
 
-pub async fn upsert_permission_obligation_for_step(
+pub async fn upsert_permission_decision_obligation_for_step(
     pool: &PgPool,
     run_id: &str,
     session_id: &str,
@@ -245,7 +245,7 @@ pub async fn upsert_permission_obligation_for_step(
             UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
-                kind = 'permission',
+                kind = 'permission_decision',
                 expected_responder_action = 'permission_decision',
                 permission_id = $4,
                 state = CASE
@@ -281,7 +281,7 @@ pub async fn upsert_permission_obligation_for_step(
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
-        ) VALUES ($1, $2, $3, 'permission', 'permission_decision', $4, $5, 'waiting_for_client', $6)
+        ) VALUES ($1, $2, $3, 'permission_decision', 'permission_decision', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
                       turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
@@ -383,7 +383,7 @@ pub async fn mark_waiting_for_tool_result(
     let row = sqlx::query(
         r#"
         UPDATE turn_obligations
-        SET kind = 'tool_call',
+        SET kind = 'tool_result',
             expected_responder_action = 'tool_result',
             state = 'waiting_for_client',
             updated_at = NOW()
