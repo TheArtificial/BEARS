@@ -510,6 +510,9 @@ impl Stream for SessionTrackingStream {
         }
 
         if let Some(pause) = self.pending_pause_after_tool.take() {
+            if matches!(pause, RuntimeSemanticEvent::RunPaused { .. }) {
+                self.finished = true;
+            }
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
         }
 
@@ -1040,6 +1043,55 @@ mod tests {
         assert_eq!(wake_count.load(Ordering::SeqCst), 1);
         assert!(stream.pending_approval.is_some());
         assert!(stream.pending_tool_event.is_some());
+    }
+
+    #[tokio::test]
+    async fn run_paused_event_finishes_current_runtime_stream_segment() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::iter(vec![Ok(
+                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
+                    text: "should-not-leak-after-pause".to_string(),
+                }),
+            )])),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        stream.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunPaused {
+            reason: "requires_approval".to_string(),
+            resume_token: Some("perm-test".to_string()),
+            expires_at: None,
+        });
+
+        let wake_count = Arc::new(AtomicUsize::new(0));
+        let waker = counting_waker(wake_count);
+        let mut cx = Context::from_waker(&waker);
+
+        assert!(matches!(
+            Pin::new(&mut stream).poll_next(&mut cx),
+            Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::RunPaused { .. }
+            ))))
+        ));
+        assert!(matches!(
+            Pin::new(&mut stream).poll_next(&mut cx),
+            Poll::Ready(None)
+        ));
     }
 
     #[test]
