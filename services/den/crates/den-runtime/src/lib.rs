@@ -50,6 +50,8 @@ pub mod turn_obligations;
 pub mod turn_runs;
 /// Persisted core model-step lifecycle.
 pub mod turn_steps;
+/// Transactional core wait/obligation persistence helpers.
+pub mod turn_waits;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.

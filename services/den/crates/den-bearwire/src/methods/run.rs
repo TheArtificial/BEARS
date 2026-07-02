@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 use axum::http::HeaderMap;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use sqlx::Row;
 use uuid::Uuid;
 
 use den_http::errors::CustomError;
@@ -401,26 +400,6 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
-fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
-    turn_obligations::TurnObligationRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        session_id: row.get("session_id"),
-        kind: row.get("kind"),
-        expected_responder_action: row.get("expected_responder_action"),
-        tool_call_id: row.get("tool_call_id"),
-        permission_id: row.get("permission_id"),
-        responder_ref_id: row.try_get("responder_ref_id").ok(),
-        state: row.get("state"),
-        turn_step_id: row.try_get("turn_step_id").ok(),
-        request_payload: row.get("request_payload"),
-        result_payload: row.get("result_payload"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        completed_at: row.get("completed_at"),
-    }
-}
-
 async fn append_answerable_client_waiting_event(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -521,262 +500,29 @@ async fn persist_tool_call_requested_transactionally(
     approval_reason: &Option<String>,
     event_run_id: &Option<String>,
 ) -> Result<(), den_core::DenError> {
-    let has_permission_id = approval_request_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|id| !id.is_empty());
-    if approval_required && !has_permission_id {
-        tracing::warn!(
+    let persisted = den_runtime::turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        pool,
+        den_runtime::turn_waits::PersistToolCallWaitInput {
             session_id,
             run_id,
+            bear_id,
+            user_id,
+            request_id,
             tool_call_id,
             tool_name,
-            "runtime emitted approval_required tool call without approval_request_id; treating as tool result obligation"
-        );
-    }
-    let effective_approval_required = approval_required && has_permission_id;
-    let run_state = if effective_approval_required {
-        turn_runs::TurnRunState::WaitingForPermission
-    } else {
-        turn_runs::TurnRunState::WaitingForToolResult
-    };
-    let request_payload = json!({
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-        "arguments": arguments,
-        "approval_required": effective_approval_required,
-        "approval_request_id": approval_request_id,
-        "request_id": request_id,
-    });
-
-    let mut tx = pool.begin().await?;
-    sqlx::query(
-        r#"
-        UPDATE bearwire_runs
-        SET state = $2, terminal_reason = NULL, updated_at = NOW()
-        WHERE run_id = $1
-        "#,
-    )
-    .bind(run_id)
-    .bind(run_state.as_str())
-    .execute(&mut *tx)
-    .await?;
-
-    let step_row = if let Some(row) = sqlx::query(
-        r#"
-        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        FROM turn_steps
-        WHERE run_id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ORDER BY step_index DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(run_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    {
-        row
-    } else {
-        sqlx::query(
-            r#"
-            WITH next_step AS (
-                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
-                FROM turn_steps
-                WHERE run_id = $1
-            )
-            INSERT INTO turn_steps (run_id, step_index, state)
-            SELECT $1, step_index, 'streaming_model'
-            FROM next_step
-            RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-            "#,
-        )
-        .bind(run_id)
-        .fetch_one(&mut *tx)
-        .await?
-    };
-    let turn_step_id: Uuid = step_row.get("id");
-
-    let obligation_row = if effective_approval_required {
-        let permission_id = approval_request_id.as_deref().unwrap_or_default();
-        if let Some(row) = sqlx::query(
-            r#"
-            UPDATE turn_obligations
-            SET session_id = $2,
-                turn_step_id = COALESCE($6, turn_step_id),
-                kind = 'permission_decision',
-                expected_responder_action = 'permission_decision',
-                permission_id = $4,
-                state = CASE
-                    WHEN state IN ('result_received','continued','failed','cancelled') THEN state
-                    ELSE 'waiting_for_client'
-                END,
-                request_payload = $5,
-                updated_at = NOW()
-            WHERE run_id = $1
-              AND tool_call_id = $3
-              AND (permission_id IS NULL OR permission_id = $4)
-            RETURNING id, run_id, session_id, kind, expected_responder_action,
-                      tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                      created_at, updated_at, completed_at
-            "#,
-        )
-        .bind(run_id)
-        .bind(session_id)
-        .bind(tool_call_id)
-        .bind(permission_id)
-        .bind(request_payload.clone())
-        .bind(turn_step_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        {
-            row
-        } else {
-            sqlx::query(
-                r#"
-                INSERT INTO turn_obligations (
-                    run_id, session_id, turn_step_id, kind, expected_responder_action,
-                    tool_call_id, permission_id, state, request_payload
-                ) VALUES ($1, $2, $3, 'permission_decision', 'permission_decision', $4, $5, 'waiting_for_client', $6)
-                ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
-                DO UPDATE SET session_id = EXCLUDED.session_id,
-                              turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
-                              tool_call_id = COALESCE(EXCLUDED.tool_call_id, turn_obligations.tool_call_id),
-                              state = CASE
-                                WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
-                                THEN turn_obligations.state
-                                ELSE EXCLUDED.state
-                              END,
-                              request_payload = EXCLUDED.request_payload,
-                              updated_at = NOW()
-                RETURNING id, run_id, session_id, kind, expected_responder_action,
-                          tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                          created_at, updated_at, completed_at
-                "#,
-            )
-            .bind(run_id)
-            .bind(session_id)
-            .bind(turn_step_id)
-            .bind(tool_call_id)
-            .bind(permission_id)
-            .bind(request_payload.clone())
-            .fetch_one(&mut *tx)
-            .await?
-        }
-    } else {
-        sqlx::query(
-            r#"
-            INSERT INTO turn_obligations (
-                run_id, session_id, turn_step_id, kind, expected_responder_action,
-                tool_call_id, permission_id, state, request_payload
-            ) VALUES ($1, $2, $3, 'tool_result', 'tool_result', $4, $5, 'waiting_for_client', $6)
-            ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
-            DO UPDATE SET session_id = EXCLUDED.session_id,
-                          turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
-                          expected_responder_action = EXCLUDED.expected_responder_action,
-                          permission_id = COALESCE(EXCLUDED.permission_id, turn_obligations.permission_id),
-                          state = CASE
-                            WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
-                            THEN turn_obligations.state
-                            ELSE EXCLUDED.state
-                          END,
-                          request_payload = EXCLUDED.request_payload,
-                          updated_at = NOW()
-            RETURNING id, run_id, session_id, kind, expected_responder_action,
-                      tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                      created_at, updated_at, completed_at
-            "#,
-        )
-        .bind(run_id)
-        .bind(session_id)
-        .bind(turn_step_id)
-        .bind(tool_call_id)
-        .bind(approval_request_id.as_deref())
-        .bind(request_payload.clone())
-        .fetch_one(&mut *tx)
-        .await?
-    };
-    let obligation = obligation_from_row(obligation_row);
-
-    let effective_kind = kind.clone().unwrap_or_else(|| "function".to_string());
-    let mut event = if effective_approval_required {
-        BearWireEvent::ephemeral(
-            "client.waiting",
-            json!({
-                "expected_responder_action": "permission_decision",
-                "expected_client_method": "client.permission.result",
-                "tool_call": {
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "title": title,
-                    "kind": effective_kind,
-                    "arguments": arguments,
-                },
-                "permission": {
-                    "id": approval_request_id,
-                    "reason": approval_reason,
-                },
-                "approval_required": true,
-                "approval_request_id": approval_request_id,
-            }),
-        )
-    } else {
-        BearWireEvent::ephemeral(
-            "tool_call.requested",
-            json!({
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "title": title,
-                "kind": effective_kind,
-                "arguments": arguments,
-                "approval_required": false,
-                "approval_request_id": approval_request_id,
-                "reason": approval_reason,
-            }),
-        )
-    };
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    event.run_id = event_run_id.clone().or_else(|| Some(run_id.to_string()));
-    event.subject = Some(format!("resource/tool_call/{tool_call_id}"));
-    event
-        .resource_refs
-        .push(ResourceRef::new("run", run_id.to_string()));
-    event
-        .resource_refs
-        .push(ResourceRef::new("tool_call", tool_call_id.to_string()));
-    if effective_approval_required {
-        let permission_id = obligation.permission_id.clone().unwrap_or_default();
-        event.data["obligation_id"] = json!(obligation.id.to_string());
-        event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
-        event.data["expected_client_method"] = json!(bearwire_client_method_for_action(
-            &obligation.expected_responder_action
-        )
-        .unwrap_or("client.permission.result"));
-        event.data["permission_id"] = json!(permission_id);
-        event.data["tool_call_id"] = json!(tool_call_id);
-        event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));
-        event
-            .resource_refs
-            .push(ResourceRef::new("permission_request", permission_id));
-        event.resource_refs.push(ResourceRef::new(
-            "client_obligation",
-            obligation.id.to_string(),
-        ));
-    }
-    bearwire_events::append_bearwire_event_on(
-        &mut tx,
-        session_id,
-        Some(bear_id),
-        Some(user_id),
-        event,
+            title,
+            kind,
+            arguments,
+            approval_request_id,
+            approval_required,
+            approval_reason,
+            event_run_id,
+        },
     )
     .await?;
-    tx.commit().await?;
 
     if let Some(started_at) = started_at {
-        let (kind, text) = if effective_approval_required {
+        let (kind, text) = if persisted.effective_approval_required {
             (
                 "tool_waiting_for_permission",
                 "Waiting for client permission to run a local tool…",
@@ -800,11 +546,12 @@ async fn persist_tool_call_requested_transactionally(
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments": arguments,
-                "approval_required": effective_approval_required,
+                "approval_required": persisted.effective_approval_required,
                 "approval_request_id": approval_request_id,
                 "request_id": request_id,
-                "turn_step_id": turn_step_id,
-                "obligation_id": obligation.id,
+                "turn_step_id": persisted.turn_step_id,
+                "obligation_id": persisted.obligation.id,
+                "event_sequence": persisted.event_sequence,
             }),
         )
         .await;

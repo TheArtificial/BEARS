@@ -1,7 +1,9 @@
 use den_runtime::{
+    bearwire_events,
     turn_obligations::{self, ExpectedResponderAction, TurnObligationKind},
-    turn_runs, turn_steps,
+    turn_runs, turn_steps, turn_waits,
 };
+use sqlx::Row;
 use uuid::Uuid;
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
@@ -268,4 +270,103 @@ async fn core_obligations_support_non_bearwire_channel_waits(pool: sqlx::PgPool)
         .await
         .expect("list open obligations");
     assert_eq!(open.len(), 3);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let permission_id = Some(format!("perm_{}", Uuid::new_v4().simple()));
+    let title = Some("Read a file".to_string());
+    let kind = Some("function".to_string());
+    let arguments = serde_json::json!({ "path": "README.md" });
+    let approval_reason = Some("read workspace file".to_string());
+    let event_run_id = Some(run_id.clone());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-transactional-wait",
+            tool_name: "fs_read_text_file",
+            title: &title,
+            kind: &kind,
+            arguments: &arguments,
+            approval_request_id: &permission_id,
+            approval_required: true,
+            approval_reason: &approval_reason,
+            event_run_id: &event_run_id,
+        },
+    )
+    .await
+    .expect("persist wait transactionally");
+
+    assert!(persisted.effective_approval_required);
+    assert_eq!(persisted.obligation.kind, "permission_decision");
+    assert_eq!(
+        persisted.obligation.expected_responder_action,
+        "permission_decision"
+    );
+    assert_eq!(
+        persisted.obligation.permission_id.as_deref(),
+        permission_id.as_deref()
+    );
+    assert_eq!(
+        persisted.obligation.tool_call_id.as_deref(),
+        Some("call-transactional-wait")
+    );
+    assert_eq!(
+        persisted.obligation.turn_step_id,
+        Some(persisted.turn_step_id)
+    );
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "waiting_for_permission");
+
+    let step_state: String = sqlx::query(
+        r#"
+        SELECT state
+        FROM turn_steps
+        WHERE id = $1
+        "#,
+    )
+    .bind(persisted.turn_step_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load turn step")
+    .get("state");
+    assert_eq!(step_state, "waiting_for_client");
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let waiting = events
+        .iter()
+        .find(|row| row.event_type == "client.waiting")
+        .expect("client.waiting event exists");
+    assert_eq!(waiting.sequence_no, persisted.event_sequence);
+    assert_eq!(
+        waiting.event.data["obligation_id"],
+        persisted.obligation.id.to_string()
+    );
+    assert_eq!(
+        waiting.event.data["expected_client_method"],
+        "client.permission.result"
+    );
+    assert_eq!(
+        waiting.event.data["turn_step_id"],
+        persisted.turn_step_id.to_string()
+    );
 }
