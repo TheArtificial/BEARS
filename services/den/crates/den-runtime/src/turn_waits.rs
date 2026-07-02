@@ -33,6 +33,22 @@ pub struct PersistedToolCallWait {
     pub event_sequence: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct PersistSurfaceObligationInput<'a> {
+    pub session_id: &'a str,
+    pub run_id: &'a str,
+    pub kind: turn_obligations::TurnObligationKind,
+    pub expected_responder_action: turn_obligations::ExpectedResponderAction,
+    pub responder_ref_id: &'a str,
+    pub request_payload: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersistedSurfaceObligation {
+    pub turn_step_id: Uuid,
+    pub obligation: turn_obligations::TurnObligationRow,
+}
+
 fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
     turn_obligations::TurnObligationRow {
         id: row.get("id"),
@@ -51,6 +67,98 @@ fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObli
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
     }
+}
+
+pub async fn persist_surface_obligation_transactionally(
+    pool: &sqlx::PgPool,
+    input: PersistSurfaceObligationInput<'_>,
+) -> Result<PersistedSurfaceObligation, DenError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r#"
+        UPDATE turn_runs
+        SET state = $2, terminal_reason = NULL, updated_at = NOW()
+        WHERE run_id = $1
+        "#,
+    )
+    .bind(input.run_id)
+    .bind(turn_runs::TurnRunState::WaitingForClient.as_str())
+    .execute(&mut *tx)
+    .await?;
+
+    let step_row = if let Some(row) = sqlx::query(
+        r#"
+        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
+        FROM turn_steps
+        WHERE run_id = $1
+          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
+        ORDER BY step_index DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(input.run_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        row
+    } else {
+        sqlx::query(
+            r#"
+            WITH next_step AS (
+                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
+                FROM turn_steps
+                WHERE run_id = $1
+            )
+            INSERT INTO turn_steps (run_id, step_index, state)
+            SELECT $1, step_index, 'streaming_model'
+            FROM next_step
+            RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
+            "#,
+        )
+        .bind(input.run_id)
+        .fetch_one(&mut *tx)
+        .await?
+    };
+    let turn_step_id: Uuid = step_row.get("id");
+    sqlx::query(
+        r#"
+        UPDATE turn_steps
+        SET state = 'waiting_for_client'
+        WHERE id = $1
+          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
+        "#,
+    )
+    .bind(turn_step_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let row = sqlx::query(
+        r#"
+        INSERT INTO turn_obligations (
+            run_id, session_id, turn_step_id, kind, expected_responder_action,
+            responder_ref_id, state, request_payload
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'waiting_for_client', $7)
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+                  request_payload, result_payload, created_at, updated_at, completed_at
+        "#,
+    )
+    .bind(input.run_id)
+    .bind(input.session_id)
+    .bind(turn_step_id)
+    .bind(input.kind.as_str())
+    .bind(input.expected_responder_action.as_str())
+    .bind(input.responder_ref_id)
+    .bind(input.request_payload)
+    .fetch_one(&mut *tx)
+    .await?;
+    let obligation = obligation_from_row(row);
+    tx.commit().await?;
+
+    Ok(PersistedSurfaceObligation {
+        turn_step_id,
+        obligation,
+    })
 }
 
 pub async fn persist_bearwire_tool_call_wait_transactionally(

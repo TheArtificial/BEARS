@@ -12,6 +12,7 @@ use den_core::DenError;
 pub enum TurnRunState {
     Accepted,
     Running,
+    WaitingForClient,
     WaitingForToolResult,
     WaitingForPermission,
     Continuing,
@@ -25,6 +26,7 @@ impl TurnRunState {
         match self {
             Self::Accepted => "accepted",
             Self::Running => "running",
+            Self::WaitingForClient => "waiting_for_client",
             Self::WaitingForToolResult => "waiting_for_tool_result",
             Self::WaitingForPermission => "waiting_for_permission",
             Self::Continuing => "continuing",
@@ -38,6 +40,7 @@ impl TurnRunState {
         match value {
             "accepted" => Ok(Self::Accepted),
             "running" => Ok(Self::Running),
+            "waiting_for_client" => Ok(Self::WaitingForClient),
             "waiting_for_tool_result" => Ok(Self::WaitingForToolResult),
             "waiting_for_permission" => Ok(Self::WaitingForPermission),
             "continuing" => Ok(Self::Continuing),
@@ -137,7 +140,7 @@ pub async fn active_run_for_session(
         SELECT {RUN_RETURNING}
         FROM turn_runs
         WHERE session_id = $1
-          AND state IN ('accepted','running','waiting_for_tool_result','waiting_for_permission','continuing')
+          AND state IN ('accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing')
         ORDER BY created_at DESC
         LIMIT 1
         "#
@@ -163,7 +166,7 @@ pub async fn supersede_active_run_for_session(
             SELECT id
             FROM turn_runs
             WHERE session_id = $1 AND bear_id = $2 AND user_id = $3
-              AND state IN ('accepted','running','waiting_for_tool_result','waiting_for_permission','continuing')
+              AND state IN ('accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing')
             ORDER BY created_at DESC
             LIMIT 1
         )

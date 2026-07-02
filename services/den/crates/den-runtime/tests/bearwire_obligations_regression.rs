@@ -1,5 +1,6 @@
 use den_runtime::{
     bearwire_events,
+    surface_projection::{project_obligation_for_surface, SurfaceActionKind, TurnSurfaceKind},
     turn_obligations::{self, ExpectedResponderAction, TurnObligationKind},
     turn_runs, turn_steps, turn_waits,
 };
@@ -367,6 +368,71 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
     );
     assert_eq!(
         waiting.event.data["turn_step_id"],
+        persisted.turn_step_id.to_string()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn web_chat_human_input_uses_core_surface_obligation_path(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("web-chat-session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let responder_ref_id = format!("web-reply-{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let persisted = turn_waits::persist_surface_obligation_transactionally(
+        &pool,
+        turn_waits::PersistSurfaceObligationInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            kind: TurnObligationKind::HumanInput,
+            expected_responder_action: ExpectedResponderAction::HumanInput,
+            responder_ref_id: &responder_ref_id,
+            request_payload: serde_json::json!({
+                "surface": "web_chat",
+                "prompt": "Please choose an option"
+            }),
+        },
+    )
+    .await
+    .expect("persist web-chat human-input obligation");
+
+    assert_eq!(persisted.obligation.kind, "human_input");
+    assert_eq!(
+        persisted.obligation.expected_responder_action,
+        "human_input"
+    );
+    assert_eq!(
+        persisted.obligation.responder_ref_id.as_deref(),
+        Some(responder_ref_id.as_str())
+    );
+    assert_eq!(
+        persisted.obligation.turn_step_id,
+        Some(persisted.turn_step_id)
+    );
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "waiting_for_client");
+
+    let projection =
+        project_obligation_for_surface(&persisted.obligation, TurnSurfaceKind::WebChat);
+    assert_eq!(projection.action_kind, SurfaceActionKind::ChatReply);
+    assert_eq!(
+        projection.obligation_id,
+        persisted.obligation.id.to_string()
+    );
+    assert_eq!(
+        projection.responder_ref_id.as_deref(),
+        Some(responder_ref_id.as_str())
+    );
+    assert_eq!(
+        projection.payload["turn_step_id"],
         persisted.turn_step_id.to_string()
     );
 }
