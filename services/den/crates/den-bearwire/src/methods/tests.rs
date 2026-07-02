@@ -22,7 +22,7 @@ use den_protocol::{
     RuntimeStreamEvent,
 };
 use den_runtime::{
-    bearwire_obligations, bearwire_runs, native_runtime::NativeRuntimeConversationBackend,
+    turn_obligations, bearturn_runstive_runtime::NativeRuntimeConversationBackend,
 };
 use den_service::{
     bears::{db as bears_db, db::BearParams},
@@ -1133,7 +1133,7 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
 async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, _bear_slug) = create_test_bear(&pool).await;
-    let run = bearwire_runs::create_run(
+    let run = turn_runs::create_run(
         &pool,
         "run-idempotency-test",
         "session-idempotency-test",
@@ -1144,7 +1144,7 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("create run");
     assert_eq!(run.state, "accepted");
 
-    let first = bearwire_runs::record_client_result(
+    let first = turn_runs::record_client_result(
         &pool,
         "run-idempotency-test",
         "tool",
@@ -1155,10 +1155,10 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record first result");
     assert!(matches!(
         first,
-        bearwire_runs::BearWireClientResultRecord::Inserted { .. }
+        turn_runs::BearWireClientResultRecord::Inserted { .. }
     ));
 
-    let duplicate = bearwire_runs::record_client_result(
+    let duplicate = turn_runs::record_client_result(
         &pool,
         "run-idempotency-test",
         "tool",
@@ -1169,10 +1169,10 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record duplicate result");
     assert!(matches!(
         duplicate,
-        bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { .. }
+        turn_runs::BearWireClientResultRecord::DuplicateIdentical { .. }
     ));
 
-    let conflict = bearwire_runs::record_client_result(
+    let conflict = turn_runs::record_client_result(
         &pool,
         "run-idempotency-test",
         "tool",
@@ -1183,7 +1183,7 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
     .expect("record conflicting result");
     assert!(matches!(
         conflict,
-        bearwire_runs::BearWireClientResultRecord::DuplicateConflict { .. }
+        turn_runs::BearWireClientResultRecord::DuplicateConflict { .. }
     ));
 }
 
@@ -1194,11 +1194,11 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
 
-    bearwire_obligations::upsert_permission_obligation(
+    turn_obligations::upsert_permission_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1228,7 +1228,7 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
         "{tool_response}"
     );
 
-    bearwire_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1271,18 +1271,18 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let tool_call_id = format!("call_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    bearwire_runs::transition_run(
+    turn_runs::transition_run(
         &pool,
         &run_id,
-        bearwire_runs::BearWireRunState::Running,
+        turn_runs::BearWireRunState::Running,
         None,
     )
     .await
     .expect("transition run to running");
-    bearwire_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1321,12 +1321,12 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
         response["result"]["diagnostic"]["run_id"], run_id,
         "{response}"
     );
-    let obligation = bearwire_obligations::get_tool_call_obligation(&pool, &run_id, &tool_call_id)
+    let obligation = turn_obligations::get_tool_call_obligation(&pool, &run_id, &tool_call_id)
         .await
         .expect("load obligation")
         .expect("obligation exists");
     assert_eq!(obligation.state, "waiting_for_client");
-    let recorded = bearwire_runs::existing_client_result_for_payload(
+    let recorded = turn_runs::existing_client_result_for_payload(
         &pool,
         &run_id,
         "tool",
@@ -1355,11 +1355,11 @@ async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
     let run_a = format!("run_{}", Uuid::new_v4().simple());
     let run_b = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    bearwire_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
         .await
         .expect("create first active run");
 
-    let err = bearwire_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
+    let err = turn_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
         .await
         .expect_err("second active run in one ACP session should be rejected");
     assert!(
@@ -1377,11 +1377,11 @@ async fn superseding_active_run_allows_new_run_for_session(pool: sqlx::PgPool) {
     let run_a = format!("run_{}", Uuid::new_v4().simple());
     let run_b = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    bearwire_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
         .await
         .expect("create first active run");
 
-    let superseded = bearwire_runs::supersede_active_run_for_session(
+    let superseded = turn_runs::supersede_active_run_for_session(
         &pool,
         &session_id,
         bear_id,
@@ -1394,7 +1394,7 @@ async fn superseding_active_run_allows_new_run_for_session(pool: sqlx::PgPool) {
     assert_eq!(superseded.run_id, run_a);
     assert_eq!(superseded.state, "failed");
 
-    let created = bearwire_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
+    let created = turn_runs::create_run(&pool, &run_b, &session_id, bear_id, user_id)
         .await
         .expect("create replacement active run");
     assert_eq!(created.run_id, run_b);
@@ -1409,7 +1409,7 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
     let tool_call_id = "call-needs-permission";
     let permission_id = "perm-needs-permission";
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create active run");
 
@@ -1435,7 +1435,7 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
     )
     .await;
 
-    let obligation = bearwire_obligations::get_permission_obligation(&pool, &run_id, permission_id)
+    let obligation = turn_obligations::get_permission_obligation(&pool, &run_id, permission_id)
         .await
         .expect("load permission obligation")
         .expect("permission obligation exists");
@@ -1458,13 +1458,13 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     let tool_call_id = "call-collision";
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_a).await;
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_b).await;
-    bearwire_runs::create_run(&pool, &run_a, &session_a, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_a, &session_a, bear_id, user_id)
         .await
         .expect("create run a");
-    bearwire_runs::create_run(&pool, &run_b, &session_b, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_b, &session_b, bear_id, user_id)
         .await
         .expect("create run b");
-    bearwire_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_a,
         &session_a,
@@ -1474,7 +1474,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
     )
     .await
     .expect("insert session a obligation");
-    bearwire_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_b,
         &session_b,
@@ -1525,11 +1525,11 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
         "{response}"
     );
 
-    let obligation_a = bearwire_obligations::get_tool_call_obligation(&pool, &run_a, tool_call_id)
+    let obligation_a = turn_obligations::get_tool_call_obligation(&pool, &run_a, tool_call_id)
         .await
         .expect("load session a obligation")
         .expect("session a obligation exists");
-    let obligation_b = bearwire_obligations::get_tool_call_obligation(&pool, &run_b, tool_call_id)
+    let obligation_b = turn_obligations::get_tool_call_obligation(&pool, &run_b, tool_call_id)
         .await
         .expect("load session b obligation")
         .expect("session b obligation exists");
@@ -1545,10 +1545,10 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    bearwire_obligations::upsert_tool_call_obligation(
+    turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1558,7 +1558,7 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     )
     .await
     .expect("insert tool obligation");
-    bearwire_obligations::upsert_permission_obligation(
+    turn_obligations::upsert_permission_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -1583,12 +1583,12 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     assert_eq!(response["result"]["cancelled"], true, "{response}");
     assert_eq!(response["result"]["run_id"], run_id, "{response}");
 
-    let tool = bearwire_obligations::get_tool_call_obligation(&pool, &run_id, "call-cancelled")
+    let tool = turn_obligations::get_tool_call_obligation(&pool, &run_id, "call-cancelled")
         .await
         .expect("load tool obligation")
         .expect("tool obligation exists");
     let permission =
-        bearwire_obligations::get_permission_obligation(&pool, &run_id, "perm-cancelled")
+        turn_obligations::get_permission_obligation(&pool, &run_id, "perm-cancelled")
             .await
             .expect("load permission obligation")
             .expect("permission obligation exists");

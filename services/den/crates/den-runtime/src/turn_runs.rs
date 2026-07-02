@@ -9,7 +9,7 @@ use den_core::DenError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BearWireRunState {
+pub enum TurnRunState {
     Accepted,
     Running,
     WaitingForToolResult,
@@ -20,7 +20,7 @@ pub enum BearWireRunState {
     Cancelled,
 }
 
-impl BearWireRunState {
+impl TurnRunState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
@@ -36,7 +36,7 @@ impl BearWireRunState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BearWireRunRow {
+pub struct TurnRunRow {
     pub id: Uuid,
     pub run_id: String,
     pub session_id: String,
@@ -49,8 +49,8 @@ pub struct BearWireRunRow {
     pub completed_at: Option<OffsetDateTime>,
 }
 
-fn row_to_run(row: sqlx::postgres::PgRow) -> BearWireRunRow {
-    BearWireRunRow {
+fn row_to_run(row: sqlx::postgres::PgRow) -> TurnRunRow {
+    TurnRunRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         session_id: row.get("session_id"),
@@ -75,10 +75,10 @@ pub async fn create_run(
     session_id: &str,
     bear_id: Uuid,
     user_id: i32,
-) -> Result<BearWireRunRow, DenError> {
+) -> Result<TurnRunRow, DenError> {
     let row = sqlx::query(&format!(
         r#"
-        INSERT INTO bearwire_runs (run_id, session_id, bear_id, user_id, state)
+        INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
         VALUES ($1, $2, $3, $4, 'accepted')
         RETURNING {RUN_RETURNING}
         "#
@@ -92,11 +92,11 @@ pub async fn create_run(
     Ok(row_to_run(row))
 }
 
-pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<BearWireRunRow>, DenError> {
+pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
         r#"
         SELECT {RUN_RETURNING}
-        FROM bearwire_runs
+        FROM turn_runs
         WHERE run_id = $1
         "#
     ))
@@ -109,11 +109,11 @@ pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<BearWireRunRo
 pub async fn active_run_for_session(
     pool: &PgPool,
     session_id: &str,
-) -> Result<Option<BearWireRunRow>, DenError> {
+) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
         r#"
         SELECT {RUN_RETURNING}
-        FROM bearwire_runs
+        FROM turn_runs
         WHERE session_id = $1
           AND state IN ('accepted','running','waiting_for_tool_result','waiting_for_permission','continuing')
         ORDER BY created_at DESC
@@ -132,14 +132,14 @@ pub async fn supersede_active_run_for_session(
     bear_id: Uuid,
     user_id: i32,
     reason: &str,
-) -> Result<Option<BearWireRunRow>, DenError> {
+) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
         r#"
-        UPDATE bearwire_runs
+        UPDATE turn_runs
         SET state = 'failed', terminal_reason = $4, completed_at = NOW(), updated_at = NOW()
         WHERE id = (
             SELECT id
-            FROM bearwire_runs
+            FROM turn_runs
             WHERE session_id = $1 AND bear_id = $2 AND user_id = $3
               AND state IN ('accepted','running','waiting_for_tool_result','waiting_for_permission','continuing')
             ORDER BY created_at DESC
@@ -158,7 +158,7 @@ pub async fn supersede_active_run_for_session(
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BearWireClientResultRow {
+pub struct TurnObligationResultRow {
     pub id: Uuid,
     pub run_id: String,
     pub obligation_kind: String,
@@ -171,9 +171,9 @@ pub struct BearWireClientResultRow {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub enum BearWireClientResultRecord {
-    Inserted { row: BearWireClientResultRow },
-    DuplicateIdentical { row: BearWireClientResultRow },
+pub enum TurnObligationResultRecord {
+    Inserted { row: TurnObligationResultRow },
+    DuplicateIdentical { row: TurnObligationResultRow },
     DuplicateConflict { existing_hash: String },
 }
 
@@ -185,8 +185,8 @@ fn result_hash(payload: &serde_json::Value) -> Result<String, DenError> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest))
 }
 
-fn row_to_client_result(row: sqlx::postgres::PgRow) -> BearWireClientResultRow {
-    BearWireClientResultRow {
+fn row_to_client_result(row: sqlx::postgres::PgRow) -> TurnObligationResultRow {
+    TurnObligationResultRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         obligation_kind: row.get("obligation_kind"),
@@ -204,11 +204,11 @@ pub async fn existing_client_result_for_payload(
     obligation_kind: &str,
     obligation_id: &str,
     payload_json: &serde_json::Value,
-) -> Result<Option<BearWireClientResultRecord>, DenError> {
+) -> Result<Option<TurnObligationResultRecord>, DenError> {
     let Some(existing) = sqlx::query(
         r#"
         SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
-        FROM bearwire_client_results
+        FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
         "#,
     )
@@ -222,9 +222,9 @@ pub async fn existing_client_result_for_payload(
     };
     let row = row_to_client_result(existing);
     if row.result_hash == result_hash(payload_json)? {
-        Ok(Some(BearWireClientResultRecord::DuplicateIdentical { row }))
+        Ok(Some(TurnObligationResultRecord::DuplicateIdentical { row }))
     } else {
-        Ok(Some(BearWireClientResultRecord::DuplicateConflict {
+        Ok(Some(TurnObligationResultRecord::DuplicateConflict {
             existing_hash: row.result_hash,
         }))
     }
@@ -236,7 +236,7 @@ pub async fn record_client_result(
     obligation_kind: &str,
     obligation_id: &str,
     payload_json: serde_json::Value,
-) -> Result<BearWireClientResultRecord, DenError> {
+) -> Result<TurnObligationResultRecord, DenError> {
     record_client_result_for_step(
         pool,
         run_id,
@@ -255,11 +255,11 @@ pub async fn record_client_result_for_step(
     obligation_kind: &str,
     obligation_id: &str,
     payload_json: serde_json::Value,
-) -> Result<BearWireClientResultRecord, DenError> {
+) -> Result<TurnObligationResultRecord, DenError> {
     let hash = result_hash(&payload_json)?;
     let inserted = sqlx::query(
         r#"
-        INSERT INTO bearwire_client_results (
+        INSERT INTO turn_obligation_results (
             run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
         ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
@@ -275,7 +275,7 @@ pub async fn record_client_result_for_step(
     .fetch_optional(pool)
     .await?;
     if let Some(row) = inserted {
-        return Ok(BearWireClientResultRecord::Inserted {
+        return Ok(TurnObligationResultRecord::Inserted {
             row: row_to_client_result(row),
         });
     }
@@ -283,7 +283,7 @@ pub async fn record_client_result_for_step(
     let existing = sqlx::query(
         r#"
         SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
-        FROM bearwire_client_results
+        FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
         "#,
     )
@@ -294,9 +294,9 @@ pub async fn record_client_result_for_step(
     .await?;
     let row = row_to_client_result(existing);
     if row.result_hash == hash {
-        Ok(BearWireClientResultRecord::DuplicateIdentical { row })
+        Ok(TurnObligationResultRecord::DuplicateIdentical { row })
     } else {
-        Ok(BearWireClientResultRecord::DuplicateConflict {
+        Ok(TurnObligationResultRecord::DuplicateConflict {
             existing_hash: row.result_hash,
         })
     }
@@ -310,7 +310,7 @@ pub async fn client_result_count_for_run_kind(
     let count = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT COUNT(*)
-        FROM bearwire_client_results
+        FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2
         "#,
     )
@@ -324,16 +324,16 @@ pub async fn client_result_count_for_run_kind(
 pub async fn transition_run(
     pool: &PgPool,
     run_id: &str,
-    state: BearWireRunState,
+    state: TurnRunState,
     terminal_reason: Option<&str>,
-) -> Result<Option<BearWireRunRow>, DenError> {
+) -> Result<Option<TurnRunRow>, DenError> {
     let terminal = matches!(
         state,
-        BearWireRunState::Completed | BearWireRunState::Failed | BearWireRunState::Cancelled
+        TurnRunState::Completed | TurnRunState::Failed | TurnRunState::Cancelled
     );
     let row = sqlx::query(&format!(
         r#"
-        UPDATE bearwire_runs
+        UPDATE turn_runs
         SET state = $2,
             terminal_reason = $3,
             updated_at = NOW(),

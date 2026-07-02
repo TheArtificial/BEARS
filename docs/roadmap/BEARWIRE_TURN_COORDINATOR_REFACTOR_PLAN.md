@@ -49,7 +49,7 @@ Armature / channel adapters
 4. **A model step is a batch.** Multiple tool calls from one model step settle together; continuation happens once per step.
 5. **Actionable waits are obligations.** `client.waiting` must carry `obligation_id` and `expected_client_method`; `run.paused` is non-actionable status.
 6. **Tool errors are normal tool results.** File-not-found and similar local failures settle tool-result obligations and are shown to the model.
-7. **Durable IDs fence results.** Results are scoped by run/session/obligation/tool/permission, and the target state adds `turn_step_id`.
+7. **Durable IDs fence results.** Results are scoped by run/session/obligation/tool/permission, and the target state adds `turn_turn_step_id`.
 8. **Events follow persistence.** Den must persist obligations before streaming answerable wait events.
 
 ## Target model
@@ -71,10 +71,10 @@ turn_steps
   opened_at
   closed_at
 
-bearwire_run_obligations
+turn_obligations
   id
   run_id
-  step_id
+  turn_step_id
   session_id
   kind
   expected_client_method
@@ -84,10 +84,10 @@ bearwire_run_obligations
   request_payload
   result_payload
 
-bearwire_client_results
+turn_obligation_results
   id
   run_id
-  step_id
+  turn_step_id
   obligation_id
   kind
   target_id
@@ -214,7 +214,7 @@ Add repository helpers:
 
 ```rust
 open_obligations_for_run(run_id)
-open_obligations_for_step(run_id, step_id) // after step ids exist
+open_obligations_for_step(run_id, turn_step_id) // after step ids exist
 has_open_obligations_for_run(run_id)
 ```
 
@@ -226,7 +226,7 @@ Patch `client.tool.result`:
 4. if any remain, return `WaitingForMoreClientResults` and do not continue;
 5. if none remain, continue once.
 
-This phase may use run-level barriers before `step_id` exists.
+This phase may use run-level barriers before `turn_step_id` exists.
 
 Done when:
 
@@ -262,22 +262,22 @@ Done when:
 
 ### Phase 3: add run-step identity
 
-Status: partially implemented (2026-07-02). `bearwire_run_steps` and nullable `turn_step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
+Status: partially implemented (2026-07-02). `turn_steps` and nullable `turn_turn_step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
 
 Add schema:
 
 ```text
-bearwire_run_steps
-bearwire_run_obligations.turn_step_id
-bearwire_client_results.turn_step_id
+turn_steps
+turn_obligations.turn_turn_step_id
+turn_obligation_results.turn_turn_step_id
 ```
 
 Migration strategy:
 
-- Add nullable `turn_step_id` first.
+- Add nullable `turn_turn_step_id` first.
 - New runs write step rows and obligation step ids.
 - Existing rows remain valid via run-level compatibility fallback.
-- Later make `turn_step_id` required for new active runs.
+- Later make `turn_turn_step_id` required for new active runs.
 
 Done when:
 
@@ -286,7 +286,7 @@ Done when:
 
 ### Phase 4: transactional obligation/event outbox
 
-Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `turn_step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
+Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `turn_turn_step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
 
 Create a single operation for answerable waits:
 
@@ -324,11 +324,10 @@ The coordinator must be deeper than BearWire. Keep BearWire as one projection ov
 #### Phase 6A: neutralize Rust-facing coordinator API over existing tables
 
 - Rename Rust-facing concepts away from BearWire where they are core turn semantics:
-  - `BearWireRunObligationRow` → future `TurnObligationRow` or coordinator-facing wrapper.
-  - `BearWireObligationState` → `TurnObligationState`.
+  - Core Rust-facing obligation rows now use neutral `TurnObligationRow` / `TurnObligationState` naming.
   - `ExpectedClientMethod` should become a protocol-neutral expected responder/action type where possible.
 - Keep existing `bearwire_*` tables as a transitional backing store where already deployed or lower-risk.
-- New not-yet-deployed fields/tables should use neutral names such as `turn_steps` and `turn_step_id`.
+- New not-yet-deployed fields/tables should use neutral names such as `turn_steps` and `turn_turn_step_id`.
 
 Done when:
 
@@ -375,8 +374,8 @@ Done when:
 
 After coordinator semantics stabilize, decide whether to rename transitional backing tables:
 
-- `bearwire_run_obligations` → `turn_obligations`
-- `bearwire_client_results` → `turn_obligation_results`
+- `turn_obligations` → `turn_obligations`
+- `turn_obligation_results` → `turn_obligation_results`
 - `bearwire_runs` may remain BearWire-specific if it only tracks BearWire-visible run state, or be split from core turn state.
 
 Done when:

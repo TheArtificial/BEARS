@@ -1,4 +1,4 @@
-use den_runtime::{bearwire_obligations, turn_steps, bearwire_runs};
+use den_runtime::{turn_obligations, turn_steps, turn_runs};
 use uuid::Uuid;
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
@@ -46,11 +46,11 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     let tool_call_id = "call-promote";
     let permission_id = "perm-promote";
 
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
 
-    let tool = bearwire_obligations::upsert_tool_call_obligation(
+    let tool = turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -61,7 +61,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     .await
     .expect("create tool obligation");
 
-    let permission = bearwire_obligations::upsert_permission_obligation(
+    let permission = turn_obligations::upsert_permission_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -82,13 +82,13 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
     assert_eq!(permission.permission_id.as_deref(), Some(permission_id));
 
     let by_permission =
-        bearwire_obligations::get_permission_obligation(&pool, &run_id, permission_id)
+        turn_obligations::get_permission_obligation(&pool, &run_id, permission_id)
             .await
             .expect("load by permission id")
             .expect("permission obligation exists");
     assert_eq!(by_permission.id, permission.id);
 
-    let waiting_for_tool = bearwire_obligations::mark_waiting_for_tool_result(&pool, permission.id)
+    let waiting_for_tool = turn_obligations::mark_waiting_for_tool_result(&pool, permission.id)
         .await
         .expect("mark waiting for tool result")
         .expect("obligation still open");
@@ -111,11 +111,11 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
 
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
 
-    let first = bearwire_obligations::upsert_tool_call_obligation(
+    let first = turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -125,7 +125,7 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     )
     .await
     .expect("create first obligation");
-    let second = bearwire_obligations::upsert_tool_call_obligation(
+    let second = turn_obligations::upsert_tool_call_obligation(
         &pool,
         &run_id,
         &session_id,
@@ -136,7 +136,7 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     .await
     .expect("create second obligation");
 
-    bearwire_obligations::mark_result_received(
+    turn_obligations::mark_result_received(
         &pool,
         first.id,
         serde_json::json!({ "status": "ok" }),
@@ -145,14 +145,14 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     .expect("mark first received")
     .expect("first still open before receive");
 
-    let open = bearwire_obligations::open_client_obligations_for_run(&pool, &run_id)
+    let open = turn_obligations::open_client_obligations_for_run(&pool, &run_id)
         .await
         .expect("list open obligations");
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].id, second.id);
     assert_eq!(open[0].tool_call_id.as_deref(), Some("call-second"));
 
-    bearwire_obligations::mark_result_received(
+    turn_obligations::mark_result_received(
         &pool,
         second.id,
         serde_json::json!({ "status": "ok" }),
@@ -161,7 +161,7 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     .expect("mark second received")
     .expect("second still open before receive");
 
-    let open = bearwire_obligations::open_client_obligations_for_run(&pool, &run_id)
+    let open = turn_obligations::open_client_obligations_for_run(&pool, &run_id)
         .await
         .expect("list open obligations after all received");
     assert!(open.is_empty(), "all tool results are received: {open:#?}");
@@ -173,14 +173,14 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
 
-    bearwire_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
 
     let first_step = turn_steps::ensure_active_step(&pool, &run_id)
         .await
         .expect("ensure first step");
-    let first = bearwire_obligations::upsert_tool_call_obligation_for_step(
+    let first = turn_obligations::upsert_tool_call_obligation_for_step(
         &pool,
         &run_id,
         &session_id,
@@ -200,7 +200,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
         .await
         .expect("ensure second step");
     assert_ne!(first_step.id, second_step.id);
-    let second = bearwire_obligations::upsert_tool_call_obligation_for_step(
+    let second = turn_obligations::upsert_tool_call_obligation_for_step(
         &pool,
         &run_id,
         &session_id,
@@ -213,14 +213,14 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     .expect("create second step obligation");
 
     let open_first_step =
-        bearwire_obligations::open_client_obligations_for_step(&pool, first_step.id)
+        turn_obligations::open_client_obligations_for_step(&pool, first_step.id)
             .await
             .expect("list first step open obligations");
     assert_eq!(open_first_step.len(), 1);
     assert_eq!(open_first_step[0].id, first.id);
 
     let open_second_step =
-        bearwire_obligations::open_client_obligations_for_step(&pool, second_step.id)
+        turn_obligations::open_client_obligations_for_step(&pool, second_step.id)
             .await
             .expect("list second step open obligations");
     assert_eq!(open_second_step.len(), 1);

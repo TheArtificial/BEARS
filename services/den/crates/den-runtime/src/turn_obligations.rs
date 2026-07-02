@@ -39,7 +39,7 @@ impl ExpectedClientMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BearWireObligationState {
+pub enum TurnObligationState {
     Requested,
     WaitingForClient,
     ResultReceived,
@@ -48,7 +48,7 @@ pub enum BearWireObligationState {
     Cancelled,
 }
 
-impl BearWireObligationState {
+impl TurnObligationState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Requested => "requested",
@@ -62,7 +62,7 @@ impl BearWireObligationState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BearWireRunObligationRow {
+pub struct TurnObligationRow {
     pub id: Uuid,
     pub run_id: String,
     pub session_id: String,
@@ -79,8 +79,8 @@ pub struct BearWireRunObligationRow {
     pub completed_at: Option<OffsetDateTime>,
 }
 
-fn row_to_obligation(row: sqlx::postgres::PgRow) -> BearWireRunObligationRow {
-    BearWireRunObligationRow {
+fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
+    TurnObligationRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         session_id: row.get("session_id"),
@@ -105,7 +105,7 @@ pub async fn upsert_tool_call_obligation(
     tool_call_id: &str,
     permission_id: Option<&str>,
     request_payload: Value,
-) -> Result<BearWireRunObligationRow, DenError> {
+) -> Result<TurnObligationRow, DenError> {
     upsert_tool_call_obligation_for_step(
         pool,
         run_id,
@@ -126,21 +126,21 @@ pub async fn upsert_tool_call_obligation_for_step(
     tool_call_id: &str,
     permission_id: Option<&str>,
     request_payload: Value,
-) -> Result<BearWireRunObligationRow, DenError> {
+) -> Result<TurnObligationRow, DenError> {
     let row = sqlx::query(
         r#"
-        INSERT INTO bearwire_run_obligations (
+        INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_client_method,
             tool_call_id, permission_id, state, request_payload
         ) VALUES ($1, $2, $3, 'tool_call', 'client.tool.result', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, tool_call_id) WHERE tool_call_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
-                      turn_step_id = COALESCE(EXCLUDED.turn_step_id, bearwire_run_obligations.turn_step_id),
+                      turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
                       expected_client_method = EXCLUDED.expected_client_method,
-                      permission_id = COALESCE(EXCLUDED.permission_id, bearwire_run_obligations.permission_id),
+                      permission_id = COALESCE(EXCLUDED.permission_id, turn_obligations.permission_id),
                       state = CASE
-                        WHEN bearwire_run_obligations.state IN ('result_received','continued','failed','cancelled')
-                        THEN bearwire_run_obligations.state
+                        WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
+                        THEN turn_obligations.state
                         ELSE EXCLUDED.state
                       END,
                       request_payload = EXCLUDED.request_payload,
@@ -168,7 +168,7 @@ pub async fn upsert_permission_obligation(
     permission_id: &str,
     tool_call_id: Option<&str>,
     request_payload: Value,
-) -> Result<BearWireRunObligationRow, DenError> {
+) -> Result<TurnObligationRow, DenError> {
     upsert_permission_obligation_for_step(
         pool,
         run_id,
@@ -189,11 +189,11 @@ pub async fn upsert_permission_obligation_for_step(
     permission_id: &str,
     tool_call_id: Option<&str>,
     request_payload: Value,
-) -> Result<BearWireRunObligationRow, DenError> {
+) -> Result<TurnObligationRow, DenError> {
     if let Some(tool_call_id) = tool_call_id {
         if let Some(row) = sqlx::query(
             r#"
-            UPDATE bearwire_run_obligations
+            UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
                 kind = 'permission',
@@ -229,17 +229,17 @@ pub async fn upsert_permission_obligation_for_step(
 
     let row = sqlx::query(
         r#"
-        INSERT INTO bearwire_run_obligations (
+        INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_client_method,
             tool_call_id, permission_id, state, request_payload
         ) VALUES ($1, $2, $3, 'permission', 'client.permission.result', $4, $5, 'waiting_for_client', $6)
         ON CONFLICT (run_id, permission_id) WHERE permission_id IS NOT NULL
         DO UPDATE SET session_id = EXCLUDED.session_id,
-                      turn_step_id = COALESCE(EXCLUDED.turn_step_id, bearwire_run_obligations.turn_step_id),
-                      tool_call_id = COALESCE(EXCLUDED.tool_call_id, bearwire_run_obligations.tool_call_id),
+                      turn_step_id = COALESCE(EXCLUDED.turn_step_id, turn_obligations.turn_step_id),
+                      tool_call_id = COALESCE(EXCLUDED.tool_call_id, turn_obligations.tool_call_id),
                       state = CASE
-                        WHEN bearwire_run_obligations.state IN ('result_received','continued','failed','cancelled')
-                        THEN bearwire_run_obligations.state
+                        WHEN turn_obligations.state IN ('result_received','continued','failed','cancelled')
+                        THEN turn_obligations.state
                         ELSE EXCLUDED.state
                       END,
                       request_payload = EXCLUDED.request_payload,
@@ -264,13 +264,13 @@ pub async fn get_tool_call_obligation(
     pool: &PgPool,
     run_id: &str,
     tool_call_id: &str,
-) -> Result<Option<BearWireRunObligationRow>, DenError> {
+) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, run_id, session_id, kind, expected_client_method,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
-        FROM bearwire_run_obligations
+        FROM turn_obligations
         WHERE run_id = $1 AND tool_call_id = $2
         "#,
     )
@@ -285,13 +285,13 @@ pub async fn get_permission_obligation(
     pool: &PgPool,
     run_id: &str,
     permission_id: &str,
-) -> Result<Option<BearWireRunObligationRow>, DenError> {
+) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
         SELECT id, run_id, session_id, kind, expected_client_method,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
-        FROM bearwire_run_obligations
+        FROM turn_obligations
         WHERE run_id = $1 AND permission_id = $2
         "#,
     )
@@ -306,10 +306,10 @@ pub async fn mark_result_received(
     pool: &PgPool,
     obligation_id: Uuid,
     result_payload: Value,
-) -> Result<Option<BearWireRunObligationRow>, DenError> {
+) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
-        UPDATE bearwire_run_obligations
+        UPDATE turn_obligations
         SET state = 'result_received',
             result_payload = $2,
             updated_at = NOW()
@@ -330,10 +330,10 @@ pub async fn mark_result_received(
 pub async fn mark_waiting_for_tool_result(
     pool: &PgPool,
     obligation_id: Uuid,
-) -> Result<Option<BearWireRunObligationRow>, DenError> {
+) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
-        UPDATE bearwire_run_obligations
+        UPDATE turn_obligations
         SET kind = 'tool_call',
             expected_client_method = 'client.tool.result',
             state = 'waiting_for_client',
@@ -355,10 +355,10 @@ pub async fn mark_waiting_for_tool_result(
 pub async fn mark_continued(
     pool: &PgPool,
     obligation_id: Uuid,
-) -> Result<Option<BearWireRunObligationRow>, DenError> {
+) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
         r#"
-        UPDATE bearwire_run_obligations
+        UPDATE turn_obligations
         SET state = 'continued',
             completed_at = COALESCE(completed_at, NOW()),
             updated_at = NOW()
@@ -378,13 +378,13 @@ pub async fn mark_continued(
 pub async fn open_client_obligations_for_step(
     pool: &PgPool,
     turn_step_id: Uuid,
-) -> Result<Vec<BearWireRunObligationRow>, DenError> {
+) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT id, run_id, session_id, kind, expected_client_method,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
-        FROM bearwire_run_obligations
+        FROM turn_obligations
         WHERE turn_step_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
@@ -399,13 +399,13 @@ pub async fn open_client_obligations_for_step(
 pub async fn open_client_obligations_for_run(
     pool: &PgPool,
     run_id: &str,
-) -> Result<Vec<BearWireRunObligationRow>, DenError> {
+) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
         r#"
         SELECT id, run_id, session_id, kind, expected_client_method,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
-        FROM bearwire_run_obligations
+        FROM turn_obligations
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
@@ -420,12 +420,12 @@ pub async fn open_client_obligations_for_run(
 pub async fn settle_outstanding_for_run(
     pool: &PgPool,
     run_id: &str,
-    state: BearWireObligationState,
+    state: TurnObligationState,
 ) -> Result<u64, DenError> {
     let state = state.as_str();
     let result = sqlx::query(
         r#"
-        UPDATE bearwire_run_obligations
+        UPDATE turn_obligations
         SET state = $2,
             completed_at = COALESCE(completed_at, NOW()),
             updated_at = NOW()
@@ -441,13 +441,13 @@ pub async fn settle_outstanding_for_run(
 }
 
 pub fn obligation_accepts_client_method(
-    obligation: &BearWireRunObligationRow,
+    obligation: &TurnObligationRow,
     method: ExpectedClientMethod,
 ) -> bool {
     obligation.expected_client_method == method.as_str()
 }
 
-pub fn obligation_is_open(obligation: &BearWireRunObligationRow) -> bool {
+pub fn obligation_is_open(obligation: &TurnObligationRow) -> bool {
     matches!(
         obligation.state.as_str(),
         "requested" | "waiting_for_client" | "result_received"

@@ -19,8 +19,8 @@ use den_protocol::{
 };
 use den_runtime::{
     bearwire_events,
-    bearwire_obligations::{self, ExpectedClientMethod},
-    bearwire_runs,
+    turn_obligations::{self, ExpectedClientMethod},
+    turn_runs,
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
@@ -125,7 +125,7 @@ async fn record_web_fetch_approval_from_permission(
 }
 
 fn continuation_unavailable_response(
-    run: &bearwire_runs::BearWireRunRow,
+    run: &turn_runs::BearWireRunRow,
     session_id: &str,
     conversation_id: &str,
     obligation_state: &str,
@@ -151,7 +151,7 @@ fn continuation_unavailable_response(
 
 fn spawn_continuation_task(
     state: &DenState,
-    run: bearwire_runs::BearWireRunRow,
+    run: turn_runs::BearWireRunRow,
     binding_id: String,
     conversation_id: String,
     continuation: RuntimeContinuation,
@@ -176,10 +176,10 @@ fn spawn_continuation_task(
             }),
         )
         .await;
-        let _ = bearwire_runs::transition_run(
+        let _ = turn_runs::transition_run(
             &pool,
             &run.run_id,
-            bearwire_runs::BearWireRunState::Continuing,
+            turn_runs::BearWireRunState::Continuing,
             None,
         )
         .await;
@@ -364,7 +364,7 @@ pub(crate) async fn client_tool_result_result(
     let session_id = required_param_string(params, "session_id")?;
     let tool_call_id = required_param_string(params, "tool_call_id")?;
     let status = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
-    let Some(run) = bearwire_runs::get_run(&state.sqlx_pool, &run_id).await? else {
+    let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
             "status": "late_result_ignored",
@@ -385,14 +385,14 @@ pub(crate) async fn client_tool_result_result(
         }));
     }
     let obligation =
-        bearwire_obligations::get_tool_call_obligation(&state.sqlx_pool, &run_id, &tool_call_id)
+        turn_obligations::get_tool_call_obligation(&state.sqlx_pool, &run_id, &tool_call_id)
             .await?
             .ok_or_else(|| {
                 CustomError::ValidationError(
                     "BearWire tool result has no persisted tool-call obligation".to_string(),
                 )
             })?;
-    if !bearwire_obligations::obligation_accepts_client_method(
+    if !turn_obligations::obligation_accepts_client_method(
         &obligation,
         ExpectedClientMethod::ToolResult,
     ) {
@@ -438,8 +438,8 @@ pub(crate) async fn client_tool_result_result(
         }
     }
     let payload = compacted.payload.clone();
-    if !bearwire_obligations::obligation_is_open(&obligation) {
-        return match bearwire_runs::existing_client_result_for_payload(
+    if !turn_obligations::obligation_is_open(&obligation) {
+        return match turn_runs::existing_client_result_for_payload(
             &state.sqlx_pool,
             &run_id,
             "tool",
@@ -448,7 +448,7 @@ pub(crate) async fn client_tool_result_result(
         )
         .await?
         {
-            Some(bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+            Some(turn_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
                 Ok(json!({
                     "ok": true,
                     "duplicate": true,
@@ -457,7 +457,7 @@ pub(crate) async fn client_tool_result_result(
                     "obligation_state": obligation.state,
                 }))
             }
-            Some(bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+            Some(turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
                 Err(CustomError::ValidationError(format!(
                     "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
                 )))
@@ -495,7 +495,7 @@ pub(crate) async fn client_tool_result_result(
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
     let permission_result_count =
-        bearwire_runs::client_result_count_for_run_kind(&state.sqlx_pool, &run_id, "permission")
+        turn_runs::client_result_count_for_run_kind(&state.sqlx_pool, &run_id, "permission")
             .await?;
     if permission_result_count >= MAX_PERMISSION_RESULTS_PER_RUN {
         persist_run_failed(
@@ -518,7 +518,7 @@ pub(crate) async fn client_tool_result_result(
             "max_permission_results": MAX_PERMISSION_RESULTS_PER_RUN,
         }));
     }
-    let record = bearwire_runs::record_client_result_for_step(
+    let record = turn_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
         obligation.turn_step_id,
@@ -528,12 +528,12 @@ pub(crate) async fn client_tool_result_result(
     )
     .await?;
     match record {
-        bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
+        turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate tool result for {tool_call_id}; existing hash {existing_hash}"
             )))
         }
-        bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
+        turn_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
             Ok(json!({
                 "ok": true,
                 "duplicate": true,
@@ -541,7 +541,7 @@ pub(crate) async fn client_tool_result_result(
                 "run_state": run.state,
             }))
         }
-        bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
+        turn_runs::BearWireClientResultRecord::Inserted { row } => {
             let coordinator_outcome = client_obligation_coordinator::settle_tool_result(
                 &state.sqlx_pool,
                 &run,
@@ -670,7 +670,7 @@ pub(crate) async fn client_permission_result_result(
     let permission_id = required_param_string(params, "permission_id")?;
     let obligation_id = param_string(params, "obligation_id");
     let decision = param_string(params, "decision").unwrap_or_else(|| "denied".to_string());
-    let Some(run) = bearwire_runs::get_run(&state.sqlx_pool, &run_id).await? else {
+    let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
             "status": "late_result_ignored",
@@ -691,7 +691,7 @@ pub(crate) async fn client_permission_result_result(
         }));
     }
     let obligation =
-        bearwire_obligations::get_permission_obligation(&state.sqlx_pool, &run_id, &permission_id)
+        turn_obligations::get_permission_obligation(&state.sqlx_pool, &run_id, &permission_id)
             .await?
             .ok_or_else(|| {
                 CustomError::ValidationError(
@@ -709,7 +709,7 @@ pub(crate) async fn client_permission_result_result(
             ));
         }
     }
-    if !bearwire_obligations::obligation_accepts_client_method(
+    if !turn_obligations::obligation_accepts_client_method(
         &obligation,
         ExpectedClientMethod::PermissionResult,
     ) {
@@ -736,8 +736,8 @@ pub(crate) async fn client_permission_result_result(
         "decision": normalized_decision,
         "reason": params.get("reason").cloned().unwrap_or(Value::Null),
     });
-    if !bearwire_obligations::obligation_is_open(&obligation) {
-        return match bearwire_runs::existing_client_result_for_payload(
+    if !turn_obligations::obligation_is_open(&obligation) {
+        return match turn_runs::existing_client_result_for_payload(
             &state.sqlx_pool,
             &run_id,
             "permission",
@@ -746,7 +746,7 @@ pub(crate) async fn client_permission_result_result(
         )
         .await?
         {
-            Some(bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
+            Some(turn_runs::BearWireClientResultRecord::DuplicateIdentical { row }) => {
                 Ok(json!({
                     "ok": true,
                     "duplicate": true,
@@ -755,7 +755,7 @@ pub(crate) async fn client_permission_result_result(
                     "obligation_state": obligation.state,
                 }))
             }
-            Some(bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
+            Some(turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash }) => {
                 Err(CustomError::ValidationError(format!(
                     "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
                 )))
@@ -792,7 +792,7 @@ pub(crate) async fn client_permission_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
-    let record = bearwire_runs::record_client_result_for_step(
+    let record = turn_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
         obligation.turn_step_id,
@@ -802,12 +802,12 @@ pub(crate) async fn client_permission_result_result(
     )
     .await?;
     match record {
-        bearwire_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
+        turn_runs::BearWireClientResultRecord::DuplicateConflict { existing_hash } => {
             Err(CustomError::ValidationError(format!(
                 "conflicting duplicate permission result for {permission_id}; existing hash {existing_hash}"
             )))
         }
-        bearwire_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
+        turn_runs::BearWireClientResultRecord::DuplicateIdentical { row } => {
             Ok(json!({
                 "ok": true,
                 "duplicate": true,
@@ -815,7 +815,7 @@ pub(crate) async fn client_permission_result_result(
                 "run_state": run.state,
             }))
         }
-        bearwire_runs::BearWireClientResultRecord::Inserted { row } => {
+        turn_runs::BearWireClientResultRecord::Inserted { row } => {
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
