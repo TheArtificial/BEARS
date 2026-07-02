@@ -5,7 +5,7 @@ use den_core::DenError;
 
 use den_core::tools::constants::DEN_WEB_FETCH;
 
-use crate::{bearwire_obligations, bearwire_run_steps, bearwire_runs};
+use crate::{bearwire_obligations, turn_steps, bearwire_runs};
 
 fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
     let tool_name = obligation_payload
@@ -93,7 +93,7 @@ pub async fn settle_tool_result(
     .await?;
     let _ = bearwire_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.step_id {
-        let _ = bearwire_run_steps::transition_step(pool, step_id, "continued").await?;
+        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
     }
     Ok(ToolResultCoordinatorOutcome::ContinueModel { run: transitioned })
 }
@@ -165,7 +165,7 @@ pub async fn settle_permission_result(
     .await?;
     let _ = bearwire_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.step_id {
-        let _ = bearwire_run_steps::transition_step(pool, step_id, "continued").await?;
+        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
     }
     Ok(PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned })
 }

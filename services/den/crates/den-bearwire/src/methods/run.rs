@@ -9,7 +9,7 @@ use uuid::Uuid;
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
-    bearwire_events, bearwire_obligations, bearwire_run_steps, bearwire_runs,
+    bearwire_events, bearwire_obligations, turn_steps, bearwire_runs,
     native_runtime::start_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{
         runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
@@ -1008,7 +1008,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_runs::BearWireRunState::WaitingForToolResult
             };
             let _ = bearwire_runs::transition_run(pool, run_id, state, None).await;
-            let step_id = match bearwire_run_steps::ensure_active_step(pool, run_id).await {
+            let step_id = match turn_steps::ensure_active_step(pool, run_id).await {
                 Ok(step) => Some(step.id),
                 Err(err) => {
                     tracing::warn!(
@@ -1126,7 +1126,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Continued,
             )
             .await;
-            let _ = bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "continued")
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued")
                 .await;
             None
         }
@@ -1161,7 +1161,7 @@ async fn update_run_state_for_runtime_event(
             )
             .await;
             let _ =
-                bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+                turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
@@ -1178,7 +1178,7 @@ async fn update_run_state_for_runtime_event(
                 bearwire_obligations::BearWireObligationState::Cancelled,
             )
             .await;
-            let _ = bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "cancelled")
+            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled")
                 .await;
             None
         }
@@ -1217,7 +1217,7 @@ async fn update_run_state_for_runtime_event(
             )
             .await;
             let _ =
-                bearwire_run_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+                turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
             None
         }
         _ => None,

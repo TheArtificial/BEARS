@@ -18,7 +18,9 @@ use den_protocol::{
     RuntimeToolResultStatus,
 };
 use den_runtime::{
-    bearwire_events, bearwire_obligations, bearwire_runs,
+    bearwire_events,
+    bearwire_obligations::{self, ExpectedClientMethod},
+    bearwire_runs,
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
@@ -390,7 +392,10 @@ pub(crate) async fn client_tool_result_result(
                     "BearWire tool result has no persisted tool-call obligation".to_string(),
                 )
             })?;
-    if !bearwire_obligations::obligation_accepts_client_method(&obligation, "client.tool.result") {
+    if !bearwire_obligations::obligation_accepts_client_method(
+        &obligation,
+        ExpectedClientMethod::ToolResult,
+    ) {
         return Err(CustomError::ValidationError(format!(
             "BearWire tool obligation {} does not accept client.tool.result (expected {}, state {})",
             obligation.id,
@@ -516,7 +521,7 @@ pub(crate) async fn client_tool_result_result(
     let record = bearwire_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
-        obligation.step_id,
+        obligation.turn_step_id,
         "tool",
         &tool_call_id,
         payload.clone(),
@@ -706,7 +711,7 @@ pub(crate) async fn client_permission_result_result(
     }
     if !bearwire_obligations::obligation_accepts_client_method(
         &obligation,
-        "client.permission.result",
+        ExpectedClientMethod::PermissionResult,
     ) {
         return Err(CustomError::ValidationError(format!(
             "BearWire permission obligation {} does not accept client.permission.result (expected {}, state {})",
@@ -790,7 +795,7 @@ pub(crate) async fn client_permission_result_result(
     let record = bearwire_runs::record_client_result_for_step(
         &state.sqlx_pool,
         &run_id,
-        obligation.step_id,
+        obligation.turn_step_id,
         "permission",
         &permission_id,
         payload.clone(),

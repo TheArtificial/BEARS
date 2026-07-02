@@ -1,4 +1,4 @@
-use den_runtime::{bearwire_obligations, bearwire_run_steps, bearwire_runs};
+use den_runtime::{bearwire_obligations, turn_steps, bearwire_runs};
 use uuid::Uuid;
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
@@ -177,7 +177,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
         .await
         .expect("create run");
 
-    let first_step = bearwire_run_steps::ensure_active_step(&pool, &run_id)
+    let first_step = turn_steps::ensure_active_step(&pool, &run_id)
         .await
         .expect("ensure first step");
     let first = bearwire_obligations::upsert_tool_call_obligation_for_step(
@@ -193,10 +193,10 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     .expect("create first step obligation");
     assert_eq!(first.step_id, Some(first_step.id));
 
-    bearwire_run_steps::transition_step(&pool, first_step.id, "continued")
+    turn_steps::transition_step(&pool, first_step.id, "continued")
         .await
         .expect("close first step");
-    let second_step = bearwire_run_steps::ensure_active_step(&pool, &run_id)
+    let second_step = turn_steps::ensure_active_step(&pool, &run_id)
         .await
         .expect("ensure second step");
     assert_ne!(first_step.id, second_step.id);

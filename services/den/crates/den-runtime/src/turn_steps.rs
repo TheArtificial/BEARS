@@ -5,7 +5,7 @@ use uuid::Uuid;
 use den_core::DenError;
 
 #[derive(Debug, Clone)]
-pub struct BearWireRunStepRow {
+pub struct TurnStepRow {
     pub id: Uuid,
     pub run_id: String,
     pub step_index: i32,
@@ -15,8 +15,8 @@ pub struct BearWireRunStepRow {
     pub closed_at: Option<OffsetDateTime>,
 }
 
-fn row_to_step(row: sqlx::postgres::PgRow) -> BearWireRunStepRow {
-    BearWireRunStepRow {
+fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
+    TurnStepRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         step_index: row.get("step_index"),
@@ -30,11 +30,11 @@ fn row_to_step(row: sqlx::postgres::PgRow) -> BearWireRunStepRow {
 pub async fn ensure_active_step(
     pool: &PgPool,
     run_id: &str,
-) -> Result<BearWireRunStepRow, DenError> {
+) -> Result<TurnStepRow, DenError> {
     if let Some(row) = sqlx::query(
         r#"
         SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        FROM bearwire_run_steps
+        FROM turn_steps
         WHERE run_id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
         ORDER BY step_index DESC
@@ -52,10 +52,10 @@ pub async fn ensure_active_step(
         r#"
         WITH next_step AS (
             SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
-            FROM bearwire_run_steps
+            FROM turn_steps
             WHERE run_id = $1
         )
-        INSERT INTO bearwire_run_steps (run_id, step_index, state)
+        INSERT INTO turn_steps (run_id, step_index, state)
         SELECT $1, step_index, 'streaming_model'
         FROM next_step
         RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
@@ -69,20 +69,20 @@ pub async fn ensure_active_step(
 
 pub async fn transition_step(
     pool: &PgPool,
-    step_id: Uuid,
+    turn_step_id: Uuid,
     state: &str,
-) -> Result<Option<BearWireRunStepRow>, DenError> {
+) -> Result<Option<TurnStepRow>, DenError> {
     let terminal = matches!(state, "continued" | "failed" | "cancelled");
     let row = sqlx::query(
         r#"
-        UPDATE bearwire_run_steps
+        UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE id = $1
         RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
         "#,
     )
-    .bind(step_id)
+    .bind(turn_step_id)
     .bind(state)
     .bind(terminal)
     .fetch_optional(pool)
@@ -98,7 +98,7 @@ pub async fn transition_active_steps_for_run(
     let terminal = matches!(state, "continued" | "failed" | "cancelled");
     let result = sqlx::query(
         r#"
-        UPDATE bearwire_run_steps
+        UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE run_id = $1

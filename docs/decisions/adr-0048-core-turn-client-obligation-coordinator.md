@@ -30,7 +30,7 @@ These failures show that BearWire RPC handlers, runtime stream projection, oblig
 
 ## Decision
 
-Den will restore a protocol-neutral **core turn/client-obligation coordinator**. BearWire remains the Den ↔ armature wire, and ACP remains an edge/client protocol, but neither BearWire nor the armature owns model-continuation decisions.
+Den will restore a protocol-neutral **core turn/client-obligation coordinator** below BearWire and below every channel/armature projection. BearWire remains the Den ↔ armature wire, and ACP remains an edge/client protocol, but neither BearWire nor the armature owns model-continuation decisions. The same coordinator must also serve non-BearWire surfaces such as web chat, Slack, and future macOS/channel adapters whenever a turn waits on human input, approval, resource binding, handoff, or tool results.
 
 ### 1. Core owns turn/tool/approval continuation semantics
 
@@ -49,7 +49,7 @@ These are not ACP semantics and must not live in the ACP armature. They are also
 
 ### 2. BearWire is transport/projection, not the continuation state machine
 
-BearWire methods such as `client.permission.result` and `client.tool.result` are inputs to the core coordinator. They do not independently decide to continue the model.
+BearWire methods such as `client.permission.result` and `client.tool.result` are one projection of coordinator inputs. Web chat actions, Slack button/reply callbacks, macOS app actions, or future channel-local actions should feed the same coordinator through their own projection. None of these surfaces independently decide to continue the model.
 
 Required shape:
 
@@ -69,7 +69,7 @@ Only the coordinator may produce `ContinueModel`.
 
 ### 3. Model continuation requires a closed obligation barrier
 
-A model continuation may start only when the current model step has no open client obligations.
+A model continuation may start only when the current model step has no open turn obligations for the required responder/surface. Tool-result obligations are the immediate pressure point, but the same barrier applies to permission decisions, human-input waits, resource-binding waits, handoff decisions, and future obligation kinds.
 
 Open obligations include:
 
@@ -102,7 +102,7 @@ A model step may emit multiple tool calls. Continuation happens once per step, a
 
 ### 6. Actionable waits are obligations
 
-The canonical BearWire event for an armature-actionable wait is `client.waiting`, carrying:
+The core concept is a protocol-neutral turn obligation. Each surface projects it into its own actionable shape. The canonical BearWire event for an armature-actionable wait is `client.waiting`, carrying:
 
 - `data.obligation_id`;
 - `data.expected_client_method`;
@@ -117,7 +117,7 @@ A local tool execution error, such as file-not-found, should settle the tool-res
 
 ### 8. Step/generation fencing is required
 
-Client obligations and client results must be fenced by durable identity. The target end-state includes a model-step identity, such as `run_step_id`, so stale events/results from earlier steps cannot trigger continuation of a later step.
+Turn obligations and obligation results must be fenced by durable identity. The target end-state includes a model-step identity, such as `turn_step_id`, so stale events/results from earlier steps cannot trigger continuation of a later step.
 
 At minimum, all transitions must be scoped by:
 
@@ -128,24 +128,25 @@ run_id + session_id + obligation_id + tool_call_id/permission_id
 The target state adds:
 
 ```text
-run_step_id
+turn_step_id
 ```
 
 ## Rationale
 
-ACP-specific code was correctly pushed to the edge, but part of the old consolidated turn/tool state machine appears to have been lost or bypassed during the migration. The fix is not to move ACP semantics back into Den. The fix is to make the turn/client-obligation state machine explicitly core and protocol-neutral again.
+ACP-specific code was correctly pushed to the edge, but part of the old consolidated turn/tool state machine appears to have been lost or bypassed during the migration. The fix is not to move ACP semantics back into Den, and it is not to make BearWire the new center. The fix is to make the turn/obligation state machine explicitly core and protocol-neutral again, with BearWire, web chat, Slack, macOS, and future channels/armatures as projections over it.
 
 The coordinator preserves the architectural separation:
 
 ```text
 Den runtime core
-  owns run/step/client-obligation semantics and continuation barriers
+  owns turn/step/obligation semantics and continuation barriers
 
-BearWire
-  owns Den ↔ armature methods/events and serializable wire shape
+Surface projections
+  BearWire for trusted armatures
+  web chat / Slack / macOS channel actions for human input, approval, resource binding, and channel-local interactions
 
-Armature / ACP adapter
-  owns local tool execution, ACP projection, permission UI, and local permission cache
+Armatures / channel adapters
+  own local execution, protocol projection, permission UI, channel UI, and local caches
 ```
 
 ## Consequences
@@ -156,20 +157,21 @@ Armature / ACP adapter
 - Prevents parallel continuations from sibling tool results in the same model step.
 - Makes stale/duplicate/late client results a core state-machine concern.
 - Makes BearWire easier to reason about because it becomes an input/output transport around the coordinator.
+- Allows web chat, Slack, macOS, and future channels to satisfy the same core obligation model without inheriting ACP/BearWire semantics.
 - Preserves ADR-0043: ACP remains edge-only while core turn coordination remains Den-owned.
 
 ### Costs
 
 - Requires refactoring BearWire RPC methods away from direct `spawn_continuation_task` calls.
 - Requires a new or restored core coordinator module and likely schema additions for model steps.
-- Requires compatibility handling while existing BearWire obligations lack `run_step_id`.
+- Requires compatibility handling while existing BearWire-backed obligations lack `turn_step_id`.
 - Requires stronger integration tests around multi-tool model steps and permission/tool-result barriers.
 
 ## Non-goals
 
 - Do not move ACP UI/framing back into Den core.
 - Do not make BearWire an ACP-shaped protocol.
-- Do not require the armature to understand model-step batching beyond answering explicit obligations.
+- Do not require any surface to understand model-step batching beyond answering explicit obligations.
 - Do not treat all tool execution errors as run infrastructure failures.
 
 ## Review checklist
@@ -180,7 +182,7 @@ When modifying turn, permission, or tool-result paths:
 2. Can the current model step have any open client obligations? If yes, continuation is illegal.
 3. Is permission approval being confused with tool execution?
 4. Are tool errors recorded as tool results rather than crashes?
-5. Are actionable armature waits represented as `client.waiting` with an `obligation_id`?
+5. Are actionable waits represented as surface projections of a core obligation (`client.waiting` for BearWire)?
 6. Is `run.paused` treated as non-actionable status?
-7. Are duplicate/late/stale client results fenced by durable IDs?
-8. Is behavior tested with multiple tool calls in one model step?
+7. Are duplicate/late/stale obligation results fenced by durable IDs?
+8. Is behavior tested with multiple tool calls or obligations in one model step?

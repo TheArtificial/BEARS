@@ -6,7 +6,7 @@ Related ADR: [ADR-0048: Core turn/client-obligation coordinator](../decisions/ad
 
 ## Goal
 
-Restore a consolidated, protocol-neutral Den turn/client-obligation state machine after the ACP-to-edge migration. BearWire remains the Den ↔ armature wire, and ACP remains edge-only, but model-continuation decisions move behind a core coordinator.
+Restore a consolidated, protocol-neutral Den turn/obligation state machine after the ACP-to-edge migration. BearWire remains the Den ↔ armature wire, and ACP remains edge-only, but model-continuation decisions move behind a core coordinator that is also usable by channels such as web chat, Slack, and future macOS surfaces.
 
 ## Problem statement
 
@@ -31,13 +31,14 @@ This permits illegal states:
 
 ```text
 Den runtime core
-  owns run state, step state, client obligations, settlement, continuation barriers
+  owns turn/run state, step state, obligations, settlement, continuation barriers
 
-BearWire
-  owns wire methods/events: client.waiting, client.permission.result, client.tool.result
+Surface projections
+  BearWire for trusted armatures
+  web chat / Slack / macOS channel actions for human input, approval, resource binding, and channel-local interactions
 
-Armature / ACP adapter
-  owns ACP projection, permission UI, local tool execution, local permission cache
+Armature / channel adapters
+  own protocol projection, permission UI, channel UI, local tool execution, local caches
 ```
 
 ## Core invariants
@@ -48,7 +49,7 @@ Armature / ACP adapter
 4. **A model step is a batch.** Multiple tool calls from one model step settle together; continuation happens once per step.
 5. **Actionable waits are obligations.** `client.waiting` must carry `obligation_id` and `expected_client_method`; `run.paused` is non-actionable status.
 6. **Tool errors are normal tool results.** File-not-found and similar local failures settle tool-result obligations and are shown to the model.
-7. **Durable IDs fence results.** Results are scoped by run/session/obligation/tool/permission, and the target state adds `run_step_id`.
+7. **Durable IDs fence results.** Results are scoped by run/session/obligation/tool/permission, and the target state adds `turn_step_id`.
 8. **Events follow persistence.** Den must persist obligations before streaming answerable wait events.
 
 ## Target model
@@ -61,7 +62,7 @@ bearwire_runs
   session_id
   state
 
-bearwire_run_steps
+turn_steps
   id
   run_id
   step_index
@@ -261,22 +262,22 @@ Done when:
 
 ### Phase 3: add run-step identity
 
-Status: partially implemented (2026-07-02). `bearwire_run_steps` and nullable `step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
+Status: partially implemented (2026-07-02). `bearwire_run_steps` and nullable `turn_step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
 
 Add schema:
 
 ```text
 bearwire_run_steps
-bearwire_run_obligations.step_id
-bearwire_client_results.step_id
+bearwire_run_obligations.turn_step_id
+bearwire_client_results.turn_step_id
 ```
 
 Migration strategy:
 
-- Add nullable `step_id` first.
+- Add nullable `turn_step_id` first.
 - New runs write step rows and obligation step ids.
 - Existing rows remain valid via run-level compatibility fallback.
-- Later make `step_id` required for new active runs.
+- Later make `turn_step_id` required for new active runs.
 
 Done when:
 
@@ -285,7 +286,7 @@ Done when:
 
 ### Phase 4: transactional obligation/event outbox
 
-Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
+Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `turn_step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
 
 Create a single operation for answerable waits:
 
@@ -316,21 +317,88 @@ Done when:
 
 - No active armature permission path depends on `run.paused` or `tool_call.blocked`.
 
-### Phase 6: tighten types and state enums
+### Phase 6: neutralize coordinator API and tighten typed state
+
+The coordinator must be deeper than BearWire. Keep BearWire as one projection over the coordinator, not the owner or vocabulary source for the state machine.
+
+#### Phase 6A: neutralize Rust-facing coordinator API over existing tables
+
+- Rename Rust-facing concepts away from BearWire where they are core turn semantics:
+  - `BearWireRunObligationRow` → future `TurnObligationRow` or coordinator-facing wrapper.
+  - `BearWireObligationState` → `TurnObligationState`.
+  - `ExpectedClientMethod` should become a protocol-neutral expected responder/action type where possible.
+- Keep existing `bearwire_*` tables as a transitional backing store where already deployed or lower-risk.
+- New not-yet-deployed fields/tables should use neutral names such as `turn_steps` and `turn_step_id`.
+
+Done when:
+
+- BearWire handlers consume coordinator outcomes and projection types, not raw storage rows where avoidable.
+- Core coordinator APIs can be called by non-BearWire surfaces without leaking BearWire method names.
+
+#### Phase 6B: add non-BearWire obligation kinds
+
+Extend the core obligation model beyond current tool/permission pressure:
+
+- `ToolResult`
+- `PermissionDecision`
+- `HumanInput`
+- `ResourceBinding`
+- `HandoffDecision`
+
+Done when:
+
+- The coordinator can represent a turn waiting on human/channel input, not only armature-local tools.
+- Obligation kinds describe what the turn needs, not which wire method will answer it.
+
+#### Phase 6C: add surface projection contracts
+
+Define how core obligations project to each surface:
+
+- BearWire armature projection:
+  - `ToolResult` → `client.tool.result`
+  - `PermissionDecision` → `client.permission.result`
+  - actionable wait event → `client.waiting`
+- Web chat projection:
+  - `HumanInput` → chat reply/action
+  - `PermissionDecision` → web approve/deny action
+- Slack projection:
+  - `HumanInput` → thread reply
+  - `PermissionDecision` → button/action callback
+- macOS app projection:
+  - may act as channel, armature, or both depending on capabilities.
+
+Done when:
+
+- Adding a channel means writing a projection for supported obligation kinds, not creating another turn state machine.
+
+#### Phase 6D: optional persistence rename/migration
+
+After coordinator semantics stabilize, decide whether to rename transitional backing tables:
+
+- `bearwire_run_obligations` → `turn_obligations`
+- `bearwire_client_results` → `turn_obligation_results`
+- `bearwire_runs` may remain BearWire-specific if it only tracks BearWire-visible run state, or be split from core turn state.
+
+Done when:
+
+- DB names match ownership, or a documented compatibility reason explains why they remain BearWire-prefixed.
+
+#### Phase 6E: typed IDs and states
 
 Replace stringly internal control state with typed values:
 
 - `RunState`
-- `RunStepState`
-- `ClientObligationState`
-- `ExpectedClientMethod`
-- `ClientObligationKind`
-- typed IDs for run, step, obligation, tool call, permission, session.
+- `TurnStepState`
+- `TurnObligationState`
+- `TurnObligationKind`
+- expected responder/action enum
+- typed IDs for run, turn step, obligation, tool call, permission, session, channel action.
 
 Done when:
 
 - Illegal state transitions are compile-time-visible or centralized in the coordinator.
 - BearWire methods do not compare raw method/status strings outside boundary parsing.
+- Non-BearWire surfaces can satisfy obligations through typed coordinator inputs.
 
 ## Required tests
 
