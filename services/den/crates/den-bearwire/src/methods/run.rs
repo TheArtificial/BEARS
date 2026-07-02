@@ -417,6 +417,7 @@ fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObli
         expected_responder_action: row.get("expected_responder_action"),
         tool_call_id: row.get("tool_call_id"),
         permission_id: row.get("permission_id"),
+        responder_ref_id: row.try_get("responder_ref_id").ok(),
         state: row.get("state"),
         turn_step_id: row.try_get("turn_step_id").ok(),
         request_payload: row.get("request_payload"),
@@ -756,7 +757,10 @@ async fn persist_tool_call_requested_transactionally(
         let permission_id = obligation.permission_id.clone().unwrap_or_default();
         event.data["obligation_id"] = json!(obligation.id.to_string());
         event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
-        event.data["expected_client_method"] = json!(bearwire_method_for_responder_action(&obligation.expected_responder_action).unwrap_or("client.permission.result"));
+        event.data["expected_client_method"] = json!(bearwire_method_for_responder_action(
+            &obligation.expected_responder_action
+        )
+        .unwrap_or("client.permission.result"));
         event.data["permission_id"] = json!(permission_id);
         event.data["tool_call_id"] = json!(tool_call_id);
         event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));

@@ -9,15 +9,21 @@ use den_core::DenError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnObligationKind {
-    ToolCall,
-    Permission,
+    ToolResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
 }
 
 impl TurnObligationKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::ToolCall => "tool_call",
-            Self::Permission => "permission",
+            Self::ToolResult => "tool_result",
+            Self::PermissionDecision => "permission_decision",
+            Self::HumanInput => "human_input",
+            Self::ResourceBinding => "resource_binding",
+            Self::HandoffDecision => "handoff_decision",
         }
     }
 }
@@ -25,14 +31,20 @@ impl TurnObligationKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpectedResponderAction {
     ToolResult,
-    PermissionResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
 }
 
 impl ExpectedResponderAction {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ToolResult => "tool_result",
-            Self::PermissionResult => "permission_decision",
+            Self::PermissionDecision => "permission_decision",
+            Self::HumanInput => "human_input",
+            Self::ResourceBinding => "resource_binding",
+            Self::HandoffDecision => "handoff_decision",
         }
     }
 }
@@ -70,6 +82,7 @@ pub struct TurnObligationRow {
     pub expected_responder_action: String,
     pub tool_call_id: Option<String>,
     pub permission_id: Option<String>,
+    pub responder_ref_id: Option<String>,
     pub state: String,
     pub turn_step_id: Option<Uuid>,
     pub request_payload: Value,
@@ -88,6 +101,7 @@ fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
         expected_responder_action: row.get("expected_responder_action"),
         tool_call_id: row.get("tool_call_id"),
         permission_id: row.get("permission_id"),
+        responder_ref_id: row.try_get("responder_ref_id").ok(),
         state: row.get("state"),
         turn_step_id: row.try_get("turn_step_id").ok(),
         request_payload: row.get("request_payload"),
@@ -96,6 +110,41 @@ fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
     }
+}
+
+pub async fn create_turn_obligation_for_step(
+    pool: &PgPool,
+    run_id: &str,
+    session_id: &str,
+    turn_step_id: Option<Uuid>,
+    kind: TurnObligationKind,
+    expected_responder_action: ExpectedResponderAction,
+    responder_ref_id: &str,
+    request_payload: Value,
+) -> Result<TurnObligationRow, DenError> {
+    let kind = kind.as_str();
+    let expected_responder_action = expected_responder_action.as_str();
+    let row = sqlx::query(
+        r#"
+        INSERT INTO turn_obligations (
+            run_id, session_id, turn_step_id, kind, expected_responder_action,
+            responder_ref_id, state, request_payload
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'waiting_for_client', $7)
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+                  request_payload, result_payload, created_at, updated_at, completed_at
+        "#,
+    )
+    .bind(run_id)
+    .bind(session_id)
+    .bind(turn_step_id)
+    .bind(kind)
+    .bind(expected_responder_action)
+    .bind(responder_ref_id)
+    .bind(request_payload)
+    .fetch_one(pool)
+    .await?;
+    Ok(row_to_obligation(row))
 }
 
 pub async fn upsert_tool_call_obligation(

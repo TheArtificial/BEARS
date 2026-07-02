@@ -1,4 +1,7 @@
-use den_runtime::{turn_obligations, turn_steps, turn_runs};
+use den_runtime::{
+    turn_obligations::{self, ExpectedResponderAction, TurnObligationKind},
+    turn_runs, turn_steps,
+};
 use uuid::Uuid;
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
@@ -74,18 +77,14 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
 
     assert_eq!(permission.id, tool.id);
     assert_eq!(permission.kind, "permission");
-    assert_eq!(
-        permission.expected_responder_action,
-        "permission_decision"
-    );
+    assert_eq!(permission.expected_responder_action, "permission_decision");
     assert_eq!(permission.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(permission.permission_id.as_deref(), Some(permission_id));
 
-    let by_permission =
-        turn_obligations::get_permission_obligation(&pool, &run_id, permission_id)
-            .await
-            .expect("load by permission id")
-            .expect("permission obligation exists");
+    let by_permission = turn_obligations::get_permission_obligation(&pool, &run_id, permission_id)
+        .await
+        .expect("load by permission id")
+        .expect("permission obligation exists");
     assert_eq!(by_permission.id, permission.id);
 
     let waiting_for_tool = turn_obligations::mark_waiting_for_tool_result(&pool, permission.id)
@@ -94,10 +93,7 @@ async fn permission_obligation_promotes_existing_tool_obligation(pool: sqlx::PgP
         .expect("obligation still open");
     assert_eq!(waiting_for_tool.id, permission.id);
     assert_eq!(waiting_for_tool.kind, "tool_call");
-    assert_eq!(
-        waiting_for_tool.expected_responder_action,
-        "tool_result"
-    );
+    assert_eq!(waiting_for_tool.expected_responder_action, "tool_result");
     assert_eq!(waiting_for_tool.tool_call_id.as_deref(), Some(tool_call_id));
     assert_eq!(
         waiting_for_tool.permission_id.as_deref(),
@@ -136,14 +132,10 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     .await
     .expect("create second obligation");
 
-    turn_obligations::mark_result_received(
-        &pool,
-        first.id,
-        serde_json::json!({ "status": "ok" }),
-    )
-    .await
-    .expect("mark first received")
-    .expect("first still open before receive");
+    turn_obligations::mark_result_received(&pool, first.id, serde_json::json!({ "status": "ok" }))
+        .await
+        .expect("mark first received")
+        .expect("first still open before receive");
 
     let open = turn_obligations::open_client_obligations_for_run(&pool, &run_id)
         .await
@@ -152,14 +144,10 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
     assert_eq!(open[0].id, second.id);
     assert_eq!(open[0].tool_call_id.as_deref(), Some("call-second"));
 
-    turn_obligations::mark_result_received(
-        &pool,
-        second.id,
-        serde_json::json!({ "status": "ok" }),
-    )
-    .await
-    .expect("mark second received")
-    .expect("second still open before receive");
+    turn_obligations::mark_result_received(&pool, second.id, serde_json::json!({ "status": "ok" }))
+        .await
+        .expect("mark second received")
+        .expect("second still open before receive");
 
     let open = turn_obligations::open_client_obligations_for_run(&pool, &run_id)
         .await
@@ -212,10 +200,9 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     .await
     .expect("create second step obligation");
 
-    let open_first_step =
-        turn_obligations::open_client_obligations_for_step(&pool, first_step.id)
-            .await
-            .expect("list first step open obligations");
+    let open_first_step = turn_obligations::open_client_obligations_for_step(&pool, first_step.id)
+        .await
+        .expect("list first step open obligations");
     assert_eq!(open_first_step.len(), 1);
     assert_eq!(open_first_step[0].id, first.id);
 
@@ -225,4 +212,60 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
             .expect("list second step open obligations");
     assert_eq!(open_second_step.len(), 1);
     assert_eq!(open_second_step[0].id, second.id);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn core_obligations_support_non_bearwire_channel_waits(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let step = turn_steps::ensure_active_step(&pool, &run_id)
+        .await
+        .expect("ensure step");
+
+    let cases = [
+        (
+            TurnObligationKind::HumanInput,
+            ExpectedResponderAction::HumanInput,
+            "slack-thread-reply-1",
+        ),
+        (
+            TurnObligationKind::ResourceBinding,
+            ExpectedResponderAction::ResourceBinding,
+            "calendar-oauth-binding-1",
+        ),
+        (
+            TurnObligationKind::HandoffDecision,
+            ExpectedResponderAction::HandoffDecision,
+            "work-handoff-1",
+        ),
+    ];
+
+    for (kind, action, responder_ref_id) in cases {
+        let row = turn_obligations::create_turn_obligation_for_step(
+            &pool,
+            &run_id,
+            &session_id,
+            Some(step.id),
+            kind,
+            action,
+            responder_ref_id,
+            serde_json::json!({ "responder_ref_id": responder_ref_id }),
+        )
+        .await
+        .expect("create non-BearWire obligation");
+        assert_eq!(row.kind, kind.as_str());
+        assert_eq!(row.expected_responder_action, action.as_str());
+        assert_eq!(row.responder_ref_id.as_deref(), Some(responder_ref_id));
+        assert_eq!(row.turn_step_id, Some(step.id));
+    }
+
+    let open = turn_obligations::open_client_obligations_for_step(&pool, step.id)
+        .await
+        .expect("list open obligations");
+    assert_eq!(open.len(), 3);
 }

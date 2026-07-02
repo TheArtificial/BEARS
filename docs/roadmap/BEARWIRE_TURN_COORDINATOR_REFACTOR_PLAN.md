@@ -336,6 +336,8 @@ Done when:
 
 #### Phase 6B: add non-BearWire obligation kinds
 
+Status: implemented baseline (2026-07-02). Core turn obligations now support `human_input`, `resource_binding`, and `handoff_decision` in addition to tool-result and permission-decision waits. A generic `create_turn_obligation_for_step` helper can create non-BearWire/channel obligations with a neutral `responder_ref_id`.
+
 Extend the core obligation model beyond current tool/permission pressure:
 
 - `ToolResult`

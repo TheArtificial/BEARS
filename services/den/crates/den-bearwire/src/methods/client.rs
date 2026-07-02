@@ -711,7 +711,7 @@ pub(crate) async fn client_permission_result_result(
     }
     if !turn_obligations::obligation_accepts_responder_action(
         &obligation,
-        ExpectedResponderAction::PermissionResult,
+        ExpectedResponderAction::PermissionDecision,
     ) {
         return Err(CustomError::ValidationError(format!(
             "BearWire permission obligation {} does not accept client.permission.result (expected {}, state {})",

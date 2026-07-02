@@ -36,6 +36,9 @@ BEGIN
     END IF;
 END $$;
 
+ALTER TABLE turn_obligations
+    ADD COLUMN IF NOT EXISTS responder_ref_id TEXT NULL;
+
 UPDATE turn_obligations
 SET expected_responder_action = CASE expected_responder_action
     WHEN 'client.tool.result' THEN 'tool_result'
@@ -46,7 +49,10 @@ END;
 ALTER TABLE turn_obligations
     DROP CONSTRAINT IF EXISTS bearwire_run_obligations_expected_client_method_check,
     DROP CONSTRAINT IF EXISTS turn_obligations_expected_client_method_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_expected_responder_action_check;
+    DROP CONSTRAINT IF EXISTS turn_obligations_expected_responder_action_check,
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_tool_or_permission_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_responder_ref_check;
 
 ALTER TABLE turn_obligations
     ADD CONSTRAINT turn_obligations_expected_responder_action_check
@@ -57,6 +63,27 @@ ALTER TABLE turn_obligations
         'resource_binding',
         'handoff_decision'
     ));
+
+ALTER TABLE turn_obligations
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_kind_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_kind_check;
+
+ALTER TABLE turn_obligations
+    ADD CONSTRAINT turn_obligations_kind_check
+    CHECK (kind IN (
+        'tool_result',
+        'permission_decision',
+        'human_input',
+        'resource_binding',
+        'handoff_decision',
+        -- legacy storage values accepted during rollout
+        'tool_call',
+        'permission'
+    ));
+
+ALTER TABLE turn_obligations
+    ADD CONSTRAINT turn_obligations_responder_ref_check
+    CHECK (tool_call_id IS NOT NULL OR permission_id IS NOT NULL OR responder_ref_id IS NOT NULL);
 
 -- Rename old indexes where PostgreSQL retained their original names across table rename.
 DO $$
