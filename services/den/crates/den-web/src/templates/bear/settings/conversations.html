@@ -9,13 +9,21 @@
 
 {% if conversations and conversations | length > 0 %}
 <table>
-  <thead><tr><th>Title</th><th>External id</th><th>ACP session</th><th>Compaction</th><th>Updated</th><th></th></tr></thead>
+  <thead><tr><th>Title</th><th>External id</th><th>Client session</th><th>Context budget</th><th>Compaction</th><th>Updated</th><th></th></tr></thead>
   <tbody>
   {% for c in conversations %}
     <tr>
       <td>{{ c.title | e }}</td>
       <td><code>{{ c.external_id | e }}</code></td>
       <td>{% if c.source_session != "—" %}<code>{{ c.source_session | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>
+        {% if c.latest_context_budget %}
+          {{ c.latest_context_budget_summary | e }}<br>
+          <small>{{ c.latest_context_budget.model | e }} · {{ c.latest_context_budget.estimate_precision | e }}{% if c.latest_context_budget_updated_at %} · {{ c.latest_context_budget_updated_at }}{% endif %}</small>
+        {% else %}
+          <em>none</em>
+        {% endif %}
+      </td>
       <td>
         {% if c.compaction_event_count > 0 %}
           {{ c.compaction_status | e }} · {{ c.compaction_event_count }} event{% if c.compaction_event_count != 1 %}s{% endif %}<br>

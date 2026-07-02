@@ -15,11 +15,53 @@
   <dd>{% if conv.external_conversation_id %}<code>{{ conv.external_conversation_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
   <dt>Title</dt>
   <dd>{% if conv.current_title %}{{ conv.current_title | e }}{% else %}<em>Untitled</em>{% endif %}</dd>
-  <dt>ACP session</dt>
-  <dd>{% if conv.source_acp_session_id %}<code>{{ conv.source_acp_session_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Client session</dt>
+  <dd>{% if conv.source_client_session_id %}<code>{{ conv.source_client_session_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
   <dt>Updated</dt>
   <dd>{{ conv.updated_at }}</dd>
 </dl>
+
+<h3>Latest Context Budget</h3>
+{% if conv.latest_context_budget %}
+<dl>
+  <dt>Model</dt>
+  <dd><code>{{ conv.latest_context_budget.model | e }}</code></dd>
+  <dt>Estimate precision</dt>
+  <dd>{{ conv.latest_context_budget.estimate_precision | e }}</dd>
+  <dt>Estimated input tokens</dt>
+  <dd>{{ conv.latest_context_budget.estimated_input_tokens }}</dd>
+  <dt>Reserved output tokens</dt>
+  <dd>{{ conv.latest_context_budget.reserved_output_tokens }}</dd>
+  <dt>Estimated total tokens</dt>
+  <dd>{{ conv.latest_context_budget.estimated_total_tokens }}</dd>
+  <dt>Context window</dt>
+  <dd>{% if conv.latest_context_budget.context_window is not none %}{{ conv.latest_context_budget.context_window }}{% else %}<em>unknown</em>{% endif %}</dd>
+  <dt>Max output tokens</dt>
+  <dd>{% if conv.latest_context_budget.max_output_tokens is not none %}{{ conv.latest_context_budget.max_output_tokens }}{% else %}<em>unknown</em>{% endif %}</dd>
+  <dt>Status</dt>
+  <dd>
+    {% if conv.latest_context_budget.over_budget %}<strong>over budget</strong>
+    {% elif conv.latest_context_budget.near_budget %}<strong>near budget</strong>
+    {% else %}ok{% endif %}
+  </dd>
+  <dt>Updated</dt>
+  <dd>{% if conv.latest_context_budget_updated_at %}{{ conv.latest_context_budget_updated_at }}{% else %}<em>unknown</em>{% endif %}</dd>
+</dl>
+<table>
+  <thead><tr><th>Component</th><th>Characters</th><th>Estimated tokens</th></tr></thead>
+  <tbody>
+  {% for component in conv.latest_context_budget.components %}
+    <tr>
+      <td>{{ component.label | e }}</td>
+      <td>{{ component.estimated_characters }}</td>
+      <td>{{ component.estimated_tokens }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No context budget snapshot recorded for this conversation.</em></p>
+{% endif %}
 
 <h3>Compaction</h3>
 {% if compaction_events and compaction_events | length > 0 %}

@@ -16,6 +16,7 @@ use crate::{
         overflow_retry::compact_session_messages_for_overflow,
         session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
+    context_budget::estimate_context_budget,
     llm::{
         bifrost_key_selection_error, byte_stream_with_idle_timeout,
         execution_fallback_model_handles, preferred_api_style_for_model, ChatCompletionRequest,
@@ -498,6 +499,20 @@ pub async fn run_agent_step_stream(
         max_tokens: None,
         telemetry: Some(session.llm_telemetry()),
     };
+    let budget = estimate_context_budget(&request, &session.budget_components);
+    if let Some(overflow) = overflow.as_ref() {
+        overflow.session_store.update(&session.session_key, |stored| {
+            stored.latest_context_budget = Some(budget.clone());
+        });
+        let _ = den_service::conversation::persistence::update_latest_context_budget(
+            &overflow.pool,
+            session.bear_id,
+            &session.conversation_id,
+            Some(&session.client_session_id),
+            &budget,
+        )
+        .await;
+    }
     Ok(Box::pin(LazyAgentStepStream::new(
         llm.clone(),
         request,

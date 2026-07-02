@@ -33,6 +33,7 @@ use crate::{
     web_chat_runtime::WebChatRuntimeRequest,
 };
 use den_llm::ModelOption;
+use den_protocol::ContextBudgetReport;
 use den_service::{client_sessions, archived_conversations};
 use den_service::{
     bears::{
@@ -117,6 +118,10 @@ pub struct ChatConversationRow {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget: Option<ContextBudgetReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget_updated_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +157,10 @@ pub struct ChatHistoryResponse {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget: Option<ContextBudgetReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget_updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +241,8 @@ async fn chat_conversations(
         id: "default".to_string(),
         title: "Main chat".to_string(),
         last_message_at: None,
+        latest_context_budget: None,
+        latest_context_budget_updated_at: None,
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
@@ -261,6 +272,12 @@ async fn chat_conversations(
                             .format(&time::format_description::well_known::Rfc3339)
                             .ok()?,
                     ),
+                    latest_context_budget: row.latest_context_budget,
+                    latest_context_budget_updated_at: row
+                        .latest_context_budget_updated_at
+                        .and_then(|value| {
+                            value.format(&time::format_description::well_known::Rfc3339).ok()
+                        }),
                 })
             })
             .collect::<Vec<_>>();
@@ -405,6 +422,8 @@ async fn chat_history(
             messages: vec![],
             has_more: false,
             next_before: None,
+            latest_context_budget: None,
+            latest_context_budget_updated_at: None,
         })
     };
 
@@ -444,6 +463,10 @@ async fn chat_history(
         messages,
         has_more,
         next_before,
+        latest_context_budget: conversation.latest_context_budget,
+        latest_context_budget_updated_at: conversation
+            .latest_context_budget_updated_at
+            .and_then(|value| value.format(&time::format_description::well_known::Rfc3339).ok()),
     }))
 }
 

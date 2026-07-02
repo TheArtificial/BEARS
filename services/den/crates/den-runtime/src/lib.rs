@@ -36,6 +36,8 @@ pub mod conversation_ids;
 
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
+/// Final-request context budget estimation and component attribution.
+pub mod context_budget;
 /// Persisted BearWire client obligations for tool/permission waits and continuations.
 pub mod bearwire_obligations;
 /// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.

@@ -255,6 +255,11 @@ impl SessionTrackingStream {
     }
 
     fn server_tool_context(&self) -> DenToolInvocationContext {
+        let context_budget = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.latest_context_budget)
+            .and_then(|report| serde_json::to_value(report).ok());
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -272,7 +277,7 @@ impl SessionTrackingStream {
             session_policy: None,
             activity: None,
             runtime: None,
-            context_budget: None,
+            context_budget,
             request_id: self.request_id.clone(),
             channel: DenToolChannelContext {
                 family: Some("armature".to_string()),
@@ -851,6 +856,7 @@ mod tests {
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
             tools: Vec::new(),
+            budget_components: Default::default(),
             model: "openai/test".to_string(),
             bifrost_virtual_key: None,
             api_style: None,
@@ -859,6 +865,7 @@ mod tests {
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,
+            latest_context_budget: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

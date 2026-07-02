@@ -30,6 +30,7 @@ use crate::{
 };
 use den_core::DenError;
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
+use den_protocol::ContextBudgetReport;
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::{
     bears::{
@@ -280,6 +281,9 @@ struct ConversationAdminRow {
     compaction_status: String,
     compaction_event_count: i64,
     latest_compaction_at: Option<String>,
+    latest_context_budget: Option<ContextBudgetReport>,
+    latest_context_budget_updated_at: Option<String>,
+    latest_context_budget_summary: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -316,6 +320,19 @@ struct CompactionArtifactAdminRow {
     artifact_json: String,
     superseded_by: Option<Uuid>,
     created_at: String,
+}
+
+fn context_budget_summary(report: &ContextBudgetReport) -> String {
+    match report.context_window {
+        Some(limit) => format!(
+            "{} / {} tokens (reserve {})",
+            report.estimated_total_tokens, limit, report.reserved_output_tokens
+        ),
+        None => format!(
+            "{} tokens estimated (reserve {})",
+            report.estimated_total_tokens, report.reserved_output_tokens
+        ),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1979,6 +1996,14 @@ async fn conversations_view(
                     .unwrap_or_else(|| "none".to_string()),
                 compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
                 latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
+                latest_context_budget_updated_at: c
+                    .latest_context_budget_updated_at
+                    .map(|value| value.to_string()),
+                latest_context_budget_summary: c
+                    .latest_context_budget
+                    .as_ref()
+                    .map(context_budget_summary),
+                latest_context_budget: c.latest_context_budget,
             }
         })
         .collect();

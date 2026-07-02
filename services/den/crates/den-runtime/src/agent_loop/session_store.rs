@@ -4,10 +4,12 @@ use std::{
 };
 
 use den_core::profile::BearProfile;
+use den_protocol::ContextBudgetReport;
 use uuid::Uuid;
 
 use crate::{
     agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
+    context_budget::AssembledTurnBudgetComponents,
     llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
 
@@ -23,6 +25,7 @@ pub struct AgentLoopSession {
     pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
+    pub budget_components: AssembledTurnBudgetComponents,
     pub model: String,
     pub bifrost_virtual_key: Option<String>,
     pub api_style: Option<LlmApiStyle>,
@@ -31,6 +34,7 @@ pub struct AgentLoopSession {
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
+    pub latest_context_budget: Option<ContextBudgetReport>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,

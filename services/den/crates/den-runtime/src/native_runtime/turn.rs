@@ -384,6 +384,7 @@ async fn build_session(
         .as_ref()
         .map(|projection| projection.cache_key.clone());
     let messages = assembled.messages;
+    let budget_components = assembled.budget_components;
     let tools =
         merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
@@ -432,6 +433,7 @@ async fn build_session(
         run_id: run_id.map(str::to_string),
         messages,
         tools,
+        budget_components,
         model,
         bifrost_virtual_key,
         api_style,
@@ -440,6 +442,7 @@ async fn build_session(
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
+        latest_context_budget: None,
         profile: profile.profile,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,

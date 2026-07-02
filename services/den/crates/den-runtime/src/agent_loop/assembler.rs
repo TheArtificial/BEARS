@@ -28,6 +28,7 @@ use super::{
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
+use crate::context_budget::AssembledTurnBudgetComponents;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -86,6 +87,7 @@ pub struct AssembledNativeTurn {
     /// Diagnostic for the derived-recall section (ADR-0038 Phase 2); `None` when recall is
     /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
+    pub budget_components: AssembledTurnBudgetComponents,
 }
 
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
@@ -154,6 +156,10 @@ pub async fn assemble_native_turn_for_bear(
     bear: &Bear,
 ) -> Result<AssembledNativeTurn, DenError> {
     let compiled_prompt = profile_prompt_text(ctx.pool, bear, ctx.profile).await?;
+    let mut budget_components = AssembledTurnBudgetComponents {
+        compiled_prompt_chars: compiled_prompt.chars().count() as u32,
+        ..Default::default()
+    };
     let model_for_profile = bears_db::resolve_model_for_profile(
         ctx.pool,
         bear,
@@ -226,11 +232,13 @@ pub async fn assemble_native_turn_for_bear(
 
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
+        budget_components.key_memory_projection_chars = block.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(&block);
     }
     let recall_diagnostic = match build_recall_section(&ctx, &system_text).await {
         Some((recall_block, diagnostic)) => {
+            budget_components.recall_chars = recall_block.chars().count() as u32;
             system_text.push_str("\n\n");
             system_text.push_str(&recall_block);
             Some(diagnostic)
@@ -242,6 +250,7 @@ pub async fn assemble_native_turn_for_bear(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
+        budget_components.runtime_supplement_chars = runtime.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(runtime);
     } else if ctx.should_load_den_owned_runtime_context() {
@@ -262,20 +271,24 @@ pub async fn assemble_native_turn_for_bear(
         )
         .await?;
         if !supplement.trim().is_empty() {
+            budget_components.runtime_supplement_chars = supplement.chars().count() as u32;
             system_text.push_str("\n\n");
             system_text.push_str(&supplement);
         }
     }
     if ctx.profile == BearProfile::Chat {
-        system_text.push_str("\n\n");
-        system_text.push_str(&den_core::tools::descriptor::render_profile_tool_surface_blurb(
+        let tool_surface_blurb = den_core::tools::descriptor::render_profile_tool_surface_blurb(
             ctx.profile,
-        ));
+        );
+        budget_components.tool_surface_guidance_chars = tool_surface_blurb.chars().count() as u32;
+        system_text.push_str("\n\n");
+        system_text.push_str(&tool_surface_blurb);
     }
 
     if let Some(state) = compaction_state.as_ref() {
         let compaction_text = render_compaction_prompt_context(state);
         if !compaction_text.trim().is_empty() {
+            budget_components.compaction_chars = compaction_text.chars().count() as u32;
             system_text.push_str("\n\n");
             system_text.push_str(&compaction_text);
         }
@@ -290,7 +303,7 @@ pub async fn assemble_native_turn_for_bear(
     }];
     let compaction_active = CompactionMode::parse(&ctx.config.compaction_mode) == CompactionMode::Active;
     let transcript_cutoff = compaction_state.as_ref().and_then(|state| state.compacted_seq_cutoff);
-    messages.extend(if compaction_active && transcript_cutoff.is_some() {
+    let transcript_messages = if compaction_active && transcript_cutoff.is_some() {
         load_transcript_messages_after_seq(
             ctx.pool,
             ctx.bear_id,
@@ -300,8 +313,15 @@ pub async fn assemble_native_turn_for_bear(
         .await?
     } else {
         load_transcript_messages(ctx.pool, ctx.bear_id, ctx.conversation_id).await?
-    });
+    };
+    budget_components.transcript_chars = transcript_messages
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .map(|value| value.chars().count() as u32)
+        .sum();
+    messages.extend(transcript_messages);
     if let Some(human) = ctx.human_message.map(str::trim).filter(|s| !s.is_empty()) {
+        budget_components.current_user_input_chars = human.chars().count() as u32;
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: Some(human.to_string()),
@@ -310,6 +330,12 @@ pub async fn assemble_native_turn_for_bear(
             tool_calls: None,
         });
     }
+    budget_components.tool_message_chars = ctx
+        .tool_messages
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .map(|value| value.chars().count() as u32)
+        .sum();
     messages.extend(ctx.tool_messages.iter().cloned());
     let messages = repair_tool_call_message_chain(messages);
     let messages = if ctx.native_runtime
@@ -328,5 +354,6 @@ pub async fn assemble_native_turn_for_bear(
         messages,
         key_memory_projection: Some(projection),
         recall_diagnostic,
+        budget_components,
     })
 }
