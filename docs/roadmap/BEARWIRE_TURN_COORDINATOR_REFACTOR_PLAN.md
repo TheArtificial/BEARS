@@ -285,7 +285,7 @@ Done when:
 
 ### Phase 4: transactional obligation/event outbox
 
-Status: baseline helper implemented (2026-07-02). Runtime `client.waiting` events are now appended through a single persisted-obligation-backed helper that validates `obligation_id`, `expected_client_method`, `permission_id`, and `tool_call_id` before emitting the event. Full SQL transaction consolidation remains follow-up work.
+Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
 
 Create a single operation for answerable waits:
 

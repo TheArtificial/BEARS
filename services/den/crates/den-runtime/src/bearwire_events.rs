@@ -1,4 +1,4 @@
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
@@ -16,8 +16,8 @@ pub struct BearWireEventRow {
     pub created_at: OffsetDateTime,
 }
 
-pub async fn append_bearwire_event(
-    pool: &PgPool,
+pub async fn append_bearwire_event_on(
+    conn: &mut PgConnection,
     session_id: &str,
     bear_id: Option<Uuid>,
     user_id: Option<i32>,
@@ -37,7 +37,7 @@ pub async fn append_bearwire_event(
     .bind(user_id)
     .bind(&event.event_type)
     .bind(initial_json)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     let id: Uuid = row.get("id");
@@ -45,11 +45,10 @@ pub async fn append_bearwire_event(
     let created_at: OffsetDateTime = row.get("created_at");
     event.event_id = Some(format!("evt_{id}"));
     event.sequence = Some(sequence_no as u64);
-    event.time = Some(
-        created_at
-            .format(&Rfc3339)
-            .map_err(|err| DenError::System(format!("format BearWire event time failed: {err}")))?,
-    );
+    event.time =
+        Some(created_at.format(&Rfc3339).map_err(|err| {
+            DenError::System(format!("format BearWire event time failed: {err}"))
+        })?);
     if event.session_id.is_none() {
         event.session_id = Some(session_id.to_string());
     }
@@ -59,7 +58,7 @@ pub async fn append_bearwire_event(
     sqlx::query("UPDATE bearwire_events SET event_json = $2 WHERE id = $1")
         .bind(id)
         .bind(final_json)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     Ok(BearWireEventRow {
@@ -70,6 +69,17 @@ pub async fn append_bearwire_event(
         event,
         created_at,
     })
+}
+
+pub async fn append_bearwire_event(
+    pool: &PgPool,
+    session_id: &str,
+    bear_id: Option<Uuid>,
+    user_id: Option<i32>,
+    event: BearWireEvent,
+) -> Result<BearWireEventRow, DenError> {
+    let mut conn = pool.acquire().await?;
+    append_bearwire_event_on(&mut conn, session_id, bear_id, user_id, event).await
 }
 
 pub async fn list_bearwire_events_after(
