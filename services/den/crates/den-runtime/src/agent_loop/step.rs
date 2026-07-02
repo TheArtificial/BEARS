@@ -500,6 +500,27 @@ pub async fn run_agent_step_stream(
         telemetry: Some(session.llm_telemetry()),
     };
     let budget = estimate_context_budget(&request, &session.budget_components);
+    if budget.near_budget {
+        tracing::warn!(
+            session_key = %session.session_key,
+            model = %budget.model,
+            context_window = budget.context_window,
+            estimated_input_tokens = budget.estimated_input_tokens,
+            reserved_output_tokens = budget.reserved_output_tokens,
+            estimated_total_tokens = budget.estimated_total_tokens,
+            "context budget is near model limit"
+        );
+    }
+    if budget.over_budget {
+        return Err(DenError::ValidationError(format!(
+            "Compiled request exceeds model context budget for {}: estimated_input_tokens={}, reserved_output_tokens={}, estimated_total_tokens={}, context_window={}. Reduce transcript/context, compact the conversation, or select a larger-context model.",
+            budget.model,
+            budget.estimated_input_tokens,
+            budget.reserved_output_tokens,
+            budget.estimated_total_tokens,
+            budget.context_window.unwrap_or_default(),
+        )));
+    }
     if let Some(overflow) = overflow.as_ref() {
         overflow.session_store.update(&session.session_key, |stored| {
             stored.latest_context_budget = Some(budget.clone());

@@ -155,4 +155,34 @@ mod tests {
         assert!(report.components.iter().any(|c| c.key == "tool_schemas"));
         assert!(!report.over_budget);
     }
+
+    #[test]
+    fn estimate_context_budget_flags_over_budget() {
+        let request = ChatCompletionRequest {
+            model: "openai/gpt-4.1".to_string(),
+            messages: vec![ChatMessage {
+                role: "system".to_string(),
+                content: Some("x".repeat(5_000_000)),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            }],
+            tools: Vec::new(),
+            stream: true,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: Some(4096),
+            telemetry: None,
+        };
+        let report = estimate_context_budget(
+            &request,
+            &AssembledTurnBudgetComponents {
+                compiled_prompt_chars: 5_000_000,
+                ..Default::default()
+            },
+        );
+
+        assert!(report.near_budget);
+        assert!(report.over_budget);
+    }
 }
