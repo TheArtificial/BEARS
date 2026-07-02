@@ -1,7 +1,8 @@
 # BearWire turn coordinator refactor plan
 
-Status: draft  
+Status: implemented  
 Date: 2026-07-02  
+Last updated: 2026-07-02  
 Related ADR: [ADR-0048: Core turn/client-obligation coordinator](../decisions/adr-0048-core-turn-client-obligation-coordinator.md)
 
 ## Goal
@@ -77,7 +78,8 @@ turn_obligations
   turn_step_id
   session_id
   kind
-  expected_client_method
+  expected_responder_action
+  responder_ref_id
   tool_call_id
   permission_id
   state
@@ -88,20 +90,21 @@ turn_obligation_results
   id
   run_id
   turn_step_id
+  obligation_kind
   obligation_id
-  kind
-  target_id
-  payload_hash
-  payload
+  result_hash
+  payload_json
 ```
 
 ### Run states
 
 ```text
 accepted
-running_model
+running
 waiting_for_client
-continuing_model
+waiting_for_tool_result
+waiting_for_permission
+continuing
 completed
 failed
 cancelled
@@ -121,17 +124,15 @@ cancelled
 ### Obligation states
 
 ```text
-waiting_for_permission
-permission_granted
-permission_denied
-waiting_for_tool_result
-tool_result_received
+requested
+waiting_for_client
+result_received
 continued
 failed
 cancelled
 ```
 
-The existing `requested`, `waiting_for_client`, `result_received`, and `continued` values can remain during migration, but the coordinator should expose semantic states internally.
+The obligation `kind` and `expected_responder_action` values carry the semantic meaning (`permission_decision`, `tool_result`, `human_input`, `resource_binding`, `handoff_decision`) while the state remains protocol-neutral lifecycle state.
 
 ## Coordinator API shape
 
@@ -193,7 +194,7 @@ project_outcome_to_bearwire_response(outcome)
 
 ### Phase 0: containment and documentation
 
-Status: partially in progress.
+Status: implemented (2026-07-02).
 
 - Document ADR-0048 and this plan.
 - Treat `client.waiting` as canonical actionable wait.
@@ -235,7 +236,7 @@ Done when:
 
 ### Phase 2: extract coordinator facade
 
-Status: partially implemented (2026-07-02). `den_runtime::client_obligation_coordinator` now owns the tool-result and permission-result outcome decisions for the current run-level barrier. BearWire still performs transport/auth/result projection and starts continuation tasks from coordinator outcomes.
+Status: implemented (2026-07-02). `den_runtime::client_obligation_coordinator` owns client result recording, duplicate/conflict detection, late-result handling, permission-to-local-tool transition, tool-result settlement, and continuation-readiness decisions. BearWire performs transport/auth parsing and projects coordinator outcomes into BearWire responses, events, and continuation tasks.
 
 Create the coordinator module and move continuation decision logic out of BearWire handlers.
 
@@ -262,7 +263,7 @@ Done when:
 
 ### Phase 3: add run-step identity
 
-Status: partially implemented (2026-07-02). `turn_steps` and nullable `turn_step_id` columns are available; new BearWire tool/permission obligations are assigned to an active run step, client results record that step id, and coordinator barriers prefer step-level checks when present with run-level fallback for older rows. Follow-up work must make step identity mandatory for new active runs and extend coordinator tests around multi-step continuation.
+Status: implemented (2026-07-02). `turn_steps` and nullable `turn_step_id` columns are available; all new core wait helpers assign obligations to an active turn step, client results record that step id, stale/wrong-step results are rejected, and coordinator barriers use step-level checks when present with run-level fallback for older rows.
 
 Add schema:
 
@@ -286,7 +287,7 @@ Done when:
 
 ### Phase 4: transactional obligation/event outbox
 
-Status: implemented for active runtime tool-call waits (2026-07-02). Runtime tool-call events now transactionally update run state, ensure/create the run step, upsert the client obligation, and append the BearWire event. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `turn_step_id`. Follow-up work can generalize this transaction helper into a reusable outbox service for all BearWire event families.
+Status: implemented (2026-07-02). `den_runtime::turn_waits` owns transactional wait persistence. Runtime tool-call waits update run state, ensure/create the turn step, upsert the client obligation, and append the BearWire event in one transaction. `client.waiting` events are emitted only from persisted obligation data and include validated `obligation_id`, `expected_client_method`, `permission_id`, `tool_call_id`, and `turn_step_id`. Non-BearWire surfaces can use the generic surface-obligation transaction helper without creating another state machine.
 
 Create a single operation for answerable waits:
 
@@ -322,6 +323,8 @@ Done when:
 The coordinator must be deeper than BearWire. Keep BearWire as one projection over the coordinator, not the owner or vocabulary source for the state machine.
 
 #### Phase 6A: neutralize Rust-facing coordinator API over existing tables
+
+Status: implemented (2026-07-02).
 
 - Rename Rust-facing concepts away from BearWire where they are core turn semantics:
   - Core Rust-facing obligation rows now use neutral `TurnObligationRow` / `TurnObligationState` naming.
@@ -391,7 +394,7 @@ Done when:
 
 #### Phase 6E: typed IDs and states
 
-Status: implemented (2026-07-02). Core turn coordination now has typed ID wrappers for run/session/tool/permission/responder/action/step/obligation ids, typed parsers for turn run/step/obligation states, and neutral typed obligation kind/action parsing. Repository rows still carry storage strings at the DB boundary but expose typed parse helpers; coordinator logic uses typed action/state helpers where practical.
+Status: implemented (2026-07-02). Core turn coordination now has typed ID wrappers for run/session/tool/permission/responder/action/step/obligation ids, typed parsers for turn run/step/obligation states including neutral `waiting_for_client`, and neutral typed obligation kind/action parsing. Repository rows still carry storage strings at the DB boundary but expose typed parse helpers; coordinator logic uses typed action/state helpers where practical.
 
 Replace stringly internal control state with typed values:
 
@@ -444,6 +447,18 @@ Done when:
 - Do not move local tool execution into Den; Den coordinates, armature executes.
 - Avoid broad rewrites before Phase 1 barrier tests are in place.
 - Prefer additive schema changes and compatibility fallbacks.
+
+## Implementation status summary
+
+Implemented in the 2026-07-02 refactor series:
+
+- Core turn state persists under neutral `turn_*` names; `bearwire_events` remains the BearWire wire event log.
+- `den_runtime::client_obligation_coordinator` owns client result idempotency, conflict detection, late-result handling, step barriers, local-tool dispatch decisions, and continuation readiness.
+- `den_runtime::turn_waits` owns transactional wait persistence for BearWire tool waits and generic non-BearWire surface obligations.
+- New active waits create/update a `turn_step`, attach obligations/results to `turn_step_id`, and reject stale/wrong-step results.
+- BearWire handlers are thin adapters that authenticate/parse, call the coordinator, then project outcomes to BearWire responses/events.
+- Non-BearWire surfaces can persist and project core obligations such as web-chat `human_input` without creating a separate state machine.
+- Tests cover multi-tool barriers, tool errors as results, local/Den-hosted approval paths, denial, duplicates, late results, wrong-step results, transactional `client.waiting` IDs, non-BearWire surface projection, neutral schema names, typed states/ids, and full `den-bearwire` behavior.
 
 ## Success criteria
 
