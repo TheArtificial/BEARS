@@ -391,6 +391,8 @@ Done when:
 
 #### Phase 6E: typed IDs and states
 
+Status: implemented (2026-07-02). Core turn coordination now has typed ID wrappers for run/session/tool/permission/responder/action/step/obligation ids, typed parsers for turn run/step/obligation states, and neutral typed obligation kind/action parsing. Repository rows still carry storage strings at the DB boundary but expose typed parse helpers; coordinator logic uses typed action/state helpers where practical.
+
 Replace stringly internal control state with typed values:
 
 - `RunState`

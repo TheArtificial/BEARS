@@ -33,6 +33,22 @@ impl TurnRunState {
             Self::Cancelled => "cancelled",
         }
     }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            "running" => Ok(Self::Running),
+            "waiting_for_tool_result" => Ok(Self::WaitingForToolResult),
+            "waiting_for_permission" => Ok(Self::WaitingForPermission),
+            "continuing" => Ok(Self::Continuing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported turn run state: {other}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +63,12 @@ pub struct TurnRunRow {
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
+}
+
+impl TurnRunRow {
+    pub fn state_value(&self) -> Result<TurnRunState, DenError> {
+        TurnRunState::try_from_storage(&self.state)
+    }
 }
 
 fn row_to_run(row: sqlx::postgres::PgRow) -> TurnRunRow {

@@ -26,6 +26,19 @@ impl TurnObligationKind {
             Self::HandoffDecision => "handoff_decision",
         }
     }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "tool_result" => Ok(Self::ToolResult),
+            "permission_decision" => Ok(Self::PermissionDecision),
+            "human_input" => Ok(Self::HumanInput),
+            "resource_binding" => Ok(Self::ResourceBinding),
+            "handoff_decision" => Ok(Self::HandoffDecision),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported turn obligation kind: {other}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +58,19 @@ impl ExpectedResponderAction {
             Self::HumanInput => "human_input",
             Self::ResourceBinding => "resource_binding",
             Self::HandoffDecision => "handoff_decision",
+        }
+    }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "tool_result" => Ok(Self::ToolResult),
+            "permission_decision" => Ok(Self::PermissionDecision),
+            "human_input" => Ok(Self::HumanInput),
+            "resource_binding" => Ok(Self::ResourceBinding),
+            "handoff_decision" => Ok(Self::HandoffDecision),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported expected responder action: {other}"
+            ))),
         }
     }
 }
@@ -71,6 +97,20 @@ impl TurnObligationState {
             Self::Cancelled => "cancelled",
         }
     }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "requested" => Ok(Self::Requested),
+            "waiting_for_client" => Ok(Self::WaitingForClient),
+            "result_received" => Ok(Self::ResultReceived),
+            "continued" => Ok(Self::Continued),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported turn obligation state: {other}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,6 +130,20 @@ pub struct TurnObligationRow {
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
+}
+
+impl TurnObligationRow {
+    pub fn kind_value(&self) -> Result<TurnObligationKind, DenError> {
+        TurnObligationKind::try_from_storage(&self.kind)
+    }
+
+    pub fn expected_action(&self) -> Result<ExpectedResponderAction, DenError> {
+        ExpectedResponderAction::try_from_storage(&self.expected_responder_action)
+    }
+
+    pub fn state_value(&self) -> Result<TurnObligationState, DenError> {
+        TurnObligationState::try_from_storage(&self.state)
+    }
 }
 
 fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
@@ -491,14 +545,19 @@ pub async fn settle_outstanding_for_run(
 
 pub fn obligation_accepts_responder_action(
     obligation: &TurnObligationRow,
-    method: ExpectedResponderAction,
+    action: ExpectedResponderAction,
 ) -> bool {
-    obligation.expected_responder_action == method.as_str()
+    obligation
+        .expected_action()
+        .map(|expected| expected == action)
+        .unwrap_or(false)
 }
 
 pub fn obligation_is_open(obligation: &TurnObligationRow) -> bool {
     matches!(
-        obligation.state.as_str(),
-        "requested" | "waiting_for_client" | "result_received"
+        obligation.state_value(),
+        Ok(TurnObligationState::Requested)
+            | Ok(TurnObligationState::WaitingForClient)
+            | Ok(TurnObligationState::ResultReceived)
     )
 }

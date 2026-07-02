@@ -4,6 +4,43 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStepState {
+    StreamingModel,
+    WaitingForClient,
+    ReadyToContinue,
+    Continued,
+    Failed,
+    Cancelled,
+}
+
+impl TurnStepState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StreamingModel => "streaming_model",
+            Self::WaitingForClient => "waiting_for_client",
+            Self::ReadyToContinue => "ready_to_continue",
+            Self::Continued => "continued",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "streaming_model" => Ok(Self::StreamingModel),
+            "waiting_for_client" => Ok(Self::WaitingForClient),
+            "ready_to_continue" => Ok(Self::ReadyToContinue),
+            "continued" => Ok(Self::Continued),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported turn step state: {other}"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnStepRow {
     pub id: Uuid,
@@ -13,6 +50,12 @@ pub struct TurnStepRow {
     pub provider_response_id: Option<String>,
     pub opened_at: OffsetDateTime,
     pub closed_at: Option<OffsetDateTime>,
+}
+
+impl TurnStepRow {
+    pub fn state_value(&self) -> Result<TurnStepState, DenError> {
+        TurnStepState::try_from_storage(&self.state)
+    }
 }
 
 fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
@@ -27,10 +70,7 @@ fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
     }
 }
 
-pub async fn ensure_active_step(
-    pool: &PgPool,
-    run_id: &str,
-) -> Result<TurnStepRow, DenError> {
+pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepRow, DenError> {
     if let Some(row) = sqlx::query(
         r#"
         SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
@@ -72,7 +112,11 @@ pub async fn transition_step(
     turn_step_id: Uuid,
     state: &str,
 ) -> Result<Option<TurnStepRow>, DenError> {
-    let terminal = matches!(state, "continued" | "failed" | "cancelled");
+    let state = TurnStepState::try_from_storage(state)?;
+    let terminal = matches!(
+        state,
+        TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
+    );
     let row = sqlx::query(
         r#"
         UPDATE turn_steps
@@ -83,7 +127,7 @@ pub async fn transition_step(
         "#,
     )
     .bind(turn_step_id)
-    .bind(state)
+    .bind(state.as_str())
     .bind(terminal)
     .fetch_optional(pool)
     .await?;
@@ -95,7 +139,11 @@ pub async fn transition_active_steps_for_run(
     run_id: &str,
     state: &str,
 ) -> Result<u64, DenError> {
-    let terminal = matches!(state, "continued" | "failed" | "cancelled");
+    let state = TurnStepState::try_from_storage(state)?;
+    let terminal = matches!(
+        state,
+        TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
+    );
     let result = sqlx::query(
         r#"
         UPDATE turn_steps
@@ -106,7 +154,7 @@ pub async fn transition_active_steps_for_run(
         "#,
     )
     .bind(run_id)
-    .bind(state)
+    .bind(state.as_str())
     .bind(terminal)
     .execute(pool)
     .await?;

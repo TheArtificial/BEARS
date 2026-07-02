@@ -42,11 +42,13 @@ pub mod client_obligation_coordinator;
 pub mod context_budget;
 /// Surface projection contracts for turn obligations.
 pub mod surface_projection;
-/// Persisted BearWire client obligations for tool/permission waits and continuations.
+/// Typed identifiers for turn coordination.
+pub mod turn_ids;
+/// Persisted core turn obligations for tool/permission/human/channel waits.
 pub mod turn_obligations;
-/// Persisted BearWire run lifecycle state machine for the Den ↔ armature wire.
+/// Persisted core turn run lifecycle state machine.
 pub mod turn_runs;
-/// Persisted BearWire model-step lifecycle for the Den ↔ armature wire.
+/// Persisted core model-step lifecycle.
 pub mod turn_steps;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
