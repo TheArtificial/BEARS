@@ -6,6 +6,7 @@
 
 **Related:**
 - [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) — the single in-process agent loop and strategy policy this ADR protects
+- [ADR-0048](adr-0048-core-turn-client-obligation-coordinator.md) — core turn/client-obligation coordination must remain protocol-neutral and Den-owned
 - [ADR-0029](adr-0029-den-structured-runtime-events.md) — Den structured runtime (semantic) events
 - [ADR-0030](adr-0030-bearwire-resource-oriented-event-model.md) — BearWire resource-oriented event model (the canonical event seam)
 - [ADR-0003](adr-0003-acp-session-bindings.md) — ACP session bindings (genuinely edge-only)
@@ -37,7 +38,7 @@ Treat ACP as an **edge adapter** and make the Den runtime **protocol-agnostic in
 
 ### 1. The core owns turns, sessions, tool-turns, and events under neutral names
 
-The agent loop and its machinery — turn lifecycle, tool-turn coordination, cancellation, session/conversation identity, the semantic event stream — are **core concepts** (ADR-0035). They live in `den-runtime` / `den-core` and **must not carry an `acp` prefix or ACP-shaped types**. The canonical event vocabulary is the BearWire semantic-event model (ADR-0029/0030), not `AcpGatewayEvent`.
+The agent loop and its machinery — turn lifecycle, tool-turn coordination, cancellation, session/conversation identity, client-obligation settlement, continuation barriers, and the semantic event stream — are **core concepts** (ADR-0035, ADR-0048). They live in `den-runtime` / `den-core` and **must not carry an `acp` prefix or ACP-shaped types**. The canonical event vocabulary is the BearWire semantic-event model (ADR-0029/0030), not `AcpGatewayEvent`.
 
 Target end state: **zero `acp_*` modules or `Acp*` public types in `den-runtime` and `den-core`.**
 
@@ -80,7 +81,7 @@ This is a renaming-and-relocation refactor, not a behavior change. It proceeds b
 
 The machinery being renamed here **is** the ADR-0035 agent loop. The ACP surgery must preserve, not dilute, these conclusions:
 
-- **One agent loop, in-process, for every role.** Roles differ only by capability profile (tool roster, memory scope, autonomy policy, sandbox). The turn controller / tool-turn coordinator / session machinery are that loop's organs — they are protocol-neutral and stay in the core. (The fact that they are currently named `acp_*` is the bug this ADR fixes, not evidence that they belong to ACP.)
+- **One agent loop, in-process, for every role.** Roles differ only by capability profile (tool roster, memory scope, autonomy policy, sandbox). The turn controller / tool-turn coordinator / client-obligation coordinator / session machinery are that loop's organs — they are protocol-neutral and stay in the core. (The fact that some were historically named `acp_*` was the bug this ADR fixed, not evidence that they belong to ACP.)
 - **One loop primitive; patterns as a thin strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), selected by the ADR-0033 model-tasks layer — **not** a forked-runtime or pluggable "agent-pattern" framework. ReAct is the substrate; Reflexion / Reflection / best-of-N are compositions realized via Docket + per-Bear SQLite + subagent fan-out. LATS tree search and LLM Compiler DAG engines remain **deferred**. (See [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) §strategy policy and [den-native-runtime.md#loop-strategies](../architecture/den-native-runtime.md#loop-strategies).)
 - **The canonical seam is BearWire semantic events** (ADR-0029/0030). The renaming must route through that seam (core emits semantic events; the adapter projects them), so that adding the next edge (REST streaming, desktop companion, CI runner) is a new projection — never another fork of the loop.
 

@@ -10,6 +10,7 @@
 - [ADR-0029](adr-0029-den-structured-runtime-events.md) — Den structured runtime (semantic) events
 - [ADR-0030](adr-0030-bearwire-resource-oriented-event-model.md) — BearWire resource-oriented event taxonomy
 - [ADR-0003](adr-0003-acp-session-bindings.md) — ACP session bindings (edge-fed into Den session store)
+- [ADR-0048](adr-0048-core-turn-client-obligation-coordinator.md) — protocol-neutral turn/client-obligation coordinator; BearWire is transport, not the continuation state machine
 - [BearWire JSON specification](../architecture/bearwire-json-spec.md)
 - [BearWire Rust design](../architecture/bearwire-rust-design.md)
 - [BearWire armature wire implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
@@ -54,10 +55,10 @@ ACP translation (stdio framing, editor permission UX, local tool execution) stay
 
 ### 2. Evolve the gateway edge into the BearWire edge — do not delete it
 
-The crate/module that today serves `/acp/**` (typically `den-acp`, composed by the binary) **evolves** into the **BearWire HTTP edge** (`den-bearwire` is an acceptable rename when the migration completes). It remains responsible for:
+The crate/module that today serves `/acp/**` (typically `den-acp`, composed by the binary) **evolves** into the **BearWire HTTP edge** (`den-bearwire` is an acceptable rename when the migration completes). It is a transport/projection edge over Den's protocol-neutral turn/client-obligation coordinator; it must not own model-continuation decisions (see ADR-0048). It remains responsible for:
 
 - transport termination (auth, TLS, rate limits at the HTTP boundary)
-- mapping BearWire control methods to den-runtime operations
+- mapping BearWire control methods to den-runtime coordinator operations
 - emitting BearWire `event` notifications on the run stream
 - session binding persistence and multi-tenant authorization
 

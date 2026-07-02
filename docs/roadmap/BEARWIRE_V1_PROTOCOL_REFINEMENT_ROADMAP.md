@@ -2,7 +2,7 @@
 
 **Status:** Draft  
 **Date:** 2026-06-22  
-**Related:** [BearWire armature wire plan](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [BearWire JSON specification](../architecture/bearwire-json-spec.md), [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md), [ADR-0043: ACP Is an Edge Adapter; the Den Runtime Is Protocol-Agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)
+**Related:** [BearWire armature wire plan](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [BearWire turn coordinator refactor plan](BEARWIRE_TURN_COORDINATOR_REFACTOR_PLAN.md), [BearWire JSON specification](../architecture/bearwire-json-spec.md), [ADR-0034: BearWire as the Den ↔ armature wire](../decisions/adr-0034-bearwire-as-den-armature-wire.md), [ADR-0043: ACP Is an Edge Adapter; the Den Runtime Is Protocol-Agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md), [ADR-0048: Core turn/client-obligation coordinator](../decisions/adr-0048-core-turn-client-obligation-coordinator.md)
 
 ## Purpose
 
@@ -96,6 +96,8 @@ Rules:
 - `bearwire_run_obligations` remains Den's source of truth.
 - Wire events reflect persisted obligation state, not transient in-memory waits.
 - Client result methods validate `(session_id, run_id, obligation_id, expected_method)` before settling.
+- Client result methods feed the core turn/client-obligation coordinator; they do not independently decide model continuation.
+- Model continuation is legal only after the current model step has no open client obligations.
 - Duplicate replay of the same result is deterministic.
 - Conflicting duplicate results are rejected.
 
