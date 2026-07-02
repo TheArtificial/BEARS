@@ -132,7 +132,7 @@ Editor ──ACP stdio──► bears-acp-adapter
 | Task | Location | Notes |
 | --- | --- | --- |
 | BearWire HTTP client (RPC + SSE consumer) | `tools/bear-armature` | Implemented opt-in path: `initialize`, `session.open`, `run.start`, event replay, fallback to legacy `/acp` unless `BEARS_BEARWIRE_REQUIRED=1` |
-| BearWire client result methods | `tools/bear-armature` + `den-bearwire` | Implemented routing for `client.tool.result` and `client.permission.result` when BearWire events carry `run_id`; persisted `bearwire_run_obligations` introduced as the intended source of truth for waits/continuations |
+| BearWire client result methods | `tools/bear-armature` + `den-bearwire` | Implemented routing for `client.tool.result` and `client.permission.result` when BearWire events carry `run_id`; core `turn_obligations` are the intended source of truth for waits/continuations |
 | BearWire session lifecycle/resource methods | `tools/bear-armature` | Implemented BearWire `session.close`, `run.cancel`, and `resource.update` paths with legacy fallback |
 | Move any remaining ACP-specific descriptor framing | adapter + den-bearwire | BearWire forwards armature `client_context`; Den derives Pair local tool descriptors from armature direct-tool capabilities. Descriptor vocabulary cleanup remains Phase 6 terminology/neutrality work |
 | Dual-mode operation | adapter config | Implemented opt-in `BEARS_BEARWIRE=1`, auto-probe with `BEARS_BEARWIRE=auto`, and strict mode via `BEARS_BEARWIRE_REQUIRED=1`; default-to-BearWire remains Phase 4 |
@@ -142,18 +142,18 @@ Editor ──ACP stdio──► bears-acp-adapter
 
 ## Phase 3.1 — BearWire obligation authority cleanup — Complete
 
-**Goal:** Make persisted `bearwire_run_obligations` the only source of truth for tool/permission waits and continuations. The legacy active fields on `bearwire_runs` (`active_tool_call_id`, `active_permission_id`, `active_request_id`) should become derived/debug-only and then be removed.
+**Goal:** Make persisted core turn obligations the only source of truth for tool/permission waits and continuations. The legacy active fields on the run table (`active_tool_call_id`, `active_permission_id`, `active_request_id`) should become derived/debug-only and then be removed.
 
 | Task | Location | Notes |
 | --- | --- | --- |
-| Treat `bearwire_run_obligations` as authoritative in handlers | `den-bearwire` | Complete. `client.tool.result` and `client.permission.result` validate expected client method and state from obligation rows |
-| Stop writing active obligation fields for new logic | `den-bearwire` / `den-runtime` | Complete. `bearwire_runs.state` remains lifecycle summary; active tool/permission/request IDs are no longer part of the run model |
-| Add active obligation query helpers | `den-runtime::bearwire_obligations` | Partially complete. Helpers exist for specific tool/permission obligations; add session/run list helpers later if `/status` needs richer obligation inspection |
+| Treat `turn_obligations` as authoritative in handlers | `den-bearwire` | Complete. `client.tool.result` and `client.permission.result` validate expected responder action and state from obligation rows |
+| Stop writing active obligation fields for new logic | `den-bearwire` / `den-runtime` | Complete. `turn_runs.state` remains lifecycle summary; active tool/permission/request IDs are no longer part of the run model |
+| Add active obligation query helpers | `den-runtime::turn_obligations` | Partially complete. Helpers exist for specific tool/permission obligations; add session/run list helpers later if `/status` needs richer obligation inspection |
 | Update run cancellation/failure/completion to settle obligations | `den-bearwire` | Complete. Terminal run states now settle outstanding obligation rows as `continued`, `failed`, or `cancelled`; richer stale-obligation reporting remains optional observability work |
-| Remove `bearwire_runs.active_tool_call_id`, `active_permission_id`, `active_request_id` | migration + Rust structs | Complete. Added drop-column migration and removed fields from `BearWireRunRow` / run queries |
+| Remove legacy active tool/permission/request columns | migration + Rust structs | Complete. Added drop-column migration and removed fields from turn run rows/queries |
 | Add regression tests for obligation authority | `den-bearwire` | Complete. Added wrong-method, fresh-state/reconnect-shaped persisted obligation, duplicate retry, duplicate conflict, and cancel-settlement coverage |
 
-**Exit gate:** Met: no BearWire code reads or writes `bearwire_runs.active_*`, the columns are dropped by migration, client result handlers validate persisted obligations, terminal run states settle outstanding obligations, and hardening tests cover wrong-method/reconnect-shaped/cancel/duplicate-result cases. Remaining work is optional richer stale-obligation reporting if `/status` needs it.
+**Exit gate:** Met: no BearWire code reads or writes legacy active run fields, the columns are dropped by migration, client result handlers validate persisted turn obligations, terminal run states settle outstanding obligations, and hardening tests cover wrong-method/reconnect-shaped/cancel/duplicate-result cases. Remaining work is optional richer stale-obligation reporting if `/status` needs it.
 
 ## Phase 3.2 — State isolation and continuation audit — Complete
 
@@ -267,7 +267,7 @@ A **stance** is a named posture of the same Bear (`chat`, `pair`, `curate`, `wor
 | WebSocket delayed indefinitely | v1 HTTP+SSE is full BearWire semantics, not a throwaway format |
 | Large adapter change | Dual-mode + feature flag; legacy default until Phase 4 |
 | `GatewayEvent` channels entangled with SSE | Phase 1 wire types bypass channels; handlers attach settlement server-side |
-| Duplicate run/obligation state machines diverge | Phase 3.1 makes `bearwire_run_obligations` authoritative and removes/deprecates `bearwire_runs.active_*` |
+| Duplicate run/obligation state machines diverge | Phase 3.1 made core `turn_obligations` authoritative and removed/deprecated legacy active run fields |
 | Stance/profile/mode terminology remains confused | Phase 6 explicitly scrubs product/model-facing language and reserves “mode” for `ask` / `plan` / `write` only |
 
 ## Out of scope

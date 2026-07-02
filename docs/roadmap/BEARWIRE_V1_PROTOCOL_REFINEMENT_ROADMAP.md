@@ -93,8 +93,8 @@ obligation.opened -> obligation.failed
 
 Rules:
 
-- `bearwire_run_obligations` remains Den's source of truth.
-- Wire events reflect persisted obligation state, not transient in-memory waits.
+- Core `turn_obligations` remains Den's source of truth.
+- BearWire wire events reflect persisted obligation state, not transient in-memory waits.
 - Client result methods validate `(session_id, run_id, obligation_id, expected_method)` before settling.
 - Client result methods feed the core turn/client-obligation coordinator; they do not independently decide model continuation.
 - Model continuation is legal only after the current model step has no open client obligations.
@@ -526,7 +526,7 @@ Goal: expose Den's persisted obligation authority directly on the wire.
 Tasks:
 
 - Add `obligation.*` wire types.
-- Emit `obligation.opened` when persisted `bearwire_run_obligations` rows become pending.
+- Emit `obligation.opened` when persisted `turn_obligations` rows become pending.
 - Emit terminal obligation events when obligations settle, expire, fail, or are cancelled.
 - Update `client.tool.result` and `client.permission.result` docs to require `obligation_id` where available.
 - Add replay/reconnect tests proving obligation state can be reconstructed from persistence.

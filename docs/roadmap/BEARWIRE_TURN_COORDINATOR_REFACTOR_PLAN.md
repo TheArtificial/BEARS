@@ -57,7 +57,7 @@ Armature / channel adapters
 ### Tables / persisted concepts
 
 ```text
-bearwire_runs
+turn_runs
   run_id
   session_id
   state
@@ -374,18 +374,20 @@ Done when:
 
 - Adding a channel means writing a projection for supported obligation kinds, not creating another turn state machine.
 
-#### Phase 6D: optional persistence rename/migration
+#### Phase 6D: persistence rename/migration
 
-After coordinator semantics stabilize, decide whether to rename transitional backing tables:
+Status: implemented (2026-07-02). Core turn state uses neutral persistence names: `turn_runs`, `turn_steps`, `turn_obligations`, and `turn_obligation_results`. `bearwire_events` remains BearWire-specific because it is the wire event log.
+
+Completed renames:
 
 - `bearwire_runs` → `turn_runs`
 - `bearwire_run_obligations` → `turn_obligations`
 - `bearwire_client_results` → `turn_obligation_results`
-- `bearwire_events` remains BearWire-specific because it is the wire event log.
 
 Done when:
 
-- DB names match ownership, or a documented compatibility reason explains why they remain BearWire-prefixed.
+- DB names match ownership.
+- Schema regression verifies neutral `turn_*` tables/columns and preserves only intentional BearWire wire tables.
 
 #### Phase 6E: typed IDs and states
 
