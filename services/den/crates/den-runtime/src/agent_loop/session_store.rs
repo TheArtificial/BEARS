@@ -21,6 +21,7 @@ pub struct AgentLoopSession {
     pub user_id: Option<i32>,
     pub conversation_id: String,
     pub client_session_id: String,
+    pub workspace_roots: Vec<String>,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,

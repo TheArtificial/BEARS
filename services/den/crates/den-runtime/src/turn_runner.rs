@@ -30,6 +30,7 @@ pub struct TurnStartRequest<'a> {
     pub bear_slug: &'a str,
     pub client: &'a str,
     pub cwd: Option<&'a str>,
+    pub workspace_roots: Option<&'a [String]>,
     pub binding: &'a den_protocol::RoleRuntimeBinding,
     pub conversation_selection: &'a str,
     pub upstream_target: &'a str,

@@ -87,6 +87,7 @@ pub(crate) async fn session_open_result(
         .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
     let cwd = param_string(params, "cwd");
     let current_mode = param_string(params, "mode");
+    let client_context = params.get("client_context").cloned();
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {
@@ -103,6 +104,16 @@ pub(crate) async fn session_open_result(
         },
     )
     .await?;
+    if let Some(client_context) = client_context.as_ref() {
+        client_sessions::update_adapter_environment(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            &session_id,
+            client_context,
+        )
+        .await?;
+    }
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,

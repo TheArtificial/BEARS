@@ -255,6 +255,11 @@ impl SessionTrackingStream {
     }
 
     fn server_tool_context(&self) -> DenToolInvocationContext {
+        let workspace_roots = self
+            .store
+            .get(&self.session_key)
+            .map(|session| session.workspace_roots)
+            .unwrap_or_default();
         let context_budget = self
             .store
             .get(&self.session_key)
@@ -273,7 +278,7 @@ impl SessionTrackingStream {
             client_session_id: Some(self.client_session_id.clone()),
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
-            workspace_roots: Vec::new(),
+            workspace_roots,
             session_policy: None,
             activity: None,
             runtime: None,
@@ -818,10 +823,13 @@ mod tests {
     };
 
     use crate::{
-        agent_loop::StrategyProfile,
+        agent_loop::{NativeToolDispatchMode, StrategyProfile},
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
+    use den_core::config::Config;
+    use den_memory::MemoryStoreManager;
     use den_protocol::RuntimeStreamEvent;
+    use den_service::bears::BearProfile;
 
     fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {
         unsafe fn clone(data: *const ()) -> RawWaker {
@@ -855,6 +863,7 @@ mod tests {
             user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
@@ -909,6 +918,36 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("checking"));
         assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[tokio::test]
+    async fn server_tool_context_inherits_workspace_roots_from_session() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session_key = "den-conv-test:client-test";
+        let mut session = test_session(session_key, bear_id);
+        session.workspace_roots = vec!["/workspace/project".to_string()];
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
+                .expect("lazy pool"),
+            bear_id,
+            session.bear_slug.clone(),
+            session.user_id,
+            session.conversation_id.clone(),
+            session.client_session_id.clone(),
+            session.request_id.clone(),
+            Arc::new(Config::test_stub()),
+            MemoryStoreManager::new(&Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let context = stream.server_tool_context();
+        assert_eq!(context.workspace_roots, vec!["/workspace/project".to_string()]);
     }
 
     #[tokio::test]

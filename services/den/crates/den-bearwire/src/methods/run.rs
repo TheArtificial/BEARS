@@ -78,6 +78,22 @@ fn client_tool_descriptors_from_context(
     json!(descriptors)
 }
 
+fn workspace_roots_from_client_context(client_context: Option<&Value>) -> Vec<String> {
+    client_context
+        .and_then(|context| context.get("workspace_roots"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 fn runtime_upstream_target(
     conversation_selection: &str,
     resolved_conversation_id: Option<&str>,
@@ -1012,10 +1028,12 @@ pub(crate) async fn run_start_result(
     let upstream_target =
         runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
     let cwd = param_string(params, "cwd");
+    let client_context = params.get("client_context").cloned();
+    let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
     let requested_mode =
         param_string(params, "requested_mode").or_else(|| param_string(params, "mode"));
     let client_tools = client_tool_descriptors_from_context(
-        params.get("client_context"),
+        client_context.as_ref(),
         requested_mode.as_deref(),
     );
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
@@ -1046,6 +1064,16 @@ pub(crate) async fn run_start_result(
         },
     )
     .await?;
+    if let Some(client_context) = client_context.as_ref() {
+        client_sessions::update_adapter_environment(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            &session_id,
+            client_context,
+        )
+        .await?;
+    }
 
     if let Some(active_run) = turn_runs::supersede_active_run_for_session(
         &state.sqlx_pool,
@@ -1178,6 +1206,7 @@ pub(crate) async fn run_start_result(
             bear_slug: &bear_slug,
             client: &client,
             cwd: cwd.as_deref(),
+            workspace_roots: Some(&workspace_roots),
             binding: &binding,
             conversation_selection: &conversation_for_task,
             upstream_target: &upstream_target_for_task,

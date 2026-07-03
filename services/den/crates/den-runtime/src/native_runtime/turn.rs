@@ -636,6 +636,7 @@ async fn build_session(
         user_id,
         conversation_id: conversation_id.to_string(),
         client_session_id: client_session_id.to_string(),
+        workspace_roots: workspace_roots.map(|items| items.to_vec()).unwrap_or_default(),
         request_id: request_id.map(|id| id.to_string()),
         run_id: run_id.map(str::to_string),
         messages,
@@ -815,7 +816,11 @@ pub async fn start_native_profile_turn_event_stream(
         materialize_runtime_conversation_if_needed(&runtime_conversations, &request).await?;
     let conversation_id = materialized.conversation_id;
     let client_session_id = request.session_id;
-    let workspace_roots = request.cwd.map(|cwd| vec![cwd.to_string()]);
+    let workspace_roots = request
+        .workspace_roots
+        .map(|roots| roots.to_vec())
+        .filter(|roots| !roots.is_empty())
+        .or_else(|| request.cwd.map(|cwd| vec![cwd.to_string()]));
     let prompt_for_model = prompt_for_model(request.prompt, request.prompt_context.as_ref());
     let session = build_session(
         &NativeRuntimeDeps {
@@ -1010,7 +1015,7 @@ async fn execute_approved_den_tool_for_session(
         client_session_id: Some(session.client_session_id.clone()),
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),
-        workspace_roots: Vec::new(),
+        workspace_roots: session.workspace_roots.clone(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -1250,6 +1255,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id: None,
             run_id: Some("run-max-step".to_string()),
             messages: Vec::new(),
@@ -1327,6 +1333,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id: Some("request-before-tool".to_string()),
             run_id: Some("run-visible-tool".to_string()),
             messages: vec![
@@ -1491,6 +1498,7 @@ mod tests {
             user_id: Some(user_id),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id: Some(request_id.clone()),
             run_id: Some("run-persisted-visible".to_string()),
             messages: vec![ChatMessage {
@@ -1635,6 +1643,7 @@ mod tests {
             user_id: Some(user_id),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id: Some(request_id.clone()),
             run_id: Some("run-load-history".to_string()),
             messages: vec![ChatMessage {
