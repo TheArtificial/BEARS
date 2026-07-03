@@ -193,8 +193,11 @@ services:
         image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
         restart: unless-stopped
         depends_on:
+            bears-den-migrate:
+                condition: service_completed_successfully
             bears-bifrost:
                 condition: service_healthy
+        command: ["serve"]
         environment:
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
@@ -262,6 +265,73 @@ services:
         expose:
             - "3000"
             - "3001"
+
+    bears-den-migrate:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        restart: "no"
+        depends_on:
+            bears-preflight-config:
+                condition: service_completed_successfully
+            bears-preflight-den-db:
+                condition: service_completed_successfully
+            bears-bifrost:
+                condition: service_healthy
+        command: ["migrate"]
+        environment:
+            BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
+            DATABASE_URL: ${DATABASE_URL:-SETME}
+            DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
+            DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-3}
+            DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
+            SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
+            JWT_SECRET: ${JWT_SECRET:-SETME}
+            DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
+            RUN_WEB: ${RUN_WEB:-true}
+            RUN_API: ${RUN_API:-true}
+            RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUST_LOG: ${RUST_LOG:-info}
+            PORT: ${DEN_PORT:-3000}
+            API_PORT: ${DEN_API_PORT:-3001}
+            DEN_GIT_SHA_OVERRIDE: ${DEN_GIT_SHA_OVERRIDE:-${SOURCE_COMMIT:-}}
+            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
+            APP_SLUG: ${APP_SLUG:-bears-den}
+            DEN_WEB_ORIGIN: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            DEN_API_ORIGIN: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            WEB_SERVER_URL: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            API_SERVER_URL: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+            SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+            MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
+            MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+            MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
+            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            QDRANT_URL: ${QDRANT_URL:-}
+            EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
+            EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+            EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+            DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
+            BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+            DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
+            S3_ENDPOINT: ${S3_ENDPOINT:-}
+            S3_BUCKET: ${S3_BUCKET:-}
+            S3_REGION: ${S3_REGION:-garage}
+            S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+            S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+            S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+            S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+            GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
+            GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
+            GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
 
 volumes:
     bears-postgres-data:

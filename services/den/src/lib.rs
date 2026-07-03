@@ -21,7 +21,8 @@ pub use den_web as web;
 
 use crate::config::Config;
 use crate::startup::{
-    run_sqlx_migrations, validate_runtime_config, validate_upstream_connections, StartupError,
+    ensure_database_schema_supported, run_sqlx_migrations, validate_runtime_config,
+    validate_upstream_connections, StartupError,
 };
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -94,40 +95,41 @@ fn native_web_chat_runtime() -> Arc<dyn web::web_chat_runtime::WebChatRuntime> {
 
 /// Run all enabled services until a shutdown signal (Ctrl+C, or SIGTERM on Unix).
 pub async fn run() -> Result<(), StartupError> {
+    run_server(false).await
+}
+
+pub async fn serve_without_migrations() -> Result<(), StartupError> {
+    run_server(true).await
+}
+
+pub async fn migrate_only() -> Result<(), StartupError> {
+    init_tracing()?;
+
+    let build = crate::build_info::snapshot();
+    tracing::info!(
+        service = build.service,
+        version = build.version,
+        git_sha = build.git_sha,
+        built_at_utc = build.built_at_utc,
+        "Starting migration job",
+    );
+
+    let config = Arc::new(Config::load());
+    validate_runtime_config(config.as_ref())?;
+    let sqlx_pool = connect_database(config.as_ref()).await?;
+    ensure_database_schema_supported(&sqlx_pool).await?;
+    run_sqlx_migrations(&sqlx_pool).await?;
+    tracing::info!(
+        schema_version = crate::startup::embedded_schema_version(),
+        "SQLx migrations completed successfully"
+    );
+    Ok(())
+}
+
+async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
     let mut task_set = JoinSet::new();
 
-    let tracing_filter: String;
-    #[cfg(feature = "production")]
-    {
-        tracing_filter = "den=info,\
-            den::web=info,\
-            den::api=info,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
-    #[cfg(not(feature = "production"))]
-    {
-        tracing_filter = "den=info,\
-            den::core=debug,\
-            den::web=debug,\
-            den::api=debug,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
-
-    tracing_subscriber::registry()
-        .with(EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or(tracing_filter),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()
-        .map_err(|e| StartupError::Tracing(e.to_string()))?;
+    init_tracing()?;
 
     // Inject the concrete builtin-Den-tool invoker into the API/armature edges. The edge
     // (den-api) depends only on the `RuntimeToolInvoker` trait; the den-side tool
@@ -180,47 +182,17 @@ pub async fn run() -> Result<(), StartupError> {
         );
     }
 
-    let db_redacted = redact_database_url(&config.database_url);
-    tracing::info!(
-        db_url = %db_redacted,
-        max_connections = config.db_max_connections,
-        acquire_timeout_secs = config.db_acquire_timeout_secs,
-        idle_timeout_secs = config.db_idle_timeout_secs,
-        "Connecting to database",
-    );
-
-    let idle_timeout = if config.db_idle_timeout_secs == 0 {
-        None
+    let sqlx_pool = connect_database(config.as_ref()).await?;
+    ensure_database_schema_supported(&sqlx_pool).await?;
+    if skip_migrations {
+        tracing::info!(
+            schema_version = crate::startup::embedded_schema_version(),
+            "Skipping startup SQLx migrations; assuming deploy-time migration job already succeeded"
+        );
     } else {
-        Some(std::time::Duration::from_secs(config.db_idle_timeout_secs))
-    };
-
-    let sqlx_pool = PgPoolOptions::new()
-        .max_connections(config.db_max_connections)
-        .acquire_timeout(std::time::Duration::from_secs(
-            config.db_acquire_timeout_secs,
-        ))
-        .idle_timeout(idle_timeout)
-        .connect(&config.database_url)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                db_url = %db_redacted,
-                error = %e,
-                "Failed to connect to database — is Postgres running and accepting connections?",
-            );
-            StartupError::Database {
-                message: format!("{e}"),
-                db_url: db_redacted.clone(),
-                hint: "Check that Postgres is running, DATABASE_URL is correct, \
-                       and the host/port are reachable from this container."
-                    .into(),
-            }
-        })?;
-
-    tracing::info!("Database connected successfully");
-
-    run_sqlx_migrations(&sqlx_pool).await?;
+        run_sqlx_migrations(&sqlx_pool).await?;
+    }
+    ensure_database_schema_supported(&sqlx_pool).await?;
 
     let session_store = PostgresStore::new(sqlx_pool.clone());
     session_store
@@ -421,6 +393,84 @@ pub async fn run() -> Result<(), StartupError> {
 
     tracing::info!("Shutdown complete.");
     Ok(())
+}
+
+fn init_tracing() -> Result<(), StartupError> {
+    let tracing_filter: String;
+    #[cfg(feature = "production")]
+    {
+        tracing_filter = "den=info,\
+            den::web=info,\
+            den::api=info,\
+            tower_sessions=info,\
+            tower_http=info,\
+            axum=info,\
+            axum_login=info"
+            .to_string();
+    }
+    #[cfg(not(feature = "production"))]
+    {
+        tracing_filter = "den=info,\
+            den::core=debug,\
+            den::web=debug,\
+            den::api=debug,\
+            tower_sessions=info,\
+            tower_http=info,\
+            axum=info,\
+            axum_login=info"
+            .to_string();
+    }
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or(tracing_filter),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()
+        .map_err(|e| StartupError::Tracing(e.to_string()))
+}
+
+async fn connect_database(config: &Config) -> Result<sqlx::PgPool, StartupError> {
+    let db_redacted = redact_database_url(&config.database_url);
+    tracing::info!(
+        db_url = %db_redacted,
+        max_connections = config.db_max_connections,
+        acquire_timeout_secs = config.db_acquire_timeout_secs,
+        idle_timeout_secs = config.db_idle_timeout_secs,
+        "Connecting to database",
+    );
+
+    let idle_timeout = if config.db_idle_timeout_secs == 0 {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(config.db_idle_timeout_secs))
+    };
+
+    let sqlx_pool = PgPoolOptions::new()
+        .max_connections(config.db_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.db_acquire_timeout_secs,
+        ))
+        .idle_timeout(idle_timeout)
+        .connect(&config.database_url)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                db_url = %db_redacted,
+                error = %e,
+                "Failed to connect to database — is Postgres running and accepting connections?",
+            );
+            StartupError::Database {
+                message: format!("{e}"),
+                db_url: db_redacted.clone(),
+                hint: "Check that Postgres is running, DATABASE_URL is correct, \
+                       and the host/port are reachable from this container."
+                    .into(),
+            }
+        })?;
+
+    tracing::info!("Database connected successfully");
+    Ok(sqlx_pool)
 }
 
 async fn shutdown_signal() {

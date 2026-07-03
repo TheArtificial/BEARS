@@ -5,7 +5,7 @@
 ## Overview
 
 - **One image, one binary** — built from [`Dockerfile`](Dockerfile) in this directory. Runtime behavior is controlled with **environment variables** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`, ports, `DATABASE_URL`, …). Deeper reference: [`docs/deploy.md`](docs/deploy.md) and [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
-- **PostgreSQL is mandatory** — Den exits on startup if it cannot use `DATABASE_URL`. The **database must exist** (empty is fine); on each start Den runs **embedded SQLx migrations** from [`migrations/`](migrations/) against that URL before serving traffic, so routine deploys do not need a separate migration job. By default migrations are **strict** (see `SQLX_MIGRATE_IGNORE_MISSING` in [`.env.example`](.env.example) / [`docs/deploy.md`](docs/deploy.md)—leave it unset in production).
+- **PostgreSQL is mandatory** — Den exits on startup if it cannot use `DATABASE_URL`. The **database must exist** (empty is fine). In the compose deployment, a one-off `bears-den-migrate` job runs embedded SQLx migrations from [`migrations/`](migrations/) before the long-running `bears-den` service is allowed to start. By default migrations are **strict** (see `SQLX_MIGRATE_IGNORE_MISSING` in [`.env.example`](.env.example) / [`docs/deploy.md`](docs/deploy.md)—leave it unset in production).
 - **SQLx at image build time** — the `Dockerfile` runs `cargo build` with compile-time SQLx checks. Coolify’s build environment must supply a **`DATABASE_URL` build argument** that resolves **from the build machine** (often the same Postgres you use at runtime, reachable on the Docker build network). See **Build-time database** below.
 
 ## Prerequisites
@@ -22,7 +22,7 @@
 ### 1. Database (before first deploy)
 
 1. Provision **PostgreSQL** (Coolify **Add Resource** → **Database** → PostgreSQL, or attach an existing instance).
-2. Create an **empty database** (or pick an existing one) and a role with permission to create tables and run DDL — Den applies schema automatically on startup.
+2. Create an **empty database** (or pick an existing one) and a role with permission to create tables and run DDL — the deploy-time migration job applies schema before `bears-den` is switched over.
 
 ### 2. Create the Den resource
 
@@ -56,7 +56,7 @@ If you want `/version` and `/status.json` to report deploy metadata **without** 
 
 If you omit `SQLX_OFFLINE=true`, the build needs a reachable Postgres so SQLx can verify queries against a database that has applied the current migrations (same as before). Offline builds are the usual **CI / air-gapped** approach (see [`docs/deploy.md`](docs/deploy.md)).
 
-At **container start**, Den connects using the **runtime** `DATABASE_URL` and applies any pending migrations there automatically.
+The build phase completes before either `bears-den-migrate` or `bears-den` starts, because both services use the same built Den image tag. The migration job then runs `den migrate`; the app service starts with `den serve` after that job exits successfully.
 
 Optional: pin **`RUST_VERSION`** in the `Dockerfile` or override it via build args if your Coolify setup supports passing additional `ARG` values.
 
@@ -66,7 +66,7 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 
 | Variable | Notes |
 | -------- | ----- |
-| `DATABASE_URL` | **Required.** The database Den serves at runtime; migrations run against this URL on startup (connection string as accepted by SQLx / `tokio-postgres`). |
+| `DATABASE_URL` | **Required.** The database Den serves at runtime; the deploy-time migration job and startup schema guard both use this URL (connection string as accepted by SQLx / `tokio-postgres`). |
 | `DB_MAX_CONNECTIONS` | Optional SQLx pool size for `DATABASE_URL` (default **5**). |
 | `DB_ACQUIRE_TIMEOUT_SECS` | Optional SQLx pool acquire timeout for `DATABASE_URL` (default **3**). |
 | `DB_IDLE_TIMEOUT_SECS` | Optional SQLx idle connection timeout for `DATABASE_URL` (default **600**; set **0** to disable). |
@@ -99,7 +99,9 @@ Integrations (set when you wire the rest of the stack):
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 
-**Migrations:** Den applies embedded SQL from [`migrations/`](migrations/) on startup. By default, SQLx does **not** ignore migration files missing from the binary; do not set `SQLX_MIGRATE_IGNORE_MISSING` in production unless you are following a documented recovery procedure for a legacy `_sqlx_migrations` table.
+**Migrations:** Compose runs embedded SQL from [`migrations/`](migrations/) in the one-off `bears-den-migrate` job before starting `bears-den`. The long-running service uses `den serve`, which refuses to boot if the database schema version recorded in `_sqlx_migrations` is newer than the binary's embedded migrator. By default, SQLx does **not** ignore migration files missing from the binary; do not set `SQLX_MIGRATE_IGNORE_MISSING` in production unless you are following a documented recovery procedure for a legacy `_sqlx_migrations` table.
+
+**Policy:** Keep migrations reversible and rollout-safe. See [`migrations/README.md`](migrations/README.md) for the expand-contract and `*_down.sql` policy that goes with this deploy flow.
 
 **Sessions:** Login sessions use `tower-sessions` with the Postgres store; the session cookie carries an opaque id and data lives in Postgres. Optional signed/encrypted cookies (`with_signed` / `with_private`) are not configured in this repo—no extra session signing env var is required today.
 
@@ -138,7 +140,7 @@ Set restart policy to **unless stopped** (or your platform equivalent) so Den re
 
 ### 10. Deploy
 
-Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures and **Application logs** for runtime config errors (missing `DATABASE_URL`, unreachable Bifrost, etc.).
+Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile failures, then the `bears-den-migrate` logs for migration failures, then `bears-den` application logs for runtime config errors (missing `DATABASE_URL`, unreachable Bifrost, etc.).
 
 ### 11. Networking with Bifrost
 
@@ -170,7 +172,7 @@ The PAT needs the `read:packages` scope. This must be run as root (Coolify's Doc
 
 When you add or change SQLx queries, run `cargo sqlx prepare` locally against a database with current migrations applied, then commit the updated `.sqlx/` directory. The CI build will fail if the metadata is stale.
 
-New versions still apply migrations automatically on first container start against the configured `DATABASE_URL`.
+When these images are used in the compose stack, `bears-den-migrate` still applies migrations first and `bears-den` then starts in `serve` mode.
 
 ---
 
@@ -197,10 +199,11 @@ Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) u
 
 After deploy:
 
-1. Open the **Logs** tab on the Den resource and confirm the process started without configuration errors.
-2. If you assigned a public domain in Coolify, open **`https://<your-host>/healthcheck`** in a browser — you should see a short **OK**-style response for the web server.
-3. Optionally open **`/health/ready`** — expect success only when the database is reachable.
-4. For the full operator experience, load the **web root** `/` and complete any first-run or sign-in flows your deployment enables.
+1. Open the **Logs** tab on `bears-den-migrate` and confirm the migration job exited successfully.
+2. Open the **Logs** tab on `bears-den` and confirm the process started without configuration errors.
+3. If you assigned a public domain in Coolify, open **`https://<your-host>/healthcheck`** in a browser — you should see a short **OK**-style response for the web server.
+4. Optionally open **`/health/ready`** — expect success only when the database is reachable.
+5. For the full operator experience, load the **web root** `/` and complete any first-run or sign-in flows your deployment enables.
 
 ---
 
@@ -211,7 +214,8 @@ After deploy:
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
 | **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Lower `CARGO_BUILD_JOBS`, add swap/RAM to the deploy host, or temporarily deploy a pinned versioned image from CI. |
 | **Whole workspace recompiles on every deploy** | Check the `build` log for `FRESHNESS=-Z checksum-freshness` and that the pinned nightly installed. If `RUST_NIGHTLY` is empty (reverted to stable) this is expected. See [Build caching](#build-caching-what-is-and-isnt-cached). |
-| **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
+| **Migration job fails** | Check `bears-den-migrate` logs for DDL permissions, broken migration SQL, or a startup schema version mismatch. The old `bears-den` container should remain the last successful runtime until the new app service is started. |
+| **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a startup schema version mismatch indicating the database is newer than this binary. |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Sessions, redirects, or ACP adapter URL wrong** | `WEB_SERVER_URL` / `API_SERVER_URL` and (if used) `SESSION_COOKIE_DOMAIN` must match the URLs users and adapters actually use. For ACP, `API_SERVER_URL` should be the public API origin, whether that is `https://api.bears.[domain]`, another hostname, or a host+port URL. |
 

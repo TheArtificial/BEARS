@@ -28,6 +28,13 @@ pub enum StartupError {
         db_url: String,
         hint: String,
     },
+    #[error(
+        "database schema version {database_version} is newer than this Den binary supports (latest embedded migration: {binary_version})"
+    )]
+    DatabaseSchemaTooNew {
+        database_version: i64,
+        binary_version: i64,
+    },
 }
 
 /// `true` when SQLx should ignore migration files present in `_sqlx_migrations` but missing
@@ -47,10 +54,39 @@ pub fn sqlx_migrate_ignore_missing_from_env() -> bool {
 /// Run embedded SQLx migrations from `migrations/` against `pool`.
 pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     if sqlx_migrate_ignore_missing_from_env() {
-        sqlx::migrate!().set_ignore_missing(true).run(pool).await
+        let mut migrator = sqlx::migrate!();
+        migrator.set_ignore_missing(true).run(pool).await
     } else {
         sqlx::migrate!().run(pool).await
     }
+}
+
+pub fn embedded_schema_version() -> i64 {
+    sqlx::migrate!()
+        .migrations
+        .last()
+        .map(|migration| migration.version)
+        .unwrap_or(0)
+}
+
+pub async fn ensure_database_schema_supported(pool: &PgPool) -> Result<(), StartupError> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT MAX(version)::BIGINT AS version FROM public._sqlx_migrations WHERE success = TRUE",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((database_version,)) = row else {
+        return Ok(());
+    };
+    let binary_version = embedded_schema_version();
+    if database_version > binary_version {
+        return Err(StartupError::DatabaseSchemaTooNew {
+            database_version,
+            binary_version,
+        });
+    }
+    Ok(())
 }
 
 /// Whether [`validate_runtime_config`] requires a non-empty `JWT_SECRET` (production builds or `RUN_API`).
