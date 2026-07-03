@@ -55,7 +55,7 @@ fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> St
                 .filter(|id| !id.trim().is_empty())
                 .unwrap_or("unknown");
             format!(
-                "Unknown tool {status} (tool_call_id={tool_call_id}). Details: `{}`",
+                "Tool call {status} (tool_call_id={tool_call_id}). Details: `{}`",
                 crate::compact_tool_json_detail(data, 1_200)
             )
         }
@@ -1356,7 +1356,7 @@ mod tests {
 
         let summary = tool_call_finished_summary(&data, "tool", false);
 
-        assert!(summary.contains("Unknown tool completed"), "{summary}");
+        assert!(summary.contains("Tool call completed"), "{summary}");
         assert!(summary.contains("call-unknown-1"), "{summary}");
         assert!(summary.contains("\"count\":3"), "{summary}");
         assert!(!matches!(

@@ -7390,7 +7390,7 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
     let mut text = if content.is_empty() {
         if is_placeholder_tool_name(tool_name) && !value.is_null() {
             format!(
-                "Unknown tool completed. Result: `{}`",
+                "Tool call completed. Result: `{}`",
                 compact_tool_json_detail(value, 1_200)
             )
         } else {
@@ -8416,6 +8416,10 @@ impl ToolDisplay {
     fn from_event(tool_name: &str, event: &Value) -> Self {
         let mut display = tool_display(tool_name);
         let Some(event_display) = event.get("display") else {
+            if is_placeholder_tool_name(tool_name) {
+                display.title = fallback_tool_title_from_event(event);
+                display.permission_operation = display.title.to_ascii_lowercase();
+            }
             return display;
         };
         if let Some(title) = event_display
@@ -8463,8 +8467,47 @@ impl ToolDisplay {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
         display.arguments_summary = event_display.get("arguments_summary").cloned();
+        if is_placeholder_tool_name(tool_name) && display.title == "Tool call" {
+            display.title = fallback_tool_title_from_event(event);
+            display.permission_operation = display.title.to_ascii_lowercase();
+        }
         display
     }
+}
+
+fn fallback_tool_title_from_event(event: &Value) -> String {
+    let args = event
+        .get("args")
+        .or_else(|| event.pointer("/data/tool_call/arguments"))
+        .or_else(|| event.pointer("/data/arguments"));
+    for key in ["path", "command", "url", "query", "glob", "cwd"] {
+        if let Some(value) = args
+            .and_then(|args| args.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return format!("Tool call: {}", truncate_title(value));
+        }
+    }
+    if let Some(keys) = args
+        .and_then(Value::as_object)
+        .map(|map| map.keys().take(4).cloned().collect::<Vec<_>>().join(", "))
+        .filter(|keys| !keys.is_empty())
+    {
+        return format!("Tool call with {keys}");
+    }
+    if let Some(tool_call_id) = event
+        .get("tool_call_id")
+        .or_else(|| event.pointer("/data/tool_call_id"))
+        .or_else(|| event.pointer("/data/tool_call/id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("Tool call: {}", truncate_title(tool_call_id));
+    }
+    "Tool call".to_string()
 }
 
 pub(crate) fn is_placeholder_tool_name(tool_name: &str) -> bool {
@@ -8479,14 +8522,14 @@ pub(crate) fn is_placeholder_tool_name(tool_name: &str) -> bool {
 fn fallback_tool_title(tool_name: &str) -> String {
     let trimmed = tool_name.trim();
     if is_placeholder_tool_name(trimmed) {
-        return "Unknown tool".to_string();
+        return "Tool call".to_string();
     }
     let words = trimmed
         .split(|ch: char| matches!(ch, '_' | '-' | '.' | '/' | ':'))
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
     if words.is_empty() {
-        return "Unknown tool".to_string();
+        return "Tool call".to_string();
     }
     let mut out = String::new();
     for (index, word) in words.into_iter().enumerate() {
@@ -10902,8 +10945,26 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn tool_display_does_not_render_placeholder_tool_name_as_tool() {
-        assert_eq!(tool_display("tool").title, "Unknown tool");
-        assert_eq!(tool_display("").title, "Unknown tool");
+        assert_eq!(tool_display("tool").title, "Tool call");
+        assert_eq!(tool_display("").title, "Tool call");
+    }
+
+    #[test]
+    fn placeholder_tool_display_derives_title_from_event_details() {
+        let event = json!({
+            "tool_call_id": "call-1",
+            "args": { "path": "/workspace/README.md" }
+        });
+        assert_eq!(
+            ToolDisplay::from_event("tool", &event).title,
+            "Tool call: /workspace/README.md"
+        );
+
+        let only_id = json!({ "tool_call_id": "call-opaque" });
+        assert_eq!(
+            ToolDisplay::from_event("local_tool", &only_id).title,
+            "Tool call: call-opaque"
+        );
     }
 
     #[test]
@@ -11055,7 +11116,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     fn placeholder_tool_completion_preview_exposes_structured_result() {
         let value = json!({ "content": "", "result": { "changed": true } });
         let preview = tool_completion_preview("tool", &value);
-        assert!(preview.contains("Unknown tool completed"), "{preview}");
+        assert!(preview.contains("Tool call completed"), "{preview}");
         assert!(preview.contains("\"changed\":true"), "{preview}");
         assert_ne!(preview, "Tool completed.");
     }
