@@ -7315,6 +7315,15 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
+pub(crate) fn compact_tool_json_detail(value: &Value, max_chars: usize) -> String {
+    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string());
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>();
+        text.push_str("... truncated");
+    }
+    text
+}
+
 fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
     if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
         return read_text_file_completion_preview(value);
@@ -7366,7 +7375,14 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         .unwrap_or("")
         .trim();
     let mut text = if content.is_empty() {
-        String::new()
+        if is_placeholder_tool_name(tool_name) && !value.is_null() {
+            format!(
+                "Unknown tool completed. Result: `{}`",
+                compact_tool_json_detail(value, 1_200)
+            )
+        } else {
+            String::new()
+        }
     } else {
         content.to_string()
     };
@@ -8432,17 +8448,26 @@ impl ToolDisplay {
     }
 }
 
+pub(crate) fn is_placeholder_tool_name(tool_name: &str) -> bool {
+    let trimmed = tool_name.trim();
+    trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "tool" | "local_tool" | "local tool" | "unknown" | "unknown_tool"
+        )
+}
+
 fn fallback_tool_title(tool_name: &str) -> String {
     let trimmed = tool_name.trim();
-    if trimmed.is_empty() {
-        return "Local tool".to_string();
+    if is_placeholder_tool_name(trimmed) {
+        return "Unknown tool".to_string();
     }
     let words = trimmed
         .split(|ch: char| matches!(ch, '_' | '-' | '.' | '/' | ':'))
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
     if words.is_empty() {
-        return "Local tool".to_string();
+        return "Unknown tool".to_string();
     }
     let mut out = String::new();
     for (index, word) in words.into_iter().enumerate() {
@@ -10854,6 +10879,12 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn tool_display_does_not_render_placeholder_tool_name_as_tool() {
+        assert_eq!(tool_display("tool").title, "Unknown tool");
+        assert_eq!(tool_display("").title, "Unknown tool");
+    }
+
+    #[test]
     fn den_memory_tool_display_uses_den_labels() {
         let event = json!({
             "display": {
@@ -10980,6 +11011,15 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     fn generic_empty_completion_preview_is_suppressed() {
         let value = json!({ "content": "" });
         assert_eq!(tool_completion_preview("fs_stat", &value), "");
+    }
+
+    #[test]
+    fn placeholder_tool_completion_preview_exposes_structured_result() {
+        let value = json!({ "content": "", "result": { "changed": true } });
+        let preview = tool_completion_preview("tool", &value);
+        assert!(preview.contains("Unknown tool completed"), "{preview}");
+        assert!(preview.contains("\"changed\":true"), "{preview}");
+        assert_ne!(preview, "Tool completed.");
     }
 
     #[test]

@@ -22,13 +22,6 @@ fn generic_tool_summary(summary: &str) -> bool {
 
 fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
     let title = crate::fallback_tool_title(tool_name);
-    if title == "Local tool" {
-        return if failed {
-            "Tool failed.".to_string()
-        } else {
-            "Tool completed.".to_string()
-        };
-    }
     if failed {
         format!("{title} failed.")
     } else {
@@ -54,6 +47,18 @@ fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> St
 
     match candidate {
         Some(message) => message.to_string(),
+        None if crate::is_placeholder_tool_name(tool_name) => {
+            let status = if failed { "failed" } else { "completed" };
+            let tool_call_id = data
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .unwrap_or("unknown");
+            format!(
+                "Unknown tool {status} (tool_call_id={tool_call_id}). Details: `{}`",
+                crate::compact_tool_json_detail(data, 1_200)
+            )
+        }
         None => default_tool_status_summary(tool_name, failed),
     }
 }
@@ -1332,6 +1337,25 @@ mod tests {
             tool_call_finished_summary(&data, "memory_read", true),
             "Memory Read failed."
         );
+    }
+
+    #[test]
+    fn tool_call_finished_summary_for_placeholder_tool_exposes_details() {
+        let data = json!({
+            "tool_call_id": "call-unknown-1",
+            "summary": "Tool completed.",
+            "result": { "count": 3 }
+        });
+
+        let summary = tool_call_finished_summary(&data, "tool", false);
+
+        assert!(summary.contains("Unknown tool completed"), "{summary}");
+        assert!(summary.contains("call-unknown-1"), "{summary}");
+        assert!(summary.contains("\"count\":3"), "{summary}");
+        assert!(!matches!(
+            summary.as_str(),
+            "Tool completed." | "Tool failed."
+        ));
     }
 
     #[test]
