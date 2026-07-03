@@ -1377,7 +1377,6 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
 async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
-    let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let tool_call_id = format!("call_{}", Uuid::new_v4().simple());

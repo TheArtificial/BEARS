@@ -183,9 +183,34 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     Some(INCOMPLETE_TOOL_RESULT_MARK.to_string())
                 } else {
                     row.content_json
-                        .get("content")
+                        .get("output_preview")
                         .and_then(Value::as_str)
                         .map(str::to_string)
+                        .or_else(|| {
+                            row.content_json
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .or_else(|| {
+                            row.content_json
+                                .get("structured_content")
+                                .and_then(|value| value.get("content"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .or_else(|| {
+                            row.content_json
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .or_else(|| {
+                            row.content_json
+                                .get("output_summary")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
                         .or_else(|| {
                             if row.content_text.trim().is_empty() {
                                 None
