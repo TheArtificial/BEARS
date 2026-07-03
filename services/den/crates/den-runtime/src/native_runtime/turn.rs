@@ -42,6 +42,7 @@ use crate::{
     },
 };
 use den_core::DenError;
+use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
 
@@ -432,19 +433,63 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         };
         let rows =
             conversation_persistence::list_messages_page(pool, canonical.id, None, 100).await?;
-        let records = rows
-            .into_iter()
-            .rev()
-            .filter_map(|row| {
-                row.to_model_transcript_message()
-                    .map(|message| RuntimeHistoryRecord {
+        let mut records = Vec::new();
+        for row in rows.into_iter().rev() {
+            match row.to_model_transcript_record() {
+                Some(PersistedTranscriptRecord::Message(message)) => {
+                    records.push(RuntimeHistoryRecord {
                         message_id: message.message_id,
                         role: message.role,
                         content: message.content,
                         created_at: Some(message.created_at.to_string()),
-                    })
-            })
-            .collect();
+                    });
+                }
+                Some(PersistedTranscriptRecord::ToolCall {
+                    tool_call_id,
+                    tool_name,
+                    arguments,
+                    created_at,
+                    ..
+                }) => {
+                    records.push(RuntimeHistoryRecord {
+                        message_id: Some(tool_call_id.clone()),
+                        role: "assistant".to_string(),
+                        content: serde_json::json!({
+                            "tool_calls": [{
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": arguments.to_string()
+                                }
+                            }]
+                        })
+                        .to_string(),
+                        created_at: Some(created_at.to_string()),
+                    });
+                }
+                Some(PersistedTranscriptRecord::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    content,
+                    created_at,
+                    ..
+                }) => {
+                    records.push(RuntimeHistoryRecord {
+                        message_id: tool_call_id.clone(),
+                        role: "tool".to_string(),
+                        content: serde_json::json!({
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": content
+                        })
+                        .to_string(),
+                        created_at: Some(created_at.to_string()),
+                    });
+                }
+                None => {}
+            }
+        }
         Ok(RuntimeHistoryPage {
             records,
             raw_payload: None,

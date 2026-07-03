@@ -41,6 +41,7 @@ pub struct PersistedConversationMessage {
     pub role: Option<String>,
     pub visibility: String,
     pub content_text: String,
+    pub content_json: serde_json::Value,
     pub provider_message_id: Option<String>,
     pub created_at: time::OffsetDateTime,
 }
@@ -52,6 +53,27 @@ pub struct PersistedTranscriptMessage {
     pub role: String,
     pub content: String,
     pub created_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PersistedTranscriptRecord {
+    Message(PersistedTranscriptMessage),
+    ToolCall {
+        sequence_no: i64,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        created_at: time::OffsetDateTime,
+    },
+    ToolResult {
+        sequence_no: i64,
+        tool_call_id: Option<String>,
+        tool_name: Option<String>,
+        status: Option<String>,
+        content: Option<String>,
+        structured_content: serde_json::Value,
+        created_at: time::OffsetDateTime,
+    },
 }
 
 impl PersistedConversationMessage {
@@ -105,6 +127,89 @@ impl PersistedConversationMessage {
         })
     }
 
+    pub fn to_model_transcript_record(&self) -> Option<PersistedTranscriptRecord> {
+        let visibility = self.storage_visibility().ok()?;
+        if !visibility.is_model_transcript_visible() {
+            return None;
+        }
+
+        if let Some(message) = self.to_model_transcript_message() {
+            return Some(PersistedTranscriptRecord::Message(message));
+        }
+
+        match self.storage_message_type().ok()? {
+            ConversationMessageType::ToolCall => {
+                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
+                if event != "tool_request" {
+                    return None;
+                }
+                Some(PersistedTranscriptRecord::ToolCall {
+                    sequence_no: self.sequence_no,
+                    tool_call_id: self
+                        .content_json_value()
+                        .get("tool_call_id")
+                        .and_then(|value| value.as_str())?
+                        .to_string(),
+                    tool_name: self
+                        .content_json_value()
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())?
+                        .to_string(),
+                    arguments: self
+                        .content_json_value()
+                        .get("args")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    created_at: self.created_at,
+                })
+            }
+            ConversationMessageType::ToolResult => {
+                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
+                if event != "tool_result" {
+                    return None;
+                }
+                let content = self
+                    .content_json_value()
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        if self.content_text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.content_text.clone())
+                        }
+                    });
+                Some(PersistedTranscriptRecord::ToolResult {
+                    sequence_no: self.sequence_no,
+                    tool_call_id: self
+                        .content_json_value()
+                        .get("tool_call_id")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    tool_name: self
+                        .content_json_value()
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    status: self
+                        .content_json_value()
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    content,
+                    structured_content: self
+                        .content_json_value()
+                        .get("structured_content")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                    created_at: self.created_at,
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn to_user_history_transcript_message(&self) -> Option<PersistedTranscriptMessage> {
         let visibility = self.storage_visibility().ok()?;
         if !visibility.is_user_history_visible() {
@@ -125,6 +230,10 @@ impl PersistedConversationMessage {
 
     pub fn is_transcript_visible(&self) -> bool {
         self.is_model_transcript_visible()
+    }
+
+    fn content_json_value(&self) -> &serde_json::Value {
+        &self.content_json
     }
 }
 
@@ -524,7 +633,7 @@ pub async fn list_messages_page(
 ) -> Result<Vec<PersistedConversationMessage>, DenError> {
     let rows = sqlx::query(
         r"
-        SELECT sequence_no, message_type, role, visibility, content_text, provider_message_id, created_at
+        SELECT sequence_no, message_type, role, visibility, content_text, content_json, provider_message_id, created_at
         FROM conversation_messages
         WHERE conversation_id = $1
           AND ($2::bigint IS NULL OR sequence_no < $2)
@@ -556,6 +665,9 @@ pub async fn list_messages_page(
                 })?,
                 content_text: row.try_get("content_text").map_err(|err| {
                     DenError::Database(format!("decode conversation message content_text: {err}"))
+                })?,
+                content_json: row.try_get("content_json").map_err(|err| {
+                    DenError::Database(format!("decode conversation message content_json: {err}"))
                 })?,
                 provider_message_id: row.try_get("provider_message_id").map_err(|err| {
                     DenError::Database(format!(

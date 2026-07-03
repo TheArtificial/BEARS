@@ -51,6 +51,27 @@ pub struct PersistedTranscriptMessage {
     pub created_at: time::OffsetDateTime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PersistedTranscriptRecord {
+    Message(PersistedTranscriptMessage),
+    ToolCall {
+        sequence_no: i64,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        created_at: time::OffsetDateTime,
+    },
+    ToolResult {
+        sequence_no: i64,
+        tool_call_id: Option<String>,
+        tool_name: Option<String>,
+        status: Option<String>,
+        content: Option<String>,
+        structured_content: serde_json::Value,
+        created_at: time::OffsetDateTime,
+    },
+}
+
 impl PersistedConversationMessage {
     pub fn storage_message_type(&self) -> Result<ConversationMessageType, DenError> {
         ConversationMessageType::try_from_storage(&self.message_type)
@@ -102,6 +123,89 @@ impl PersistedConversationMessage {
         })
     }
 
+    pub fn to_model_transcript_record(&self) -> Option<PersistedTranscriptRecord> {
+        let visibility = self.storage_visibility().ok()?;
+        if !visibility.is_model_transcript_visible() {
+            return None;
+        }
+
+        if let Some(message) = self.to_model_transcript_message() {
+            return Some(PersistedTranscriptRecord::Message(message));
+        }
+
+        match self.storage_message_type().ok()? {
+            ConversationMessageType::ToolCall => {
+                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
+                if event != "tool_request" {
+                    return None;
+                }
+                Some(PersistedTranscriptRecord::ToolCall {
+                    sequence_no: self.sequence_no,
+                    tool_call_id: self
+                        .content_json_value()
+                        .get("tool_call_id")
+                        .and_then(|value| value.as_str())?
+                        .to_string(),
+                    tool_name: self
+                        .content_json_value()
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())?
+                        .to_string(),
+                    arguments: self
+                        .content_json_value()
+                        .get("args")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    created_at: self.created_at,
+                })
+            }
+            ConversationMessageType::ToolResult => {
+                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
+                if event != "tool_result" {
+                    return None;
+                }
+                let content = self
+                    .content_json_value()
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        if self.content_text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.content_text.clone())
+                        }
+                    });
+                Some(PersistedTranscriptRecord::ToolResult {
+                    sequence_no: self.sequence_no,
+                    tool_call_id: self
+                        .content_json_value()
+                        .get("tool_call_id")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    tool_name: self
+                        .content_json_value()
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    status: self
+                        .content_json_value()
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    content,
+                    structured_content: self
+                        .content_json_value()
+                        .get("structured_content")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                    created_at: self.created_at,
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn to_user_history_transcript_message(&self) -> Option<PersistedTranscriptMessage> {
         let visibility = self.storage_visibility().ok()?;
         if !visibility.is_user_history_visible() {
@@ -122,6 +226,10 @@ impl PersistedConversationMessage {
 
     pub fn is_transcript_visible(&self) -> bool {
         self.is_model_transcript_visible()
+    }
+
+    fn content_json_value(&self) -> &serde_json::Value {
+        &self.content_json
     }
 }
 
@@ -703,6 +811,58 @@ mod tests {
         let workflow = row("workflow_event", Some("system"), "default");
         assert!(workflow.to_model_transcript_message().is_none());
         assert!(workflow.to_user_history_transcript_message().is_none());
+    }
+
+    #[test]
+    fn transcript_projection_includes_tool_records_for_model_replay_only() {
+        let tool_call = PersistedConversationMessage {
+            sequence_no: 8,
+            message_type: "tool_call".to_string(),
+            role: Some("system".to_string()),
+            visibility: "hidden_from_user".to_string(),
+            content_text: "Tool request: memory_read".to_string(),
+            provider_message_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let tool_call = PersistedConversationMessage {
+            content_json: serde_json::json!({
+                "event": "tool_request",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_read",
+                "args": { "path": "pair/notes/demo.md" }
+            }),
+            ..tool_call
+        };
+        assert!(matches!(
+            tool_call.to_model_transcript_record(),
+            Some(PersistedTranscriptRecord::ToolCall { tool_call_id, tool_name, .. })
+            if tool_call_id == "call-1" && tool_name == "memory_read"
+        ));
+        assert!(tool_call.to_user_history_transcript_message().is_none());
+
+        let tool_result = PersistedConversationMessage {
+            sequence_no: 9,
+            message_type: "tool_result".to_string(),
+            role: Some("system".to_string()),
+            visibility: "hidden_from_user".to_string(),
+            content_text: "Tool result: memory_read".to_string(),
+            content_json: serde_json::json!({
+                "event": "tool_result",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_read",
+                "status": "ok",
+                "content": "file contents",
+                "structured_content": { "content": "file contents" }
+            }),
+            provider_message_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        assert!(matches!(
+            tool_result.to_model_transcript_record(),
+            Some(PersistedTranscriptRecord::ToolResult { tool_call_id, status, .. })
+            if tool_call_id.as_deref() == Some("call-1") && status.as_deref() == Some("ok")
+        ));
+        assert!(tool_result.to_user_history_transcript_message().is_none());
     }
 }
 
