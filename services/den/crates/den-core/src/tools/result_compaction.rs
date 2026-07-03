@@ -10,6 +10,35 @@ pub struct CompactToolResult {
     pub truncated: bool,
 }
 
+fn preview_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.trim().to_string()).filter(|text| !text.is_empty()),
+        Value::Object(map) => map
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .map(str::to_string)
+            .filter(|text| !text.is_empty())
+            .or_else(|| {
+                let rendered = value.to_string();
+                Some(rendered).filter(|text| text != "{}" && text != "null" && text != "[]")
+            }),
+        Value::Null => None,
+        other => {
+            let rendered = other.to_string();
+            Some(rendered).filter(|text| text != "null" && text != "[]")
+        }
+    }
+}
+
+fn bounded_summary(tool_name: Option<&str>, status: &str, preview: Option<&str>) -> String {
+    let subject = tool_name.filter(|name| !name.is_empty()).unwrap_or("tool");
+    match preview {
+        Some(preview) if !preview.is_empty() => format!("Used {subject} ({status}): {preview}"),
+        _ => format!("Used {subject} ({status})"),
+    }
+}
+
 pub fn truncate_str(value: &str, max_chars: usize) -> (String, bool, usize) {
     let char_count = value.chars().count();
     if char_count <= max_chars {
@@ -203,6 +232,21 @@ pub fn compact_client_tool_result_params_with_artifact(
     {
         payload["tool_name"] = json!(tool_name);
     }
+    let tool_name = payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let preview = payload
+        .get("content")
+        .and_then(preview_text)
+        .or_else(|| payload.get("structured_content").and_then(preview_text))
+        .or_else(|| payload.get("error").and_then(preview_text));
+    if let Some(preview) = preview.as_ref() {
+        let (preview, _, _) = truncate_str(preview, 512);
+        payload["output_preview"] = json!(preview);
+    }
+    payload["output_summary"] =
+        json!(bounded_summary(tool_name.as_deref(), status, preview.as_deref()));
     let serialized_len = payload.to_string().chars().count();
     if serialized_len > MODEL_TOOL_RESULT_MAX_CHARS {
         truncated = true;

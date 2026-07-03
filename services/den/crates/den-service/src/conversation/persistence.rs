@@ -90,6 +90,14 @@ fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<
     if event != "tool_result" {
         return None;
     }
+    if let Some(summary) = content_json
+        .get("output_summary")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(summary.to_string());
+    }
     let tool_name = content_json
         .get("tool_name")
         .and_then(|value| value.as_str())
@@ -99,7 +107,8 @@ fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<
         .and_then(|value| value.as_str())
         .unwrap_or("completed");
     let content = content_json
-        .get("content")
+        .get("output_preview")
+        .or_else(|| content_json.get("content"))
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty());
