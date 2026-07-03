@@ -10,6 +10,60 @@ pub struct CompactToolResult {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClientToolResultInput {
+    pub tool_call_id: String,
+    pub tool_name: Option<String>,
+    pub status: String,
+    pub content: Option<String>,
+    pub structured_content: Value,
+    pub error: Value,
+}
+
+impl ClientToolResultInput {
+    pub fn new(
+        tool_call_id: impl Into<String>,
+        tool_name: Option<String>,
+        status: impl Into<String>,
+        content: Option<String>,
+        structured_content: Value,
+        error: Value,
+    ) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            status: status.into(),
+            content: content
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            structured_content,
+            error,
+        }
+    }
+
+    pub fn from_params(tool_call_id: &str, status: &str, params: &Value) -> Self {
+        Self::new(
+            tool_call_id.to_string(),
+            params
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            status.to_string(),
+            params
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            params
+                .get("structured_content")
+                .cloned()
+                .unwrap_or(Value::Null),
+            params.get("error").cloned().unwrap_or(Value::Null),
+        )
+    }
+}
+
 fn preview_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.trim().to_string()).filter(|text| !text.is_empty()),
@@ -179,39 +233,32 @@ pub fn compact_json_tool_result_with_artifact(
     }
 }
 
-pub fn compact_client_tool_result_params(
-    tool_call_id: &str,
-    status: &str,
-    params: &Value,
-) -> CompactToolResult {
-    compact_client_tool_result_params_with_artifact(tool_call_id, status, params, None)
+pub fn compact_client_tool_result(input: &ClientToolResultInput) -> CompactToolResult {
+    compact_client_tool_result_with_artifact(input, None)
 }
 
-pub fn compact_client_tool_result_params_with_artifact(
-    tool_call_id: &str,
-    status: &str,
-    params: &Value,
+pub fn compact_client_tool_result_with_artifact(
+    input: &ClientToolResultInput,
     artifact_ref: Option<&str>,
 ) -> CompactToolResult {
     let mut truncated = false;
     let mut omitted_chars = 0usize;
+    let tool_call_id = input.tool_call_id.as_str();
+    let status = input.status.as_str();
     let (content, content_truncated, content_omitted) = compact_value_for_model(
-        params.get("content").cloned().unwrap_or(Value::Null),
+        input.content.clone().map(Value::String).unwrap_or(Value::Null),
         TOOL_RESULT_FIELD_MAX_CHARS,
     );
     truncated |= content_truncated;
     omitted_chars += content_omitted;
     let (structured_content, structured_truncated, structured_omitted) = compact_value_for_model(
-        params
-            .get("structured_content")
-            .cloned()
-            .unwrap_or(Value::Null),
+        input.structured_content.clone(),
         TOOL_RESULT_FIELD_MAX_CHARS,
     );
     truncated |= structured_truncated;
     omitted_chars += structured_omitted;
     let (error, error_truncated, error_omitted) = compact_value_for_model(
-        params.get("error").cloned().unwrap_or(Value::Null),
+        input.error.clone(),
         TOOL_RESULT_FIELD_MAX_CHARS,
     );
     truncated |= error_truncated;
@@ -224,12 +271,7 @@ pub fn compact_client_tool_result_params_with_artifact(
         "structured_content": structured_content,
         "error": error,
     });
-    if let Some(tool_name) = params
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(tool_name) = input.tool_name.as_deref() {
         payload["tool_name"] = json!(tool_name);
     }
     let tool_name = payload

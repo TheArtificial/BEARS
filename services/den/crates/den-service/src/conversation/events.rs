@@ -68,6 +68,20 @@ pub enum CanonicalConversationRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct CanonicalToolResultRecord {
+    pub tool_name: String,
+    pub tool_call_id: String,
+    pub approval_request_id: Option<String>,
+    pub status: String,
+    pub content: Option<String>,
+    pub structured_content: serde_json::Value,
+    pub output_summary: String,
+    pub output_preview: Option<String>,
+    pub diagnostic: serde_json::Value,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ConversationEventProvenance {
     pub source: String,
     pub scope_id: String,
@@ -135,6 +149,43 @@ fn canonical_tool_result_summary(tool_name: &str, status: &str, preview: Option<
     match preview.filter(|value| !value.is_empty()) {
         Some(preview) => format!("Used {tool_name} ({status}): {preview}"),
         None => format!("Used {tool_name} ({status})"),
+    }
+}
+
+impl CanonicalToolResultRecord {
+    pub fn new(
+        tool_name: Option<String>,
+        tool_call_id: impl Into<String>,
+        approval_request_id: Option<String>,
+        status: impl Into<String>,
+        content: Option<String>,
+        structured_content: serde_json::Value,
+        diagnostic: serde_json::Value,
+        request_id: Option<String>,
+    ) -> Self {
+        let tool_name = tool_name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "tool".to_string());
+        let status = status.into();
+        let content = content
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let output_preview = canonical_tool_result_preview(content.as_deref(), &structured_content);
+        let output_summary =
+            canonical_tool_result_summary(&tool_name, &status, output_preview.as_deref());
+        Self {
+            tool_name,
+            tool_call_id: tool_call_id.into(),
+            approval_request_id,
+            status,
+            content,
+            structured_content,
+            output_summary,
+            output_preview,
+            diagnostic,
+            request_id,
+        }
     }
 }
 
@@ -300,38 +351,23 @@ impl CanonicalConversationRecord {
         )
     }
 
-    pub fn tool_result(
-        tool_name: Option<String>,
-        tool_call_id: impl Into<String>,
-        approval_request_id: Option<String>,
-        status: impl Into<String>,
-        content: Option<String>,
-        structured_content: serde_json::Value,
-        diagnostic: serde_json::Value,
-        request_id: Option<String>,
-        provenance: &ConversationEventProvenance,
-    ) -> Self {
-        let tool_name = tool_name.unwrap_or_else(|| "tool".to_string());
-        let status = status.into();
-        let output_preview = canonical_tool_result_preview(content.as_deref(), &structured_content);
-        let output_summary =
-            canonical_tool_result_summary(&tool_name, &status, output_preview.as_deref());
+    pub fn tool_result(record: CanonicalToolResultRecord, provenance: &ConversationEventProvenance) -> Self {
         Self::tool_event(
-            format!("Tool result: {tool_name}"),
+            format!("Tool result: {}", record.tool_name),
             serde_json::json!({
                 "source": provenance.source,
                 "event": "tool_result",
                 "scope_id": provenance.scope_id,
-                "tool_call_id": tool_call_id.into(),
-                "approval_request_id": approval_request_id,
-                "tool_name": tool_name,
-                "status": status,
-                "content": content,
-                "structured_content": structured_content,
-                "output_summary": output_summary,
-                "output_preview": output_preview,
-                "diagnostic": diagnostic,
-                "request_id": request_id,
+                "tool_call_id": record.tool_call_id,
+                "approval_request_id": record.approval_request_id,
+                "tool_name": record.tool_name,
+                "status": record.status,
+                "content": record.content,
+                "structured_content": record.structured_content,
+                "output_summary": record.output_summary,
+                "output_preview": record.output_preview,
+                "diagnostic": record.diagnostic,
+                "request_id": record.request_id,
             }),
             None,
         )
@@ -664,29 +700,12 @@ pub fn spawn_persist_turn_outcome(
 
 pub fn spawn_persist_tool_result(
     context: ConversationPersistenceContext,
-    tool_name: Option<String>,
-    tool_call_id: String,
-    approval_request_id: Option<String>,
-    status: String,
-    content: Option<String>,
-    structured_content: serde_json::Value,
-    diagnostic: serde_json::Value,
-    request_id: Option<String>,
+    record: CanonicalToolResultRecord,
     provenance: &ConversationEventProvenance,
 ) {
     spawn_persist_canonical_conversation_record(
         context,
-        CanonicalConversationRecord::tool_result(
-            tool_name,
-            tool_call_id,
-            approval_request_id,
-            status,
-            content,
-            structured_content,
-            diagnostic,
-            request_id,
-            provenance,
-        ),
+        CanonicalConversationRecord::tool_result(record, provenance),
     );
 }
 

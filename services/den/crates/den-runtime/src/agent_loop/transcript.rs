@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use den_service::conversation::events::{
     canonical_persistence_context, spawn_persist_assistant_output, spawn_persist_tool_request,
-    spawn_persist_tool_result, ConversationEventProvenance,
+    spawn_persist_tool_result, CanonicalToolResultRecord, ConversationEventProvenance,
 };
 
 use crate::llm::{ChatMessage, ChatToolCall};
@@ -140,17 +140,19 @@ pub fn spawn_persist_web_chat_turn(
                 };
                 spawn_persist_tool_result(
                     context.clone(),
-                    message.name.clone(),
-                    tool_call_id,
-                    None,
-                    status.to_string(),
-                    persisted_content,
-                    Value::Null,
-                    serde_json::json!({
-                        "component": "den.web_chat",
-                        "phase": "server_side_tool_result",
-                    }),
-                    Some(request_id.clone()),
+                    CanonicalToolResultRecord::new(
+                        message.name.clone(),
+                        tool_call_id,
+                        None,
+                        status.to_string(),
+                        persisted_content,
+                        Value::Null,
+                        serde_json::json!({
+                            "component": "den.web_chat",
+                            "phase": "server_side_tool_result",
+                        }),
+                        Some(request_id.clone()),
+                    ),
                     &provenance,
                 );
             }
@@ -170,19 +172,21 @@ fn spawn_persist_incomplete_tool_results(
     for call in tool_calls {
         spawn_persist_tool_result(
             context.clone(),
-            Some(call.function.name.clone()),
-            call.id.clone(),
-            None,
-            "incomplete".to_string(),
-            None,
-            Value::Null,
-            serde_json::json!({
-                "component": "den.agent_loop",
-                "phase": phase,
-                "reason": reason,
-                "tool_name": call.function.name,
-            }),
-            request_id.clone(),
+            CanonicalToolResultRecord::new(
+                Some(call.function.name.clone()),
+                call.id.clone(),
+                None,
+                "incomplete".to_string(),
+                None,
+                Value::Null,
+                serde_json::json!({
+                    "component": "den.agent_loop",
+                    "phase": phase,
+                    "reason": reason,
+                    "tool_name": call.function.name,
+                }),
+                request_id.clone(),
+            ),
             provenance,
         );
     }

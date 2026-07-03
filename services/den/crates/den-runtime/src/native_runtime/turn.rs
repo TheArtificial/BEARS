@@ -2,7 +2,7 @@ use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
-    result_compaction::compact_client_tool_result_params,
+    result_compaction::{compact_client_tool_result, ClientToolResultInput},
 };
 use std::sync::{Arc, LazyLock};
 
@@ -19,7 +19,7 @@ use den_service::{
         events::{
             canonical_persistence_context, canonical_persistence_enabled_for_conversation,
             persist_canonical_conversation_record, CanonicalConversationRecord,
-            ConversationEventProvenance,
+            CanonicalToolResultRecord, ConversationEventProvenance,
         },
         persistence as conversation_persistence,
     },
@@ -292,34 +292,34 @@ pub async fn record_native_client_tool_result(
             RuntimeToolResultStatus::Timeout => "timeout",
             RuntimeToolResultStatus::Error => "error",
         };
-        let compacted = compact_client_tool_result_params(
-            tool_call_id,
-            status_label,
-            &serde_json::json!({
-                "tool_name": tool_name,
-                "content": content,
-                "structured_content": serde_json::Value::Null,
-                "error": serde_json::Value::Null,
-            }),
-        );
+        let compacted = compact_client_tool_result(&ClientToolResultInput::new(
+            tool_call_id.to_string(),
+            tool_name.clone(),
+            status_label.to_string(),
+            Some(content),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ));
         persist_canonical_conversation_record(
             &persistence_context,
             &CanonicalConversationRecord::tool_result(
-                tool_name,
-                tool_call_id.to_string(),
-                approval_request_id.map(str::to_string),
-                status_label,
-                compacted
-                    .payload
-                    .get("content")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
-                compacted.payload.clone(),
-                serde_json::json!({
-                    "component": "den.native_runtime",
-                    "phase": "client_tool_result_recorded",
-                }),
-                Some(request_id.to_string()),
+                CanonicalToolResultRecord::new(
+                    tool_name,
+                    tool_call_id.to_string(),
+                    approval_request_id.map(str::to_string),
+                    status_label,
+                    compacted
+                        .payload
+                        .get("content")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    compacted.payload.clone(),
+                    serde_json::json!({
+                        "component": "den.native_runtime",
+                        "phase": "client_tool_result_recorded",
+                    }),
+                    Some(request_id.to_string()),
+                ),
                 &provenance,
             ),
         )

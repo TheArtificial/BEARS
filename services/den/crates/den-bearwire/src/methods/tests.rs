@@ -1394,13 +1394,15 @@ async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPo
     )
     .await
     .expect("insert tool obligation");
-    let compacted = den_core::tools::result_compaction::compact_client_tool_result_params(
-        &tool_call_id,
-        "ok",
-        &json!({
-            "tool_name": "fs_read_text_file",
-            "content": "file contents"
-        }),
+    let compacted = den_core::tools::result_compaction::compact_client_tool_result(
+        &den_core::tools::result_compaction::ClientToolResultInput::new(
+            tool_call_id.clone(),
+            Some("fs_read_text_file".to_string()),
+            "ok",
+            Some("file contents".to_string()),
+            Value::Null,
+            Value::Null,
+        ),
     );
     assert_eq!(
         compacted.payload["output_summary"],

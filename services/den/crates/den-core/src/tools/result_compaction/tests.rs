@@ -3,14 +3,15 @@ use super::*;
 #[test]
 fn compact_client_tool_result_truncates_large_content_for_model() {
     let long = "x".repeat(40 * 1024);
-    let compacted = compact_client_tool_result_params(
+    let input = ClientToolResultInput::new(
         "call_large",
+        None,
         "ok",
-        &json!({
-            "content": long,
-            "structured_content": { "nested": "y".repeat(40 * 1024) },
-        }),
+        Some(long),
+        json!({ "nested": "y".repeat(40 * 1024) }),
+        Value::Null,
     );
+    let compacted = compact_client_tool_result(&input);
 
     assert_eq!(compacted.payload["tool_call_id"], "call_large");
     assert_eq!(compacted.payload["result_compaction"]["truncated"], true);
@@ -22,16 +23,15 @@ fn compact_client_tool_result_truncates_large_content_for_model() {
 
 #[test]
 fn compact_client_tool_result_preserves_tool_name_for_projection() {
-    let compacted = compact_client_tool_result_params(
+    let input = ClientToolResultInput::new(
         "call_named",
+        Some("fs_read_text_file".to_string()),
         "ok",
-        &json!({
-            "tool_name": "fs_read_text_file",
-            "content": "",
-            "structured_content": { "content": "hello" },
-            "diagnostic": { "phase": "permission_local_tool_completed" },
-        }),
+        Some("".to_string()),
+        json!({ "content": "hello" }),
+        Value::Null,
     );
+    let compacted = compact_client_tool_result(&input);
 
     assert_eq!(compacted.payload["tool_name"], "fs_read_text_file");
     assert!(compacted.payload["error"].is_null());
@@ -44,16 +44,15 @@ fn compact_client_tool_result_preserves_tool_name_for_projection() {
 
 #[test]
 fn compact_client_tool_result_adds_bounded_summary_without_preview() {
-    let compacted = compact_client_tool_result_params(
+    let input = ClientToolResultInput::new(
         "call_status_only",
+        Some("session_info".to_string()),
         "ok",
-        &json!({
-            "tool_name": "session_info",
-            "content": "",
-            "structured_content": null,
-            "error": null,
-        }),
+        Some("".to_string()),
+        Value::Null,
+        Value::Null,
     );
+    let compacted = compact_client_tool_result(&input);
 
     assert_eq!(compacted.payload["output_summary"], "Used session_info (ok)");
     assert!(compacted.payload.get("output_preview").is_none());
@@ -61,16 +60,15 @@ fn compact_client_tool_result_adds_bounded_summary_without_preview() {
 
 #[test]
 fn compact_client_tool_result_falls_back_to_structured_content_when_content_is_empty() {
-    let compacted = compact_client_tool_result_params(
+    let input = ClientToolResultInput::new(
         "call_read_file",
+        Some("fs_read_text_file".to_string()),
         "ok",
-        &json!({
-            "tool_name": "fs_read_text_file",
-            "content": "",
-            "structured_content": { "content": "hello from file" },
-            "error": null,
-        }),
+        Some("".to_string()),
+        json!({ "content": "hello from file" }),
+        Value::Null,
     );
+    let compacted = compact_client_tool_result(&input);
 
     assert_eq!(compacted.content, "hello from file");
     assert_eq!(

@@ -12,7 +12,8 @@ use crate::{
     runtime::compaction::TranscriptGroupingRow,
 };
 use den_service::conversation::events::{
-    canonical_persistence_context, spawn_persist_tool_result, ConversationEventProvenance,
+    canonical_persistence_context, spawn_persist_tool_result, CanonicalToolResultRecord,
+    ConversationEventProvenance,
 };
 
 #[derive(Debug, Clone)]
@@ -412,19 +413,21 @@ fn backfill_incomplete_tool_results(
         );
         spawn_persist_tool_result(
             context.clone(),
-            Some(tool_name.clone()),
-            tool_call_id,
-            None,
-            "incomplete".to_string(),
-            None,
-            Value::Null,
-            serde_json::json!({
-                "component": "den.agent_loop",
-                "phase": "orphan_tool_call_backfill",
-                "reason": "turn_interrupted",
-                "tool_name": tool_name,
-            }),
-            None,
+            CanonicalToolResultRecord::new(
+                Some(tool_name.clone()),
+                tool_call_id,
+                None,
+                "incomplete".to_string(),
+                None,
+                Value::Null,
+                serde_json::json!({
+                    "component": "den.agent_loop",
+                    "phase": "orphan_tool_call_backfill",
+                    "reason": "turn_interrupted",
+                    "tool_name": tool_name,
+                }),
+                None,
+            ),
             &provenance,
         );
     }

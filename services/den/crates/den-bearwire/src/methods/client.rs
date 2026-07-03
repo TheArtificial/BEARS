@@ -8,9 +8,7 @@ use uuid::Uuid;
 
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
-    result_compaction::{
-        compact_client_tool_result_params, compact_client_tool_result_params_with_artifact,
-    },
+    result_compaction::{compact_client_tool_result, compact_client_tool_result_with_artifact, ClientToolResultInput},
 };
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
@@ -41,6 +39,32 @@ use crate::methods::run::{
 use crate::methods::{param_string, required_param_string};
 
 const MAX_PERMISSION_RESULTS_PER_RUN: i64 = 8;
+
+#[derive(Debug, Clone)]
+struct ClientToolResultRequest {
+    run_id: String,
+    session_id: String,
+    tool_call_id: String,
+    status: String,
+    input: ClientToolResultInput,
+}
+
+impl ClientToolResultRequest {
+    fn from_params(params: &Value) -> Result<Self, CustomError> {
+        let run_id = required_param_string(params, "run_id")?;
+        let session_id = required_param_string(params, "session_id")?;
+        let tool_call_id = required_param_string(params, "tool_call_id")?;
+        let status = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
+        let input = ClientToolResultInput::from_params(&tool_call_id, &status, params);
+        Ok(Self {
+            run_id,
+            session_id,
+            tool_call_id,
+            status,
+            input,
+        })
+    }
+}
 
 fn continuation_watchdog_timeout() -> Duration {
     let millis = std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
@@ -360,10 +384,11 @@ pub(crate) async fn client_tool_result_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let run_id = required_param_string(params, "run_id")?;
-    let session_id = required_param_string(params, "session_id")?;
-    let tool_call_id = required_param_string(params, "tool_call_id")?;
-    let status = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
+    let request = ClientToolResultRequest::from_params(params)?;
+    let run_id = request.run_id.clone();
+    let session_id = request.session_id.clone();
+    let tool_call_id = request.tool_call_id.clone();
+    let status = request.status.clone();
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -403,7 +428,7 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
-    let mut compacted = compact_client_tool_result_params(&tool_call_id, &status, params);
+    let mut compacted = compact_client_tool_result(&request.input);
     if compacted.truncated {
         if let Ok(artifact) = create_tool_output_artifact(
             &state.sqlx_pool,
@@ -414,25 +439,17 @@ pub(crate) async fn client_tool_result_result(
                 conversation_id: None,
                 run_id: Some(run_id.clone()),
                 tool_call_id: tool_call_id.clone(),
-                tool_name: params
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                tool_name: request.input.tool_name.clone(),
                 source: "bearwire_client",
-                content_text: params
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                content_text: request.input.content.clone(),
                 content_json: Some(params.clone()),
                 metadata: json!({ "status": status }),
             },
         )
         .await
         {
-            compacted = compact_client_tool_result_params_with_artifact(
-                &tool_call_id,
-                &status,
-                params,
+            compacted = compact_client_tool_result_with_artifact(
+                &request.input,
                 Some(&artifact.artifact_ref),
             );
         }

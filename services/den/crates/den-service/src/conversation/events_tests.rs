@@ -171,3 +171,25 @@ fn projection_visible_summary_record_uses_visible_assistant_shape() {
         _ => panic!("expected visible assistant message"),
     }
 }
+
+#[test]
+fn canonical_tool_result_record_normalizes_empty_content_and_derives_preview() {
+    let record = CanonicalToolResultRecord::new(
+        Some("fs_read_text_file".to_string()),
+        "call-1",
+        None,
+        "ok",
+        Some("".to_string()),
+        serde_json::json!({ "content": "hello from file" }),
+        serde_json::Value::Null,
+        None,
+    );
+
+    assert_eq!(record.tool_name, "fs_read_text_file");
+    assert_eq!(record.content, None);
+    assert_eq!(record.output_preview.as_deref(), Some("hello from file"));
+    assert_eq!(
+        record.output_summary,
+        "Used fs_read_text_file (ok): hello from file"
+    );
+}
