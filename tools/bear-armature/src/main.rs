@@ -33,8 +33,8 @@ use axum::{extract::State, response::IntoResponse};
 use http::StatusCode;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{
-    file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path,
-    resolve_requested_tool_path,
+    ensure_path_allowed_for_session, file_uri_or_path_to_path, is_absolute_local_path,
+    normalize_requested_tool_path, resolve_requested_tool_path,
 };
 
 use reqwest::Url;
@@ -3404,6 +3404,12 @@ fn client_supports_terminal(adapter_state: &AdapterState) -> bool {
         .unwrap_or(false)
 }
 
+fn client_read_text_file_request_path(context: &SessionContext, raw_path: &str) -> Result<PathBuf> {
+    let resolved_path = resolve_requested_tool_path(context, raw_path)?;
+    ensure_path_allowed_for_session(context, &resolved_path)?;
+    Ok(resolved_path)
+}
+
 async fn handle_client_read_text_file(
     adapter_state: &mut AdapterState,
     session_id: &str,
@@ -3413,7 +3419,9 @@ async fn handle_client_read_text_file(
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("fs_read_text_file args missing path"))?;
-    let mut request = ReadTextFileRequest::new(session_id.to_string(), PathBuf::from(path));
+    let context = session_context(adapter_state, session_id)?;
+    let resolved_path = client_read_text_file_request_path(context, path)?;
+    let mut request = ReadTextFileRequest::new(session_id.to_string(), resolved_path.clone());
     if let Some(line) = args.get("line").and_then(Value::as_u64) {
         request = request.line(Some(line.clamp(1, u32::MAX as u64) as u32));
     }
@@ -3441,12 +3449,15 @@ async fn handle_client_read_text_file(
         )
     })?;
     let content = parsed.content;
-    eprintln!(
-        "bear-armature: client fs/read_text_file path={} bytes={} duration_ms={}",
-        path,
-        content.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: client fs/read_text_file requested_path={} resolved_path={} bytes={} duration_ms={}",
+            path,
+            resolved_path.display(),
+            content.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path,
@@ -7665,13 +7676,15 @@ async fn post_permission_result(
             payload.clone(),
         )
         .await?;
-        eprintln!(
-            "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
-            session_id,
-            run_id,
-            permission_id,
-            truncate_for_log(&result.to_string(), 360)
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
+                session_id,
+                run_id,
+                permission_id,
+                truncate_for_log(&result.to_string(), 360)
+            );
+        }
         return Ok(result);
     }
 
@@ -7720,13 +7733,15 @@ async fn post_tool_result(
         let result =
             bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone())
                 .await?;
-        eprintln!(
-            "bear-armature: posted BearWire tool result session_id={} run_id={} tool_call_id={} response={}",
-            session_id,
-            run_id,
-            tool_call_id,
-            truncate_for_log(&result.to_string(), 360)
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: posted BearWire tool result session_id={} run_id={} tool_call_id={} response={}",
+                session_id,
+                run_id,
+                tool_call_id,
+                truncate_for_log(&result.to_string(), 360)
+            );
+        }
         return Ok(());
     }
 
@@ -8163,10 +8178,12 @@ async fn handle_permission_request_event(
         false
     };
     let decision = if auto_allowed {
-        eprintln!(
-            "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
-            session_id, tool_name, target_label
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
+                session_id, tool_name, target_label
+            );
+        }
         PermissionDecision {
             approved: true,
             remember: false,
@@ -10949,6 +10966,22 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(preview.starts_with("```\n"));
         assert!(preview.contains("... truncated"));
         assert!(preview.chars().count() < 4_050);
+    }
+
+    #[test]
+    fn client_read_text_file_request_path_resolves_relative_path_before_acp_call() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let resolved = client_read_text_file_request_path(&context, "docs/roadmap/PLAN.md")
+            .expect("relative path resolves under workspace");
+        assert_eq!(resolved, PathBuf::from("/workspace/docs/roadmap/PLAN.md"));
+
+        let escaped = client_read_text_file_request_path(&context, "../etc/passwd")
+            .expect_err("path escaping workspace is denied");
+        assert!(format!("{escaped:#}").contains("outside the ACP session workspace roots"));
     }
 
     #[test]

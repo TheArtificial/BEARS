@@ -983,9 +983,11 @@ pub async fn continue_native_client_turn_event_stream(
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     if session.step >= session.max_steps {
-        return Err(DenError::System(
-            "native agent loop reached max steps".to_string(),
-        ));
+        return Err(DenError::System(format!(
+            "native agent loop reached max steps before the model produced a final answer. The turn completed tool/permission continuations but exhausted the safety budget (step={}/max_steps={}). This usually means the model got stuck in a tool-recovery loop; retry with a narrower request or inspect the recent tool results for missing paths, permission denials, or repeated workspace discovery.",
+            session.step,
+            session.max_steps
+        )));
     }
     let llm = LlmClient::new(request.config);
     let overflow = overflow_context(

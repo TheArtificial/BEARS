@@ -115,12 +115,14 @@ impl JsonRpcTransport {
                 tx,
             },
         );
-        eprintln!(
-            "bear-armature: JSON-RPC client request sent method={} id={} timeout_ms={}",
-            method,
-            key,
-            timeout.as_millis()
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: JSON-RPC client request sent method={} id={} timeout_ms={}",
+                method,
+                key,
+                timeout.as_millis()
+            );
+        }
         write_json(json!({
             "jsonrpc": "2.0",
             "id": id,

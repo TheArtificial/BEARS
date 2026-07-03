@@ -1114,10 +1114,12 @@ async fn handle_bearwire_event(
             .await?;
         }
         "tool_call.blocked" => {
-            eprintln!(
-                "bear-armature: ignoring legacy BearWire tool_call.blocked session_id={}; actionable permission waits must use client.waiting",
-                session_id
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: ignoring legacy BearWire tool_call.blocked session_id={}; actionable permission waits must use client.waiting",
+                    session_id
+                );
+            }
         }
         "permission.granted" | "permission.denied" | "permission.expired" => {
             diagnostics.saw_tool_activity = true;
@@ -1135,27 +1137,32 @@ async fn handle_bearwire_event(
             }
         }
         "run.paused" => {
-            let reason = event
-                .pointer("/data/reason")
-                .and_then(Value::as_str)
-                .unwrap_or("paused");
-            let resume_token = event
-                .pointer("/data/resume_token")
-                .and_then(Value::as_str)
-                .unwrap_or("<none>");
             // `run.paused` is status/diagnostic state only. Actionable waits must arrive
-            // as `client.waiting` with a persisted obligation; treating this as tool
-            // activity can make stale pause events look like fresh permission work.
-            eprintln!(
-                "bear-armature: BearWire run paused session_id={} reason={} resume_token={}",
-                session_id, reason, resume_token
-            );
+            // as `client.waiting` with a persisted obligation. Keep this out of normal
+            // stderr so stale pause status cannot look like a fresh permission request
+            // after the armature already answered the matching obligation.
+            if crate::bear_debug_verbose() {
+                let reason = event
+                    .pointer("/data/reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("paused");
+                let resume_token = event
+                    .pointer("/data/resume_token")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<none>");
+                eprintln!(
+                    "bear-armature: BearWire run paused status-only session_id={} reason={} resume_token={}",
+                    session_id, reason, resume_token
+                );
+            }
         }
         "permission.requested" => {
-            eprintln!(
-                "bear-armature: ignoring legacy BearWire permission.requested session_id={}; actionable permission waits must use client.waiting",
-                session_id
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: ignoring legacy BearWire permission.requested session_id={}; actionable permission waits must use client.waiting",
+                    session_id
+                );
+            }
         }
         "session.opened" | "session.state" | "run.accepted" | "run.started" => {}
         _ => {
