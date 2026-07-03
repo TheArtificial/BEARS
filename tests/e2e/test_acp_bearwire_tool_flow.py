@@ -1,0 +1,426 @@
+import json
+import os
+import queue
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+ARMATURE_BIN = Path(
+    os.environ.get(
+        "BEAR_ARMATURE_BIN", ROOT / "tools/bear-armature/target/debug/bear-armature"
+    )
+)
+
+
+class FakeBearWireState:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.events = []
+        self.next_sequence = 1
+        self.run_id = "run-e2e-tool-flow"
+        self.session_id = None
+        self.permission_result_payloads = []
+        self.tool_result_payloads = []
+        self.run_start_payloads = []
+
+    def append_event(self, event):
+        with self.lock:
+            sequence = self.next_sequence
+            self.next_sequence += 1
+            event = dict(event)
+            event.setdefault("sequence", sequence)
+            event.setdefault("event_id", f"evt-e2e-{sequence}")
+            self.events.append((sequence, event))
+            return sequence
+
+    def events_after(self, after):
+        with self.lock:
+            return [
+                (seq, ev) for (seq, ev) in self.events if after is None or seq > after
+            ]
+
+
+class FakeBearWireHandler(BaseHTTPRequestHandler):
+    state: FakeBearWireState = None
+
+    def log_message(self, fmt, *args):
+        return
+
+    def _json(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _sse(self, frames):
+        data = b"".join(frames)
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length).decode() if length else "{}"
+        try:
+            request = json.loads(body)
+        except json.JSONDecodeError:
+            self._json(400, {"error": "bad json"})
+            return
+
+        if parsed.path != "/bearwire/v1/rpc":
+            self._json(404, {"error": "not found"})
+            return
+
+        method = request.get("method")
+        req_id = request.get("id")
+        params = request.get("params") or {}
+        result = self.rpc_result(method, params)
+        self._json(200, {"jsonrpc": "2.0", "id": req_id, "result": result})
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/version.json":
+            self._json(200, {"service": "den", "version": "e2e", "git_sha": "fake"})
+            return
+        if not parsed.path.startswith(
+            "/bearwire/v1/sessions/"
+        ) or not parsed.path.endswith("/events"):
+            self._json(404, {"error": "not found"})
+            return
+        query = urllib.parse.parse_qs(parsed.query)
+        after_values = query.get("after") or []
+        after = int(after_values[0]) if after_values else None
+        frames = []
+        for seq, event in self.state.events_after(after):
+            payload = {"jsonrpc": "2.0", "method": "event", "params": event}
+            frames.append(f"id: {seq}\ndata: {json.dumps(payload)}\n\n".encode())
+        self._sse(frames)
+
+    def rpc_result(self, method, params):
+        state = self.state
+        if method == "initialize":
+            return {
+                "protocol": "bearwire",
+                "version": 1,
+                "server": {"name": "fake-den", "version": "e2e"},
+            }
+        if method == "session.state":
+            return {"kind": "session_state", "ok": True}
+        if method == "resource.update":
+            return {"ok": True}
+        if method == "session.model.get":
+            return {"ok": True, "model": "openai/e2e-mock"}
+        if method == "session.open":
+            state.session_id = params.get("session_id")
+            return {
+                "ok": True,
+                "event_sequence": 0,
+                "session": {
+                    "id": "fake-den-session",
+                    "client_session_id": state.session_id,
+                    "conversation_id": params.get("conversation_id") or "default",
+                    "current_mode": params.get("mode") or "ask",
+                },
+            }
+        if method == "run.start":
+            state.run_start_payloads.append(params)
+            state.session_id = params.get("session_id")
+            state.append_event(
+                {
+                    "type": "client.waiting",
+                    "run_id": state.run_id,
+                    "session_id": state.session_id,
+                    "data": {
+                        "obligation_id": "obl-e2e-1",
+                        "expected_client_method": "client.permission.result",
+                        "expected_responder_action": "permission_decision",
+                        "permission_id": "perm-e2e-1",
+                        "tool_call_id": "call-e2e-read",
+                        "tool_call": {
+                            "id": "call-e2e-read",
+                            "name": "fs_read_text_file",
+                            "title": "Read file",
+                            "kind": "function",
+                            "arguments": {"path": "docs/roadmap/PLAN.md", "limit": 120},
+                        },
+                        "permission": {"id": "perm-e2e-1", "reason": "read test file"},
+                    },
+                }
+            )
+            # This stale status event should not be surfaced as ordinary stderr noise.
+            state.append_event(
+                {
+                    "type": "run.paused",
+                    "run_id": state.run_id,
+                    "session_id": state.session_id,
+                    "data": {
+                        "reason": "requires_approval",
+                        "resume_token": "perm-e2e-1",
+                    },
+                }
+            )
+            return {"ok": True, "run_id": state.run_id, "event_sequence": 1}
+        if method == "client.permission.result":
+            state.permission_result_payloads.append(params)
+            return {
+                "ok": True,
+                "duplicate": False,
+                "event_sequence": state.next_sequence,
+                "run_state": "waiting_for_tool_result",
+                "continuation": "waiting_for_tool_result",
+                "obligation_state": "waiting_for_client",
+                "local_tool_request": {
+                    "tool_call_id": "call-e2e-read",
+                    "tool_name": "fs_read_text_file",
+                    "result_tool_name": "fs_read_text_file",
+                    "permission_id": "perm-e2e-1",
+                    "obligation_id": "obl-e2e-1",
+                    "args": {"path": "docs/roadmap/PLAN.md", "limit": 120},
+                },
+            }
+        if method == "client.tool.result":
+            state.tool_result_payloads.append(params)
+            content = (
+                (params.get("structured_content") or {})
+                if isinstance(params.get("structured_content"), dict)
+                else {}
+            )
+            assert params.get("tool_call_id") == "call-e2e-read"
+            assert params.get("status") == "ok", params
+            assert "e2e fixture plan" in json.dumps(content), params
+            state.append_event(
+                {
+                    "type": "message.delta",
+                    "run_id": state.run_id,
+                    "session_id": state.session_id,
+                    "data": {"delta": "Read the requested plan file successfully."},
+                }
+            )
+            state.append_event(
+                {
+                    "type": "run.completed",
+                    "run_id": state.run_id,
+                    "session_id": state.session_id,
+                    "data": {"outcome": "ok"},
+                }
+            )
+            return {
+                "ok": True,
+                "duplicate": False,
+                "event_sequence": state.next_sequence,
+                "run_state": "continuing",
+                "continuation": "started",
+                "result_id": "result-e2e-1",
+            }
+        self._json(500, {"error": f"unexpected method {method}"})
+        raise RuntimeError(method)
+
+
+class ArmatureClient:
+    def __init__(self, proc):
+        self.proc = proc
+        self.responses = {}
+        self.notifications = []
+        self.client_requests = queue.Queue()
+        self.stderr_lines = []
+        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
+        self._err_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self._reader.start()
+        self._err_reader.start()
+
+    def _read_stdout(self):
+        for line in self.proc.stdout:
+            if not line.strip():
+                continue
+            msg = json.loads(line)
+            if "id" in msg and ("result" in msg or "error" in msg):
+                self.responses[str(msg["id"])] = msg
+            elif "method" in msg:
+                self.client_requests.put(msg)
+            else:
+                self.notifications.append(msg)
+
+    def _read_stderr(self):
+        for line in self.proc.stderr:
+            self.stderr_lines.append(line.rstrip())
+
+    def send(self, method, params=None, req_id=None):
+        req_id = req_id or f"req-{int(time.time() * 1000)}"
+        self.proc.stdin.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": method,
+                    "params": params or {},
+                }
+            )
+            + "\n"
+        )
+        self.proc.stdin.flush()
+        return req_id
+
+    def wait_response(self, req_id, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if str(req_id) in self.responses:
+                return self.responses.pop(str(req_id))
+            time.sleep(0.02)
+        raise AssertionError(
+            f"timed out waiting for response {req_id}; stderr={self.stderr_lines}"
+        )
+
+    def wait_client_request(self, method, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                msg = self.client_requests.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if msg.get("method") == method:
+                return msg
+            # Respond harmlessly to session/update notifications that arrive as requests in tests.
+            self.notifications.append(msg)
+        raise AssertionError(
+            f"timed out waiting for client request {method}; stderr={self.stderr_lines}"
+        )
+
+    def respond(self, req, result=None, error=None):
+        msg = {"jsonrpc": "2.0", "id": req["id"]}
+        if error is not None:
+            msg["error"] = error
+        else:
+            msg["result"] = result or {}
+        self.proc.stdin.write(json.dumps(msg) + "\n")
+        self.proc.stdin.flush()
+
+
+def build_armature_if_needed():
+    if ARMATURE_BIN.exists():
+        return
+    subprocess.run(
+        [
+            "cargo",
+            "build",
+            "--manifest-path",
+            str(ROOT / "tools/bear-armature/Cargo.toml"),
+        ],
+        check=True,
+        cwd=ROOT,
+    )
+
+
+def start_fake_bearwire_server():
+    state = FakeBearWireState()
+    handler = type("Handler", (FakeBearWireHandler,), {})
+    handler.state = state
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, state, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_acp_bearwire_relative_tool_flow(tmp_path):
+    build_armature_if_needed()
+    workspace = tmp_path / "workspace"
+    plan = workspace / "docs" / "roadmap" / "PLAN.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(
+        "# e2e fixture plan\n\nThis proves ACP relative paths resolve before tool use.\n"
+    )
+
+    server, state, api_url = start_fake_bearwire_server()
+    env = os.environ.copy()
+    env.update(
+        {
+            "DEN_API_URL": api_url,
+            "BEAR_SLUG": "meta",
+            "DEN_TOKEN": "bear_arm_e2e_fake_token",
+            "DEN_ACP_CLIENT": "e2e-acp",
+            "BEARS_BEARWIRE": "true",
+            "BEAR_DEBUG": "off",
+        }
+    )
+    proc = subprocess.Popen(
+        [str(ARMATURE_BIN), "acp"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+    client = ArmatureClient(proc)
+    try:
+        init_id = client.send(
+            "initialize", {"clientCapabilities": {"fs": {"readTextFile": True}}}, "init"
+        )
+        init = client.wait_response(init_id)
+        assert "result" in init, init
+
+        new_id = client.send(
+            "session/new",
+            {
+                "cwd": str(workspace),
+                "workspace": {"roots": [{"rootUri": workspace.as_uri()}]},
+            },
+            "new",
+        )
+        new = client.wait_response(new_id)
+        assert "result" in new, new
+        session_id = new["result"]["sessionId"]
+
+        prompt_id = client.send(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "Read the plan"}],
+            },
+            "prompt",
+        )
+
+        permission = client.wait_client_request(
+            "session/request_permission", timeout=10
+        )
+        client.respond(
+            permission, {"outcome": {"outcome": "selected", "optionId": "allow_once"}}
+        )
+
+        fs_req = client.wait_client_request("fs/read_text_file", timeout=10)
+        path = fs_req["params"].get("path") or fs_req["params"].get("uri")
+        assert path == str(plan), fs_req
+        client.respond(fs_req, {"content": plan.read_text()})
+
+        prompt = client.wait_response(prompt_id, timeout=15)
+        assert "result" in prompt, prompt
+
+        assert state.run_start_payloads, "run.start was not called"
+        client_context = state.run_start_payloads[0].get("client_context") or {}
+        assert client_context.get("workspace_roots") == [str(workspace)]
+        assert state.permission_result_payloads, "permission result not posted"
+        assert state.tool_result_payloads, "tool result not posted"
+        assert state.tool_result_payloads[0]["status"] == "ok"
+
+        stderr = "\n".join(client.stderr_lines)
+        assert "BearWire run paused" not in stderr
+        assert "JSON-RPC client request sent" not in stderr
+        assert "permission_auto_allowed" not in stderr
+        assert "Tool completed" not in stderr
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        server.shutdown()
