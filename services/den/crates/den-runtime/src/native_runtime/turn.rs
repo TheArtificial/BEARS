@@ -2,6 +2,7 @@ use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
+    result_compaction::compact_client_tool_result_params,
 };
 use std::sync::{Arc, LazyLock};
 
@@ -291,6 +292,16 @@ pub async fn record_native_client_tool_result(
             RuntimeToolResultStatus::Timeout => "timeout",
             RuntimeToolResultStatus::Error => "error",
         };
+        let compacted = compact_client_tool_result_params(
+            tool_call_id,
+            status_label,
+            &serde_json::json!({
+                "tool_name": tool_name,
+                "content": content,
+                "structured_content": serde_json::Value::Null,
+                "error": serde_json::Value::Null,
+            }),
+        );
         persist_canonical_conversation_record(
             &persistence_context,
             &CanonicalConversationRecord::tool_result(
@@ -298,8 +309,12 @@ pub async fn record_native_client_tool_result(
                 tool_call_id.to_string(),
                 approval_request_id.map(str::to_string),
                 status_label,
-                Some(content),
-                serde_json::Value::Null,
+                compacted
+                    .payload
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                compacted.payload.clone(),
                 serde_json::json!({
                     "component": "den.native_runtime",
                     "phase": "client_tool_result_recorded",
@@ -1693,6 +1708,14 @@ mod tests {
         assert!(
             rows.iter().any(|row| row.message_type == "tool_result"),
             "expected persisted tool_result row, got {rows:#?}"
+        );
+        let persisted_tool_result = rows
+            .iter()
+            .find(|row| row.message_type == "tool_result")
+            .expect("persisted tool_result row");
+        assert_eq!(
+            persisted_tool_result.content_json["output_summary"],
+            serde_json::json!("Used fs_read_text_file (ok): {\"status\":\"ok\",\"structured_content\":{\"content\":\"# BEARS roadmap\"},\"tool_name\":\"fs_read_text_file\"}")
         );
         assert!(
             rows.iter().any(|row| matches!(

@@ -1374,6 +1374,43 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let tool_call_id = format!("call_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        &tool_call_id,
+        None,
+        json!({ "tool_name": "fs_read_text_file" }),
+    )
+    .await
+    .expect("insert tool obligation");
+    let compacted = den_core::tools::result_compaction::compact_client_tool_result_params(
+        &tool_call_id,
+        "ok",
+        &json!({
+            "tool_name": "fs_read_text_file",
+            "content": "file contents"
+        }),
+    );
+    assert_eq!(
+        compacted.payload["output_summary"],
+        json!("Used fs_read_text_file (ok): file contents")
+    );
+    assert_eq!(compacted.payload["output_preview"], json!("file contents"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

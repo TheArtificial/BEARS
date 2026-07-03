@@ -1,4 +1,4 @@
-use den_core::DenError;
+use den_core::{tools::result_compaction::truncate_str, DenError};
 use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -102,6 +102,39 @@ impl ConversationEventProvenance {
             "event": event,
             "scope_id": self.scope_id,
         })
+    }
+}
+
+fn canonical_tool_result_preview(
+    content: Option<&str>,
+    structured_content: &serde_json::Value,
+) -> Option<String> {
+    let preview = content
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            structured_content
+                .get("content")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| match structured_content {
+            serde_json::Value::Null => None,
+            value => {
+                let rendered = value.to_string();
+                Some(rendered).filter(|text| text != "null" && text != "{}" && text != "[]")
+            }
+        });
+    preview.map(|preview| truncate_str(&preview, 512).0)
+}
+
+fn canonical_tool_result_summary(tool_name: &str, status: &str, preview: Option<&str>) -> String {
+    match preview.filter(|value| !value.is_empty()) {
+        Some(preview) => format!("Used {tool_name} ({status}): {preview}"),
+        None => format!("Used {tool_name} ({status})"),
     }
 }
 
@@ -279,6 +312,10 @@ impl CanonicalConversationRecord {
         provenance: &ConversationEventProvenance,
     ) -> Self {
         let tool_name = tool_name.unwrap_or_else(|| "tool".to_string());
+        let status = status.into();
+        let output_preview = canonical_tool_result_preview(content.as_deref(), &structured_content);
+        let output_summary =
+            canonical_tool_result_summary(&tool_name, &status, output_preview.as_deref());
         Self::tool_event(
             format!("Tool result: {tool_name}"),
             serde_json::json!({
@@ -288,9 +325,11 @@ impl CanonicalConversationRecord {
                 "tool_call_id": tool_call_id.into(),
                 "approval_request_id": approval_request_id,
                 "tool_name": tool_name,
-                "status": status.into(),
+                "status": status,
                 "content": content,
                 "structured_content": structured_content,
+                "output_summary": output_summary,
+                "output_preview": output_preview,
                 "diagnostic": diagnostic,
                 "request_id": request_id,
             }),
