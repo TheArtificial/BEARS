@@ -3210,6 +3210,7 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
             "ACP session cwd must be an absolute local path; got {cwd:?}"
         ));
     }
+    let roots = roots_or_cwd(roots, &cwd);
     let raw = json!({
         "cwd": cwd,
         "workspace_roots": roots,
@@ -3989,6 +3990,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             "ACP session cwd must be an absolute local path; got {cwd:?}"
         ));
     }
+    let roots = roots_or_cwd(roots, &cwd);
     let mut ctx = SessionContext {
         cwd,
         roots,
@@ -6243,13 +6245,34 @@ fn capability_value_bool(value: &Value) -> bool {
 fn workspace_roots_from_params(params: &Value) -> Vec<String> {
     let mut roots = Vec::new();
     push_path_value(&mut roots, params.get("workspaceUri"));
+    push_path_value(&mut roots, params.get("rootUri"));
+    push_path_value(&mut roots, params.get("root_uri"));
+    push_path_value(&mut roots, params.get("workspaceRoot"));
+    push_path_value(&mut roots, params.get("workspace_root"));
     push_path_value(&mut roots, params.pointer("/workspace/currentDirectory"));
     push_path_value(&mut roots, params.pointer("/workspace/cwd"));
     push_path_value(&mut roots, params.pointer("/workspace/root"));
+    push_path_value(&mut roots, params.pointer("/workspace/rootUri"));
+    push_path_value(&mut roots, params.pointer("/workspace/root_uri"));
     push_folder_array(&mut roots, params.get("workspaceFolders"));
+    push_folder_array(&mut roots, params.get("workspace_folders"));
+    push_folder_array(&mut roots, params.get("workspaceRoots"));
+    push_folder_array(&mut roots, params.get("workspace_roots"));
     push_folder_array(&mut roots, params.pointer("/workspace/folders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspaceFolders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspace_folders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/roots"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspaceRoots"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspace_roots"));
     roots.sort();
     roots.dedup();
+    roots
+}
+
+fn roots_or_cwd(mut roots: Vec<String>, cwd: &str) -> Vec<String> {
+    if roots.is_empty() && is_absolute_local_path(cwd) {
+        roots.push(cwd.to_string());
+    }
     roots
 }
 
@@ -6258,7 +6281,11 @@ fn push_folder_array(roots: &mut Vec<String>, value: Option<&Value>) {
         return;
     };
     for item in items {
-        push_path_value(roots, item.get("path").or_else(|| item.get("uri")));
+        if let Some(object) = item.as_object() {
+            for key in ["path", "uri", "rootUri", "root_uri", "root", "cwd"] {
+                push_path_value(roots, object.get(key));
+            }
+        }
         if item.as_str().is_some() {
             push_path_value(roots, Some(item));
         }
@@ -12845,6 +12872,58 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .unwrap();
         assert_eq!(context.cwd, "/Users/bear/active");
         assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
+    }
+
+    #[test]
+    fn session_context_uses_cwd_as_workspace_root_when_roots_are_absent() {
+        let context = session_context_from_params(&json!({
+            "cwd": "/Users/bear/project"
+        }))
+        .unwrap();
+        assert_eq!(context.cwd, "/Users/bear/project");
+        assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
+        assert_eq!(
+            context.raw["workspace_roots"],
+            json!(["/Users/bear/project"])
+        );
+    }
+
+    #[test]
+    fn session_context_reads_nested_workspace_roots_shapes() {
+        let context = session_context_from_params(&json!({
+            "cwd": "/Users/bear/project-a",
+            "workspace": {
+                "roots": [
+                    { "rootUri": "file:///Users/bear/project-b" },
+                    "/Users/bear/project-a"
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            context.roots,
+            vec![
+                "/Users/bear/project-a".to_string(),
+                "/Users/bear/project-b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_context_reads_top_level_root_uri_and_workspace_roots() {
+        let context = session_context_from_params(&json!({
+            "rootUri": "file:///Users/bear/project-a",
+            "workspace_roots": [{ "uri": "file:///Users/bear/project-b" }]
+        }))
+        .unwrap();
+        assert_eq!(context.cwd, "/Users/bear/project-a");
+        assert_eq!(
+            context.roots,
+            vec![
+                "/Users/bear/project-a".to_string(),
+                "/Users/bear/project-b".to_string(),
+            ]
+        );
     }
 
     #[test]
