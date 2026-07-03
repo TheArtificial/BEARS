@@ -12,6 +12,8 @@ pub struct AssembledTurnBudgetComponents {
     pub tool_surface_guidance_chars: u32,
     pub compaction_chars: u32,
     pub transcript_chars: u32,
+    pub transcript_fallback_pruned_chars: u32,
+    pub transcript_fallback_pruned_messages: u32,
     pub current_user_input_chars: u32,
     pub tool_message_chars: u32,
 }
@@ -21,9 +23,17 @@ fn estimated_tokens(chars: u32) -> u32 {
 }
 
 fn component(key: &str, label: &str, chars: u32) -> ContextBudgetComponentReport {
+    component_with_label(key, label.to_string(), chars)
+}
+
+fn component_with_label(
+    key: &str,
+    label: String,
+    chars: u32,
+) -> ContextBudgetComponentReport {
     ContextBudgetComponentReport {
         key: key.to_string(),
-        label: label.to_string(),
+        label,
         estimated_tokens: estimated_tokens(chars),
         estimated_characters: chars,
     }
@@ -68,6 +78,16 @@ pub fn estimate_context_budget(
         component("tool_messages", "Tool messages", parts.tool_message_chars),
         component("tool_schemas", "Tool schemas", tool_schema_chars),
     ];
+    if parts.transcript_fallback_pruned_chars > 0 {
+        components.push(component_with_label(
+            "transcript_fallback_prune",
+            format!(
+                "Transcript fallback prune ({} messages)",
+                parts.transcript_fallback_pruned_messages
+            ),
+            parts.transcript_fallback_pruned_chars,
+        ));
+    }
     let accounted_chars: u32 = components.iter().map(|entry| entry.estimated_characters).sum();
     if body_chars > accounted_chars {
         components.push(component(
@@ -147,6 +167,8 @@ mod tests {
                 tool_surface_guidance_chars: 60,
                 compaction_chars: 10,
                 transcript_chars: 200,
+                transcript_fallback_pruned_chars: 24,
+                transcript_fallback_pruned_messages: 3,
                 current_user_input_chars: 32,
                 tool_message_chars: 16,
             },
@@ -161,6 +183,10 @@ mod tests {
         assert_eq!(report.estimate_precision, ContextBudgetEstimatePrecision::Approximate);
         assert!(report.components.iter().any(|c| c.key == "compiled_prompt"));
         assert!(report.components.iter().any(|c| c.key == "tool_schemas"));
+        assert!(report
+            .components
+            .iter()
+            .any(|c| c.key == "transcript_fallback_prune" && c.label.contains("3 messages")));
         assert!(!report.over_budget);
     }
 

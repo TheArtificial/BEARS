@@ -25,24 +25,31 @@ struct TranscriptRow {
 type TranscriptHistoryRow = (String, i64, String, String, Value, Option<String>);
 
 const TRANSCRIPT_HISTORY_QUERY: &str = r"
-        SELECT id, sequence_no, message_type, content_text, content_json, tool_call_id
-        FROM (
-            SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
-            FROM conversation_messages
-            WHERE conversation_id = (
-                SELECT id FROM conversations
-                WHERE external_conversation_id = $1 AND bear_id = $2
-                LIMIT 1
-            )
-            AND (
-                visibility != 'diagnostic_only'
-                OR message_type IN ('tool_call', 'tool_result')
-            )
-            ORDER BY sequence_no DESC
-            LIMIT 200
-        ) recent
+        SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE external_conversation_id = $1 AND bear_id = $2
+            LIMIT 1
+        )
+        AND (
+            visibility != 'diagnostic_only'
+            OR message_type IN ('tool_call', 'tool_result')
+        )
         ORDER BY sequence_no ASC
         ";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TranscriptPruneDiagnostics {
+    pub pruned_message_count: u32,
+    pub pruned_character_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrunedTranscriptMessages {
+    pub messages: Vec<ChatMessage>,
+    pub diagnostics: TranscriptPruneDiagnostics,
+}
 
 fn transcript_grouping_rows_from_history(
     history_rows: Vec<TranscriptHistoryRow>,
@@ -442,24 +449,48 @@ pub fn prune_messages_for_native_chat(messages: Vec<ChatMessage>) -> Vec<ChatMes
 
 /// Cap transcript tail sent to native pair LLM turns (system prefix + recent turns).
 pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    prune_messages_for_native_pair_with_diagnostics(messages).messages
+}
+
+pub fn prune_messages_for_native_pair_with_diagnostics(
+    messages: Vec<ChatMessage>,
+) -> PrunedTranscriptMessages {
     const MAX_TAIL_MESSAGES: usize = 64;
     if messages.len() <= MAX_TAIL_MESSAGES {
-        return messages;
+        return PrunedTranscriptMessages {
+            messages,
+            diagnostics: TranscriptPruneDiagnostics::default(),
+        };
     }
     let system = messages
         .first()
         .filter(|message| message.role == "system")
         .cloned();
+    let system_count = usize::from(system.is_some());
     let mut tail_start = messages.len().saturating_sub(MAX_TAIL_MESSAGES - 1);
     while tail_start < messages.len() && messages[tail_start].role == "tool" {
         tail_start += 1;
     }
+    let pruned_message_count = tail_start.saturating_sub(system_count) as u32;
+    let pruned_character_count = messages
+        .iter()
+        .skip(system_count)
+        .take(pruned_message_count as usize)
+        .filter_map(|message| message.content.as_deref())
+        .map(|value| value.chars().count() as u32)
+        .sum();
     let mut pruned = Vec::with_capacity(MAX_TAIL_MESSAGES);
     if let Some(system_message) = system {
         pruned.push(system_message);
     }
     pruned.extend(messages.into_iter().skip(tail_start));
-    repair_tool_call_message_chain(pruned)
+    PrunedTranscriptMessages {
+        messages: repair_tool_call_message_chain(pruned),
+        diagnostics: TranscriptPruneDiagnostics {
+            pruned_message_count,
+            pruned_character_count,
+        },
+    }
 }
 
 pub async fn assemble_agent_messages(
@@ -581,6 +612,41 @@ mod tests {
             pruned.last().and_then(|m| m.content.as_deref()),
             Some("message-39")
         );
+    }
+
+    #[test]
+    fn prune_messages_for_native_pair_reports_fallback_diagnostics() {
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some("system".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }];
+        for index in 0..80 {
+            messages.push(ChatMessage {
+                role: if index % 2 == 0 {
+                    "user".to_string()
+                } else {
+                    "assistant".to_string()
+                },
+                content: Some(format!("message-{index}")),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        }
+
+        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
+
+        assert!(pruned.diagnostics.pruned_message_count > 0);
+        assert!(pruned.diagnostics.pruned_character_count > 0);
+        assert_eq!(pruned.messages.first().map(|m| m.role.as_str()), Some("system"));
+    }
+
+    #[test]
+    fn transcript_history_query_has_no_hard_row_limit() {
+        assert!(!TRANSCRIPT_HISTORY_QUERY.contains("LIMIT 200"));
     }
 
     #[test]

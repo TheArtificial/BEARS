@@ -14,7 +14,7 @@ use den_core::tools::work_surface::WorkSurfaceSessionHints;
 use super::{
     context::{
         load_transcript_messages, load_transcript_messages_after_seq,
-        prune_messages_for_native_chat, prune_messages_for_native_pair,
+        prune_messages_for_native_pair_with_diagnostics,
         repair_tool_call_message_chain,
     },
     key_memory_projection::{
@@ -344,9 +344,45 @@ pub async fn assemble_native_turn_for_bear(
     {
         messages
     } else if ctx.native_runtime && ctx.profile == BearProfile::Pair {
-        prune_messages_for_native_pair(messages)
+        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
+        budget_components.transcript_fallback_pruned_chars =
+            pruned.diagnostics.pruned_character_count;
+        budget_components.transcript_fallback_pruned_messages =
+            pruned.diagnostics.pruned_message_count;
+        budget_components.transcript_chars = budget_components
+            .transcript_chars
+            .saturating_sub(pruned.diagnostics.pruned_character_count);
+        if pruned.diagnostics.pruned_message_count > 0 {
+            tracing::warn!(
+                bear_id = %ctx.bear_id,
+                conversation_id = %ctx.conversation_id,
+                profile = %ctx.profile.as_str(),
+                pruned_message_count = pruned.diagnostics.pruned_message_count,
+                pruned_character_count = pruned.diagnostics.pruned_character_count,
+                "transcript replay used fallback pruning instead of compaction"
+            );
+        }
+        pruned.messages
     } else if ctx.native_runtime && ctx.profile == BearProfile::Chat {
-        prune_messages_for_native_chat(messages)
+        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
+        budget_components.transcript_fallback_pruned_chars =
+            pruned.diagnostics.pruned_character_count;
+        budget_components.transcript_fallback_pruned_messages =
+            pruned.diagnostics.pruned_message_count;
+        budget_components.transcript_chars = budget_components
+            .transcript_chars
+            .saturating_sub(pruned.diagnostics.pruned_character_count);
+        if pruned.diagnostics.pruned_message_count > 0 {
+            tracing::warn!(
+                bear_id = %ctx.bear_id,
+                conversation_id = %ctx.conversation_id,
+                profile = %ctx.profile.as_str(),
+                pruned_message_count = pruned.diagnostics.pruned_message_count,
+                pruned_character_count = pruned.diagnostics.pruned_character_count,
+                "transcript replay used fallback pruning instead of compaction"
+            );
+        }
+        pruned.messages
     } else {
         messages
     };
