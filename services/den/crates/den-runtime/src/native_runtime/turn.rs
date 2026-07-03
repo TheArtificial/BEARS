@@ -1158,6 +1158,116 @@ mod tests {
         SESSION_STORE.remove(&session_key);
     }
 
+    #[tokio::test]
+    async fn recorded_client_tool_result_remains_visible_in_live_continuation_transcript() {
+        let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let tool_call_id = "call-visible-tool";
+        SESSION_STORE.insert(AgentLoopSession {
+            session_key: session_key.clone(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: conversation_id.clone(),
+            client_session_id: client_session_id.clone(),
+            request_id: Some("request-before-tool".to_string()),
+            run_id: Some("run-visible-tool".to_string()),
+            messages: vec![
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: Some("Inspect the plan".to_string()),
+                    tool_call_id: None,
+                    name: None,
+                    tool_calls: None,
+                },
+                ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_call_id: None,
+                    name: None,
+                    tool_calls: Some(vec![ChatToolCall {
+                        id: tool_call_id.to_string(),
+                        call_type: "function".to_string(),
+                        function: crate::llm::ChatToolCallFunction {
+                            name: "fs_read_text_file".to_string(),
+                            arguments: serde_json::json!({
+                                "path": "/workspace/docs/roadmap/PLAN.md",
+                                "limit": 120,
+                            })
+                            .to_string(),
+                        },
+                    }]),
+                },
+            ],
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 1,
+            max_steps: 8,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        });
+        let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
+            .expect("lazy pool");
+
+        record_native_client_tool_result(
+            &pool,
+            &conversation_id,
+            &client_session_id,
+            "request-after-tool",
+            Some("run-visible-tool"),
+            tool_call_id,
+            None,
+            RuntimeToolResultStatus::Ok,
+            serde_json::json!({
+                "tool_name": "fs_read_text_file",
+                "status": "ok",
+                "structured_content": { "content": "# BEARS roadmap" }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("record tool result");
+
+        let stored = SESSION_STORE.get(&session_key).expect("stored session");
+        assert_eq!(stored.messages.len(), 3);
+        assert_eq!(stored.messages[1].role, "assistant");
+        assert_eq!(
+            stored.messages[1]
+                .tool_calls
+                .as_ref()
+                .and_then(|calls| calls.first())
+                .map(|call| (call.id.as_str(), call.function.name.as_str())),
+            Some((tool_call_id, "fs_read_text_file"))
+        );
+        assert_eq!(stored.messages[2].role, "tool");
+        assert_eq!(
+            stored.messages[2].tool_call_id.as_deref(),
+            Some(tool_call_id)
+        );
+        assert!(stored.messages[2]
+            .content
+            .as_deref()
+            .unwrap_or_default()
+            .contains("BEARS roadmap"));
+
+        let repaired = crate::agent_loop::repair_tool_call_message_chain(stored.messages);
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(repaired[1].role, "assistant");
+        assert_eq!(repaired[2].role, "tool");
+        SESSION_STORE.remove(&session_key);
+    }
+
     #[test]
     fn prompt_for_model_leaves_plain_prompt_unchanged_without_host_context() {
         assert_eq!(
