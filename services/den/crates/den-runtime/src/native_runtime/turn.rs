@@ -1554,6 +1554,210 @@ mod tests {
             .contains("BEARS roadmap"));
     }
 
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn load_history_replays_persisted_tool_call_and_result_records(pool: PgPool) {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let username = format!("toolhistload{}", &suffix[..8]);
+        let email = format!("{username}@example.test");
+        let (user_id,): (i32,) = sqlx::query_as(
+            r#"
+            INSERT INTO users (email, username, display_name, passhash)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+        )
+        .bind(email)
+        .bind(&username)
+        .bind("Tool Load History Test")
+        .bind("test-passhash")
+        .fetch_one(&pool)
+        .await
+        .expect("create user");
+        let bear_id = Uuid::new_v4();
+        let bear_slug = format!("tool-load-history-{}", &suffix[..8]);
+        sqlx::query(
+            r#"
+            INSERT INTO bears (id, slug, name)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(bear_id)
+        .bind(&bear_slug)
+        .bind("Tool Load History Bear")
+        .execute(&pool)
+        .await
+        .expect("create bear");
+
+        let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+        let request_id = Uuid::new_v4().to_string();
+        let tool_call_id = "call-load-history";
+        let context = canonical_persistence_context(
+            pool.clone(),
+            bear_id,
+            Some(user_id),
+            conversation_id.clone(),
+            Some(client_session_id.clone()),
+            Some(request_id.clone()),
+            client_session_id.clone(),
+            false,
+        );
+        persist_canonical_conversation_record(
+            &context,
+            &CanonicalConversationRecord::visible_user_message(
+                "Read the plan",
+                serde_json::json!({ "event": "user_message", "scope_id": client_session_id }),
+                None,
+            ),
+        )
+        .await
+        .expect("persist user message");
+        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        SESSION_STORE.insert(AgentLoopSession {
+            session_key: session_key.clone(),
+            bear_id,
+            bear_slug,
+            user_id: Some(user_id),
+            conversation_id: conversation_id.clone(),
+            client_session_id: client_session_id.clone(),
+            request_id: Some(request_id.clone()),
+            run_id: Some("run-load-history".to_string()),
+            messages: vec![ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: tool_call_id.to_string(),
+                    call_type: "function".to_string(),
+                    function: crate::llm::ChatToolCallFunction {
+                        name: "fs_read_text_file".to_string(),
+                        arguments: serde_json::json!({ "path": "/workspace/docs/roadmap/PLAN.md" })
+                            .to_string(),
+                    },
+                }]),
+            }],
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 1,
+            max_steps: 8,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        });
+
+        record_native_client_tool_result(
+            &pool,
+            &conversation_id,
+            &client_session_id,
+            &request_id,
+            Some("run-load-history"),
+            tool_call_id,
+            None,
+            RuntimeToolResultStatus::Ok,
+            serde_json::json!({
+                "tool_name": "fs_read_text_file",
+                "status": "ok",
+                "structured_content": { "content": "# BEARS roadmap" }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("record tool result");
+        SESSION_STORE.remove(&session_key);
+
+        let canonical = conversation_persistence::get_conversation_for_external_id(
+            &pool,
+            bear_id,
+            &conversation_id,
+        )
+        .await
+        .expect("load canonical conversation")
+        .expect("canonical conversation exists");
+        let rows = conversation_persistence::list_messages_page(&pool, canonical.id, None, 10)
+            .await
+            .expect("list persisted rows");
+        assert!(
+            rows.iter().any(|row| row.message_type == "tool_call"),
+            "expected persisted tool_call row, got {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.message_type == "tool_result"),
+            "expected persisted tool_result row, got {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| matches!(
+                row.to_model_transcript_record(),
+                Some(PersistedTranscriptRecord::ToolCall { .. })
+            )),
+            "expected tool_call transcript projection, got {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| matches!(
+                row.to_model_transcript_record(),
+                Some(PersistedTranscriptRecord::ToolResult { .. })
+            )),
+            "expected tool_result transcript projection, got {rows:#?}"
+        );
+
+        let backend = NativeRuntimeConversationBackend::with_pool(pool);
+        let binding = RoleRuntimeBinding {
+            binding_id: format!("den-native:{bear_id}:pair"),
+            compatibility_backend: Some("native".to_string()),
+        };
+        let history = backend
+            .load_history(
+                &binding,
+                &RuntimeConversationRef {
+                    id: conversation_id,
+                },
+            )
+            .await
+            .expect("load history");
+
+        assert_eq!(history.records.len(), 3, "{history:#?}");
+        assert!(matches!(
+            &history.records[0],
+            RuntimeHistoryRecord::Message { role, content, .. }
+            if role == "user" && content == "Read the plan"
+        ));
+        assert!(matches!(
+            &history.records[1],
+            RuntimeHistoryRecord::ToolCall {
+                tool_call_id: record_tool_call_id,
+                tool_name,
+                arguments,
+                ..
+            }
+            if record_tool_call_id == tool_call_id
+                && tool_name == "fs_read_text_file"
+                && arguments.get("path").and_then(serde_json::Value::as_str) == Some("/workspace/docs/roadmap/PLAN.md")
+        ));
+        assert!(matches!(
+            &history.records[2],
+            RuntimeHistoryRecord::ToolResult {
+                tool_call_id: Some(record_tool_call_id),
+                tool_name: Some(tool_name),
+                status: Some(status),
+                content: Some(content),
+                ..
+            }
+            if record_tool_call_id == tool_call_id
+                && tool_name == "fs_read_text_file"
+                && status == "ok"
+                && content.contains("BEARS roadmap")
+        ));
+    }
+
     #[test]
     fn prompt_for_model_leaves_plain_prompt_unchanged_without_host_context() {
         assert_eq!(

@@ -76,6 +76,15 @@ pub enum PersistedTranscriptRecord {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedUserHistoryMessage {
+    pub sequence_no: i64,
+    pub message_id: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub created_at: time::OffsetDateTime,
+}
+
 impl PersistedConversationMessage {
     pub fn storage_message_type(&self) -> Result<ConversationMessageType, DenError> {
         ConversationMessageType::try_from_storage(&self.message_type)
@@ -128,11 +137,6 @@ impl PersistedConversationMessage {
     }
 
     pub fn to_model_transcript_record(&self) -> Option<PersistedTranscriptRecord> {
-        let visibility = self.storage_visibility().ok()?;
-        if !visibility.is_model_transcript_visible() {
-            return None;
-        }
-
         if let Some(message) = self.to_model_transcript_message() {
             return Some(PersistedTranscriptRecord::Message(message));
         }
@@ -218,14 +222,25 @@ impl PersistedConversationMessage {
         self.to_model_transcript_message()
     }
 
+    pub fn to_user_history_record(&self) -> Option<PersistedUserHistoryMessage> {
+        let message = self.to_user_history_transcript_message()?;
+        Some(PersistedUserHistoryMessage {
+            sequence_no: message.sequence_no,
+            message_id: message.message_id,
+            role: message.role,
+            content: message.content,
+            created_at: message.created_at,
+        })
+    }
+
     /// Rows that may be replayed into model transcript context.
     pub fn is_model_transcript_visible(&self) -> bool {
-        self.to_model_transcript_message().is_some()
+        self.to_model_transcript_record().is_some()
     }
 
     /// Rows that may be shown in user-facing conversation history.
     pub fn is_user_history_visible(&self) -> bool {
-        self.to_user_history_transcript_message().is_some()
+        self.to_user_history_record().is_some()
     }
 
     pub fn is_transcript_visible(&self) -> bool {

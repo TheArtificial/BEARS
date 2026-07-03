@@ -55,7 +55,7 @@ pub(crate) async fn conversation_history_result(
         .iter()
         .rev()
         .filter_map(|row| {
-            let message = row.to_user_history_transcript_message()?;
+            let message = row.to_user_history_record()?;
             let text =
                 den_runtime::agent_assist::sanitize_visible_transcript_text(&message.content);
             if text.trim().is_empty() {

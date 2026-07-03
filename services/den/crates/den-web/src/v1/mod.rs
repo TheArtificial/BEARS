@@ -484,12 +484,12 @@ fn map_persisted_history_page(
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let visible_rows: Vec<_> = rows
         .iter()
-        .filter(|row| row.is_transcript_visible())
+        .filter_map(|row| row.to_user_history_record().map(|message| (row, message)))
         .collect();
 
     let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
-    for row in visible_rows {
-        let storage_role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
+    for (row, message) in visible_rows {
+        let storage_role = message.role.clone();
         if let Some((_, last)) = coalesced_desc.last_mut() {
             if last.role == client_chat_history_role(&storage_role)
                 && storage_role == "assistant"
@@ -498,7 +498,7 @@ fn map_persisted_history_page(
                     Ok(den_service::conversation::message_types::ConversationMessageType::Assistant)
                 )
             {
-                last.text.push_str(&row.content_text);
+                last.text.push_str(&message.content);
                 last.text =
                     crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
                         &last.text,
@@ -507,13 +507,13 @@ fn map_persisted_history_page(
             }
         }
         let text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
-            &row.content_text,
+            &message.content,
         );
         if text.is_empty() {
             continue;
         }
         coalesced_desc.push((
-            row.sequence_no,
+            message.sequence_no,
             ChatHistoryMessage {
                 role: client_chat_history_role(&storage_role),
                 text,

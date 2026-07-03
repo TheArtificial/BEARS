@@ -97,3 +97,31 @@
         ));
         assert!(tool_result.to_user_history_transcript_message().is_none());
     }
+
+    #[test]
+    fn user_history_projection_remains_text_only_when_tool_records_exist() {
+        let user = row("user", Some("user"), "default");
+        assert!(matches!(
+            user.to_user_history_record(),
+            Some(PersistedUserHistoryMessage { role, content, .. })
+            if role == "user" && content == "hello transcript"
+        ));
+
+        let tool_call = PersistedConversationMessage {
+            sequence_no: 8,
+            message_type: "tool_call".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: "Tool request: memory_read".to_string(),
+            content_json: serde_json::json!({
+                "event": "tool_request",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_read",
+                "args": { "path": "pair/notes/demo.md" }
+            }),
+            provider_message_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        assert!(tool_call.to_model_transcript_record().is_some());
+        assert!(tool_call.to_user_history_record().is_none());
+    }
