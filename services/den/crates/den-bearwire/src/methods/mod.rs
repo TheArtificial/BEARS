@@ -11,7 +11,7 @@ pub(crate) mod session;
 #[cfg(test)]
 mod tests;
 
-pub(crate) fn initialize_result(state: &DenState) -> Value {
+pub(crate) fn initialize_result(_state: &DenState) -> Value {
     json!({
         "protocol": "bearwire",
         "version": 1,
@@ -24,9 +24,9 @@ pub(crate) fn initialize_result(state: &DenState) -> Value {
             "rpc": "/bearwire/v1/rpc",
             "events": "/bearwire/v1/sessions/{session_id}/events"
         },
-        "legacy_acp_enabled": state.config.run_api,
+        "legacy_acp_enabled": false,
         "legacy_acp_deprecated": true,
-        "legacy_acp_removal_phase": "phase_4",
+        "legacy_acp_removal_phase": "removed",
     })
 }
 

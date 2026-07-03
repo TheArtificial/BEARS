@@ -1,4 +1,5 @@
 use crate::{
+    bear_debug_verbose,
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
         resolve_requested_tool_path, session_workspace_roots,
@@ -52,18 +53,20 @@ pub(crate) async fn handle_read_text_file(
     if raw.ends_with('\n') && !content.is_empty() && !truncated {
         content.push('\n');
     }
-    eprintln!(
-        "bear-armature: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        line,
-        limit,
-        raw.len(),
-        total_lines,
-        selected.len(),
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            line,
+            limit,
+            raw.len(),
+            total_lines,
+            selected.len(),
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -157,18 +160,20 @@ pub(crate) async fn handle_list_directory(
     }
     let truncated = truncated || total_entries_seen > entries.len() || !queue.is_empty();
     let content = format_directory_listing(&path, &entries, truncated);
-    eprintln!(
-        "bear-armature: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        recursive,
-        include_hidden,
-        limit,
-        entries.len(),
-        total_entries_seen,
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            recursive,
+            include_hidden,
+            limit,
+            entries.len(),
+            total_entries_seen,
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -241,17 +246,19 @@ pub(crate) async fn handle_find_paths(
     )?;
     matches.sort();
     let content = format_find_path_results(glob, &matches, truncated);
-    eprintln!(
-        "bear-armature: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
-        session_id,
-        root.display(),
-        glob,
-        limit,
-        matches.len(),
-        visited,
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
+            session_id,
+            root.display(),
+            glob,
+            limit,
+            matches.len(),
+            visited,
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "root": root.to_string_lossy(),
@@ -385,19 +392,21 @@ pub(crate) async fn handle_search_files(
         }
     }
     let content = format_search_results(query, &matches, truncated);
-    eprintln!(
-        "bear-armature: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        query.len(),
-        limit,
-        max_bytes,
-        files_scanned,
-        bytes_scanned,
-        matches.len(),
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            query.len(),
+            limit,
+            max_bytes,
+            files_scanned,
+            bytes_scanned,
+            matches.len(),
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -489,14 +498,16 @@ pub(crate) async fn handle_replace_text(
     let started = std::time::Instant::now();
     let plan = ReplaceTextPlan::preflight(context, args, policy)?;
     let applied = plan.apply(context, policy)?;
-    eprintln!(
-        "bear-armature: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
-        session_id,
-        applied["path"].as_str().unwrap_or(""),
-        applied["bytes_before"].as_u64().unwrap_or(0),
-        applied["bytes_after"].as_u64().unwrap_or(0),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
+            session_id,
+            applied["path"].as_str().unwrap_or(""),
+            applied["bytes_before"].as_u64().unwrap_or(0),
+            applied["bytes_after"].as_u64().unwrap_or(0),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(applied)
 }
 
@@ -571,13 +582,15 @@ pub(crate) async fn handle_create_text_file(
             "sensitive_path_policy": policy.sensitive_path_policy,
         }
     });
-    eprintln!(
-        "bear-armature: create_text_file session_id={} path={} bytes={} duration_ms={}",
-        session_id,
-        path.display(),
-        content.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: create_text_file session_id={} path={} bytes={} duration_ms={}",
+            session_id,
+            path.display(),
+            content.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(result)
 }
 
@@ -642,13 +655,15 @@ pub(crate) async fn handle_create_directory(
     } else {
         fs::create_dir(&path).with_context(|| format!("create directory {}", path.display()))?;
     }
-    eprintln!(
-        "bear-armature: create_directory session_id={} path={} parents={} duration_ms={}",
-        session_id,
-        path.display(),
-        parents,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: create_directory session_id={} path={} parents={} duration_ms={}",
+            session_id,
+            path.display(),
+            parents,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -742,15 +757,17 @@ pub(crate) async fn handle_move_path(
     let started = std::time::Instant::now();
     fs::rename(&source, &destination)
         .with_context(|| format!("move {} to {}", source.display(), destination.display()))?;
-    eprintln!(
-        "bear-armature: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
-        session_id,
-        source.display(),
-        destination.display(),
-        kind,
-        overwrite,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
+            session_id,
+            source.display(),
+            destination.display(),
+            kind,
+            overwrite,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "source_path": source.to_string_lossy(),
@@ -881,16 +898,18 @@ pub(crate) async fn handle_copy_path(
     } else {
         copy_dir_recursive(&source, &destination)?;
     }
-    eprintln!(
-        "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
-        session_id,
-        source.display(),
-        destination.display(),
-        kind,
-        total_bytes,
-        entries.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
+            session_id,
+            source.display(),
+            destination.display(),
+            kind,
+            total_bytes,
+            entries.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "source_path": source.to_string_lossy(),
@@ -1000,12 +1019,14 @@ pub(crate) async fn handle_apply_patch(
         }
         changed.push(path.to_string_lossy().to_string());
     }
-    eprintln!(
-        "bear-armature: apply_patch session_id={} files={} dry_run={}",
-        session_id,
-        changed.len(),
-        dry_run,
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: apply_patch session_id={} files={} dry_run={}",
+            session_id,
+            changed.len(),
+            dry_run,
+        );
+    }
     Ok(json!({
         "ok": true,
         "dry_run": dry_run,
@@ -1104,15 +1125,17 @@ pub(crate) async fn handle_delete_path(
             String::new()
         }
     );
-    eprintln!(
-        "bear-armature: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
-        session_id,
-        path.display(),
-        kind,
-        recursive,
-        entries.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
+            session_id,
+            path.display(),
+            kind,
+            recursive,
+            entries.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),

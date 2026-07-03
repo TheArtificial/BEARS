@@ -789,10 +789,12 @@ fn spawn_adapter_environment_publish(
         )
         .await
         {
-            eprintln!(
-                "bear-armature: failed to publish adapter environment session_id={} error={err:#}",
-                session_id
-            );
+            if bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: failed to publish adapter environment session_id={} error={err:#}",
+                    session_id
+                );
+            }
         }
     });
 }
@@ -2283,12 +2285,6 @@ async fn handle_request(
                             return Ok(());
                         }
                     }
-                    spawn_adapter_environment_publish(
-                        config.clone(),
-                        session_id.clone(),
-                        adapter_state.clone(),
-                        None,
-                    );
                 }
                 shared_state
                     .session_contexts
@@ -2298,6 +2294,14 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
+                if let Some(config) = runtime.config.as_ref() {
+                    spawn_adapter_environment_publish(
+                        config.clone(),
+                        session_id.clone(),
+                        adapter_state.clone(),
+                        None,
+                    );
+                }
                 let response = NewSessionResponse::new(session_id.clone())
                     .config_options(session_config_options_for_mode(mode))
                     .modes(session_modes_for_mode(mode))
@@ -2310,8 +2314,6 @@ async fn handle_request(
                         }),
                     )])));
                 write_response(id, Ok(serde_json::to_value(response)?)).await?;
-                send_available_commands_update(&session_id).await?;
-                notify_mode_state(&session_id, mode).await?;
             }
         }
         "session/set_config_option" => {
@@ -10051,7 +10053,7 @@ mod tests {
 
         let request_line = request_line.lock().await.clone().unwrap_or_default();
         assert!(
-            request_line.starts_with("POST /acp/bears/test-bear/sessions/acp-session/close "),
+            request_line.starts_with("POST /bearwire/v1/rpc "),
             "request_line={request_line:?}"
         );
         assert!(shared
@@ -10424,7 +10426,10 @@ mod tests {
 
         assert_eq!(mode, MODE_WRITE);
         assert_eq!(response["deferred"], true);
-        assert_eq!(response["source"], "adapter.den_session_mode_not_found");
+        assert_eq!(
+            response["source"],
+            "adapter.bearwire_local_mode_until_next_prompt"
+        );
         assert_eq!(response["pending_mode"], MODE_WRITE);
     }
 
