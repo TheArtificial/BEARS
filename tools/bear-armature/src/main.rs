@@ -8545,6 +8545,23 @@ fn fallback_tool_title(tool_name: &str) -> String {
     out
 }
 
+fn mcp_tool_title(provider_name: &str) -> String {
+    let Some(rest) = provider_name.strip_prefix("mcp__") else {
+        return fallback_tool_title(provider_name);
+    };
+    let mut parts = rest.split("__").collect::<Vec<_>>();
+    let tool = parts.pop().unwrap_or(rest);
+    let server = parts.join(" ");
+    let server_title = if server.contains("chrome") && server.contains("devtools") {
+        "Chrome DevTools".to_string()
+    } else if server.trim().is_empty() {
+        "MCP".to_string()
+    } else {
+        fallback_tool_title(&server)
+    };
+    format!("{server_title}: {}", fallback_tool_title(tool))
+}
+
 fn is_den_server_tool_request(event: &Value) -> bool {
     event
         .get("policy")
@@ -8630,9 +8647,75 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Creating git stash in",
             "create git stash",
         ),
-        "web_fetch" => {
+        "web_fetch" | "local_web_fetch" => {
             ToolDisplay::builtin("Fetch URL", ToolKind::Fetch, "Fetching", "fetch this URL")
         }
+        "web_search" => ToolDisplay::builtin(
+            "Search web",
+            ToolKind::Search,
+            "Searching web",
+            "search the web",
+        ),
+        "session_info" | "bear_environment" => ToolDisplay::builtin(
+            "Inspect session",
+            ToolKind::Read,
+            "Inspecting session",
+            "inspect session context",
+        ),
+        "memory_browse" => ToolDisplay::builtin(
+            "Browse memory",
+            ToolKind::Read,
+            "Browsing memory",
+            "browse memory",
+        ),
+        "memory_read" => ToolDisplay::builtin(
+            "Read memory",
+            ToolKind::Read,
+            "Reading memory",
+            "read memory",
+        ),
+        "memory_search" => ToolDisplay::builtin(
+            "Search memory",
+            ToolKind::Search,
+            "Searching memory",
+            "search memory",
+        ),
+        "memory_write_entry" => ToolDisplay::builtin(
+            "Write memory entry",
+            ToolKind::Edit,
+            "Writing memory",
+            "write memory",
+        ),
+        "memory_request_review" => ToolDisplay::builtin(
+            "Request memory review",
+            ToolKind::Think,
+            "Requesting memory review",
+            "request memory review",
+        ),
+        "list_task_lists" => ToolDisplay::builtin(
+            "List task lists",
+            ToolKind::Read,
+            "Listing task lists",
+            "list task lists",
+        ),
+        "get_task_list_status" => ToolDisplay::builtin(
+            "Get task list status",
+            ToolKind::Read,
+            "Reading task list status",
+            "read task list status",
+        ),
+        "update_task_list" | "update_plan" => ToolDisplay::builtin(
+            "Update task list",
+            ToolKind::Edit,
+            "Updating task list",
+            "update task list",
+        ),
+        "request_task_list_handoff" | "request_work_handoff" => ToolDisplay::builtin(
+            "Request work handoff",
+            ToolKind::Think,
+            "Requesting work handoff",
+            "request work handoff",
+        ),
         "process_run" => ToolDisplay::builtin(
             "Run process",
             ToolKind::Execute,
@@ -8645,12 +8728,7 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Running terminal command in",
             "run this terminal command",
         ),
-        "bear_environment" => ToolDisplay::builtin(
-            "Inspect bear environment",
-            ToolKind::Read,
-            "Inspecting bear environment for",
-            "inspect the bear environment",
-        ),
+
         "chrome_open" => ToolDisplay::builtin(
             "Chrome open",
             ToolKind::Fetch,
@@ -8714,6 +8792,18 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Deleting",
             "delete this path",
         ),
+        _ if tool_name.starts_with("mcp__") => {
+            let title = mcp_tool_title(tool_name);
+            ToolDisplay {
+                title: title.clone(),
+                kind: ToolKind::Other,
+                verb: "Running MCP tool".to_string(),
+                permission_operation: title.to_ascii_lowercase(),
+                subtitle: Some("MCP tool".to_string()),
+                category: Some("mcp".to_string()),
+                arguments_summary: None,
+            }
+        }
         _ => ToolDisplay {
             title: fallback_tool_title(tool_name),
             kind: ToolKind::Other,
@@ -10938,9 +11028,61 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn all_advertised_direct_tools_have_specific_titles() {
+        let direct = direct_tools_context_with_client_mcp(false);
+        let map = direct.as_object().expect("direct tools object");
+        for (tool, value) in map {
+            if !value.as_bool().unwrap_or(false)
+                || tool.ends_with("_present")
+                || tool.ends_with("_reason")
+            {
+                continue;
+            }
+            let title = tool_display(tool).title;
+            assert_ne!(title, "Tool call", "{tool} should have a specific title");
+            assert_ne!(title, "Unknown tool", "{tool} should have a specific title");
+        }
+    }
+
+    #[test]
+    fn known_den_hosted_tools_have_specific_titles() {
+        for (tool, expected) in [
+            ("session_info", "Inspect session"),
+            ("memory_browse", "Browse memory"),
+            ("memory_read", "Read memory"),
+            ("memory_search", "Search memory"),
+            ("memory_write_entry", "Write memory entry"),
+            ("memory_request_review", "Request memory review"),
+            ("web_fetch", "Fetch URL"),
+            ("web_search", "Search web"),
+            ("list_task_lists", "List task lists"),
+            ("get_task_list_status", "Get task list status"),
+            ("update_task_list", "Update task list"),
+            ("request_task_list_handoff", "Request work handoff"),
+        ] {
+            assert_eq!(tool_display(tool).title, expected, "{tool}");
+        }
+    }
+
+    #[test]
+    fn mcp_tools_have_human_friendly_titles() {
+        assert_eq!(
+            tool_display("mcp__chrome_devtools_custom__take_snapshot").title,
+            "Chrome DevTools: Take Snapshot"
+        );
+        assert_eq!(
+            tool_display("mcp__github__list_issues").title,
+            "Github: List Issues"
+        );
+    }
+
+    #[test]
     fn tool_display_humanizes_unknown_tool_names() {
-        assert_eq!(tool_display("memory_read").title, "Memory Read");
-        assert_eq!(tool_display("mcp.call_tool").title, "Mcp Call Tool");
+        assert_eq!(
+            tool_display("custom_memory_read").title,
+            "Custom Memory Read"
+        );
+        assert_eq!(tool_display("custom.call_tool").title, "Custom Call Tool");
     }
 
     #[test]
