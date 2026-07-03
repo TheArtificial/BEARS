@@ -18,8 +18,8 @@ use uuid::Uuid;
 use den_http::armature_tokens;
 use den_protocol::{
     ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
-    RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeSemanticEvent,
-    RuntimeStreamEvent,
+    RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
+    RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligations, turn_runs};
 use den_service::{
@@ -868,10 +868,16 @@ async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: s
         .expect("load native history");
 
     assert_eq!(history.records.len(), 2);
-    assert_eq!(history.records[0].role, "user");
-    assert_eq!(history.records[0].content, "first user prompt");
-    assert_eq!(history.records[1].role, "assistant");
-    assert_eq!(history.records[1].content, "first assistant reply");
+    assert!(matches!(
+        &history.records[0],
+        RuntimeHistoryRecord::Message { role, content, .. }
+        if role == "user" && content == "first user prompt"
+    ));
+    assert!(matches!(
+        &history.records[1],
+        RuntimeHistoryRecord::Message { role, content, .. }
+        if role == "assistant" && content == "first assistant reply"
+    ));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -437,7 +437,7 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
         for row in rows.into_iter().rev() {
             match row.to_model_transcript_record() {
                 Some(PersistedTranscriptRecord::Message(message)) => {
-                    records.push(RuntimeHistoryRecord {
+                    records.push(RuntimeHistoryRecord::Message {
                         message_id: message.message_id,
                         role: message.role,
                         content: message.content,
@@ -451,39 +451,30 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
                     created_at,
                     ..
                 }) => {
-                    records.push(RuntimeHistoryRecord {
+                    records.push(RuntimeHistoryRecord::ToolCall {
                         message_id: Some(tool_call_id.clone()),
-                        role: "assistant".to_string(),
-                        content: serde_json::json!({
-                            "tool_calls": [{
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": arguments.to_string()
-                                }
-                            }]
-                        })
-                        .to_string(),
+                        tool_call_id,
+                        tool_name,
+                        arguments,
                         created_at: Some(created_at.to_string()),
                     });
                 }
                 Some(PersistedTranscriptRecord::ToolResult {
                     tool_call_id,
                     tool_name,
+                    status,
                     content,
+                    structured_content,
                     created_at,
                     ..
                 }) => {
-                    records.push(RuntimeHistoryRecord {
+                    records.push(RuntimeHistoryRecord::ToolResult {
                         message_id: tool_call_id.clone(),
-                        role: "tool".to_string(),
-                        content: serde_json::json!({
-                            "tool_call_id": tool_call_id,
-                            "name": tool_name,
-                            "content": content
-                        })
-                        .to_string(),
+                        tool_call_id,
+                        tool_name,
+                        status,
+                        content,
+                        structured_content,
                         created_at: Some(created_at.to_string()),
                     });
                 }

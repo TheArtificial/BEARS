@@ -49,11 +49,29 @@ pub struct EnsureConversationResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeHistoryRecord {
-    pub message_id: Option<String>,
-    pub role: String,
-    pub content: String,
-    pub created_at: Option<String>,
+pub enum RuntimeHistoryRecord {
+    Message {
+        message_id: Option<String>,
+        role: String,
+        content: String,
+        created_at: Option<String>,
+    },
+    ToolCall {
+        message_id: Option<String>,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        created_at: Option<String>,
+    },
+    ToolResult {
+        message_id: Option<String>,
+        tool_call_id: Option<String>,
+        tool_name: Option<String>,
+        status: Option<String>,
+        content: Option<String>,
+        structured_content: serde_json::Value,
+        created_at: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
