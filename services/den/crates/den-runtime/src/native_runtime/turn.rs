@@ -982,9 +982,9 @@ pub async fn continue_native_client_turn_event_stream(
     let session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
-    if session.step >= session.max_steps {
+    if session.step >= session.max_steps.saturating_sub(1) {
         let message = format!(
-            "I stopped because this turn used the maximum number of tool/permission continuation steps before producing a final answer (step={}/max_steps={}). The recent tool results were recorded, but the model appears to be in a tool-recovery loop. Please retry with a narrower request or point me at the exact file/path to inspect.",
+            "I stopped because this turn reached the tool/permission continuation safety budget before producing a final answer (step={}/max_steps={}). The recent tool results were recorded, but the model appears to be in a tool-recovery loop. Please retry with a narrower request or point me at the exact file/path to inspect.",
             session.step,
             session.max_steps
         );
@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn max_step_continuation_returns_terminal_event_not_error() {
+    async fn near_max_step_continuation_returns_terminal_event_not_error() {
         let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
@@ -1104,7 +1104,7 @@ mod tests {
             model_max_output_tokens: None,
             bifrost_virtual_key: None,
             api_style: None,
-            step: 8,
+            step: 7,
             max_steps: 8,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
@@ -1150,8 +1150,8 @@ mod tests {
             .expect("event ok");
         match event {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("maximum number of tool/permission continuation steps"));
-                assert!(message.contains("step=8/max_steps=8"));
+                assert!(message.contains("tool/permission continuation safety budget"));
+                assert!(message.contains("step=7/max_steps=8"));
             }
             other => panic!("expected TurnFailed, got {other:?}"),
         }
