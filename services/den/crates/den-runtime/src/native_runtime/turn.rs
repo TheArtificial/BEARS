@@ -193,17 +193,60 @@ pub async fn record_native_client_tool_result(
             .or_else(|| session.run_id.clone());
         session.messages.push(ChatMessage {
             role: "tool".to_string(),
-            content: Some(content),
+            content: Some(content.clone()),
             tool_call_id: Some(tool_call_id.to_string()),
             name: None,
             tool_calls: None,
         });
     });
-    if SESSION_STORE.get(&session_key).is_none() {
+    let Some(session) = SESSION_STORE.get(&session_key) else {
         return Err(DenError::System(
             "native agent loop session not found".to_string(),
         ));
-    }
+    };
+    let tool_name = session
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "assistant")
+        .filter_map(|message| message.tool_calls.as_ref())
+        .flat_map(|calls| calls.iter())
+        .find(|call| call.id == tool_call_id)
+        .map(|call| call.function.name.clone());
+    let persistence_context = canonical_persistence_context(
+        pool.clone(),
+        session.bear_id,
+        session.user_id,
+        conversation_id.to_string(),
+        Some(client_session_id.to_string()),
+        Some(request_id.to_string()),
+        client_session_id.to_string(),
+        false,
+    );
+    let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
+    let status_label = match status {
+        RuntimeToolResultStatus::Ok => "ok",
+        RuntimeToolResultStatus::Timeout => "timeout",
+        RuntimeToolResultStatus::Error => "error",
+    };
+    persist_canonical_conversation_record(
+        &persistence_context,
+        &CanonicalConversationRecord::tool_result(
+            tool_name,
+            tool_call_id.to_string(),
+            approval_request_id.map(str::to_string),
+            status_label,
+            Some(content),
+            serde_json::Value::Null,
+            serde_json::json!({
+                "component": "den.native_runtime",
+                "phase": "client_tool_result_recorded",
+            }),
+            Some(request_id.to_string()),
+            &provenance,
+        ),
+    )
+    .await?;
     Ok(())
 }
 
@@ -1080,7 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn near_max_step_continuation_returns_terminal_event_not_error() {
-        let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+        let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
         let config = Config::test_stub();
@@ -1160,7 +1203,7 @@ mod tests {
 
     #[tokio::test]
     async fn recorded_client_tool_result_remains_visible_in_live_continuation_transcript() {
-        let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+        let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
         let tool_call_id = "call-visible-tool";
@@ -1266,6 +1309,168 @@ mod tests {
         assert_eq!(repaired[1].role, "assistant");
         assert_eq!(repaired[2].role, "tool");
         SESSION_STORE.remove(&session_key);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn recorded_client_tool_result_replays_from_persisted_history(pool: PgPool) {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let username = format!("toolhist{}", &suffix[..12]);
+        let email = format!("{username}@example.test");
+        let (user_id,): (i32,) = sqlx::query_as(
+            r#"
+            INSERT INTO users (email, username, display_name, passhash)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+        )
+        .bind(email)
+        .bind(&username)
+        .bind("Tool History Test")
+        .bind("test-passhash")
+        .fetch_one(&pool)
+        .await
+        .expect("create user");
+        let bear_id = Uuid::new_v4();
+        let bear_slug = format!("tool-history-{}", &suffix[..12]);
+        sqlx::query(
+            r#"
+            INSERT INTO bears (id, slug, name)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(bear_id)
+        .bind(&bear_slug)
+        .bind("Tool History Bear")
+        .execute(&pool)
+        .await
+        .expect("create bear");
+
+        let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+        let request_id = Uuid::new_v4().to_string();
+        let tool_call_id = "call-persisted-visible";
+        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
+        let context = canonical_persistence_context(
+            pool.clone(),
+            bear_id,
+            Some(user_id),
+            conversation_id.clone(),
+            Some(client_session_id.clone()),
+            Some(request_id.clone()),
+            client_session_id.clone(),
+            false,
+        );
+        persist_canonical_conversation_record(
+            &context,
+            &CanonicalConversationRecord::visible_user_message(
+                "Read the plan",
+                serde_json::json!({ "event": "user_message", "scope_id": client_session_id }),
+                None,
+            ),
+        )
+        .await
+        .expect("persist user message");
+        persist_canonical_conversation_record(
+            &context,
+            &CanonicalConversationRecord::tool_request(
+                "fs_read_text_file",
+                tool_call_id,
+                request_id.clone(),
+                None,
+                serde_json::json!({ "path": "/workspace/docs/roadmap/PLAN.md" }),
+                true,
+                Some("native runtime policy".to_string()),
+                "native_runtime",
+                &provenance,
+            ),
+        )
+        .await
+        .expect("persist tool request");
+
+        SESSION_STORE.insert(AgentLoopSession {
+            session_key: session_key.clone(),
+            bear_id,
+            bear_slug,
+            user_id: Some(user_id),
+            conversation_id: conversation_id.clone(),
+            client_session_id: client_session_id.clone(),
+            request_id: Some(request_id.clone()),
+            run_id: Some("run-persisted-visible".to_string()),
+            messages: vec![ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: tool_call_id.to_string(),
+                    call_type: "function".to_string(),
+                    function: crate::llm::ChatToolCallFunction {
+                        name: "fs_read_text_file".to_string(),
+                        arguments: serde_json::json!({ "path": "/workspace/docs/roadmap/PLAN.md" })
+                            .to_string(),
+                    },
+                }]),
+            }],
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 1,
+            max_steps: 8,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        });
+
+        record_native_client_tool_result(
+            &pool,
+            &conversation_id,
+            &client_session_id,
+            &request_id,
+            Some("run-persisted-visible"),
+            tool_call_id,
+            None,
+            RuntimeToolResultStatus::Ok,
+            serde_json::json!({
+                "tool_name": "fs_read_text_file",
+                "status": "ok",
+                "structured_content": { "content": "# BEARS roadmap" }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("record tool result");
+        SESSION_STORE.remove(&session_key);
+
+        let replayed =
+            crate::agent_loop::load_transcript_messages(&pool, bear_id, &conversation_id)
+                .await
+                .expect("load transcript");
+        assert_eq!(replayed.len(), 3, "{replayed:#?}");
+        assert_eq!(replayed[1].role, "assistant");
+        assert_eq!(
+            replayed[1]
+                .tool_calls
+                .as_ref()
+                .and_then(|calls| calls.first())
+                .map(|call| (call.id.as_str(), call.function.name.as_str())),
+            Some((tool_call_id, "fs_read_text_file"))
+        );
+        assert_eq!(replayed[2].role, "tool");
+        assert_eq!(replayed[2].tool_call_id.as_deref(), Some(tool_call_id));
+        assert!(replayed[2]
+            .content
+            .as_deref()
+            .unwrap_or_default()
+            .contains("BEARS roadmap"));
     }
 
     #[test]
