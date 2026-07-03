@@ -1,0 +1,104 @@
+use den_runtime::agent_loop::load_transcript_messages;
+use den_service::conversation::persistence::{append_message, ensure_conversation_for_external_id};
+use den_service::conversation_message_types::{
+    ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+    ConversationMessageWrite,
+};
+use uuid::Uuid;
+
+async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
+    let suffix = Uuid::new_v4().simple().to_string();
+    let username = format!("hist{}", &suffix[..16]);
+    let email = format!("{username}@example.test");
+    let (user_id,): (i32,) = sqlx::query_as(
+        r#"
+        INSERT INTO users (email, username, display_name, passhash)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        "#,
+    )
+    .bind(email)
+    .bind(&username)
+    .bind("History Regression")
+    .bind("test-passhash")
+    .fetch_one(pool)
+    .await
+    .expect("create user");
+
+    let bear_id = Uuid::new_v4();
+    let slug = format!("history-{}", &suffix[..16]);
+    sqlx::query(
+        r#"
+        INSERT INTO bears (id, slug, name)
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(slug)
+    .bind("History Regression Bear")
+    .execute(pool)
+    .await
+    .expect("create bear");
+
+    (user_id, bear_id)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn transcript_loader_keeps_recent_history_not_oldest_prefix(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure conversation");
+
+    for index in 0..240 {
+        let role = if index % 2 == 0 {
+            ConversationMessageRole::User
+        } else {
+            ConversationMessageRole::Assistant
+        };
+        let message_type = if role == ConversationMessageRole::User {
+            ConversationMessageType::User
+        } else {
+            ConversationMessageType::Assistant
+        };
+        append_message(
+            &pool,
+            conversation.id,
+            &ConversationMessageWrite {
+                message_type,
+                role: Some(role),
+                visibility: ConversationMessageVisibility::Default,
+                content_text: format!("message-{index}"),
+                content_json: serde_json::json!({ "index": index }),
+                provider_message_id: Some(format!("msg-{index}")),
+                source_event_id: Some(format!("src-{index}")),
+                created_at: None,
+            },
+        )
+        .await
+        .expect("append message");
+    }
+
+    let transcript = load_transcript_messages(&pool, bear_id, &conversation_id)
+        .await
+        .expect("load transcript");
+    let texts = transcript
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(texts.len(), 200);
+    assert_eq!(texts.first(), Some(&"message-40"));
+    assert_eq!(texts.last(), Some(&"message-239"));
+    assert!(!texts.contains(&"message-0"));
+    assert!(texts.contains(&"message-238"));
+}

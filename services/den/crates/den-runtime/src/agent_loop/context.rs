@@ -25,19 +25,23 @@ struct TranscriptRow {
 type TranscriptHistoryRow = (String, i64, String, String, Value, Option<String>);
 
 const TRANSCRIPT_HISTORY_QUERY: &str = r"
-        SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
-        FROM conversation_messages
-        WHERE conversation_id = (
-            SELECT id FROM conversations
-            WHERE external_conversation_id = $1 AND bear_id = $2
-            LIMIT 1
-        )
-        AND (
-            visibility != 'diagnostic_only'
-            OR message_type IN ('tool_call', 'tool_result')
-        )
+        SELECT id, sequence_no, message_type, content_text, content_json, tool_call_id
+        FROM (
+            SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
+            FROM conversation_messages
+            WHERE conversation_id = (
+                SELECT id FROM conversations
+                WHERE external_conversation_id = $1 AND bear_id = $2
+                LIMIT 1
+            )
+            AND (
+                visibility != 'diagnostic_only'
+                OR message_type IN ('tool_call', 'tool_result')
+            )
+            ORDER BY sequence_no DESC
+            LIMIT 200
+        ) recent
         ORDER BY sequence_no ASC
-        LIMIT 80
         ";
 
 fn transcript_grouping_rows_from_history(
@@ -438,7 +442,7 @@ pub fn prune_messages_for_native_chat(messages: Vec<ChatMessage>) -> Vec<ChatMes
 
 /// Cap transcript tail sent to native pair LLM turns (system prefix + recent turns).
 pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    const MAX_TAIL_MESSAGES: usize = 28;
+    const MAX_TAIL_MESSAGES: usize = 64;
     if messages.len() <= MAX_TAIL_MESSAGES {
         return messages;
     }
@@ -572,10 +576,78 @@ mod tests {
         }
         let pruned = prune_messages_for_native_pair(messages);
         assert_eq!(pruned.first().map(|m| m.role.as_str()), Some("system"));
-        assert_eq!(pruned.len(), 28);
+        assert_eq!(pruned.len(), 41);
         assert_eq!(
             pruned.last().and_then(|m| m.content.as_deref()),
             Some("message-39")
+        );
+    }
+
+    #[test]
+    fn prune_messages_for_native_pair_keeps_recent_tool_heavy_history() {
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some("system".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }];
+        for index in 0..80 {
+            messages.push(ChatMessage {
+                role: if index % 2 == 0 {
+                    "user".to_string()
+                } else {
+                    "assistant".to_string()
+                },
+                content: Some(format!("old-message-{index}")),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        }
+        let tool_call_id = "call_recent";
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: None,
+            tool_call_id: None,
+            name: None,
+            tool_calls: Some(vec![ChatToolCall {
+                id: tool_call_id.to_string(),
+                call_type: "function".to_string(),
+                function: ChatToolCallFunction {
+                    name: "fs_read_text_file".to_string(),
+                    arguments: json!({"path":"/workspace/docs/roadmap/PLAN.md"}).to_string(),
+                },
+            }]),
+        });
+        messages.push(ChatMessage {
+            role: "tool".to_string(),
+            content: Some("# BEARS roadmap".to_string()),
+            tool_call_id: Some(tool_call_id.to_string()),
+            name: Some("fs_read_text_file".to_string()),
+            tool_calls: None,
+        });
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: Some("what happened?".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        });
+
+        let pruned = prune_messages_for_native_pair(messages);
+        assert!(pruned.iter().any(|message| {
+            message
+                .tool_calls
+                .as_ref()
+                .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id))
+        }));
+        assert!(pruned.iter().any(|message| {
+            message.role == "tool" && message.tool_call_id.as_deref() == Some(tool_call_id)
+        }));
+        assert_eq!(
+            pruned.last().and_then(|message| message.content.as_deref()),
+            Some("what happened?")
         );
     }
 
