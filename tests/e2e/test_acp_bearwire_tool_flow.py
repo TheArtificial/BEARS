@@ -597,7 +597,12 @@ def test_acp_bearwire_tool_loop_terminates_cleanly_without_stderr_noise(tmp_path
         while time.time() < deadline and len(state.tool_result_payloads) < len(
             state.loop_tools
         ):
-            req = client.wait_any_client_request(timeout=5)
+            if prompt_id in client.responses:
+                break
+            try:
+                req = client.wait_any_client_request(timeout=0.25)
+            except AssertionError:
+                continue
             method = req.get("method")
             if method == "session/request_permission":
                 client.respond(
@@ -618,7 +623,9 @@ def test_acp_bearwire_tool_loop_terminates_cleanly_without_stderr_noise(tmp_path
                 client.notifications.append(req)
 
         prompt = client.wait_response(prompt_id, timeout=10)
-        assert "result" in prompt, prompt
+        assert "error" in prompt, prompt
+        error_message = prompt["error"].get("data", {}).get("message", "")
+        assert "Tool budget exhausted before final answer" in error_message, prompt
         assert len(state.permission_result_payloads) == len(state.loop_tools)
         assert len(state.tool_result_payloads) == len(state.loop_tools)
         assert state.tool_result_payloads[0]["status"] == "error"

@@ -1037,19 +1037,13 @@ async fn handle_bearwire_event(
             .await?;
         }
         "run.failed" => {
-            outcome.saw_done = true;
-            outcome.saw_error = true;
-            outcome.saw_visible_output = true;
-            diagnostics.saw_error = true;
-            diagnostics.saw_visible_output = true;
             let message = bearwire_run_failed_user_message(event);
             eprintln!(
                 "bear-armature: BearWire run failed session_id={} message={}",
                 session_id,
                 truncate_for_log(&message, 500)
             );
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
-                .await?;
+            return Err(anyhow!(message));
         }
         "run.cancelled" => {
             outcome.saw_done = true;
