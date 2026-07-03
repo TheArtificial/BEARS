@@ -3,10 +3,7 @@ mod tests {
     use uuid::Uuid;
 
     use den_core::config::Config;
-    use crate::memory::{
-        store::{self, LogicalMemoryPath, MemoryStoreManager},
-        tools as sqlite_tools,
-    };
+    use den_memory::{self as store, tools as sqlite_tools, LogicalMemoryPath, MemoryStoreManager};
 
     #[tokio::test]
     async fn sqlite_memory_round_trip() {

@@ -4,10 +4,10 @@ use crate::{
         project_runtime_event_lossy, runtime_semantic_event_to_bearwire_gateway_events,
         runtime_stream_event_to_bearwire_sse, RuntimeEventProjectionOutcome,
     },
-    runtime_contracts::{
-        RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
-        ToolCallFinishStatus,
-    },
+};
+use den_protocol::{
+    RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
+    ToolCallFinishStatus,
 };
 
 #[test]

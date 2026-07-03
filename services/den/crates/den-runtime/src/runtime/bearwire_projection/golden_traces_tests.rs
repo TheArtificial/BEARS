@@ -20,10 +20,10 @@ use crate::{
             runtime_stream_event_to_bearwire_notifications,
         },
     },
-    runtime_contracts::{
-        RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
-        ToolCallFinishStatus,
-    },
+};
+use den_protocol::{
+    RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
+    ToolCallFinishStatus,
 };
 
 /// Parse one `data: {json}\n\n` adapter-SSE frame into its JSON value.
