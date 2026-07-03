@@ -872,6 +872,7 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
 }
 
 async fn handle_bearwire_tool_call_finished_event(
+    shared_state: &AdapterSharedState,
     session_id: &str,
     event: &Value,
     failed: bool,
@@ -882,22 +883,29 @@ async fn handle_bearwire_tool_call_finished_event(
         .and_then(Value::as_str)
         .or_else(|| resource_ref_id(event, "tool_call"))
         .unwrap_or("unknown");
+    let cached = shared_state.tool_tasks.get(session_id, tool_call_id).await;
     let tool_name = data
         .get("tool_name")
         .and_then(Value::as_str)
-        .unwrap_or("tool");
-    let summary = tool_call_finished_summary(data, tool_name, failed);
+        .filter(|name| !crate::is_placeholder_tool_name(name))
+        .map(str::to_string)
+        .or_else(|| cached.as_ref().map(|record| record.tool_name.clone()))
+        .unwrap_or_else(|| "tool".to_string());
+    let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
-    let legacy = json!({
+    let mut legacy = json!({
         "type": "tool_result",
         "run_id": event.get("run_id").and_then(Value::as_str),
         "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
+        "tool_name": tool_name.clone(),
     });
+    if let Some(args) = cached.and_then(|record| record.input_args) {
+        legacy["args"] = args;
+    }
     send_tool_call_update(
         session_id,
         tool_call_id,
-        tool_name,
+        &tool_name,
         ToolCallUpdatePayload {
             status,
             text: &summary,
@@ -1112,14 +1120,15 @@ async fn handle_bearwire_event(
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
-            handle_bearwire_tool_call_finished_event(session_id, event, false).await?;
+            handle_bearwire_tool_call_finished_event(shared_state, session_id, event, false)
+                .await?;
         }
         "tool_call.failed" => {
             outcome.saw_tool_activity = true;
             outcome.saw_error = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_error = true;
-            handle_bearwire_tool_call_finished_event(session_id, event, true).await?;
+            handle_bearwire_tool_call_finished_event(shared_state, session_id, event, true).await?;
         }
         "client.waiting" => {
             outcome.saw_tool_activity = true;

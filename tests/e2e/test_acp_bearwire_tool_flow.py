@@ -348,7 +348,10 @@ class ArmatureClient:
             if "id" in msg and ("result" in msg or "error" in msg):
                 self.responses[str(msg["id"])] = msg
             elif "method" in msg:
-                self.client_requests.put(msg)
+                if msg.get("method") == "session/update":
+                    self.notifications.append(msg)
+                else:
+                    self.client_requests.put(msg)
             else:
                 self.notifications.append(msg)
 
@@ -523,6 +526,22 @@ def test_acp_bearwire_relative_tool_flow(tmp_path):
         assert state.permission_result_payloads, "permission result not posted"
         assert state.tool_result_payloads, "tool result not posted"
         assert state.tool_result_payloads[0]["status"] == "ok"
+        completed_updates = [
+            msg
+            for msg in client.notifications
+            if msg.get("method") == "session/update"
+            and msg.get("params", {}).get("update", {}).get("sessionUpdate")
+            == "tool_call"
+            and msg.get("params", {}).get("update", {}).get("status") == "completed"
+        ]
+        assert completed_updates, client.notifications
+        update = completed_updates[-1]["params"]["update"]
+        raw_input = update.get("rawInput") or update.get("raw_input")
+        raw_output = update.get("rawOutput") or update.get("raw_output")
+        assert raw_input and raw_input.get("path") == "docs/roadmap/PLAN.md", update
+        visible_text = json.dumps(update.get("content", []))
+        assert "e2e fixture plan" in visible_text, update
+        assert raw_output, update
 
         stderr = "\n".join(client.stderr_lines)
         assert "BearWire run paused" not in stderr

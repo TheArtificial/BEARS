@@ -6834,6 +6834,9 @@ async fn handle_tool_request_event(
     )
     .await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+    task_registry
+        .remember_input(session_id, tool_call_id, tool_name, args.clone())
+        .await;
     let policy = policy_from_event(event);
     let replace_plan = if tool_name == "fs_edit_file" || tool_name == "fs_replace_text" {
         let context = session_context(adapter_state, session_id)?;
@@ -8341,13 +8344,21 @@ async fn handle_permission_request_event(
             .and_then(Value::as_str)
             .unwrap_or(tool_name);
         let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
+        shared_state
+            .tool_tasks
+            .register(session_id, tool_call_id, tool_name, None)
+            .await;
+        shared_state
+            .tool_tasks
+            .remember_input(session_id, tool_call_id, tool_name, args.clone())
+            .await;
         let policy = policy_from_event(local_tool);
         let result = execute_local_tool(
             adapter_state,
             mcp_registry,
             session_id,
             tool_name,
-            args,
+            args.clone(),
             &policy,
         )
         .await;
@@ -8366,6 +8377,27 @@ async fn handle_permission_request_event(
                         notify_mode_state(session_id, mode).await?;
                     }
                 }
+                let preview = tool_completion_preview(tool_name, &value);
+                let local_event = json!({
+                    "type": "tool_request",
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "args": args,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                });
+                send_tool_call_update(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolCallUpdatePayload {
+                        status: "completed",
+                        text: &preview,
+                        event: Some(&local_event),
+                        raw_output: Some(value.clone()),
+                        extra_content: Vec::new(),
+                    },
+                )
+                .await?;
                 let payload = json!({
                     "tool_call_id": tool_call_id,
                     "run_id": event.get("run_id").and_then(Value::as_str),
@@ -8378,12 +8410,38 @@ async fn handle_permission_request_event(
                 post_tool_result(config, session_id, tool_call_id, payload).await?;
             }
             Err(err) => {
+                let message = format!("{err:#}");
+                let local_event = json!({
+                    "type": "tool_request",
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "args": args,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                });
+                send_tool_call_update(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolCallUpdatePayload {
+                        status: "failed",
+                        text: &message,
+                        event: Some(&local_event),
+                        raw_output: Some(json!({
+                            "component": "bear-armature",
+                            "phase": "permission_local_tool_failed",
+                            "error": message,
+                            "duration_ms": started.elapsed().as_millis(),
+                        })),
+                        extra_content: Vec::new(),
+                    },
+                )
+                .await?;
                 let payload = json!({
                     "tool_call_id": tool_call_id,
                     "run_id": event.get("run_id").and_then(Value::as_str),
                     "tool_name": result_tool_name,
                     "status": "error",
-                    "content": format!("{err:#}"),
+                    "content": message,
                     "structured_content": {},
                     "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
                 });
