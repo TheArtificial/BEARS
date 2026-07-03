@@ -25,6 +25,7 @@ The target removes that split entirely. There is **no Letta server, no Letta Cod
 - **One loop primitive, patterns as policy.** The step (assemble context -> stream model -> execute tools -> persist) is the primitive. Reasoning "patterns" are a thin, data-driven **strategy policy** over it, not forked runtimes. See [Loop strategies](#loop-strategies).
 - **A turn is a Tokio task owned by Den**, not an HTTP call to another service. Cancellation is a `CancellationToken`, not external run-ids.
 - **Den owns conversation identity, message/context state, approvals, and compaction.** No conversation "materialization", no run-ids, no approval-deny recovery, no synthetic `TurnCompleted`.
+- **Tool exchanges must be replayable transcript state.** Tool requests/results that affect model behavior are first-class model-history artifacts: stable tool-call id, canonical tool name, typed arguments, matching result/error, and bounded output/summary. ACP/BearWire/web projections may render them differently, but no edge cache may be the only record of what tool ran or what happened.
 - **Bifrost is the inference substrate** (OpenAI-compatible), called directly by Den.
 - **The loop is protocol-agnostic; ACP is an edge adapter** ([ADR-0043](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)). The turn controller, tool-turn coordinator, session machinery, and semantic event stream are core organs of this loop — they carry neutral names and live in the runtime, not behind any wire protocol. ACP (like REST and the web UI) is a sibling adapter that projects the canonical BearWire semantic events ([ADR-0029](../decisions/adr-0029-den-structured-runtime-events.md)/[ADR-0030](../decisions/adr-0030-bearwire-resource-oriented-event-model.md)) to/from its wire format. The current `acp_*` naming inside `den-runtime` is historical drift that ADR-0043 corrects, not evidence those organs belong to ACP.
 - **Bear memory and cognition is canonical in per-Bear SQLite** (ADR-0031). The git MemFS sidecar is removed; git is retained only for human-authored artifacts.
@@ -247,7 +248,7 @@ system:  [compiled role prompt]
        + [key memory projection — path anchors]
        + [derived recall — optional vector passages]
        + [runtime supplements: prompt-memory, compaction, channel reminders]
-messages: [canonical transcript] + [current user/tool step]
+messages: [canonical transcript, including replayable tool calls/results] + [current user/tool step]
 tools:    [merged Den + client descriptors]
 ```
 

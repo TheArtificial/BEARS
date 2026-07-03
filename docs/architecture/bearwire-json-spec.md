@@ -88,6 +88,18 @@ For permission-mediated tool calls this means:
 
 This invariant prevents unanswerable permission prompts and avoids reconstructing continuation state from loosely matched permission IDs, transcript text, or rendered error strings.
 
+### Replayable tool activity invariant
+
+Tool activity carried over BearWire must be self-describing enough to replay into a future model transcript and to project into a human UI without edge-local archaeology.
+
+For every model-relevant tool call, Den must be able to persist and later reconstruct:
+
+- the assistant tool-call part: stable `tool_call_id`, canonical `tool_name`, optional human title, and typed arguments;
+- the corresponding tool-result part: same `tool_call_id`, same `tool_name`, status, structured result or structured error, and bounded text output/summary;
+- the surface projection: visible input and output/error summaries plus bounded raw/structured detail.
+
+A `tool_call.completed` event that only carries `{ "status": "OK" }`, or UI content such as `Tool completed`, is not sufficient as the sole durable/projection source. If a later event is intentionally sparse, the referenced tool-call record must already be persisted and queryable by `tool_call_id`; otherwise the completion event must repeat enough detail for replay.
+
 ### JSON-RPC framing
 
 All BearWire requests and responses use standard JSON-RPC 2.0 framing.
@@ -520,12 +532,20 @@ Recommended pause reasons include:
 {
   "tool_call_id": "tc_123",
   "run_id": "run_123",
-  "tool_name": "acp.fs.read_text_file",
+  "turn_step_id": "step_001",
+  "tool_name": "fs_read_text_file",
+  "title": "Read file",
   "arguments": {
-    "path": "/workspace/README.md"
+    "path": "/workspace/README.md",
+    "limit": 2000
+  },
+  "display": {
+    "input_summary": "Read /workspace/README.md"
   }
 }
 ```
+
+`arguments` are typed JSON arguments intended for replay, not a rendered string. `display.input_summary` is optional but recommended so edge adapters can render meaningful UI without guessing from tool-specific argument names.
 
 #### `tool_call.dispatched`
 
@@ -605,11 +625,23 @@ New Den ↔ armature code should prefer `client.waiting`. Armatures may accept `
 {
   "tool_call_id": "tc_123",
   "run_id": "run_123",
+  "turn_step_id": "step_001",
+  "tool_name": "fs_read_text_file",
+  "status": "ok",
   "result": {
-    "status": "OK"
+    "content": "# README\n...",
+    "bytes": 62357,
+    "truncated": true,
+    "artifact_ref": "tool-output://cdb618e0-4a0a-4271-99e8-68cafd7f45ea"
+  },
+  "display": {
+    "output_summary": "Read /workspace/README.md (62,357 bytes; truncated)",
+    "output_preview": "# README\n..."
   }
 }
 ```
+
+The completion event must either repeat `tool_name` and replay-relevant result fields or reference an already-persisted tool-call record by `tool_call_id`. `display.output_summary`/`output_preview` are bounded presentation helpers; the durable replay shape is the typed `result` plus status.
 
 #### `tool_call.failed`
 
@@ -617,10 +649,21 @@ New Den ↔ armature code should prefer `client.waiting`. Armatures may accept `
 {
   "tool_call_id": "tc_123",
   "run_id": "run_123",
-  "category": "permission_denied",
-  "message": "The user denied editing this file."
+  "turn_step_id": "step_001",
+  "tool_name": "fs_read_text_file",
+  "status": "error",
+  "error": {
+    "category": "resource_not_found",
+    "message": "File not found: /workspace/PLAN.md",
+    "retryable": false
+  },
+  "display": {
+    "output_summary": "Could not read /workspace/PLAN.md: file not found"
+  }
 }
 ```
+
+Tool execution errors are normal tool results for model replay unless the BearWire transport or coordinator itself failed. They must be tied to the same `tool_call_id` so the next model turn can see what the agent tried and what happened.
 
 #### `tool_call.cancelled`
 

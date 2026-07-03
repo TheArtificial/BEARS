@@ -84,6 +84,7 @@ The machinery being renamed here **is** the ADR-0035 agent loop. The ACP surgery
 - **One agent loop, in-process, for every role.** Roles differ only by capability profile (tool roster, memory scope, autonomy policy, sandbox). The turn controller / tool-turn coordinator / client-obligation coordinator / session machinery are that loop's organs — they are protocol-neutral and stay in the core. (The fact that some were historically named `acp_*` was the bug this ADR fixed, not evidence that they belong to ACP.)
 - **One loop primitive; patterns as a thin strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), selected by the ADR-0033 model-tasks layer — **not** a forked-runtime or pluggable "agent-pattern" framework. ReAct is the substrate; Reflexion / Reflection / best-of-N are compositions realized via Docket + per-Bear SQLite + subagent fan-out. LATS tree search and LLM Compiler DAG engines remain **deferred**. (See [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) §strategy policy and [den-native-runtime.md#loop-strategies](../architecture/den-native-runtime.md#loop-strategies).)
 - **The canonical seam is BearWire semantic events** (ADR-0029/0030). The renaming must route through that seam (core emits semantic events; the adapter projects them), so that adding the next edge (REST streaming, desktop companion, CI runner) is a new projection — never another fork of the loop.
+- **Tool activity is core replay state, not edge decoration.** Per ADR-0048, every model-relevant tool call/result must be persisted in a replayable Den transcript shape: stable tool-call id, canonical tool name, typed arguments, matching result/error, and a bounded human/model-readable output. ACP may project that into `session/update` tool-call UI, but ACP must not be the only place that knows what tool ran, what input it received, or what result/error came back.
 
 Renames in the runtime must move *toward* this neutral vocabulary; they must not invent a parallel abstraction or re-shape the loop around a different protocol.
 
@@ -104,7 +105,7 @@ Renames in the runtime must move *toward* this neutral vocabulary; they must not
 
 ## Non-goals
 
-- Not a behavior change to ACP or to the agent loop; ACP clients see identical traces.
+- Not a behavior change to ACP or to the agent loop; ACP clients see identical traces, except where prior traces omitted replay-critical tool details that must now be preserved and projected.
 - Not a new event model — BearWire (ADR-0030) is the canonical seam; we are not inventing another.
 - Not an "agent-pattern" framework (ADR-0035 non-goal stands).
 - Not a second runtime or a pluggable multi-runtime abstraction (ADR-0035 non-goal stands).

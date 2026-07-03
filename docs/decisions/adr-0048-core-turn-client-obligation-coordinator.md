@@ -131,6 +131,17 @@ The target state adds:
 turn_step_id
 ```
 
+### 9. Tool activity must be replayable as model context
+
+Every tool request/result that can affect model behavior must be persisted as a first-class transcript artifact before the run is considered safely resumable or complete. The stored representation must be sufficient to reconstruct both:
+
+- **the model replay view**: assistant tool call part with stable `tool_call_id`, canonical `tool_name`, and typed arguments; followed by a matching tool result part with status, structured result/error, and bounded text output;
+- **the surface projection view**: human-friendly title, visible input summary, visible output/error summary, and enough raw/structured detail for ACP, web, Slack, or future clients to explain what happened.
+
+A tool result is not replayable if it only says `Tool completed`, omits the arguments, omits the matching tool call, hides the error as generic text, or exists only in an armature-local cache. Edge adapters may cache richer UI detail temporarily, but durable Den transcript state is the source of truth for future model turns.
+
+Failed or max-step turns are not exempt. If a tool call/result happened before terminal failure, it must remain visible to later model context and operator/debug UI. Terminal run state may be stored separately, but it must not cause the user prompt, assistant tool call, or tool result records from that turn to disappear.
+
 ## Rationale
 
 ACP-specific code was correctly pushed to the edge, but part of the old consolidated turn/tool state machine appears to have been lost or bypassed during the migration. The fix is not to move ACP semantics back into Den, and it is not to make BearWire the new center. The fix is to make the turn/obligation state machine explicitly core and protocol-neutral again, with BearWire, web chat, Slack, macOS, and future channels/armatures as projections over it.

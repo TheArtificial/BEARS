@@ -105,7 +105,20 @@ This is important because:
 - a tool call may be requested, approved, dispatched, completed, denied, or cancelled independently of transcript rendering
 - suspend/resume and recovery should be row/state transitions, not message archaeology
 
-### 8. Preserve provider neutrality while keeping migration visibility explicit
+### 8. Tool activity must be replayable, not merely observable
+
+Tool calls and results are part of the model transcript, not just operator diagnostics. If a model saw a tool call or used a tool result to decide what to do next, Den must persist enough structured data to replay that fact in later model context and to project it into every surface.
+
+A replayable tool exchange requires:
+
+- an assistant/tool-call artifact with stable `tool_call_id`, canonical `tool_name`, and typed arguments;
+- a matching tool-result artifact with the same `tool_call_id`, status, structured result or structured error, and bounded textual output/summary;
+- a durable event trail tying both artifacts to the run and model step where possible;
+- surface-friendly summaries derived from the same persisted data, not from edge-local caches.
+
+Error and max-step turns are included. A terminal run failure may add a run-level error, but it must not erase the user prompt, assistant tool call, or tool result records that happened before the failure.
+
+### 9. Preserve provider neutrality while keeping migration visibility explicit
 
 Provider references should be stored as nullable compatibility fields, not as canonical identities.
 
@@ -115,7 +128,7 @@ During migration, this means Letta-origin ids can be stored in dedicated provide
 - dual-write and verification are straightforward
 - provider-specific fields can be removed cleanly later
 
-### 9. Be compatible with staged adoption
+### 10. Be compatible with staged adoption
 
 The schema should support:
 
@@ -296,6 +309,8 @@ Recommended:
 
 This is intentionally message-oriented and does not try to store every granular event. That belongs in `conversation_events`.
 
+Tool calls and tool results should still have transcript artifacts when they are part of model-visible history. For model replay, a future context assembler must be able to reconstruct an assistant tool-call part and the matching tool-result part from durable rows, without consulting an ACP/BearWire edge cache. Human-visible projections may hide or summarize those rows, but model replay must not silently drop them.
+
 ## 4. `conversation_events`
 
 ### Purpose
@@ -356,6 +371,8 @@ This table is critical for ACP parity and poisoned-run debugging. It is the best
 
 It should also be treated as the canonical event log for read-model updates. UI/admin surfaces should preferably read from explicit projections derived from these events rather than reconstructing state ad hoc from multiple write-side tables.
 
+Tool-call events should carry replay identifiers (`run_id`, `turn_step_id` where available, `tool_call_id`, canonical `tool_name`) and typed payloads. Event payloads that only say `Tool completed` or `{ "status": "OK" }` are not sufficient as the only source for projections or model replay.
+
 ## 5. `conversation_tool_calls`
 
 ### Purpose
@@ -402,6 +419,8 @@ Recommended:
 This table should be the bridge between runtime behavior and ACP/Den permission logic.
 
 Tool-call lifecycle should remain first-class here even if messages also carry user-visible summaries of tool activity. The transcript is not the source of truth for tool execution state.
+
+For replay, `request_payload` must retain the typed arguments originally offered to the model and `result_payload` must retain a structured success/error result with bounded text output or artifact references for large outputs. Edge adapters may provide additional UI metadata, but they must not be the only holders of the input/output detail needed to explain or replay the tool exchange.
 
 ## 6. `conversation_approvals`
 
