@@ -13,7 +13,7 @@ If you need different wording in old migrations, document it in this README or i
 
 Production deploys now run Den schema changes in a dedicated one-off migration job before the long-running `bears-den` service starts. To keep deploys diagnosable and rollback-friendly:
 
-- Every new schema migration must include a matching `*_down.sql` unless the change is provably irreversible and explicitly documented in the migration review.
+- Every new `*.up.sql` schema migration must include a matching `*.down.sql` unless the change is provably irreversible and explicitly documented in the migration review.
 - Prefer **expand-contract** changes so both the currently running Den and the newly deployed Den can tolerate the schema during rollout.
 - Treat destructive schema changes (`DROP COLUMN`, `DROP TABLE`, tightening `NOT NULL`, incompatible enum/value rewrites, semantic renames) as a second-step contract migration after the compatible application code is already deployed.
 - Keep migrations short, transactional where possible, and separate long backfills from the schema step.

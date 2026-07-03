@@ -112,7 +112,7 @@ cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 ## Database migrations (SQLx)
 
 - **Never edit** an existing file under `migrations/` that has already been applied anywhere: SQLx checksums the file content in `_sqlx_migrations`. **Add a new** `*_up.sql` for fixes or new columns (see [`migrations/README.md`](migrations/README.md)).
-- New migrations should follow the reversible / expand-contract deployment policy documented in [`migrations/README.md`](migrations/README.md). In short: add a matching `*_down.sql` unless explicitly justified, prefer backward-compatible expand steps first, and defer destructive contract changes until a later deploy.
+- New migrations should follow the reversible / expand-contract deployment policy documented in [`migrations/README.md`](migrations/README.md). In short: add a matching `.down.sql` for each new `.up.sql` unless explicitly justified, prefer backward-compatible expand steps first, and defer destructive contract changes until a later deploy.
 - Den startup now rejects databases whose successful SQLx version is newer than the binary's embedded migrator. Keep deploy docs and migration reviews aligned with that guard; details live in [`migrations/README.md`](migrations/README.md) and [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md).
 - If checksum drift already happened, follow **Repairing checksum mismatch** in that README (`sqlx migrate info`, then align `checksum` with the canonical file).
 
