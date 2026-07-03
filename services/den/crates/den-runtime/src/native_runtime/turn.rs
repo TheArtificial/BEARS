@@ -16,8 +16,9 @@ use den_service::{
     bears::BearProfile,
     conversation::{
         events::{
-            canonical_persistence_context, persist_canonical_conversation_record,
-            CanonicalConversationRecord, ConversationEventProvenance,
+            canonical_persistence_context, canonical_persistence_enabled_for_conversation,
+            persist_canonical_conversation_record, CanonicalConversationRecord,
+            ConversationEventProvenance,
         },
         persistence as conversation_persistence,
     },
@@ -159,6 +160,36 @@ pub fn native_client_session_exists(conversation_id: &str, client_session_id: &s
     SESSION_STORE.get(&key).is_some()
 }
 
+async fn persisted_tool_call_exists(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    tool_call_id: &str,
+) -> Result<bool, DenError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM conversation_messages
+            WHERE conversation_id = (
+                SELECT id FROM conversations
+                WHERE external_conversation_id = $1 AND bear_id = $2
+                LIMIT 1
+            )
+              AND message_type = 'tool_call'
+              AND tool_call_id = $3
+        )
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(bear_id)
+    .bind(tool_call_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("check persisted tool_call: {err}")))?;
+    Ok(exists)
+}
+
 pub async fn record_native_client_tool_result(
     pool: &PgPool,
     conversation_id: &str,
@@ -204,7 +235,7 @@ pub async fn record_native_client_tool_result(
             "native agent loop session not found".to_string(),
         ));
     };
-    let tool_name = session
+    let matching_call = session
         .messages
         .iter()
         .rev()
@@ -212,41 +243,72 @@ pub async fn record_native_client_tool_result(
         .filter_map(|message| message.tool_calls.as_ref())
         .flat_map(|calls| calls.iter())
         .find(|call| call.id == tool_call_id)
+        .cloned();
+    let tool_name = matching_call
+        .as_ref()
         .map(|call| call.function.name.clone());
-    let persistence_context = canonical_persistence_context(
-        pool.clone(),
-        session.bear_id,
-        session.user_id,
-        conversation_id.to_string(),
-        Some(client_session_id.to_string()),
-        Some(request_id.to_string()),
-        client_session_id.to_string(),
-        false,
-    );
-    let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
-    let status_label = match status {
-        RuntimeToolResultStatus::Ok => "ok",
-        RuntimeToolResultStatus::Timeout => "timeout",
-        RuntimeToolResultStatus::Error => "error",
-    };
-    persist_canonical_conversation_record(
-        &persistence_context,
-        &CanonicalConversationRecord::tool_result(
-            tool_name,
-            tool_call_id.to_string(),
-            approval_request_id.map(str::to_string),
-            status_label,
-            Some(content),
-            serde_json::Value::Null,
-            serde_json::json!({
-                "component": "den.native_runtime",
-                "phase": "client_tool_result_recorded",
-            }),
+    if canonical_persistence_enabled_for_conversation(conversation_id) {
+        let persistence_context = canonical_persistence_context(
+            pool.clone(),
+            session.bear_id,
+            session.user_id,
+            conversation_id.to_string(),
+            Some(client_session_id.to_string()),
             Some(request_id.to_string()),
-            &provenance,
-        ),
-    )
-    .await?;
+            client_session_id.to_string(),
+            false,
+        );
+        let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
+        if let Some(call) = matching_call.as_ref() {
+            if !persisted_tool_call_exists(pool, session.bear_id, conversation_id, tool_call_id).await? {
+                let args = serde_json::from_str(&call.function.arguments)
+                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
+                persist_canonical_conversation_record(
+                    &persistence_context,
+                    &CanonicalConversationRecord::tool_request(
+                        call.function.name.clone(),
+                        call.id.clone(),
+                        request_id.to_string(),
+                        approval_request_id.map(str::to_string),
+                        args,
+                        approval_request_id.is_some(),
+                        if approval_request_id.is_some() {
+                            Some("native runtime policy".to_string())
+                        } else {
+                            None
+                        },
+                        "native_runtime_backfill",
+                        &provenance,
+                    ),
+                )
+                .await?;
+            }
+        }
+
+        let status_label = match status {
+            RuntimeToolResultStatus::Ok => "ok",
+            RuntimeToolResultStatus::Timeout => "timeout",
+            RuntimeToolResultStatus::Error => "error",
+        };
+        persist_canonical_conversation_record(
+            &persistence_context,
+            &CanonicalConversationRecord::tool_result(
+                tool_name,
+                tool_call_id.to_string(),
+                approval_request_id.map(str::to_string),
+                status_label,
+                Some(content),
+                serde_json::Value::Null,
+                serde_json::json!({
+                    "component": "den.native_runtime",
+                    "phase": "client_tool_result_recorded",
+                }),
+                Some(request_id.to_string()),
+                &provenance,
+            ),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -1350,7 +1412,6 @@ mod tests {
         let request_id = Uuid::new_v4().to_string();
         let tool_call_id = "call-persisted-visible";
         let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
-        let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
         let context = canonical_persistence_context(
             pool.clone(),
             bear_id,
@@ -1371,22 +1432,6 @@ mod tests {
         )
         .await
         .expect("persist user message");
-        persist_canonical_conversation_record(
-            &context,
-            &CanonicalConversationRecord::tool_request(
-                "fs_read_text_file",
-                tool_call_id,
-                request_id.clone(),
-                None,
-                serde_json::json!({ "path": "/workspace/docs/roadmap/PLAN.md" }),
-                true,
-                Some("native runtime policy".to_string()),
-                "native_runtime",
-                &provenance,
-            ),
-        )
-        .await
-        .expect("persist tool request");
 
         SESSION_STORE.insert(AgentLoopSession {
             session_key: session_key.clone(),
