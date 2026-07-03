@@ -7328,6 +7328,16 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
+fn compact_tool_raw_output(value: Value) -> Value {
+    if value.to_string().chars().count() <= 24 * 1024 {
+        return value;
+    }
+    json!({
+        "preview": compact_tool_json_detail(&value, 24 * 1024),
+        "truncated": true,
+    })
+}
+
 pub(crate) fn compact_tool_json_detail(value: &Value, max_chars: usize) -> String {
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string());
     if text.chars().count() > max_chars {
@@ -7337,7 +7347,7 @@ pub(crate) fn compact_tool_json_detail(value: &Value, max_chars: usize) -> Strin
     text
 }
 
-fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
+pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
     if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
         return read_text_file_completion_preview(value);
     }
@@ -8570,6 +8580,10 @@ fn is_den_server_tool_request(event: &Value) -> bool {
         == Some("den")
 }
 
+pub(crate) fn friendly_tool_title(tool_name: &str) -> String {
+    tool_display(tool_name).title
+}
+
 fn tool_display(tool_name: &str) -> ToolDisplay {
     match tool_name {
         "fs_read_text_file" | "fs.read_text_file" => {
@@ -9142,16 +9156,12 @@ async fn send_tool_call_update(
         if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
-        if bear_debug_verbose() {
-            if let Some(args) = event.get("args") {
-                tool_call = tool_call.raw_input(Some(args.clone()));
-            }
+        if let Some(args) = event.get("args") {
+            tool_call = tool_call.raw_input(Some(args.clone()));
         }
     }
-    if bear_debug_verbose() {
-        if let Some(raw_output) = raw_output {
-            tool_call = tool_call.raw_output(Some(raw_output));
-        }
+    if let Some(raw_output) = raw_output {
+        tool_call = tool_call.raw_output(Some(compact_tool_raw_output(raw_output)));
     }
     write_notification(
         "session/update",

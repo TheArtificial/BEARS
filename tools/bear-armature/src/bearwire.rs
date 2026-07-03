@@ -20,8 +20,27 @@ fn generic_tool_summary(summary: &str) -> bool {
     matches!(summary.trim(), "Tool failed." | "Tool completed.")
 }
 
+fn generic_tool_summary_for_tool(summary: &str, tool_name: &str) -> bool {
+    let normalized = summary.trim().trim_end_matches('.').to_ascii_lowercase();
+    if matches!(normalized.as_str(), "tool failed" | "tool completed") {
+        return true;
+    }
+    let status_suffix = normalized
+        .strip_suffix(" completed")
+        .or_else(|| normalized.strip_suffix(" failed"));
+    let Some(prefix) = status_suffix else {
+        return false;
+    };
+    if prefix.strip_prefix("local tool ").is_some() {
+        return true;
+    }
+    let fallback = crate::fallback_tool_title(tool_name).to_ascii_lowercase();
+    let friendly = crate::friendly_tool_title(tool_name).to_ascii_lowercase();
+    prefix == fallback || prefix == friendly
+}
+
 fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
-    let title = crate::fallback_tool_title(tool_name);
+    let title = crate::friendly_tool_title(tool_name);
     if failed {
         format!("{title} failed.")
     } else {
@@ -43,23 +62,36 @@ fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> St
     .into_iter()
     .flatten()
     .map(str::trim)
-    .find(|message| !message.is_empty() && !generic_tool_summary(message));
+    .find(|message| {
+        !message.is_empty()
+            && !generic_tool_summary(message)
+            && !generic_tool_summary_for_tool(message, tool_name)
+    });
 
     match candidate {
         Some(message) => message.to_string(),
-        None if crate::is_placeholder_tool_name(tool_name) => {
-            let status = if failed { "failed" } else { "completed" };
-            let tool_call_id = data
-                .get("tool_call_id")
-                .and_then(Value::as_str)
-                .filter(|id| !id.trim().is_empty())
-                .unwrap_or("unknown");
-            format!(
-                "Tool call {status} (tool_call_id={tool_call_id}). Details: `{}`",
-                crate::compact_tool_json_detail(data, 1_200)
-            )
+        None => {
+            let structured_preview = data
+                .get("structured_content")
+                .map(|structured| crate::tool_completion_preview(tool_name, structured))
+                .filter(|preview| !preview.trim().is_empty());
+            if let Some(preview) = structured_preview {
+                return preview;
+            }
+            if crate::is_placeholder_tool_name(tool_name) {
+                let status = if failed { "failed" } else { "completed" };
+                let tool_call_id = data
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.trim().is_empty())
+                    .unwrap_or("unknown");
+                return format!(
+                    "Tool call {status} (tool_call_id={tool_call_id}). Details: `{}`",
+                    crate::compact_tool_json_detail(data, 1_200)
+                );
+            }
+            default_tool_status_summary(tool_name, failed)
         }
-        None => default_tool_status_summary(tool_name, failed),
     }
 }
 
@@ -1360,7 +1392,7 @@ mod tests {
 
         assert_eq!(
             tool_call_finished_summary(&data, "memory_read", true),
-            "Memory Read failed."
+            "Read memory failed."
         );
     }
 
