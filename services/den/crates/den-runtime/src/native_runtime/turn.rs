@@ -8,9 +8,9 @@ use std::sync::{Arc, LazyLock};
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
-    RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
-    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, RuntimeToolResultStatus,
-    StartTurnRequest,
+    RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream, RuntimeHistoryPage,
+    RuntimeHistoryRecord, RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent,
+    RuntimeToolResultStatus, StartTurnRequest,
 };
 use den_service::{
     bears::BearProfile,
@@ -22,7 +22,7 @@ use den_service::{
         persistence as conversation_persistence,
     },
 };
-use futures::StreamExt;
+use futures::{stream, StreamExt};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -983,11 +983,19 @@ pub async fn continue_native_client_turn_event_stream(
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     if session.step >= session.max_steps {
-        return Err(DenError::System(format!(
-            "native agent loop reached max steps before the model produced a final answer. The turn completed tool/permission continuations but exhausted the safety budget (step={}/max_steps={}). This usually means the model got stuck in a tool-recovery loop; retry with a narrower request or inspect the recent tool results for missing paths, permission denials, or repeated workspace discovery.",
+        let message = format!(
+            "I stopped because this turn used the maximum number of tool/permission continuation steps before producing a final answer (step={}/max_steps={}). The recent tool results were recorded, but the model appears to be in a tool-recovery loop. Please retry with a narrower request or point me at the exact file/path to inspect.",
             session.step,
             session.max_steps
-        )));
+        );
+        let stream: RuntimeEventStream = Box::pin(stream::iter(vec![Ok(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+                turn: None,
+                category: RuntimeErrorCategory::Internal,
+                message,
+            }),
+        )]));
+        return Ok((RuntimeStreamContinuation::Deferred, stream));
     }
     let llm = LlmClient::new(request.config);
     let overflow = overflow_context(
@@ -1021,6 +1029,7 @@ pub async fn continue_native_client_turn_event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_loop::StrategyProfile;
 
     #[test]
     fn bear_id_from_native_binding_parses_den_native_format() {
@@ -1067,6 +1076,86 @@ mod tests {
         assert!(prompt.contains("file:///workspace/src/lib.rs"));
         assert!(prompt.contains("embedded_text_bytes: 128 (body omitted"));
         assert!(prompt.contains("<user_message>\nPlease inspect this.\n</user_message>"));
+    }
+
+    #[tokio::test]
+    async fn max_step_continuation_returns_terminal_event_not_error() {
+        let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+        let client_session_id = format!("session-{}", Uuid::new_v4().simple());
+        let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
+        let config = Config::test_stub();
+        let stores = MemoryStoreManager::new(&config);
+        let pool = PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
+            .expect("lazy pool");
+        SESSION_STORE.insert(AgentLoopSession {
+            session_key: session_key.clone(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: conversation_id.clone(),
+            client_session_id: client_session_id.clone(),
+            request_id: None,
+            run_id: Some("run-max-step".to_string()),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 8,
+            max_steps: 8,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        });
+
+        let (_continuation, mut stream) = continue_native_client_turn_event_stream(
+            TurnContinueRequest {
+                sqlx_pool: &pool,
+                config: &config,
+                memory_stores: &stores,
+                request_id: Uuid::new_v4(),
+                run_id: Some("run-max-step"),
+                client_session_id: &client_session_id,
+                conversation: RuntimeConversationRef {
+                    id: conversation_id.clone(),
+                },
+                binding: &RoleRuntimeBinding {
+                    binding_id: format!("den-native:{}:pair", Uuid::new_v4()),
+                    compatibility_backend: Some("native".to_string()),
+                },
+                continuation: RuntimeContinuation::ToolResult {
+                    tool_call_id: "call-max".to_string(),
+                    approval_request_id: None,
+                    status: RuntimeToolResultStatus::Ok,
+                    content: "{}".to_string(),
+                },
+                stream_context: crate::turn_runner::default_tool_continue_stream_context(),
+            },
+            BearProfile::Pair,
+        )
+        .await
+        .expect("max-step continuation should return terminal stream");
+
+        let event = stream
+            .next()
+            .await
+            .expect("terminal event")
+            .expect("event ok");
+        match event {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
+                assert!(message.contains("maximum number of tool/permission continuation steps"));
+                assert!(message.contains("step=8/max_steps=8"));
+            }
+            other => panic!("expected TurnFailed, got {other:?}"),
+        }
+        SESSION_STORE.remove(&session_key);
     }
 
     #[test]

@@ -196,7 +196,9 @@ class FakeBearWireHandler(BaseHTTPRequestHandler):
                 else {}
             )
             assert params.get("tool_call_id") == "call-e2e-read"
+            assert params.get("tool_name") == "fs_read_text_file", params
             assert params.get("status") == "ok", params
+            assert params.get("error") in (None, {}), params
             assert "e2e fixture plan" in json.dumps(content), params
             state.append_event(
                 {

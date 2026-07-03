@@ -487,6 +487,40 @@ pub(crate) async fn post_resource_update(
     .await
 }
 
+pub(crate) fn tool_result_rpc_params(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    payload: &Value,
+) -> Value {
+    let status = payload
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("ok");
+    let error = if status == "ok" {
+        Value::Null
+    } else {
+        payload
+            .get("error")
+            .cloned()
+            .unwrap_or_else(|| payload.get("diagnostic").cloned().unwrap_or(Value::Null))
+    };
+    json!({
+        "bear_slug": config.bear,
+        "session_id": session_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": payload.get("tool_name").cloned().unwrap_or(Value::Null),
+        "status": status,
+        "content": payload.get("content").cloned().unwrap_or(Value::Null),
+        "structured_content": payload.get("structured_content").cloned().unwrap_or(Value::Null),
+        "diagnostic": payload.get("diagnostic").cloned().unwrap_or(Value::Null),
+        "error": error,
+        "adapter_contract": adapter_contract_context(),
+    })
+}
+
 pub(crate) async fn post_tool_result(
     config: &Config,
     session_id: &str,
@@ -498,17 +532,7 @@ pub(crate) async fn post_tool_result(
         &reqwest::Client::new(),
         config,
         "client.tool.result",
-        json!({
-            "bear_slug": config.bear,
-            "session_id": session_id,
-            "run_id": run_id,
-            "tool_call_id": tool_call_id,
-            "status": payload.get("status").and_then(Value::as_str).unwrap_or("ok"),
-            "content": payload.get("content").cloned().unwrap_or(Value::Null),
-            "structured_content": payload.get("structured_content").cloned().unwrap_or(Value::Null),
-            "error": payload.get("error").cloned().unwrap_or_else(|| payload.get("diagnostic").cloned().unwrap_or(Value::Null)),
-            "adapter_contract": adapter_contract_context(),
-        }),
+        tool_result_rpc_params(config, session_id, run_id, tool_call_id, &payload),
     )
     .await
 }
@@ -1344,6 +1368,60 @@ mod tests {
             tool_call_finished_summary(&data, "memory_read", true),
             "Memory Read failed."
         );
+    }
+
+    #[test]
+    fn successful_tool_result_params_do_not_put_diagnostic_in_error_field() {
+        let config = Config {
+            api_url: "http://den.test".to_string(),
+            bear: "meta".to_string(),
+            token: "token".to_string(),
+            client: "zed".to_string(),
+        };
+        let params = tool_result_rpc_params(
+            &config,
+            "session-1",
+            "run-1",
+            "call-1",
+            &json!({
+                "tool_name": "fs_read_text_file",
+                "status": "ok",
+                "content": "",
+                "structured_content": { "content": "hello" },
+                "diagnostic": { "phase": "permission_local_tool_completed" }
+            }),
+        );
+
+        assert_eq!(params["tool_name"], "fs_read_text_file");
+        assert_eq!(
+            params["diagnostic"]["phase"],
+            "permission_local_tool_completed"
+        );
+        assert!(params["error"].is_null(), "{params}");
+    }
+
+    #[test]
+    fn failed_tool_result_params_copy_diagnostic_to_error_field() {
+        let config = Config {
+            api_url: "http://den.test".to_string(),
+            bear: "meta".to_string(),
+            token: "token".to_string(),
+            client: "zed".to_string(),
+        };
+        let params = tool_result_rpc_params(
+            &config,
+            "session-1",
+            "run-1",
+            "call-1",
+            &json!({
+                "tool_name": "fs_read_text_file",
+                "status": "error",
+                "content": "failed",
+                "diagnostic": { "phase": "permission_local_tool_failed" }
+            }),
+        );
+
+        assert_eq!(params["error"]["phase"], "permission_local_tool_failed");
     }
 
     #[test]

@@ -131,7 +131,8 @@ pub fn compact_json_tool_result_with_artifact(
         }
     }
 
-    let mut content = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    let mut content =
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
     if content.chars().count() > MODEL_TOOL_RESULT_MAX_CHARS {
         let (text, _, _) = truncate_str(&content, MODEL_TOOL_RESULT_MAX_CHARS);
         content = text;
@@ -194,6 +195,14 @@ pub fn compact_client_tool_result_params_with_artifact(
         "structured_content": structured_content,
         "error": error,
     });
+    if let Some(tool_name) = params
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload["tool_name"] = json!(tool_name);
+    }
     let serialized_len = payload.to_string().chars().count();
     if serialized_len > MODEL_TOOL_RESULT_MAX_CHARS {
         truncated = true;
@@ -233,4 +242,3 @@ pub fn compact_client_tool_result_params_with_artifact(
 
 #[cfg(test)]
 mod tests;
-
