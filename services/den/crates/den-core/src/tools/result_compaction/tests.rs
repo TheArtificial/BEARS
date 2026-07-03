@@ -60,6 +60,27 @@ fn compact_client_tool_result_adds_bounded_summary_without_preview() {
 }
 
 #[test]
+fn compact_client_tool_result_falls_back_to_structured_content_when_content_is_empty() {
+    let compacted = compact_client_tool_result_params(
+        "call_read_file",
+        "ok",
+        &json!({
+            "tool_name": "fs_read_text_file",
+            "content": "",
+            "structured_content": { "content": "hello from file" },
+            "error": null,
+        }),
+    );
+
+    assert_eq!(compacted.content, "hello from file");
+    assert_eq!(
+        compacted.payload["output_summary"],
+        "Used fs_read_text_file (ok): hello from file"
+    );
+    assert_eq!(compacted.payload["output_preview"], "hello from file");
+}
+
+#[test]
 fn compact_json_tool_result_truncates_large_den_hosted_result() {
     let compacted = compact_json_tool_result(json!({
         "results": [{ "body": "x".repeat(40 * 1024) }]

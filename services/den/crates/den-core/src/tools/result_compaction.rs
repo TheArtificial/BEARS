@@ -259,14 +259,12 @@ pub fn compact_client_tool_result_params_with_artifact(
     let mut content_text = payload
         .get("content")
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| {
-            payload
-                .get("structured_content")
-                .or_else(|| payload.get("error"))
-                .map(|v| v.to_string())
-                .unwrap_or_default()
-        });
+        .or_else(|| payload.get("structured_content").and_then(preview_text))
+        .or_else(|| payload.get("error").and_then(preview_text))
+        .unwrap_or_default();
     if content_text.chars().count() > MODEL_TOOL_RESULT_MAX_CHARS {
         let (text, _, _) = truncate_str(&content_text, MODEL_TOOL_RESULT_MAX_CHARS);
         content_text = text;
