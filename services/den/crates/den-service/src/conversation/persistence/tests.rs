@@ -99,7 +99,7 @@
     }
 
     #[test]
-    fn user_history_projection_remains_text_only_when_tool_records_exist() {
+    fn user_history_projection_includes_tool_result_summary_but_not_tool_request() {
         let user = row("user", Some("user"), "default");
         assert!(matches!(
             user.to_user_history_record(),
@@ -124,4 +124,26 @@
         };
         assert!(tool_call.to_model_transcript_record().is_some());
         assert!(tool_call.to_user_history_record().is_none());
+
+        let tool_result = PersistedConversationMessage {
+            sequence_no: 9,
+            message_type: "tool_result".to_string(),
+            role: Some("system".to_string()),
+            visibility: "diagnostic_only".to_string(),
+            content_text: "Tool result: memory_read".to_string(),
+            content_json: serde_json::json!({
+                "event": "tool_result",
+                "tool_call_id": "call-1",
+                "tool_name": "memory_read",
+                "status": "ok",
+                "content": "file contents"
+            }),
+            provider_message_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        assert!(matches!(
+            tool_result.to_user_history_record(),
+            Some(PersistedUserHistoryMessage { role, content, .. })
+            if role == "assistant" && content == "Used memory_read (ok): file contents"
+        ));
     }

@@ -85,6 +85,31 @@ pub struct PersistedUserHistoryMessage {
     pub created_at: time::OffsetDateTime,
 }
 
+fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<String> {
+    let event = content_json.get("event").and_then(|value| value.as_str())?;
+    if event != "tool_result" {
+        return None;
+    }
+    let tool_name = content_json
+        .get("tool_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("tool");
+    let status = content_json
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("completed");
+    let content = content_json
+        .get("content")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let prefix = format!("Used {tool_name} ({status})");
+    Some(match content {
+        Some(content) => format!("{prefix}: {content}"),
+        None => prefix,
+    })
+}
+
 impl PersistedConversationMessage {
     pub fn storage_message_type(&self) -> Result<ConversationMessageType, DenError> {
         ConversationMessageType::try_from_storage(&self.message_type)
@@ -223,14 +248,26 @@ impl PersistedConversationMessage {
     }
 
     pub fn to_user_history_record(&self) -> Option<PersistedUserHistoryMessage> {
-        let message = self.to_user_history_transcript_message()?;
-        Some(PersistedUserHistoryMessage {
-            sequence_no: message.sequence_no,
-            message_id: message.message_id,
-            role: message.role,
-            content: message.content,
-            created_at: message.created_at,
-        })
+        if let Some(message) = self.to_user_history_transcript_message() {
+            return Some(PersistedUserHistoryMessage {
+                sequence_no: message.sequence_no,
+                message_id: message.message_id,
+                role: message.role,
+                content: message.content,
+                created_at: message.created_at,
+            });
+        }
+
+        match self.storage_message_type().ok()? {
+            ConversationMessageType::ToolResult => Some(PersistedUserHistoryMessage {
+                sequence_no: self.sequence_no,
+                message_id: self.provider_message_id.clone(),
+                role: "assistant".to_string(),
+                content: tool_result_user_history_summary(self.content_json_value())?,
+                created_at: self.created_at,
+            }),
+            _ => None,
+        }
     }
 
     /// Rows that may be replayed into model transcript context.
