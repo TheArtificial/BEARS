@@ -6,7 +6,7 @@ fn compact_client_tool_result_truncates_large_content_for_model() {
     let input = ClientToolResultInput::new(
         "call_large",
         None,
-        "ok",
+        ToolResultStatus::Ok,
         Some(long),
         json!({ "nested": "y".repeat(40 * 1024) }),
         Value::Null,
@@ -26,7 +26,7 @@ fn compact_client_tool_result_preserves_tool_name_for_projection() {
     let input = ClientToolResultInput::new(
         "call_named",
         Some("fs_read_text_file".to_string()),
-        "ok",
+        ToolResultStatus::Ok,
         Some("".to_string()),
         json!({ "content": "hello" }),
         Value::Null,
@@ -47,7 +47,7 @@ fn compact_client_tool_result_adds_bounded_summary_without_preview() {
     let input = ClientToolResultInput::new(
         "call_status_only",
         Some("session_info".to_string()),
-        "ok",
+        ToolResultStatus::Ok,
         Some("".to_string()),
         Value::Null,
         Value::Null,
@@ -63,7 +63,7 @@ fn compact_client_tool_result_falls_back_to_structured_content_when_content_is_e
     let input = ClientToolResultInput::new(
         "call_read_file",
         Some("fs_read_text_file".to_string()),
-        "ok",
+        ToolResultStatus::Ok,
         Some("".to_string()),
         json!({ "content": "hello from file" }),
         Value::Null,

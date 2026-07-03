@@ -1,4 +1,5 @@
 use crate::conversation::events::*;
+use den_core::tools::result_compaction::ToolResultStatus;
 
 #[test]
 fn projection_workflow_content_json_is_derived_from_typed_event() {
@@ -178,7 +179,7 @@ fn canonical_tool_result_record_normalizes_empty_content_and_derives_preview() {
         Some("fs_read_text_file".to_string()),
         "call-1",
         None,
-        "ok",
+        ToolResultStatus::Ok,
         Some("".to_string()),
         serde_json::json!({ "content": "hello from file" }),
         serde_json::Value::Null,
@@ -192,4 +193,24 @@ fn canonical_tool_result_record_normalizes_empty_content_and_derives_preview() {
         record.output_summary,
         "Used fs_read_text_file (ok): hello from file"
     );
+}
+
+#[test]
+fn canonical_tool_request_record_keeps_typed_request_fields() {
+    let record = CanonicalToolRequestRecord::new(
+        "fs_read_text_file",
+        "call-1",
+        "request-1",
+        None,
+        serde_json::json!({ "path": "/workspace/README.md" }),
+        false,
+        None,
+        "native_runtime",
+    );
+
+    assert_eq!(record.tool_name, "fs_read_text_file");
+    assert_eq!(record.tool_call_id, "call-1");
+    assert_eq!(record.request_id, "request-1");
+    assert_eq!(record.route, "native_runtime");
+    assert_eq!(record.args["path"], serde_json::json!("/workspace/README.md"));
 }

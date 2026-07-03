@@ -2,7 +2,7 @@ use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
-    result_compaction::{compact_client_tool_result, ClientToolResultInput},
+    result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
 use std::sync::{Arc, LazyLock};
 
@@ -19,7 +19,7 @@ use den_service::{
         events::{
             canonical_persistence_context, canonical_persistence_enabled_for_conversation,
             persist_canonical_conversation_record, CanonicalConversationRecord,
-            CanonicalToolResultRecord, ConversationEventProvenance,
+            CanonicalToolRequestRecord, CanonicalToolResultRecord, ConversationEventProvenance,
         },
         persistence as conversation_persistence,
     },
@@ -268,18 +268,20 @@ pub async fn record_native_client_tool_result(
                 persist_canonical_conversation_record(
                     &persistence_context,
                     &CanonicalConversationRecord::tool_request(
-                        call.function.name.clone(),
-                        call.id.clone(),
-                        request_id.to_string(),
-                        approval_request_id.map(str::to_string),
-                        args,
-                        approval_request_id.is_some(),
-                        if approval_request_id.is_some() {
-                            Some("native runtime policy".to_string())
-                        } else {
-                            None
-                        },
-                        "native_runtime_backfill",
+                        CanonicalToolRequestRecord::new(
+                            call.function.name.clone(),
+                            call.id.clone(),
+                            request_id.to_string(),
+                            approval_request_id.map(str::to_string),
+                            args,
+                            approval_request_id.is_some(),
+                            if approval_request_id.is_some() {
+                                Some("native runtime policy".to_string())
+                            } else {
+                                None
+                            },
+                            "native_runtime_backfill",
+                        ),
                         &provenance,
                     ),
                 )
@@ -288,14 +290,14 @@ pub async fn record_native_client_tool_result(
         }
 
         let status_label = match status {
-            RuntimeToolResultStatus::Ok => "ok",
-            RuntimeToolResultStatus::Timeout => "timeout",
-            RuntimeToolResultStatus::Error => "error",
+            RuntimeToolResultStatus::Ok => ToolResultStatus::Ok,
+            RuntimeToolResultStatus::Timeout => ToolResultStatus::Timeout,
+            RuntimeToolResultStatus::Error => ToolResultStatus::Error,
         };
         let compacted = compact_client_tool_result(&ClientToolResultInput::new(
             tool_call_id.to_string(),
             tool_name.clone(),
-            status_label.to_string(),
+            status_label,
             Some(content),
             serde_json::Value::Null,
             serde_json::Value::Null,

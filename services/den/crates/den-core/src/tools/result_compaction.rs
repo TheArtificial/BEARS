@@ -10,11 +10,43 @@ pub struct CompactToolResult {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolResultStatus {
+    Ok,
+    Error,
+    Timeout,
+    Incomplete,
+    Cancelled,
+}
+
+impl ToolResultStatus {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "ok" => Some(Self::Ok),
+            "error" => Some(Self::Error),
+            "timeout" | "timed_out" => Some(Self::Timeout),
+            "incomplete" => Some(Self::Incomplete),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Timeout => "timeout",
+            Self::Incomplete => "incomplete",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ClientToolResultInput {
     pub tool_call_id: String,
     pub tool_name: Option<String>,
-    pub status: String,
+    pub status: ToolResultStatus,
     pub content: Option<String>,
     pub structured_content: Value,
     pub error: Value,
@@ -24,7 +56,7 @@ impl ClientToolResultInput {
     pub fn new(
         tool_call_id: impl Into<String>,
         tool_name: Option<String>,
-        status: impl Into<String>,
+        status: ToolResultStatus,
         content: Option<String>,
         structured_content: Value,
         error: Value,
@@ -34,7 +66,7 @@ impl ClientToolResultInput {
             tool_name: tool_name
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            status: status.into(),
+            status,
             content: content
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
@@ -43,14 +75,14 @@ impl ClientToolResultInput {
         }
     }
 
-    pub fn from_params(tool_call_id: &str, status: &str, params: &Value) -> Self {
+    pub fn from_params(tool_call_id: &str, status: ToolResultStatus, params: &Value) -> Self {
         Self::new(
             tool_call_id.to_string(),
             params
                 .get("tool_name")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            status.to_string(),
+            status,
             params
                 .get("content")
                 .and_then(Value::as_str)

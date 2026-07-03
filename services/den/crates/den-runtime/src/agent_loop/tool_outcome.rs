@@ -1,6 +1,7 @@
 //! Shared helpers for tool execution outcomes across web chat, client adapters, and transcript repair.
 
 use den_protocol::{RuntimeSemanticEvent, ToolCallFinishStatus};
+use den_core::tools::result_compaction::ToolResultStatus;
 use crate::{
     llm::ChatToolCall,
     
@@ -41,13 +42,13 @@ pub fn tool_message_counts_toward_llm_resolution(content: Option<&str>) -> bool 
     !is_incomplete_tool_result(content) && !is_legacy_synthetic_interrupted_tool_result(content)
 }
 
-pub fn tool_result_persistence_status(content: Option<&str>) -> &'static str {
+pub fn tool_result_persistence_status(content: Option<&str>) -> ToolResultStatus {
     if is_incomplete_tool_result(content) {
-        "incomplete"
+        ToolResultStatus::Incomplete
     } else if tool_result_content_indicates_error(content) {
-        "error"
+        ToolResultStatus::Error
     } else {
-        "ok"
+        ToolResultStatus::Ok
     }
 }
 

@@ -1,4 +1,4 @@
-use den_core::{tools::result_compaction::truncate_str, DenError};
+use den_core::{tools::result_compaction::{truncate_str, ToolResultStatus}, DenError};
 use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -72,13 +72,25 @@ pub struct CanonicalToolResultRecord {
     pub tool_name: String,
     pub tool_call_id: String,
     pub approval_request_id: Option<String>,
-    pub status: String,
+    pub status: ToolResultStatus,
     pub content: Option<String>,
     pub structured_content: serde_json::Value,
     pub output_summary: String,
     pub output_preview: Option<String>,
     pub diagnostic: serde_json::Value,
     pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalToolRequestRecord {
+    pub tool_name: String,
+    pub tool_call_id: String,
+    pub request_id: String,
+    pub approval_request_id: Option<String>,
+    pub args: serde_json::Value,
+    pub approval_required: bool,
+    pub approval_reason: Option<String>,
+    pub route: String,
 }
 
 #[derive(Debug, Clone)]
@@ -157,7 +169,7 @@ impl CanonicalToolResultRecord {
         tool_name: Option<String>,
         tool_call_id: impl Into<String>,
         approval_request_id: Option<String>,
-        status: impl Into<String>,
+        status: ToolResultStatus,
         content: Option<String>,
         structured_content: serde_json::Value,
         diagnostic: serde_json::Value,
@@ -167,13 +179,12 @@ impl CanonicalToolResultRecord {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "tool".to_string());
-        let status = status.into();
         let content = content
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         let output_preview = canonical_tool_result_preview(content.as_deref(), &structured_content);
         let output_summary =
-            canonical_tool_result_summary(&tool_name, &status, output_preview.as_deref());
+            canonical_tool_result_summary(&tool_name, status.as_str(), output_preview.as_deref());
         Self {
             tool_name,
             tool_call_id: tool_call_id.into(),
@@ -185,6 +196,30 @@ impl CanonicalToolResultRecord {
             output_preview,
             diagnostic,
             request_id,
+        }
+    }
+}
+
+impl CanonicalToolRequestRecord {
+    pub fn new(
+        tool_name: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        request_id: impl Into<String>,
+        approval_request_id: Option<String>,
+        args: serde_json::Value,
+        approval_required: bool,
+        approval_reason: Option<String>,
+        route: impl Into<String>,
+    ) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            tool_call_id: tool_call_id.into(),
+            request_id: request_id.into(),
+            approval_request_id,
+            args,
+            approval_required,
+            approval_reason,
+            route: route.into(),
         }
     }
 }
@@ -319,33 +354,21 @@ impl CanonicalConversationRecord {
         )
     }
 
-    pub fn tool_request(
-        tool_name: impl Into<String>,
-        tool_call_id: impl Into<String>,
-        request_id: impl Into<String>,
-        approval_request_id: Option<String>,
-        args: serde_json::Value,
-        approval_required: bool,
-        approval_reason: Option<String>,
-        route: impl Into<String>,
-        provenance: &ConversationEventProvenance,
-    ) -> Self {
-        let tool_name = tool_name.into();
-        let tool_call_id = tool_call_id.into();
+    pub fn tool_request(record: CanonicalToolRequestRecord, provenance: &ConversationEventProvenance) -> Self {
         Self::tool_call_event(
-            format!("Tool request: {tool_name}"),
+            format!("Tool request: {}", record.tool_name),
             serde_json::json!({
                 "source": provenance.source,
                 "event": "tool_request",
                 "scope_id": provenance.scope_id,
-                "request_id": request_id.into(),
-                "tool_call_id": tool_call_id,
-                "approval_request_id": approval_request_id,
-                "tool_name": tool_name,
-                "args": args,
-                "approval_required": approval_required,
-                "approval_reason": approval_reason,
-                "route": route.into(),
+                "request_id": record.request_id,
+                "tool_call_id": record.tool_call_id,
+                "approval_request_id": record.approval_request_id,
+                "tool_name": record.tool_name,
+                "args": record.args,
+                "approval_required": record.approval_required,
+                "approval_reason": record.approval_reason,
+                "route": record.route,
             }),
             None,
         )
@@ -361,7 +384,7 @@ impl CanonicalConversationRecord {
                 "tool_call_id": record.tool_call_id,
                 "approval_request_id": record.approval_request_id,
                 "tool_name": record.tool_name,
-                "status": record.status,
+                "status": record.status.as_str(),
                 "content": record.content,
                 "structured_content": record.structured_content,
                 "output_summary": record.output_summary,
@@ -711,29 +734,12 @@ pub fn spawn_persist_tool_result(
 
 pub fn spawn_persist_tool_request(
     context: ConversationPersistenceContext,
-    tool_name: String,
-    tool_call_id: String,
-    request_id: String,
-    approval_request_id: Option<String>,
-    arguments: serde_json::Value,
-    approval_required: bool,
-    approval_reason: Option<String>,
-    route: String,
+    record: CanonicalToolRequestRecord,
     provenance: &ConversationEventProvenance,
 ) {
     spawn_persist_canonical_conversation_record(
         context,
-        CanonicalConversationRecord::tool_request(
-            tool_name,
-            tool_call_id,
-            request_id,
-            approval_request_id,
-            arguments,
-            approval_required,
-            approval_reason,
-            route,
-            provenance,
-        ),
+        CanonicalConversationRecord::tool_request(record, provenance),
     );
 }
 

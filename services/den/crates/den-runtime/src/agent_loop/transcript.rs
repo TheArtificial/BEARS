@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use den_service::conversation::events::{
     canonical_persistence_context, spawn_persist_assistant_output, spawn_persist_tool_request,
-    spawn_persist_tool_result, CanonicalToolResultRecord, ConversationEventProvenance,
+    spawn_persist_tool_result, CanonicalToolRequestRecord, CanonicalToolResultRecord,
+    ConversationEventProvenance,
 };
 
 use crate::llm::{ChatMessage, ChatToolCall};
@@ -55,18 +56,20 @@ pub fn spawn_persist_native_agent_step(
         let approval_required = provider_tool_requires_approval(&call.function.name);
         spawn_persist_tool_request(
             context.clone(),
-            call.function.name.clone(),
-            call.id.clone(),
-            request_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
-            None,
-            args,
-            approval_required,
-            if approval_required {
-                Some("native runtime policy".to_string())
-            } else {
-                None
-            },
-            "native_runtime".to_string(),
+            CanonicalToolRequestRecord::new(
+                call.function.name.clone(),
+                call.id.clone(),
+                request_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                None,
+                args,
+                approval_required,
+                if approval_required {
+                    Some("native runtime policy".to_string())
+                } else {
+                    None
+                },
+                "native_runtime".to_string(),
+            ),
             &provenance,
         );
     }
@@ -111,18 +114,20 @@ pub fn spawn_persist_web_chat_turn(
                             provider_tool_requires_approval(&call.function.name);
                         spawn_persist_tool_request(
                             context.clone(),
-                            call.function.name.clone(),
-                            call.id.clone(),
-                            request_id.clone(),
-                            None,
-                            args,
-                            approval_required,
-                            if approval_required {
-                                Some("native runtime policy".to_string())
-                            } else {
-                                None
-                            },
-                            "native_web_chat".to_string(),
+                            CanonicalToolRequestRecord::new(
+                                call.function.name.clone(),
+                                call.id.clone(),
+                                request_id.clone(),
+                                None,
+                                args,
+                                approval_required,
+                                if approval_required {
+                                    Some("native runtime policy".to_string())
+                                } else {
+                                    None
+                                },
+                                "native_web_chat".to_string(),
+                            ),
                             &provenance,
                         );
                     }
@@ -144,7 +149,7 @@ pub fn spawn_persist_web_chat_turn(
                         message.name.clone(),
                         tool_call_id,
                         None,
-                        status.to_string(),
+                        status,
                         persisted_content,
                         Value::Null,
                         serde_json::json!({
@@ -176,7 +181,7 @@ fn spawn_persist_incomplete_tool_results(
                 Some(call.function.name.clone()),
                 call.id.clone(),
                 None,
-                "incomplete".to_string(),
+                den_core::tools::result_compaction::ToolResultStatus::Incomplete,
                 None,
                 Value::Null,
                 serde_json::json!({

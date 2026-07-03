@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
-    result_compaction::{compact_client_tool_result, compact_client_tool_result_with_artifact, ClientToolResultInput},
+    result_compaction::{compact_client_tool_result, compact_client_tool_result_with_artifact, ClientToolResultInput, ToolResultStatus},
 };
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
@@ -45,7 +45,7 @@ struct ClientToolResultRequest {
     run_id: String,
     session_id: String,
     tool_call_id: String,
-    status: String,
+    status: ToolResultStatus,
     input: ClientToolResultInput,
 }
 
@@ -54,8 +54,13 @@ impl ClientToolResultRequest {
         let run_id = required_param_string(params, "run_id")?;
         let session_id = required_param_string(params, "session_id")?;
         let tool_call_id = required_param_string(params, "tool_call_id")?;
-        let status = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
-        let input = ClientToolResultInput::from_params(&tool_call_id, &status, params);
+        let status_raw = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
+        let status = ToolResultStatus::parse(&status_raw).ok_or_else(|| {
+            CustomError::ValidationError(format!(
+                "unsupported client.tool.result status: {status_raw}"
+            ))
+        })?;
+        let input = ClientToolResultInput::from_params(&tool_call_id, status, params);
         Ok(Self {
             run_id,
             session_id,
@@ -388,7 +393,7 @@ pub(crate) async fn client_tool_result_result(
     let run_id = request.run_id.clone();
     let session_id = request.session_id.clone();
     let tool_call_id = request.tool_call_id.clone();
-    let status = request.status.clone();
+    let status = request.status;
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -443,7 +448,7 @@ pub(crate) async fn client_tool_result_result(
                 source: "bearwire_client",
                 content_text: request.input.content.clone(),
                 content_json: Some(params.clone()),
-                metadata: json!({ "status": status }),
+                metadata: json!({ "status": status.as_str() }),
             },
         )
         .await
@@ -541,7 +546,7 @@ pub(crate) async fn client_tool_result_result(
             result,
         } => {
             let result = result.expect("record-and-settle tool outcome should include result row");
-            let event_type = if status == "ok" {
+            let event_type = if status == ToolResultStatus::Ok {
                 "tool_call.completed"
             } else {
                 "tool_call.failed"
@@ -561,10 +566,12 @@ pub(crate) async fn client_tool_result_result(
             )
             .await?;
             let content = compacted.content.clone();
-            let continuation_status = match status.as_str() {
-                "ok" => RuntimeToolResultStatus::Ok,
-                "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
-                _ => RuntimeToolResultStatus::Error,
+            let continuation_status = match status {
+                ToolResultStatus::Ok => RuntimeToolResultStatus::Ok,
+                ToolResultStatus::Timeout => RuntimeToolResultStatus::Timeout,
+                ToolResultStatus::Error
+                | ToolResultStatus::Incomplete
+                | ToolResultStatus::Cancelled => RuntimeToolResultStatus::Error,
             };
             den_runtime::native_runtime::record_native_client_tool_result(
                 &state.sqlx_pool,
@@ -601,7 +608,7 @@ pub(crate) async fn client_tool_result_result(
             result,
         } => {
             let result = result.expect("record-and-settle tool outcome should include result row");
-            let event_type = if status == "ok" {
+            let event_type = if status == ToolResultStatus::Ok {
                 "tool_call.completed"
             } else {
                 "tool_call.failed"
@@ -621,10 +628,12 @@ pub(crate) async fn client_tool_result_result(
             )
             .await?;
             let content = compacted.content.clone();
-            let continuation_status = match status.as_str() {
-                "ok" => RuntimeToolResultStatus::Ok,
-                "timeout" | "timed_out" => RuntimeToolResultStatus::Timeout,
-                _ => RuntimeToolResultStatus::Error,
+            let continuation_status = match status {
+                ToolResultStatus::Ok => RuntimeToolResultStatus::Ok,
+                ToolResultStatus::Timeout => RuntimeToolResultStatus::Timeout,
+                ToolResultStatus::Error
+                | ToolResultStatus::Incomplete
+                | ToolResultStatus::Cancelled => RuntimeToolResultStatus::Error,
             };
             spawn_continuation_task(
                 state,

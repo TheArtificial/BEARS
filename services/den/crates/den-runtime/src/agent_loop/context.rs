@@ -417,7 +417,7 @@ fn backfill_incomplete_tool_results(
                 Some(tool_name.clone()),
                 tool_call_id,
                 None,
-                "incomplete".to_string(),
+                den_core::tools::result_compaction::ToolResultStatus::Incomplete,
                 None,
                 Value::Null,
                 serde_json::json!({
