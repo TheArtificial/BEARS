@@ -39,6 +39,20 @@ END $$;
 ALTER TABLE turn_obligations
     ADD COLUMN IF NOT EXISTS responder_ref_id TEXT NULL;
 
+-- Drop legacy checks before rewriting legacy values. PostgreSQL checks are enforced
+-- on UPDATE, so converting `tool_call`/`permission` to neutral values must happen
+-- after the old BearWire-only constraints are removed and before new neutral
+-- constraints are installed.
+ALTER TABLE turn_obligations
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_expected_client_method_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_expected_client_method_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_expected_responder_action_check,
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_kind_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_kind_check,
+    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_tool_or_permission_check,
+    DROP CONSTRAINT IF EXISTS turn_obligations_responder_ref_check;
+
 UPDATE turn_obligations
 SET kind = CASE kind
     WHEN 'tool_call' THEN 'tool_result'
@@ -54,14 +68,6 @@ SET expected_responder_action = CASE expected_responder_action
 END;
 
 ALTER TABLE turn_obligations
-    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_expected_client_method_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_expected_client_method_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_expected_responder_action_check,
-    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_tool_or_permission_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_responder_ref_check;
-
-ALTER TABLE turn_obligations
     ADD CONSTRAINT turn_obligations_expected_responder_action_check
     CHECK (expected_responder_action IN (
         'tool_result',
@@ -70,10 +76,6 @@ ALTER TABLE turn_obligations
         'resource_binding',
         'handoff_decision'
     ));
-
-ALTER TABLE turn_obligations
-    DROP CONSTRAINT IF EXISTS bearwire_run_obligations_kind_check,
-    DROP CONSTRAINT IF EXISTS turn_obligations_kind_check;
 
 ALTER TABLE turn_obligations
     ADD CONSTRAINT turn_obligations_kind_check
