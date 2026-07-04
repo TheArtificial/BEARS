@@ -3451,6 +3451,7 @@ async fn handle_client_read_text_file(
         )
     })?;
     let content = parsed.content;
+    verify_empty_client_read_result(&resolved_path, &content).await?;
     if bear_debug_verbose() {
         eprintln!(
             "bear-armature: client fs/read_text_file requested_path={} resolved_path={} bytes={} duration_ms={}",
@@ -3468,6 +3469,25 @@ async fn handle_client_read_text_file(
         "raw_result": result,
         "bytes": content.len(),
     }))
+}
+
+async fn verify_empty_client_read_result(path: &std::path::Path, content: &str) -> Result<()> {
+    if !content.is_empty() {
+        return Ok(());
+    }
+    let metadata = tokio::fs::metadata(path).await.with_context(|| {
+        format!(
+            "client fs/read_text_file returned empty content and local verification failed for {}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        bail!(
+            "client fs/read_text_file target is not a file: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 async fn handle_direct_read_text_file(
@@ -13194,6 +13214,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         }))
         .unwrap();
         assert_eq!(response.content, "hello from file");
+    }
+
+    #[tokio::test]
+    async fn empty_client_read_result_requires_existing_file() {
+        let existing = std::path::PathBuf::from("/tmp/opencode/read-text-file-empty-ok.txt");
+        tokio::fs::write(&existing, "").await.unwrap();
+        verify_empty_client_read_result(&existing, "").await.unwrap();
+        tokio::fs::remove_file(&existing).await.unwrap();
+
+        let missing = std::path::PathBuf::from("/tmp/opencode/read-text-file-missing.txt");
+        let err = verify_empty_client_read_result(&missing, "")
+            .await
+            .expect_err("missing file must not look like successful empty read");
+        assert!(err.to_string().contains("local verification failed"));
     }
 
     #[test]
