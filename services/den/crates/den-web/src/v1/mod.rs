@@ -34,7 +34,7 @@ use crate::{
 };
 use den_llm::ModelOption;
 use den_protocol::ContextBudgetReport;
-use den_service::{client_sessions, archived_conversations};
+use den_service::archived_conversations;
 use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
@@ -364,14 +364,7 @@ async fn chat_conversation_patch(
 
     if let Some(title) = title {
         let title = title.chars().take(120).collect::<String>();
-        let _ = conversation_persistence::set_conversation_title(
-            state.sqlx_pool(),
-            bear.id,
-            &conv_id,
-            &title,
-        )
-        .await?;
-        let _ = client_sessions::set_title_for_bear_conversation(
+        let _ = conversation_persistence::set_conversation_title_and_sync_client_sessions(
             state.sqlx_pool(),
             bear.id,
             &conv_id,
@@ -852,11 +845,13 @@ async fn maybe_handle_direct_set_conversation_title(
         return Ok(None);
     };
     let title = title.chars().take(120).collect::<String>();
-    conversation_persistence::set_conversation_title(state.sqlx_pool(), bear.id, conv_id, &title)
-        .await?;
-    let _ =
-        client_sessions::set_title_for_bear_conversation(state.sqlx_pool(), bear.id, conv_id, &title)
-            .await?;
+    let _ = conversation_persistence::set_conversation_title_and_sync_client_sessions(
+        state.sqlx_pool(),
+        bear.id,
+        conv_id,
+        &title,
+    )
+    .await?;
     let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())

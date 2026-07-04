@@ -650,6 +650,22 @@ pub async fn set_conversation_title(
     Ok(result.rows_affected())
 }
 
+pub async fn set_conversation_title_and_sync_client_sessions(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+    title: &str,
+) -> Result<u64, DenError> {
+    let _ = set_conversation_title(pool, bear_id, external_conversation_id, title).await?;
+    crate::client_sessions::set_title_for_bear_conversation(
+        pool,
+        bear_id,
+        external_conversation_id,
+        title,
+    )
+    .await
+}
+
 pub async fn update_latest_context_budget(
     pool: &PgPool,
     bear_id: Uuid,

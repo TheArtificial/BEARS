@@ -349,6 +349,28 @@ impl SessionTrackingStream {
         })
     }
 
+    fn session_info_update_event_from_tool_message(
+        message: &ChatMessage,
+    ) -> Option<RuntimeSemanticEvent> {
+        if message.name.as_deref()? != "set_conversation_title" {
+            return None;
+        }
+        let content = message.content.as_deref()?;
+        let value: serde_json::Value = serde_json::from_str(content).ok()?;
+        let title = value
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())?
+            .to_string();
+        Some(RuntimeSemanticEvent::RunProgress {
+            kind: "session_info_update".to_string(),
+            text: None,
+            phase: Some("tool_result".to_string()),
+            detail: Some(serde_json::json!({ "title": title })),
+        })
+    }
+
     fn begin_server_tool_execution(&mut self, call: ChatToolCall) {
         let Some(invoker) = crate::native_runtime::tool_invoker() else {
             let tool_name = call.function.name.clone();
@@ -527,8 +549,8 @@ impl Stream for SessionTrackingStream {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
                     self.inner = stream;
-                    self.pending_pause_after_tool =
-                        Self::plan_update_event_from_tool_message(&message);
+                    self.pending_pause_after_tool = Self::plan_update_event_from_tool_message(&message)
+                        .or_else(|| Self::session_info_update_event_from_tool_message(&message));
                     self.pending_server_tool_continuation = Some(call.id.clone());
                     let finished =
                         tool_call_finished_event_for_content(&call, message.content.as_deref());
@@ -936,6 +958,33 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("checking"));
         assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn session_info_update_event_is_derived_from_set_conversation_title_tool_result() {
+        let message = ChatMessage {
+            role: "tool".to_string(),
+            content: Some(
+                serde_json::json!({
+                    "ok": true,
+                    "title": "Useful title"
+                })
+                .to_string(),
+            ),
+            tool_call_id: Some("call-1".to_string()),
+            name: Some("set_conversation_title".to_string()),
+            tool_calls: None,
+        };
+
+        let event = SessionTrackingStream::session_info_update_event_from_tool_message(&message)
+            .expect("session info update event");
+
+        assert!(matches!(
+            event,
+            RuntimeSemanticEvent::RunProgress { kind, detail: Some(detail), .. }
+                if kind == "session_info_update"
+                    && detail["title"].as_str() == Some("Useful title")
+        ));
     }
 
     #[tokio::test]

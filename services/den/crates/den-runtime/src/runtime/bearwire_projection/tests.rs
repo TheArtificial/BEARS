@@ -159,6 +159,26 @@ fn lossy_projection_handles_progress_events_without_failure() {
 }
 
 #[test]
+fn session_info_update_progress_projects_to_session_info_gateway_event() {
+    let mapped = runtime_semantic_event_to_bearwire_gateway_events(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "session_info_update".to_string(),
+            text: None,
+            phase: Some("tool_result".to_string()),
+            detail: Some(serde_json::json!({
+                "title": "New title"
+            })),
+        },
+    );
+
+    assert!(matches!(
+        mapped.as_slice(),
+        [GatewayEvent::SessionInfoUpdate { title, updated_at, .. }]
+            if title.as_deref() == Some("New title") && updated_at.is_none()
+    ));
+}
+
+#[test]
 fn lossy_projection_covers_core_semantic_variants() {
     let events = vec![
         RuntimeSemanticEvent::AssistantTextDelta {

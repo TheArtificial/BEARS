@@ -120,9 +120,33 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             request_id: None,
             context: None,
         }],
-        RuntimeSemanticEvent::RunProgress { kind, text, .. } => vec![GatewayEvent::StatusText {
-            text: text.unwrap_or(kind),
-        }],
+        RuntimeSemanticEvent::RunProgress {
+            kind,
+            text,
+            detail,
+            ..
+        } => {
+            if kind == "session_info_update" {
+                let title = detail
+                    .as_ref()
+                    .and_then(|value| value.get("title"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string);
+                let updated_at = detail
+                    .as_ref()
+                    .and_then(|value| value.get("updated_at"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string);
+                return vec![GatewayEvent::SessionInfoUpdate {
+                    title,
+                    updated_at,
+                    meta: None,
+                }];
+            }
+            vec![GatewayEvent::StatusText {
+                text: text.unwrap_or(kind),
+            }]
+        }
         RuntimeSemanticEvent::ToolCallFinished {
             tool_name,
             status,
