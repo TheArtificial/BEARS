@@ -34,6 +34,7 @@ struct RunStartRequest {
     session_id: String,
     #[serde(deserialize_with = "deserialize_required_string")]
     prompt: String,
+    /// Intentionally raw: prompt context is a typed outer field carrying extensible structured payloads.
     #[serde(default)]
     prompt_context: Option<Value>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
@@ -44,6 +45,7 @@ struct RunStartRequest {
     cwd: Option<String>,
     #[serde(default, alias = "mode", deserialize_with = "deserialize_optional_string")]
     requested_mode: Option<String>,
+    /// Intentionally raw: adapter session/capability context is an extensible envelope.
     #[serde(default)]
     client_context: Option<Value>,
 }

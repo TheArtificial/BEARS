@@ -127,8 +127,10 @@ struct ClientToolResultRequest {
     tool_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     content: Option<String>,
+    /// Intentionally raw: tool-specific structured result payloads vary by tool family.
     #[serde(default)]
     structured_content: Value,
+    /// Intentionally raw: some tools surface structured error objects instead of plain text.
     #[serde(default)]
     error: Value,
 }
@@ -162,6 +164,7 @@ struct ClientPermissionResultRequest {
     obligation_id: Option<String>,
     #[serde(default = "default_permission_decision")]
     decision: PermissionDecisionInput,
+    /// Intentionally raw: reason may be string or structured adapter metadata.
     #[serde(default)]
     reason: Option<Value>,
 }

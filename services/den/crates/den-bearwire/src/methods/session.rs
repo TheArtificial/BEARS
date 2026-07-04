@@ -30,6 +30,7 @@ struct SessionOpenRequest {
     cwd: Option<String>,
     #[serde(default, alias = "requested_mode", deserialize_with = "deserialize_optional_string")]
     mode: Option<String>,
+    /// Intentionally raw: adapter session snapshots are open-ended capability/context envelopes.
     #[serde(default)]
     client_context: Option<Value>,
 }

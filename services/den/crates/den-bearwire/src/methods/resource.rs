@@ -16,8 +16,10 @@ use crate::methods::{deserialize_required_string, parse_params};
 struct ResourceUpdateRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     session_id: String,
+    /// Intentionally raw: adapter-owned resource envelopes are extensible and forwarded verbatim.
     #[serde(default)]
     resource: Option<Value>,
+    /// Legacy alias for `resource`; intentionally raw for the same reason.
     #[serde(default)]
     payload: Option<Value>,
 }
