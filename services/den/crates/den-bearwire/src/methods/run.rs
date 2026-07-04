@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -25,7 +26,33 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{param_string, required_param_string};
+use crate::methods::{deserialize_optional_string, deserialize_required_string, parse_params};
+
+#[derive(Debug, Deserialize)]
+struct RunStartRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    prompt: String,
+    #[serde(default)]
+    prompt_context: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    client: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    conversation_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    cwd: Option<String>,
+    #[serde(default, alias = "mode", deserialize_with = "deserialize_optional_string")]
+    requested_mode: Option<String>,
+    #[serde(default)]
+    client_context: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunCancelRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+}
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_000);
 const BEARWIRE_LOG_SAMPLE_CHARS: usize = 2_000;
@@ -1004,10 +1031,11 @@ pub(crate) async fn run_start_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let prompt = required_param_string(params, "prompt")?;
-    let prompt_context = params.get("prompt_context").cloned();
-    let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
+    let request: RunStartRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let prompt = request.prompt;
+    let prompt_context = request.prompt_context;
+    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -1015,7 +1043,7 @@ pub(crate) async fn run_start_result(
         &session_id,
     )
     .await?;
-    let conversation_id = param_string(params, "conversation_id")
+    let conversation_id = request.conversation_id
         .or_else(|| {
             existing
                 .as_ref()
@@ -1027,11 +1055,10 @@ pub(crate) async fn run_start_result(
         .and_then(|session| session.resolved_conversation_id.clone());
     let upstream_target =
         runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
-    let cwd = param_string(params, "cwd");
-    let client_context = params.get("client_context").cloned();
+    let cwd = request.cwd;
+    let client_context = request.client_context;
     let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
-    let requested_mode =
-        param_string(params, "requested_mode").or_else(|| param_string(params, "mode"));
+    let requested_mode = request.requested_mode;
     let client_tools = client_tool_descriptors_from_context(
         client_context.as_ref(),
         requested_mode.as_deref(),
@@ -1343,7 +1370,8 @@ pub(crate) async fn run_cancel_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
+    let request: RunCancelRequest = parse_params(params)?;
+    let session_id = request.session_id;
     let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,

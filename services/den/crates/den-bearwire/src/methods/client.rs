@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -36,7 +37,7 @@ use crate::auth::authenticated_bear;
 use crate::methods::run::{
     persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
 };
-use crate::methods::{param_string, required_param_string};
+use crate::methods::{deserialize_optional_string, deserialize_required_string, parse_params, param_string, required_param_string};
 
 const MAX_PERMISSION_RESULTS_PER_RUN: i64 = 8;
 
@@ -69,6 +70,22 @@ impl ClientToolResultRequest {
             input,
         })
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientPermissionResultRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    run_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    permission_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    obligation_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    decision: Option<String>,
+    #[serde(default)]
+    reason: Option<Value>,
 }
 
 fn continuation_watchdog_timeout() -> Duration {
@@ -665,11 +682,12 @@ pub(crate) async fn client_permission_result_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let run_id = required_param_string(params, "run_id")?;
-    let session_id = required_param_string(params, "session_id")?;
-    let permission_id = required_param_string(params, "permission_id")?;
-    let obligation_id = param_string(params, "obligation_id");
-    let decision = param_string(params, "decision").unwrap_or_else(|| "denied".to_string());
+    let request: ClientPermissionResultRequest = parse_params(params)?;
+    let run_id = request.run_id;
+    let session_id = request.session_id;
+    let permission_id = request.permission_id;
+    let obligation_id = request.obligation_id;
+    let decision = request.decision.unwrap_or_else(|| "denied".to_string());
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -734,7 +752,7 @@ pub(crate) async fn client_permission_result_result(
     let payload = json!({
         "permission_id": permission_id,
         "decision": normalized_decision,
-        "reason": params.get("reason").cloned().unwrap_or(Value::Null),
+        "reason": request.reason.unwrap_or(Value::Null),
     });
 
     let session = client_sessions::find_for_user_bear_session(
