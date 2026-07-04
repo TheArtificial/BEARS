@@ -85,6 +85,29 @@ pub(crate) fn command_family_key(command: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) fn command_workspace_scope_label(command: &str) -> Option<String> {
+    let policy = command_policy_for(command)?;
+    let (executable, args) = split_command(command)?;
+    match policy.family_key {
+        "git_read" => args
+            .first()
+            .map(|subcommand| format!("{} {}", policy.executable, subcommand)),
+        "cargo" => args
+            .first()
+            .map(|subcommand| format!("{} {}", executable, subcommand)),
+        "pytest" => {
+            if executable == "pytest" {
+                Some("pytest".to_string())
+            } else if executable == "python" || executable == "python3" {
+                Some(format!("{} -m pytest", executable))
+            } else {
+                Some(normalize_command(command))
+            }
+        }
+        _ => Some(normalize_command(command)),
+    }
+}
+
 pub(crate) fn terminal_command_allowed(command: &str, args: &[String]) -> bool {
     let full = if args.is_empty() {
         command.to_string()
@@ -118,6 +141,30 @@ mod tests {
     fn git_policy_is_read_only() {
         assert_eq!(command_family_key("git status"), Some("git_read"));
         assert_eq!(command_family_key("git commit"), None);
+        assert_eq!(
+            command_workspace_scope_label("git diff -- src/main.rs").as_deref(),
+            Some("git diff")
+        );
+    }
+
+    #[test]
+    fn cargo_and_pytest_workspace_scope_labels_drop_extra_arguments() {
+        assert_eq!(
+            command_workspace_scope_label("cargo test --lib foo::bar").as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(
+            command_workspace_scope_label("cargo check -p den-runtime").as_deref(),
+            Some("cargo check")
+        );
+        assert_eq!(
+            command_workspace_scope_label("pytest tests/unit/test_x.py -k foo").as_deref(),
+            Some("pytest")
+        );
+        assert_eq!(
+            command_workspace_scope_label("python -m pytest tests/unit/test_x.py -k foo").as_deref(),
+            Some("python -m pytest")
+        );
     }
 
     #[test]

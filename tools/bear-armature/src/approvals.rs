@@ -1,7 +1,9 @@
 use crate::{
     env_bool,
     paths::session_workspace_roots,
-    tools::command_policy::{command_family_key, command_policy_for, normalize_command},
+    tools::command_policy::{
+        command_family_key, command_policy_for, command_workspace_scope_label, normalize_command,
+    },
     RuntimeConfig, SessionContext,
 };
 use agent_client_protocol::schema::{
@@ -362,7 +364,7 @@ fn command_workspace_fingerprint(
     prefix: &str,
     command: &str,
 ) -> Option<String> {
-    let command = normalize_command(command);
+    let command = command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
     if command.is_empty() {
         return None;
     }
@@ -571,7 +573,7 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
-        let exact = normalize_command(command);
+        let exact = command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
         options.push(PermissionOption::new(
             "allow_command_exact_workspace",
             format!("Always allow `{exact}` in this workspace"),
@@ -1403,6 +1405,48 @@ mod tests {
         assert!(serialized
             .to_string()
             .contains("Always allow `cargo build` in this workspace"));
+    }
+
+    #[test]
+    fn permission_options_use_git_subcommand_label_for_exact_workspace_scope() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("git diff -- src/main.rs"),
+            "commands",
+        );
+        let serialized = serde_json::to_value(&options).unwrap().to_string();
+        assert!(serialized.contains("Always allow `git diff` in this workspace"));
+        assert!(!serialized.contains("Always allow `git diff -- src/main.rs` in this workspace"));
+    }
+
+    #[test]
+    fn permission_options_use_short_exact_labels_for_safe_command_families() {
+        let context = workspace_context("/workspace");
+
+        let cargo = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("cargo test --lib foo::bar"),
+            "commands",
+        );
+        let cargo_serialized = serde_json::to_value(&cargo).unwrap().to_string();
+        assert!(cargo_serialized.contains("Always allow `cargo test` in this workspace"));
+        assert!(!cargo_serialized.contains("Always allow `cargo test --lib foo::bar` in this workspace"));
+
+        let pytest = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("python -m pytest tests/unit/test_x.py -k foo"),
+            "commands",
+        );
+        let pytest_serialized = serde_json::to_value(&pytest).unwrap().to_string();
+        assert!(pytest_serialized.contains("Always allow `python -m pytest` in this workspace"));
+        assert!(!pytest_serialized.contains("Always allow `python -m pytest tests/unit/test_x.py -k foo` in this workspace"));
     }
 
     #[test]
