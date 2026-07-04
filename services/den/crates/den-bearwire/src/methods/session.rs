@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
@@ -10,7 +11,57 @@ use den_runtime::{
 use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::{param_string, required_param_string};
+use crate::methods::{
+    deserialize_optional_i64_from_value, deserialize_optional_string,
+    deserialize_required_string, parse_params,
+};
+
+#[derive(Debug, Deserialize)]
+struct SessionOpenRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    client: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    conversation_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    runtime_session_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    cwd: Option<String>,
+    #[serde(default, alias = "requested_mode", deserialize_with = "deserialize_optional_string")]
+    mode: Option<String>,
+    #[serde(default)]
+    client_context: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionIdRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionStateRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    bear_slug: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    session_id: Option<String>,
+    #[serde(default)]
+    include_closed: Option<bool>,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_i64_from_value")]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionModelSetRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    selection_mode: Option<String>,
+    #[serde(default, alias = "requested_model", deserialize_with = "deserialize_optional_string")]
+    model: Option<String>,
+}
 
 async fn session_state_payload(
     state: &DenState,
@@ -59,7 +110,8 @@ pub(crate) async fn session_open_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
+    let request: SessionOpenRequest = parse_params(params)?;
+    let session_id = request.session_id;
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -67,8 +119,8 @@ pub(crate) async fn session_open_result(
         &session_id,
     )
     .await?;
-    let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
-    let conversation_id = param_string(params, "conversation_id")
+    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
+    let conversation_id = request.conversation_id
         .or_else(|| {
             existing
                 .as_ref()
@@ -78,16 +130,16 @@ pub(crate) async fn session_open_result(
     let resolved_conversation_id = existing
         .as_ref()
         .and_then(|session| session.resolved_conversation_id.clone());
-    let runtime_session_id = param_string(params, "runtime_session_id")
+    let runtime_session_id = request.runtime_session_id
         .or_else(|| {
             existing
                 .as_ref()
                 .map(|session| session.runtime_session_id.clone())
         })
         .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
-    let cwd = param_string(params, "cwd");
-    let current_mode = param_string(params, "mode");
-    let client_context = params.get("client_context").cloned();
+    let cwd = request.cwd;
+    let current_mode = request.mode;
+    let client_context = request.client_context;
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {
@@ -152,7 +204,8 @@ pub(crate) async fn session_compact_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -197,7 +250,8 @@ pub(crate) async fn session_close_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
     let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -240,9 +294,10 @@ pub(crate) async fn session_state_result(
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
-    let Some(bear_slug) = params
-        .get("bear_slug")
-        .and_then(|v| v.as_str())
+    let request: SessionStateRequest = parse_params(params)?;
+    let Some(bear_slug) = request
+        .bear_slug
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     else {
@@ -253,9 +308,9 @@ pub(crate) async fn session_state_result(
         }));
     };
     let user_id = authenticate_for_bear_slug(state, headers, bear_slug).await?;
-    if let Some(session_id) = params
-        .get("session_id")
-        .and_then(|v| v.as_str())
+    if let Some(session_id) = request
+        .session_id
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
@@ -276,15 +331,8 @@ pub(crate) async fn session_state_result(
         }));
     }
 
-    let include_closed = params
-        .get("include_closed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(50)
-        .clamp(1, 100);
+    let include_closed = request.include_closed.unwrap_or(false);
+    let limit = request.limit.unwrap_or(50).clamp(1, 100);
     let sessions = client_sessions::list_for_user_bear(
         &state.sqlx_pool,
         client_sessions::SessionListParams {
@@ -375,7 +423,8 @@ pub(crate) async fn session_model_get_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
     session_model_payload(state, user_id, &bear, &session_id).await
 }
 
@@ -385,9 +434,10 @@ pub(crate) async fn session_model_set_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let mode = param_string(params, "selection_mode").unwrap_or_else(|| "auto".to_string());
-    let requested_model = param_string(params, "model");
+    let request: SessionModelSetRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let mode = request.selection_mode.unwrap_or_else(|| "auto".to_string());
+    let requested_model = request.model;
     let payload = session_model_payload(state, user_id, &bear, &session_id).await?;
     let options = payload
         .get("model_options")

@@ -1398,7 +1398,7 @@ async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPo
         &den_core::tools::result_compaction::ClientToolResultInput::new(
             tool_call_id.clone(),
             Some("fs_read_text_file".to_string()),
-            "ok",
+            den_core::tools::result_compaction::ToolResultStatus::Ok,
             Some("file contents".to_string()),
             Value::Null,
             Value::Null,

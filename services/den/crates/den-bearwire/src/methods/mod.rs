@@ -1,3 +1,5 @@
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
 use den_service::DenState;
@@ -45,4 +47,54 @@ pub(crate) fn required_param_string(
 ) -> Result<String, den_http::errors::CustomError> {
     param_string(params, key)
         .ok_or_else(|| den_http::errors::CustomError::ValidationError(format!("{key} is required")))
+}
+
+pub(crate) fn parse_params<T: DeserializeOwned>(
+    params: &Value,
+) -> Result<T, den_http::errors::CustomError> {
+    serde_json::from_value(params.clone()).map_err(|err| {
+        den_http::errors::CustomError::ValidationError(format!(
+            "invalid BearWire params: {err}"
+        ))
+    })
+}
+
+pub(crate) fn deserialize_optional_i64_from_value<'de, D>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| match value {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => text.trim().parse::<i64>().ok(),
+        _ => None,
+    }))
+}
+
+pub(crate) fn deserialize_required_string<'de, D>(
+    deserializer: D,
+) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(serde::de::Error::custom("expected non-empty string"));
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(crate) fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
 }

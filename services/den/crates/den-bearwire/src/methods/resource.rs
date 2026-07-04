@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
@@ -9,7 +10,17 @@ use den_runtime::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::required_param_string;
+use crate::methods::{deserialize_required_string, parse_params};
+
+#[derive(Debug, Deserialize)]
+struct ResourceUpdateRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(default)]
+    resource: Option<Value>,
+    #[serde(default)]
+    payload: Option<Value>,
+}
 
 pub(crate) async fn resource_update_result(
     state: &DenState,
@@ -17,11 +28,11 @@ pub(crate) async fn resource_update_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let resource = params
-        .get("resource")
-        .cloned()
-        .or_else(|| params.get("payload").cloned())
+    let request: ResourceUpdateRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let resource = request
+        .resource
+        .or(request.payload)
         .unwrap_or_else(|| json!({}));
     let resource_kind = resource
         .get("kind")

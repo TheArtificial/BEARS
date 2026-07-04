@@ -1,11 +1,28 @@
 use axum::http::HeaderMap;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
 use den_service::{conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
-use crate::methods::required_param_string;
+use crate::methods::{
+    deserialize_optional_i64_from_value, deserialize_required_string, parse_params,
+};
+
+#[derive(Debug, Deserialize)]
+struct ConversationHistoryRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    conversation_id: String,
+    #[serde(default, alias = "before_sequence_no", deserialize_with = "deserialize_optional_i64_from_value")]
+    before: Option<i64>,
+    #[serde(default = "default_history_limit")]
+    limit: i64,
+}
+
+fn default_history_limit() -> i64 {
+    50
+}
 
 pub(crate) async fn conversation_history_result(
     state: &DenState,
@@ -13,20 +30,10 @@ pub(crate) async fn conversation_history_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let conversation_id = required_param_string(params, "conversation_id")?;
-    let before_sequence_no = params
-        .get("before")
-        .or_else(|| params.get("before_sequence_no"))
-        .and_then(|value| {
-            value
-                .as_i64()
-                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
-        });
-    let limit = params
-        .get("limit")
-        .and_then(Value::as_i64)
-        .unwrap_or(50)
-        .clamp(1, 100);
+    let request: ConversationHistoryRequest = parse_params(params)?;
+    let conversation_id = request.conversation_id;
+    let before_sequence_no = request.before;
+    let limit = request.limit.clamp(1, 100);
 
     let Some(conversation) =
         persistence::get_conversation_for_external_id(&state.sqlx_pool, bear.id, &conversation_id)
