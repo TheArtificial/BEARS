@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::web::bear::create_support::{
-    canonical_default_model_handle, model_catalog_select_context,
-};
+use crate::web::bear::create_support::model_catalog_select_context;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
@@ -601,24 +599,6 @@ async fn web_chat_workboard_prompt_context(
     Ok(work_plans::render_workboard_prompt_context(&plans))
 }
 
-fn chat_model_available(options: &[ModelOption], raw: &str) -> bool {
-    let requested = raw.trim();
-    if requested.is_empty() {
-        return false;
-    }
-    let requested_resolved = den_llm::model_registry::resolve_model_handle(requested);
-    options.iter().any(|model| {
-        if model.handle == requested {
-            return true;
-        }
-        let Some(resolved) = requested_resolved else {
-            return false;
-        };
-        resolved == model.handle
-            || den_llm::model_registry::resolve_model_handle(&model.handle) == Some(resolved)
-    })
-}
-
 async fn chat_model_response_for(
     state: &AppState,
     user_id: i32,
@@ -747,23 +727,6 @@ async fn chat_model_patch(
         })));
     }
     let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
-    let (selection_mode, requested_model, selected_model, reason) = if mode == "explicit" {
-        let raw = body.model.as_deref().unwrap_or("").trim();
-        if raw.is_empty() || !chat_model_available(&model_options, raw) {
-            return Err(CustomError::ValidationError(
-                "Pick a configured Den model selection option.".to_string(),
-            ));
-        }
-        let canonical = canonical_default_model_handle(raw).unwrap_or_else(|| raw.to_string());
-        (
-            "explicit",
-            Some(canonical.clone()),
-            Some(canonical),
-            "human_selected",
-        )
-    } else {
-        ("auto", None, None, "inherit_stance_or_bear_default")
-    };
     let conversation = conversation_persistence::ensure_conversation_for_external_id(
         state.sqlx_pool(),
         bear.id,
@@ -773,13 +736,13 @@ async fn chat_model_patch(
         None,
     )
     .await?;
-    conversation_persistence::set_conversation_model_state(
+    den_service::model_selection::apply_conversation_model_selection(
         state.sqlx_pool(),
         conversation.id,
-        selection_mode,
-        requested_model.as_deref(),
-        selected_model.as_deref(),
-        Some(reason),
+        mode,
+        body.model.as_deref(),
+        "human_selected",
+        "inherit_stance_or_bear_default",
     )
     .await?;
     Ok(Json(

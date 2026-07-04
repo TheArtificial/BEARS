@@ -421,7 +421,8 @@ async fn session_model_payload(
         .await?
         .unwrap_or(base_model);
     let model_options =
-        den_service::model_selection::list_selectable_model_options(&state.sqlx_pool).await?;
+        den_service::model_selection::list_selectable_model_options_for_acp(&state.sqlx_pool)
+            .await?;
     Ok(json!({
         "ok": true,
         "session_id": session_id,
@@ -455,41 +456,6 @@ pub(crate) async fn session_model_set_result(
     let session_id = request.session_id;
     let mode = request.selection_mode.unwrap_or_else(|| "auto".to_string());
     let requested_model = request.model;
-    let payload = session_model_payload(state, user_id, &bear, &session_id).await?;
-    let options = payload
-        .get("model_options")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let selected = if mode.trim() == "explicit" {
-        let raw = requested_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                CustomError::ValidationError("model is required for explicit selection".to_string())
-            })?;
-        if den_llm::model_registry::is_routing_wildcard_model_handle(raw) {
-            return Err(CustomError::ValidationError(
-                "routing wildcards are not selectable models".to_string(),
-            ));
-        }
-        let resolved = den_llm::model_registry::resolve_model_handle(raw);
-        let available = options.iter().any(|option| {
-            let handle = option.get("handle").and_then(Value::as_str).unwrap_or("");
-            handle == raw
-                || resolved == Some(handle)
-                || den_llm::model_registry::resolve_model_handle(handle) == resolved
-        });
-        if !available {
-            return Err(CustomError::ValidationError(
-                "model must be configured as a selectable Den model".to_string(),
-            ));
-        }
-        Some(resolved.unwrap_or(raw).to_string())
-    } else {
-        None
-    };
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -511,31 +477,24 @@ pub(crate) async fn session_model_set_result(
         None,
     )
     .await?;
-    den_service::conversation::persistence::set_conversation_model_state(
+    let model_state = den_service::model_selection::apply_conversation_model_selection(
         &state.sqlx_pool,
         conversation.id,
-        if selected.is_some() {
-            "explicit"
-        } else {
-            "auto"
-        },
-        selected.as_deref(),
-        selected.as_deref(),
-        Some(if selected.is_some() {
-            "acp_selected"
-        } else {
-            "inherit_stance_or_bear_default"
-        }),
+        &mode,
+        requested_model.as_deref(),
+        "acp_selected",
+        "inherit_stance_or_bear_default",
     )
-    .await?;
+    .await
+    .map_err(CustomError::from)?;
 
     let mut event = BearWireEvent::ephemeral(
         "model.selection.changed",
         json!({
             "session_id": session_id,
             "conversation_id": conversation_id,
-            "selection_mode": if selected.is_some() { "explicit" } else { "auto" },
-            "selected_model": selected,
+            "selection_mode": model_state.selection_mode,
+            "selected_model": model_state.selected_model.or(model_state.requested_model),
         }),
     );
     event.bear_id = Some(bear.id.to_string());

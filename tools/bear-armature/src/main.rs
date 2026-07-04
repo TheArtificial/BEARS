@@ -384,9 +384,11 @@ fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
     };
     let mut options = vec![SessionConfigSelectOption::new(
         "auto",
-        format!("Auto / stance default ({effective})"),
+        "Default",
     )
-    .description("Inherit the current stance/Bear model policy for this ACP conversation.")];
+    .description(format!(
+        "Use the current stance/Bear default model for this ACP conversation. Current effective model: {effective}."
+    ))];
     if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
         for item in items {
             let Some(handle) = item.get("handle").and_then(Value::as_str) else {
