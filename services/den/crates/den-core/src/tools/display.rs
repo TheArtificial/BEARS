@@ -7,6 +7,7 @@
 //! armature tool surface share a single definition.
 
 use serde_json::json;
+use std::path::{Component, Path};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDisplayDescriptor {
@@ -31,4 +32,40 @@ impl ToolDisplayDescriptor {
             "approval_summary": self.approval_summary,
         })
     }
+}
+
+pub fn is_display_path_key(key: &str) -> bool {
+    matches!(
+        key,
+        "path" | "repo_path" | "source_path" | "destination_path" | "root" | "base_path" | "cwd" | "target_path"
+    )
+}
+
+pub fn display_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    let candidate = Path::new(trimmed);
+    let is_absolute = candidate.is_absolute()
+        || trimmed.starts_with("\\\\")
+        || (trimmed.len() >= 3
+            && trimmed.as_bytes()[0].is_ascii_alphabetic()
+            && trimmed.as_bytes()[1] == b':'
+            && matches!(trimmed.as_bytes()[2], b'/' | b'\\'));
+    if !is_absolute {
+        return trimmed.to_string();
+    }
+    let parts = candidate
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return trimmed.to_string();
+    }
+    let keep = 3.min(parts.len());
+    format!("…/{}", parts[parts.len() - keep..].join("/"))
 }

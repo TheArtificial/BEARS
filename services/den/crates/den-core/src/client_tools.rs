@@ -1812,7 +1812,12 @@ fn summarize_target(keys: &[&str], args: &serde_json::Value) -> Option<String> {
         if let Some(value) = object.get(*key).and_then(|value| value.as_str()) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                values.push(preview(trimmed, 96));
+                let display = if crate::tools::display::is_display_path_key(key) {
+                    crate::tools::display::display_path(trimmed)
+                } else {
+                    trimmed.to_string()
+                };
+                values.push(preview(&display, 96));
             }
         }
     }
@@ -1830,6 +1835,12 @@ fn summarize_target_object(keys: &[&str], args: &serde_json::Value) -> serde_jso
     let mut out = serde_json::Map::new();
     for key in keys {
         if let Some(value) = object.get(*key) {
+            if crate::tools::display::is_display_path_key(key) {
+                if let Some(raw) = value.as_str() {
+                    out.insert((*key).to_string(), json!(crate::tools::display::display_path(raw)));
+                    continue;
+                }
+            }
             out.insert((*key).to_string(), summarize_value(value, false));
         }
     }

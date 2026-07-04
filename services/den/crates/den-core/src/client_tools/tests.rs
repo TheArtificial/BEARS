@@ -47,3 +47,26 @@
             .get("bypass_tool_redirect")
             .is_some());
     }
+
+    #[test]
+    fn client_tool_display_uses_short_display_paths_for_workspace_targets() {
+        let display = client_tool_display_for_provider(
+            "fs_read_text_file",
+            &json!({ "path": "/workspace/project/src/main.rs" }),
+        );
+        assert_eq!(display["title"], "Reading …/project/src/main.rs");
+        assert_eq!(display["subtitle"], "…/project/src/main.rs");
+        assert_eq!(display["target"]["path"], "…/project/src/main.rs");
+
+        let move_display = client_tool_display_for_provider(
+            "fs_move_path",
+            &json!({
+                "source_path": "/workspace/project/src/main.rs",
+                "destination_path": "/workspace/project/src/lib.rs"
+            }),
+        );
+        assert_eq!(
+            move_display["title"],
+            "Moving …/project/src/main.rs → …/project/src/lib.rs"
+        );
+    }

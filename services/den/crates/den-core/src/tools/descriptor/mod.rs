@@ -975,7 +975,12 @@ fn display_target_summary(keys: &[&str], args: &Value) -> Option<String> {
         if let Some(value) = object.get(*key).and_then(Value::as_str) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                values.push(trimmed.to_string());
+                let display = if crate::tools::display::is_display_path_key(key) {
+                    crate::tools::display::display_path(trimmed)
+                } else {
+                    trimmed.to_string()
+                };
+                values.push(display);
             }
         }
     }
@@ -1534,6 +1539,29 @@ fn set_conversation_title_schema() -> Value {
         "required": ["title"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn den_tool_display_uses_short_display_paths_for_target_paths() {
+        let display = den_tool_display_json_for_provider(
+            "memory_apply_core_update",
+            &json!({
+                "target_path": "/workspace/project/core/decisions.md",
+                "mode": "append_section"
+            }),
+        )
+        .expect("display");
+
+        assert_eq!(
+            display["title"],
+            "Applying core memory update …/project/core/decisions.md → append_section"
+        );
+        assert_eq!(display["subtitle"], "…/project/core/decisions.md → append_section");
+    }
 }
 
 fn prompt_memory_upsert_schema() -> Value {
