@@ -232,3 +232,29 @@
         assert_eq!(payload["diagnostics"]["warnings"][0], "adapter warning");
         assert!(payload["tools"]["available_den_tools"].is_array());
     }
+
+    #[test]
+    fn bear_environment_prefers_trusted_workspace_snapshot_when_present() {
+        let context = pair_context();
+        let payload = bear_environment_payload(
+            &context,
+            BearProfile::Pair,
+            None,
+            2,
+            &json!({ "configured": false, "available": false }),
+            &json!({ "status": "ok" }),
+            &json!({
+                "status": "ok",
+                "trusted_workspace": {
+                    "cwd": "/workspace/project",
+                    "roots": ["/workspace/project", "/workspace/shared"],
+                    "source": "trusted_session"
+                }
+            }),
+        );
+
+        assert_eq!(payload["workspace"]["cwd"], "/workspace/project");
+        assert_eq!(payload["workspace"]["roots"][0], "/workspace/project");
+        assert_eq!(payload["workspace"]["roots"][1], "/workspace/shared");
+        assert_eq!(payload["workspace"]["source"], "trusted_session");
+    }

@@ -50,6 +50,59 @@ pub struct ClientSessionRow {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustedWorkspaceContext {
+    pub cwd: Option<String>,
+    pub roots: Vec<String>,
+    pub source: String,
+}
+
+impl ClientSessionRow {
+    pub fn trusted_workspace_context(&self) -> TrustedWorkspaceContext {
+        let roots = self
+            .adapter_environment
+            .as_ref()
+            .and_then(|value| value.get("workspace_roots"))
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let cwd = self
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                self.adapter_environment
+                    .as_ref()
+                    .and_then(|value| value.get("cwd"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let roots = if roots.is_empty() {
+            cwd.as_ref().map(|cwd| vec![cwd.clone()]).unwrap_or_default()
+        } else {
+            roots
+        };
+        let source = if !roots.is_empty() || cwd.is_some() {
+            "trusted_session".to_string()
+        } else {
+            "none".to_string()
+        };
+        TrustedWorkspaceContext { cwd, roots, source }
+    }
+}
+
 const UPSERT_SESSION_SQL: &str = r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
@@ -396,4 +449,3 @@ pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
 
 #[cfg(test)]
 mod tests;
-

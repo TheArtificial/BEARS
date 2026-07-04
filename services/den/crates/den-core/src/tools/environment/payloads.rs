@@ -17,6 +17,23 @@ use crate::tools::{
     work_surface::infer_work_surface_hint,
 };
 
+fn trusted_workspace_from_context(
+    context: &DenToolInvocationContext,
+    adapter_runtime: Option<&Value>,
+) -> Value {
+    if let Some(trusted) = adapter_runtime
+        .and_then(|value| value.get("trusted_workspace"))
+        .cloned()
+    {
+        return trusted;
+    }
+    json!({
+        "cwd": context.workspace_roots.first().cloned(),
+        "roots": context.workspace_roots,
+        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
+    })
+}
+
 pub fn bear_environment_payload(
     context: &DenToolInvocationContext,
     role: BearProfile,
@@ -44,12 +61,8 @@ pub fn bear_environment_payload(
         "channel": context.channel,
         "active_turn": runtime.get("active_turn").cloned().unwrap_or(Value::Null),
     });
-    let workspace = json!({
-        "cwd": context.workspace_roots.first().cloned(),
-        "roots": context.workspace_roots,
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
-        "work_surface": infer_work_surface_hint(context, role)["work_surface"].clone(),
-    });
+    let mut workspace = trusted_workspace_from_context(context, Some(adapter_runtime));
+    workspace["work_surface"] = infer_work_surface_hint(context, role)["work_surface"].clone();
     let tools = json!({
         "session_policy": context.session_policy,
         "available_den_tools": builtin_den_tool_descriptors_for_profile(role)
@@ -240,11 +253,7 @@ pub fn session_info_payload(
     entities: &Value,
 ) -> Value {
     let work_surface = infer_work_surface_hint(context, role);
-    let workspace = json!({
-        "roots": context.workspace_roots,
-        "cwd": context.workspace_roots.first().cloned(),
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" }
-    });
+    let workspace = trusted_workspace_from_context(context, None);
     let runtime = context.runtime.clone().unwrap_or_else(|| {
         json!({
             "state": "idle",
@@ -296,7 +305,7 @@ pub fn session_info_payload(
             "active_bear_id": context.bear_id,
             "active_bear_authority": "trusted_session",
             "memory_surface": format!("{}/", role.as_str()),
-            "workspace_root": context.workspace_roots.first().cloned(),
+            "workspace_root": workspace.get("cwd").cloned().unwrap_or(Value::Null),
         },
         "context_composition_note": if role_contract_label.is_some() {
             Value::String("Role-contract context defines role behavior and style. Runtime context defines active Bear attachment, scope, attribution, workspace, and permissions for this session.".to_string())

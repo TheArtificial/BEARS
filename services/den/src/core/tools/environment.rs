@@ -13,6 +13,7 @@ use crate::{
 use den_service::bears::BearProfile;
 use den_memory as memory_store;
 use den_memory::MemoryStoreManager;
+use den_service::client_sessions;
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.
 pub(crate) struct DenEnvironmentOps<'a> {
@@ -109,8 +110,25 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
 
     async fn fetch_adapter_environment(
         &self,
-        _context: &DenToolInvocationContext,
+        context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError> {
-        Ok(None)
+        let Some(client_session_id) = context.client_session_id.as_deref() else {
+            return Ok(None);
+        };
+        let session = client_sessions::find_for_user_bear_session(
+            self.pool,
+            context.user_id,
+            &context.bear_slug,
+            client_session_id,
+        )
+        .await?;
+        Ok(session.map(|session| {
+            let workspace = session.trusted_workspace_context();
+            json!({
+                "status": "ok",
+                "adapter_environment": session.adapter_environment,
+                "trusted_workspace": workspace,
+            })
+        }))
     }
 }
