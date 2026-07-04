@@ -31,16 +31,19 @@ The central problem is that Bear conversations contain layered context: platform
 3. **Prefer structured affordances**
    - Tool descriptors, tool availability, runtime-state tools, and tool returns are preferred over per-turn prompt prose.
 
-4. **Scope before recall**
+4. **Prefer dedicated tools over generic command execution**
+   - If a git, filesystem, web, browser, memory, or workflow operation already has a dedicated tool, the agent should use that tool before considering command execution.
+
+5. **Scope before recall**
    - When a request depends on local understanding, the agent should identify current Workplace and work surface before broad memory search.
 
-5. **Discovery state should be visible**
+6. **Discovery state should be visible**
    - Tool availability, MCP server summaries, mode/policy state, and work-surface confidence should be inspectable through `session_info`, `/status`, or equivalent ACP status UX. The user should not need to infer scope/tool state from failures.
 
-6. **Minimal workplace persona**
+7. **Minimal workplace persona**
    - Stable role prompts should define mission and boundaries, not rich personality. Workplace agents should remain capability/policy oriented.
 
-7. **Discovery should be purposeful**
+8. **Discovery should be purposeful**
    - Self-discovery is good when scope or capability is ambiguous. It should not be mandatory for simple direct user requests.
 
 ## Context layers and placements
@@ -78,6 +81,24 @@ A tool, memory entry, artifact, plan, or observation should carry enough provena
 Work-surface identification is a resolution process. The Bear should know whether the current work surface is `unresolved`, `candidate`, `ambiguous`, `resolved`, `confirmed`, or `rejected`, and it should be able to communicate that status to the user. When ambiguity affects memory or action, the Bear may ask the user to verify an assumption or choose among candidates. User confirmation can raise confidence for the current thread and should become provenance for later memory writes.
 
 ## Tool advertisement levels
+
+### Command execution direction
+
+`pair` should be designed around one legible model-facing command concept such as `run_command`, even if the adapter/runtime still uses both `process_run` and `terminal_run_command` internally.
+
+Expected routing:
+
+1. dedicated-tool redirect first when an operation is clearly covered by a dedicated tool;
+2. `process_run` for short, bounded, structured commands;
+3. `terminal_run_command` for high-output, long-running, or user-visible commands;
+4. unknown commands in interactive armature flows default to terminal-backed execution.
+
+The redirect should be a **soft wall**:
+
+- first request returns a structured `prefer_dedicated_tool` result with a suggested tool and suggested arguments;
+- a second request may force command execution only through an explicit override flag such as `bypass_tool_redirect=true`.
+
+This keeps the model-facing surface simple while preserving transparency and an escape hatch.
 
 ### Level 0: Hidden Den/runtime mechanisms
 

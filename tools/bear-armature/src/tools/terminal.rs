@@ -14,6 +14,12 @@ use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
 use std::{fmt, time::Duration};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalCommandValidation {
+    Allowlisted,
+    Generic,
+}
+
 pub(crate) fn command_line(command: &str, args: &[String]) -> String {
     if args.is_empty() {
         command.to_string()
@@ -127,6 +133,7 @@ pub(crate) async fn handle_terminal_run_command(
     tool_title: Option<String>,
     args: &Value,
     policy: &ToolPolicy,
+    validation: TerminalCommandValidation,
 ) -> Result<Value> {
     if !client_supports_terminal(adapter_state) {
         return Err(anyhow!(
@@ -140,7 +147,7 @@ pub(crate) async fn handle_terminal_run_command(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("terminal_run_command args missing command"))?;
-    validate_build_command(command)?;
+    validate_terminal_command(command, validation)?;
 
     let cwd_raw = args
         .get("cwd")
@@ -155,7 +162,7 @@ pub(crate) async fn handle_terminal_run_command(
     }
 
     let command_args = command_args(args)?;
-    validate_build_command_args(command, &command_args)?;
+    validate_terminal_command_args(command, &command_args, validation)?;
     let env = terminal_env(args)?;
     let timeout_ms = terminal_timeout_ms(args, policy);
     let output_byte_limit = terminal_output_byte_limit(args, policy);
@@ -473,7 +480,7 @@ fn terminal_output_byte_limit(args: &Value, policy: &ToolPolicy) -> u64 {
         .clamp(1, policy_max_output)
 }
 
-fn validate_build_command(command: &str) -> Result<()> {
+fn validate_terminal_command(command: &str, validation: TerminalCommandValidation) -> Result<()> {
     if command.contains('\0')
         || command.contains('/')
         || command.contains(' ')
@@ -484,18 +491,24 @@ fn validate_build_command(command: &str) -> Result<()> {
             "terminal_run_command command must be an executable name, not a shell string or path"
         ));
     }
-    let allowed_executables = [
-        "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
-    ];
-    if !allowed_executables.contains(&command) {
-        return Err(anyhow!(
-            "terminal_run_command command {command:?} is not in the build/test allowlist"
-        ));
+    if validation == TerminalCommandValidation::Allowlisted {
+        let allowed_executables = [
+            "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
+        ];
+        if !allowed_executables.contains(&command) {
+            return Err(anyhow!(
+                "terminal_run_command command {command:?} is not in the build/test allowlist"
+            ));
+        }
     }
     Ok(())
 }
 
-fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
+fn validate_terminal_command_args(
+    command: &str,
+    args: &[String],
+    validation: TerminalCommandValidation,
+) -> Result<()> {
     for arg in args {
         if arg.contains('\0') {
             return Err(anyhow!(
@@ -503,9 +516,7 @@ fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
             ));
         }
     }
-    if terminal_command_allowed(command, args) {
-        Ok(())
-    } else {
+    if validation == TerminalCommandValidation::Allowlisted && !terminal_command_allowed(command, args) {
         Err(anyhow!(
             "terminal_run_command command `{}` is not allowed by command policy",
             if args.is_empty() {
@@ -514,5 +525,7 @@ fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
                 format!("{} {}", command, args.join(" "))
             }
         ))
+    } else {
+        Ok(())
     }
 }

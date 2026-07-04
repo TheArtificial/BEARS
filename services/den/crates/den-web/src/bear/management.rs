@@ -175,6 +175,7 @@ fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
             matches!(
                 tool,
                 ClientToolName::TerminalRunCommand
+                    | ClientToolName::RunCommand
                     | ClientToolName::ProcessRun
                     | ClientToolName::ReadTextFile
                     | ClientToolName::ListDirectory
@@ -214,7 +215,7 @@ fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
                 policy_summary,
                 parameter_summary: acp_tool_parameter_summary(descriptor.provider_name),
                 usage_hint: acp_tool_usage_hint(descriptor.provider_name),
-                highlighted: descriptor.provider_name == "terminal_run_command",
+                highlighted: descriptor.provider_name == "run_command",
             }
         })
         .collect()
@@ -222,6 +223,7 @@ fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
 
 fn acp_tool_approval_label(provider_name: &str) -> &'static str {
     match provider_name {
+        "run_command" => "Only once, by command in workspace, by workspace, or globally",
         "terminal_run_command" => "Only once, by command in workspace, by workspace, or globally",
         "process_run" => "Only once, by command in workspace, by workspace, or globally",
         "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => {
@@ -237,6 +239,7 @@ fn acp_tool_approval_label(provider_name: &str) -> &'static str {
 
 fn acp_tool_scope_label(provider_name: &str) -> &'static str {
     match provider_name {
+        "run_command" => "Workspace cwd + routed command execution policy",
         "terminal_run_command" => "Workspace cwd + allowlisted build/test commands",
         "process_run" => "Workspace cwd + adapter process policy",
         "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => {
@@ -251,7 +254,7 @@ fn acp_tool_scope_label(provider_name: &str) -> &'static str {
 
 fn acp_tool_parameter_summary(provider_name: &str) -> Vec<&'static str> {
     match provider_name {
-        "terminal_run_command" | "process_run" => vec![
+        "run_command" | "terminal_run_command" | "process_run" => vec![
             "command",
             "args[]",
             "cwd",
@@ -271,7 +274,8 @@ fn acp_tool_parameter_summary(provider_name: &str) -> Vec<&'static str> {
 
 fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
     match provider_name {
-        "terminal_run_command" => "Use for build/test commands that should run in Zed's client terminal and wait for actual process exit, including Cargo file-lock waits.",
+        "run_command" => "Unified command tool. The adapter routes dedicated-tool redirects first, then chooses process or terminal execution based on command policy and visibility needs.",
+        "terminal_run_command" => "Compatibility terminal command tool; unified run_command should be preferred for new model-facing flows.",
         "process_run" => "Legacy bounded adapter-local process execution; prefer terminal_run_command for visible build/test workflows.",
         "fs_read_text_file" => "Read bounded text from a workspace file.",
         "fs_list_directory" => "Discover workspace files and directories without reading file contents.",

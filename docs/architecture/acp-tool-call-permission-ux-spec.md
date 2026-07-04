@@ -74,6 +74,30 @@ The product should classify actions using this canonical taxonomy before project
 - `browse` is intentionally distinct from `fetch` in Bear Den's internal semantics even though ACP does not provide a separate browser kind.
 - Browser navigation or inspection should use browser-specific copy such as `Open page` or `Inspect page`, not `Fetch`.
 - Placeholder tool names should be normalized into one of these families whenever arguments permit.
+- The current split between `process_run` and `terminal_run_command` is an execution-detail split. The preferred long-term model-facing abstraction is a single command tool such as `run_command`, with routing performed by policy.
+
+### Preferred future command abstraction
+
+The product should converge toward one model-facing command tool:
+
+```text
+run_command
+```
+
+Routing policy should then decide whether the request becomes:
+
+- a dedicated-tool redirect,
+- `process_run`,
+- or `terminal_run_command`.
+
+Routing defaults:
+
+1. redirect to a dedicated tool when one clearly fits the requested operation;
+2. use `process_run` for short, bounded, structured commands;
+3. use `terminal_run_command` for high-output, long-running, or user-visible commands;
+4. default unknown commands in interactive armature flows to `terminal_run_command`.
+
+The dedicated-tool redirect should be a soft wall: first redirect, then require an explicit override to force command execution when truly necessary.
 
 ## Initial tool mapping targets
 

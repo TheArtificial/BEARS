@@ -93,12 +93,13 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
+use tools::command_policy::{process_command_preferred, terminal_command_allowed};
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
 };
 use tools::process::handle_process_run;
-use tools::terminal::handle_terminal_run_command;
+use tools::terminal::{handle_terminal_run_command, TerminalCommandValidation};
 use tools::web::handle_local_web_fetch;
 use update::{run_update_command, update_doctor_line, UpdateCommand, UpdateOptions};
 
@@ -3081,6 +3082,7 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
             "git_restore": { "supported": true, "version": 1 },
             "git_commit": { "supported": true, "version": 1 },
             "git_stash": { "supported": true, "version": 1 },
+            "run_command": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "terminal_run_command": { "supported": true, "version": 1 },
             "bear_environment": { "supported": true, "version": 1 },
@@ -3120,6 +3122,7 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
         "git_restore": true,
         "git_commit": true,
         "git_stash": true,
+        "run_command": true,
         "process_run": true,
         "terminal_run_command": true,
         "bear_environment": true,
@@ -3186,6 +3189,38 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     if !context.roots.is_empty() {
         context.raw["workspace_roots"] = json!(context.roots.clone());
     }
+}
+
+fn run_command_prefers_terminal(args: &Value) -> bool {
+    let command = args.get("command").and_then(Value::as_str).map(str::trim);
+    let command_args = args
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(command) = command.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    if command == "git" {
+        if command_args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "status" | "diff" | "log" | "show" | "add" | "restore" | "commit" | "stash"
+            )
+        }) {
+            return false;
+        }
+    }
+    if terminal_command_allowed(command, &command_args) {
+        return true;
+    }
+    !process_command_preferred(command, &command_args)
 }
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
@@ -3609,7 +3644,7 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_git_stash(context, &args, policy).await
         }
-        "process_run" => {
+        "run_command" | "process_run" => {
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
         }
@@ -3623,6 +3658,7 @@ async fn execute_local_tool(
                 None,
                 &args,
                 policy,
+                TerminalCommandValidation::Allowlisted,
             )
             .await
         }
@@ -7155,8 +7191,26 @@ async fn handle_tool_request_event(
             Some(tool_call_title(tool_name, event)),
             &args,
             &policy,
+            TerminalCommandValidation::Allowlisted,
         )
         .await
+    } else if tool_name == "run_command" {
+        let context = session_context(adapter_state, session_id)?.clone();
+        if client_supports_terminal(adapter_state) && run_command_prefers_terminal(&args) {
+            handle_terminal_run_command(
+                adapter_state,
+                &context,
+                session_id,
+                Some(tool_call_id),
+                Some(tool_call_title(tool_name, event)),
+                &args,
+                &policy,
+                TerminalCommandValidation::Generic,
+            )
+            .await
+        } else {
+            handle_process_run(&context, session_id, &args, &policy).await
+        }
     } else {
         execute_local_tool(
             adapter_state,

@@ -169,6 +169,7 @@ pub enum ClientToolName {
     GitRestore,
     GitCommit,
     GitStash,
+    RunCommand,
     ProcessRun,
     TerminalRunCommand,
     ChromeOpen,
@@ -202,6 +203,7 @@ impl ClientToolName {
             Self::GitRestore => &GIT_RESTORE_TOOL,
             Self::GitCommit => &GIT_COMMIT_TOOL,
             Self::GitStash => &GIT_STASH_TOOL,
+            Self::RunCommand => &RUN_COMMAND_TOOL,
             Self::ProcessRun => &PROCESS_RUN_TOOL,
             Self::TerminalRunCommand => &TERMINAL_RUN_COMMAND_TOOL,
             Self::ChromeOpen => &CHROME_OPEN_TOOL,
@@ -239,8 +241,7 @@ impl ClientToolName {
             Self::GitRestore,
             Self::GitCommit,
             Self::GitStash,
-            Self::ProcessRun,
-            Self::TerminalRunCommand,
+            Self::RunCommand,
             Self::ChromeOpen,
             Self::ChromeSnapshot,
             Self::ChromeConsoleMessages,
@@ -287,7 +288,7 @@ impl ClientToolName {
             Self::GitAdd | Self::GitRestore => &["paths"],
             Self::GitCommit => &["message"],
             Self::GitStash => &[],
-            Self::ProcessRun | Self::TerminalRunCommand => &["command", "cwd"],
+            Self::RunCommand | Self::ProcessRun | Self::TerminalRunCommand => &["command", "cwd"],
             Self::ChromeOpen => &["url"],
             Self::ChromeSnapshot
             | Self::ChromeConsoleMessages
@@ -364,13 +365,16 @@ impl ClientToolName {
                 Some(Self::GitCommit)
             }
             "bears/git_stash" | "git/stash" | "git.stash" | "git_stash" => Some(Self::GitStash),
+            "bears/run_command" | "command/run" | "command.run" | "run_command" => {
+                Some(Self::RunCommand)
+            }
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
-                Some(Self::ProcessRun)
+                Some(Self::RunCommand)
             }
             "bears/terminal_run_command"
             | "terminal/run_command"
             | "terminal.run_command"
-            | "terminal_run_command" => Some(Self::TerminalRunCommand),
+            | "terminal_run_command" => Some(Self::RunCommand),
             "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => {
                 Some(Self::ChromeOpen)
             }
@@ -734,6 +738,25 @@ pub const GIT_STASH_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     permission_class: "git_write",
 };
 
+pub const RUN_COMMAND_TOOL: ClientToolDescriptor = ClientToolDescriptor {
+    provider_name: "run_command",
+    provider_aliases: &[
+        "process_run",
+        "process/run",
+        "process.run",
+        "bears/process_run",
+        "terminal_run_command",
+        "terminal/run_command",
+        "terminal.run_command",
+        "bears/terminal_run_command",
+    ],
+    canonical_name: "armature.command.run",
+    title: "Run command",
+    kind: "execute",
+    risk: "executes_process",
+    permission_class: "command_run",
+};
+
 pub const PROCESS_RUN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "process_run",
     provider_aliases: &[],
@@ -966,7 +989,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
             }),
             vec![],
         ),
-        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => object_schema(
+        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => object_schema(
             json!({
                 "command": { "type": "string", "description": "Executable name. Shell strings are not accepted." },
                 "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
@@ -1423,7 +1446,7 @@ pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
         ClientToolName::GitRestore => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitCommit => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitStash => ARMATURE_GIT_WRITE_POLICY,
-        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ARMATURE_PROCESS_RUN_POLICY,
+        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ARMATURE_PROCESS_RUN_POLICY,
         ClientToolName::ChromeOpen
         | ClientToolName::ChromeSnapshot
         | ClientToolName::ChromeConsoleMessages
@@ -1455,7 +1478,7 @@ pub fn tool_class(tool: ClientToolName) -> ToolClass {
         | ClientToolName::GitRestore
         | ClientToolName::GitCommit
         | ClientToolName::GitStash => ToolClass::WorkspaceMutation,
-        ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ToolClass::Execution,
+        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ToolClass::Execution,
         ClientToolName::ChromeOpen
         | ClientToolName::ChromeSnapshot
         | ClientToolName::ChromeConsoleMessages
@@ -1664,6 +1687,15 @@ pub fn client_tool_display(tool: ClientToolName) -> ToolDisplayDescriptor {
             target_arg_keys: &["repo_path"],
             sensitive_arg_keys: &[],
             approval_summary: "Allow creating a git stash.",
+        },
+        ClientToolName::RunCommand => ToolDisplayDescriptor {
+            label: "Run command",
+            category: "terminal",
+            progress_verb: "Running command",
+            complete_verb: "Ran command",
+            target_arg_keys: &["command", "cwd"],
+            sensitive_arg_keys: &["env"],
+            approval_summary: "Allow running this command in the workspace.",
         },
         ClientToolName::ProcessRun => ToolDisplayDescriptor {
             label: "Run process",

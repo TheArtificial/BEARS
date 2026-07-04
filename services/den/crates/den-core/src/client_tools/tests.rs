@@ -31,9 +31,9 @@
     }
 
     #[test]
-    fn provider_tool_descriptor_process_run_has_command_schema() {
-        let descriptor = provider_tool_descriptor(ClientToolName::ProcessRun);
-        assert_eq!(descriptor["name"], "process_run");
+    fn provider_tool_descriptor_run_command_has_command_schema() {
+        let descriptor = provider_tool_descriptor(ClientToolName::RunCommand);
+        assert_eq!(descriptor["name"], "run_command");
         assert_eq!(descriptor["parameters"]["required"], json!(["command"]));
         assert_eq!(descriptor["parameters"]["additionalProperties"], false);
         assert!(
@@ -43,4 +43,7 @@
         );
         assert!(descriptor["parameters"]["properties"].get("args").is_some());
         assert!(descriptor["parameters"]["properties"].get("cwd").is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("bypass_tool_redirect")
+            .is_some());
     }
