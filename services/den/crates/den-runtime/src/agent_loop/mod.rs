@@ -36,7 +36,8 @@ pub use assembler::{
     assemble_native_turn_messages_for_bear, AssembleTurnContext, AssembledNativeTurn,
 };
 pub use budget::{
-    evaluate_turn_budget, tool_signature, tool_signature_from_call, ToolContinuationObservation,
+    classify_tool_budget_class, evaluate_turn_budget, tool_signature, tool_signature_from_call,
+    ToolBudgetClass, ToolCallBudgetLimits, ToolCallBudgetUsage, ToolContinuationObservation,
     TurnBudgetEvaluation, TurnBudgetPolicy, TurnBudgetState, TurnBudgetStopReason,
 };
 pub use context::{

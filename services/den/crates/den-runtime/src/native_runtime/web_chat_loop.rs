@@ -21,13 +21,13 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{
-        evaluate_turn_budget, pending_tool_calls, provider_tool_supports_unilateral_execution,
-        run_agent_step_stream, spawn_persist_web_chat_interrupted_turn,
-        spawn_persist_web_chat_turn, tool_call_finished_event,
-        tool_call_finished_event_for_content, tool_call_finished_event_for_incomplete,
-        tool_result_content_indicates_error, tool_signature_from_call, AgentLoopSessionStore,
-        AgentStepOverflowContext, NativeToolDispatchMode, SessionTrackingStream,
-        ToolContinuationObservation,
+        classify_tool_budget_class, evaluate_turn_budget, pending_tool_calls,
+        provider_tool_supports_unilateral_execution, run_agent_step_stream,
+        spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
+        tool_call_finished_event, tool_call_finished_event_for_content,
+        tool_call_finished_event_for_incomplete, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopSessionStore, AgentStepOverflowContext,
+        NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     runtime_compaction::enqueue_compaction_after_turn,
@@ -284,12 +284,18 @@ impl NativeWebChatLoopStream {
             .map(|(call, message)| ToolContinuationObservation {
                 tool_name: call.function.name.clone(),
                 signature: tool_signature_from_call(call),
+                class: classify_tool_budget_class(&call.function.name),
                 failed: tool_result_content_indicates_error(message.content.as_deref()),
             })
             .collect::<Vec<_>>();
         let evaluation = evaluate_turn_budget(
             prior_session.turn_budget,
             prior_session.step,
+            prior_session
+                .turn_budget_state
+                .started_at
+                .elapsed()
+                .as_millis() as u64,
             &prior_session.turn_budget_state,
             &observations,
         );
@@ -402,7 +408,13 @@ impl Stream for NativeWebChatLoopStream {
         if let Some(event) = self.maybe_keepalive() {
             return Poll::Ready(Some(Ok(event)));
         }
-        if self.started_at.elapsed() >= WEB_CHAT_TURN_BUDGET {
+        let wall_clock_limit = self
+            .runtime
+            .session_store
+            .get(&self.runtime.session_key)
+            .map(|session| Duration::from_millis(session.turn_budget.max_wall_clock_ms))
+            .unwrap_or(WEB_CHAT_TURN_BUDGET);
+        if self.started_at.elapsed() >= wall_clock_limit {
             if let LoopPhase::ExecutingTools { calls, index, .. } = &self.phase {
                 let pending = calls[*index..].to_vec();
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
@@ -485,16 +497,16 @@ impl Stream for NativeWebChatLoopStream {
                             }
                             return Poll::Ready(None);
                         }
-                        if session.step >= session.turn_budget.hard_steps {
-                            self.persist_interrupted_turn("hard_step_limit");
+                        if session.step >= session.turn_budget.emergency_hard_steps {
+                            self.persist_interrupted_turn("emergency_hard_step_limit");
                             self.phase = LoopPhase::Finished;
                             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                                 RuntimeSemanticEvent::TurnFailed {
                                     turn: None,
                                     category: RuntimeErrorCategory::Internal,
                                     message: format!(
-                                        "native web chat reached hard step limit (step={}/hard_steps={})",
-                                        session.step, session.turn_budget.hard_steps
+                                        "native web chat reached emergency hard step limit (step={}/emergency_hard_steps={})",
+                                        session.step, session.turn_budget.emergency_hard_steps
                                     ),
                                 },
                             ))));

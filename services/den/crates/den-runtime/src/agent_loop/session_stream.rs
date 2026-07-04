@@ -823,7 +823,9 @@ mod tests {
     };
 
     use crate::{
-        agent_loop::{NativeToolDispatchMode, StrategyProfile, TurnBudgetPolicy},
+        agent_loop::{
+            NativeToolDispatchMode, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
+        },
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
     use den_core::config::Config;
@@ -876,8 +878,18 @@ mod tests {
             api_style: None,
             step: 0,
             turn_budget: TurnBudgetPolicy {
-                soft_steps: 3,
-                hard_steps: 4,
+                max_wall_clock_ms: 60_000,
+                emergency_hard_steps: 16,
+                tool_call_limits: ToolCallBudgetLimits {
+                    total: 8,
+                    read: 6,
+                    search: 4,
+                    fetch: 2,
+                    execute: 2,
+                    write: 2,
+                    destructive: 1,
+                    other: 2,
+                },
                 max_consecutive_tool_failures: 2,
                 max_same_tool_signature_repeats: 1,
             },

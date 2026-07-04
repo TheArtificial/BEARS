@@ -34,11 +34,12 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, evaluate_turn_budget,
-        record_approval_decision, run_agent_step_stream, tool_result_content_indicates_error,
-        tool_signature_from_call, AgentLoopSession, AgentLoopSessionStore,
-        AgentStepOverflowContext, AssembleTurnContext, NativeToolDispatchMode,
-        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
+        agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
+        evaluate_turn_budget, record_approval_decision, run_agent_step_stream,
+        tool_result_content_indicates_error, tool_signature_from_call, AgentLoopSession,
+        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
+        TurnBudgetStopReason,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -948,6 +949,7 @@ fn tool_observation_from_call(
     ToolContinuationObservation {
         tool_name: call.function.name.clone(),
         signature: tool_signature_from_call(call),
+        class: classify_tool_budget_class(&call.function.name),
         failed: tool_result_content_indicates_error(content),
     }
 }
@@ -1153,12 +1155,15 @@ pub async fn continue_native_client_turn_event_stream(
                     if let Some(tool_call_id) = tool_call_id.as_deref() {
                         if let Some(call) = find_pending_tool_call(session, tool_call_id) {
                             if call_is_den_web_fetch(&call) {
-                                tool_messages.push(
-                                    execute_approved_den_tool_for_session(
-                                        &request, session, &call, profile,
-                                    )
-                                    .await?,
-                                );
+                                let tool_message = execute_approved_den_tool_for_session(
+                                    &request, session, &call, profile,
+                                )
+                                .await?;
+                                observations.push(tool_observation_from_call(
+                                    &call,
+                                    tool_message.content.as_deref(),
+                                ));
+                                tool_messages.push(tool_message);
                             }
                         }
                     }
@@ -1184,6 +1189,11 @@ pub async fn continue_native_client_turn_event_stream(
     let evaluation = evaluate_turn_budget(
         prior_session.turn_budget,
         prior_session.step,
+        prior_session
+            .turn_budget_state
+            .started_at
+            .elapsed()
+            .as_millis() as u64,
         &prior_session.turn_budget_state,
         &observations,
     );
@@ -1234,12 +1244,22 @@ pub async fn continue_native_client_turn_event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::{StrategyProfile, TurnBudgetPolicy};
+    use crate::agent_loop::{StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy};
 
     fn pair_turn_budget() -> TurnBudgetPolicy {
         TurnBudgetPolicy {
-            soft_steps: 6,
-            hard_steps: 8,
+            max_wall_clock_ms: 60_000,
+            emergency_hard_steps: 8,
+            tool_call_limits: ToolCallBudgetLimits {
+                total: 8,
+                read: 8,
+                search: 8,
+                fetch: 8,
+                execute: 8,
+                write: 8,
+                destructive: 2,
+                other: 8,
+            },
             max_consecutive_tool_failures: 3,
             max_same_tool_signature_repeats: 2,
         }
@@ -1366,8 +1386,8 @@ mod tests {
             .expect("event ok");
         match event {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("hard tool/permission continuation budget"));
-                assert!(message.contains("step=8/hard_steps=8"));
+                assert!(message.contains("emergency continuation fuse"));
+                assert!(message.contains("step=8/emergency_hard_steps=8"));
             }
             other => panic!("expected TurnFailed, got {other:?}"),
         }
